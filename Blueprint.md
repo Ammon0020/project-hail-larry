@@ -2,7 +2,7 @@
 
 ## Product Design Blueprint
 
-> **Version:** 2.3
+> **Version:** 2.4
 >
 > This document defines the architecture for the Local Agent Interface application. It supersedes earlier drafts while preserving all existing functionality. The design is ACP-only, agent-agnostic, and intended to support any ACP-compatible agent without provider-specific integration code.
 
@@ -274,6 +274,37 @@ The client starts the agent binary, establishes the ACP transport, and maintains
 
 The host daemon is the long-running background process on the user's machine. It serves the web UI, manages workspaces, broadcasts events to paired clients, and runs the ACP Client Layer. Users interact with it primarily through the `app` CLI for setup tasks (registering folders, pairing devices) and through the web UI for agent sessions.
 
+### Daemon Lifecycle
+
+| Phase | Behavior |
+|---|---|
+| **Install** | Single binary added to PATH. State stored in `~/.local-agent/`. |
+| **Start** | `app start` launches the daemon (foreground or `--background`). Binds to the LAN; see Network Discovery. |
+| **Autostart** | Opt-in via `app install-service` (launchd on macOS, systemd on Linux). Default is manual start. |
+| **Running** | One daemon per machine. Owns all workspace writes and ACP agent connections. |
+| **Crash** | Daemon exits; service manager or user restarts it. Paired clients reconnect via WebSocket and resync events. Active ACP sessions resume if the agent supports it. |
+| **Upgrade** | `app stop` → replace binary → `app start`. Event log and paired devices persist across restarts. |
+
+### Host CLI
+
+```
+app — Local Agent Interface host CLI
+
+Usage: app <command> [options]
+
+Commands:
+  start              Start the background daemon
+  stop               Stop the daemon
+  status             Show URL, LAN IP, port, workspaces, and paired devices
+  add-folder [path]  Register a directory as a workspace (default: current dir)
+  pair               Generate QR code and mnemonic passcode for device pairing
+  devices            List paired devices
+  revoke <id>        Revoke a paired device's access
+  install-service    Install autostart (launchd / systemd; opt-in)
+  logs               Tail daemon logs
+  help               Show this help
+```
+
 ---
 
 ## Paired Client
@@ -445,6 +476,10 @@ Because the client owns approval decisions, the application includes a dedicated
 
 Every ACP-compatible agent uses the same permission flow. The client does not implement separate approval logic per agent.
 
+### Prompt Routing
+
+Permission prompts are **broadcast to all paired devices** simultaneously. Any device may respond; the first response is applied and synchronized to all clients. This lets a user approve a shell command or file write from whichever device is in hand.
+
 ---
 
 # 9. Agent Lifecycle
@@ -542,6 +577,7 @@ Example event types include:
 * ShellCommandStarted
 * ShellOutputStreamed
 * ShellCommandCompleted
+* FileRevisionUpdated
 * PermissionRequested
 * PermissionGranted
 * PermissionDenied
@@ -575,7 +611,7 @@ Multiple paired devices may observe the same running session simultaneously.
 
 A user may begin a session on one device and continue monitoring or interacting from another without interrupting the underlying agent connection. When a second device (e.g., a laptop) completes pairing while a phone session is already active, the new client's UI immediately populates with the same chat history, active agent tasks, and file tree—no manual refresh or session handoff required.
 
-The server broadcasts state globally so every paired client stays in sync, preventing file overwrite collisions by serializing writes through the host.
+The server broadcasts state globally so every paired client stays in sync. File collision prevention is handled by host-authoritative writes and revision tracking (see File System Access).
 
 ---
 
@@ -605,9 +641,9 @@ Workspace configuration remains agent-independent.
 
 # 14. File System Access
 
-The client owns the filesystem within workspace boundaries.
+The host daemon owns the filesystem within workspace boundaries. Agents and browsers never write to disk directly.
 
-When an agent needs to read or modify files, it requests permission through ACP. The client validates the request, presents it to the user if required, performs the operation, and returns the result to the agent.
+When an agent needs to read or modify files, it requests permission through ACP. The daemon validates the request, presents it to the user if required, performs the operation, and returns the result to the agent.
 
 The server is responsible for:
 
@@ -616,7 +652,31 @@ The server is responsible for:
 * Executing approved file operations on behalf of agents
 * Recording file-related events
 
-This maintains a clear audit trail and keeps filesystem control with the client, as ACP intends.
+This maintains a clear audit trail and keeps filesystem control with the host, as ACP intends.
+
+## Collision Prevention
+
+OS file locking does not work here: the agent writes whole files, and users need to **watch live** as the agent edits. The solution is not locking—it is **one writer (the host) and revision-based sync**.
+
+### Rules
+
+1. **Only the host daemon writes to disk.** Agents write through ACP; browsers never touch the filesystem.
+2. **Every file has a monotonic revision number.** Each successful write increments it.
+3. **All clients read from the event stream**, not from independent disk polls. When a file changes, the host emits a `FileRevisionUpdated` event (content snapshot or diff + revision).
+4. **Writes are serialized** through the host. Agent tool writes and any future client saves enter a single queue per file—no concurrent disk writes.
+
+### Typical Flow (agent editing, user watching)
+
+```
+Agent requests write → permission granted → host writes disk
+  → revision++ → FileRevisionUpdated event → all clients update editor view
+```
+
+A user on a phone and a laptop both see the same live content as the agent edits. No lock screen blocks the view.
+
+### Client Edits (v1: read-only)
+
+In v1, the Monaco editor is **read-only** for browsing and reviewing agent changes. Users dispatch work through chat; the agent is the editor. Client-initiated file saves are deferred to a later release and will use **optimistic concurrency** (submit with `expectedRevision`; host rejects if stale).
 
 ---
 
@@ -744,7 +804,15 @@ The conversation view renders directly from the event stream.
 
 ---
 
-## Running Tasks Panel
+## Editor and File Viewing
+
+The main editor uses **Monaco**. Clients render file content from `FileRevisionUpdated` events so the view stays live while the agent edits.
+
+* **Read-only viewing (v1)** — browse files and follow agent edits in real time across all paired devices.
+* **Diff view** — Monaco's built-in diff editor shows before/after when reviewing agent-proposed changes (e.g., from the tool timeline or permission dialog).
+* **No direct client saves in v1** — prevents collision with in-flight agent writes; see Collision Prevention.
+
+---
 
 A dedicated panel displays currently active work.
 
@@ -878,13 +946,26 @@ Configuration is organized into separate scopes.
 Examples include:
 
 * Registered agents
-* Network settings (bind address, port)
+* Network settings (bind address, port, mDNS hostname)
 * Paired devices
 * Theme
 * Logging
 * Security
 * Default models
 * Permission policies
+
+### Network Discovery
+
+The daemon binds to **`0.0.0.0`** on a configurable port (default **`7337`**) so all LAN interfaces accept connections.
+
+| Method | How |
+|---|---|
+| **mDNS** | Advertise as `app.local` (Bonjour on macOS, Avahi on Linux) so browsers can use `http://app.local:7337` |
+| **QR code** | `app pair` encodes the full URL (mDNS hostname or LAN IP) |
+| **Manual** | `app status` prints the LAN IP and port as fallback |
+| **Lock screen** | Unpaired clients can enter the host IP manually before pairing |
+
+mDNS is recommended but not required—`app status` always provides a direct IP fallback.
 
 ---
 
@@ -978,6 +1059,8 @@ Potential future enhancements include:
 * Session replay
 * Distributed workers
 * Cloud synchronization (optional)
+* Client-initiated file editing with revision conflict UI
+* ACP sub-worker support (deferred until next ACP release)
 * Additional ACP capabilities as the protocol evolves
 
 These features should be additive rather than requiring architectural changes.
@@ -1007,9 +1090,9 @@ This separation of concerns keeps the application maintainable, extensible, and 
 
 ## Phase 1 – Core Infrastructure
 
-* Host daemon and CLI (`app add-folder`, `app pair`)
+* Host daemon and CLI (`app start`, `app stop`, `app status`, `app add-folder`, `app pair`, `app devices`, `app revoke`, `app logs`)
 * Device pairing (QR code + mnemonic passcode, lock screen)
-* Local web server (LAN binding)
+* Local web server (LAN binding, mDNS discovery)
 * Workspace management
 * Session lifecycle
 * ACP Client Layer (transport, sessions, prompts, streaming)
@@ -1018,6 +1101,7 @@ This separation of concerns keeps the application maintainable, extensible, and 
 * Single agent support
 * Event system
 * WebSocket synchronization across paired clients
+* Monaco read-only editor with diff view
 
 ---
 
