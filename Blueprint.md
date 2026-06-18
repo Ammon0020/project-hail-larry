@@ -2,7 +2,7 @@
 
 ## Product Design Blueprint
 
-> **Version:** 2.1
+> **Version:** 2.2
 >
 > This document defines the architecture for the Local Agent Interface application. It supersedes earlier drafts while preserving all existing functionality. The design is ACP-only, agent-agnostic, and intended to support any ACP-compatible agent without provider-specific integration code.
 
@@ -10,18 +10,29 @@
 
 # 1. Vision
 
-The Local Agent Interface is a locally hosted web application that provides a single interface for interacting with AI coding agents.
+The Local Agent Interface is a powerful, self-hosted web interface that transforms CLI-based coding agents (like Claude Code and Cursor CLI) into collaborative, multi-device assistants. It moves the agent out of a rigid terminal window and into an intelligent, event-driven web dashboard.
 
-Rather than acting as an AI itself, the application implements an **ACP client** that orchestrates one or more external agents through the Agent Client Protocol. The user interacts only with the Local Agent Interface; all agent communication flows through ACP.
+Rather than acting as an AI itself, the application implements an **ACP client** that orchestrates one or more external agents through the Agent Client Protocol. A lightweight **host daemon** runs on the user's machine, serving the web UI to any device on the local network while keeping files on the host computer perfectly synced and safe from overwrite collisions.
 
 The application is designed to:
 
-* Run entirely on a personal computer.
-* Serve multiple devices over the local network.
-* Support multiple simultaneous users.
+* Run entirely on a personal computer via a background daemon and CLI.
+* Serve multiple devices over the local network (desktop, laptop, phone).
+* Keep all authoritative state on the host; connected devices are thin clients.
 * Connect to any ACP-compatible agent.
 * Remain functional as agents evolve, without custom per-agent integration.
 * Use ACP as the sole communication protocol between the application and agents.
+* Require explicit device pairing before any web client may access the UI.
+
+---
+
+## Product Summary
+
+**This app is** a powerful, self-hosted web interface that transforms CLI-based coding agents (like Claude Code and Cursor CLI) into collaborative, multi-device assistants. It moves the agent out of a rigid terminal window and into an intelligent, event-driven web dashboard. By running a lightweight background daemon on the host machine, it allows users to securely access, monitor, and direct AI coding agents from any desktop, laptop, or phone on the local network—all while keeping files perfectly synced and safe from overwrite collisions.
+
+**The user interaction starts by** opening the host computer's terminal and running a simple CLI command (like `app add-folder .`) inside a project directory to register the workspace. They then run `app pair` to generate a secure QR code. Scanning this QR code with a phone instantly pairs the device and opens a sleek, Gemini-style web UI. From there, they can select an AI model (like Claude 3.5 Sonnet), type coding instructions, upload photos of whiteboard architectures, and watch as the agent writes code, executes shell commands, and spins up sub-workers—all rendered as a clean, interactive chat stream on the phone while the actual files are modified on the host computer.
+
+**To add a second client, like a laptop, while already using a phone, the user** opens a web browser on the laptop and navigates to the app's local IP address, where they are met with a secure lock screen. They run `app pair` again on the host computer's terminal. Instead of scanning the QR code, they read the short, four-word mnemonic passcode displayed on screen (e.g., *purple-fox-delta-wave*) and type it into the laptop's browser. The laptop is instantly authenticated. Because the backend broadcasts event state globally, the laptop's UI immediately populates with the same active chat, ongoing agent tasks, and file tree currently visible on the phone. The user can set the phone down and seamlessly continue on a full keyboard without skipping a beat.
 
 ---
 
@@ -121,6 +132,8 @@ Examples include:
 * Session resumed
 * Agent connected
 * Agent disconnected
+* DevicePaired
+* DeviceRevoked
 
 The UI renders from the event stream instead of maintaining its own independent state.
 
@@ -129,11 +142,27 @@ The UI renders from the event stream instead of maintaining its own independent 
 # 3. Architecture
 
 ```
-Browser UI
+Host Machine
+─────────────────────────
+CLI (app add-folder, app pair, ...)
+Background Daemon
+Workspace files (authoritative)
+
+        │
+        ▼
+Local Agent Server
+─────────────────────────
+Device pairing & auth
+Event broadcast
+Workspace Manager
+ACP Client Layer
+
+        │
+        ▼ (WebSocket / HTTP, LAN only)
+Browser UI (any paired device)
 ─────────────────────────
 Chat
 File Tree
-Terminal
 Permission Dialogs
 Settings
 Session History
@@ -159,7 +188,9 @@ AI Agent
 (Claude Code, Codex CLI, Gemini CLI, Cursor CLI, OpenCode, etc.)
 ```
 
-The **Browser UI** presents the user experience: chat, file tree, terminal, permission dialogs, settings, and session history.
+The **host daemon** runs on the user's machine, manages workspaces, serves the web UI to the local network, and owns all files on disk.
+
+The **Browser UI** presents the user experience on any paired device: chat, file tree, permission dialogs, settings, and session history. Unpaired devices see only a lock screen.
 
 The **ACP Client Layer** implements the protocol: starting agents, sending prompts, receiving streaming updates, handling `session/request_permission`, and managing session lifecycle.
 
@@ -169,8 +200,8 @@ The server owns:
 
 * Sessions
 * Routing
-* Authentication
-* Event storage
+* Device pairing and application authentication
+* Event storage and broadcast
 * Workspace management
 * Agent registry
 * Permission policies
@@ -224,6 +255,18 @@ Sessions may be resumed via ACP (`create session`, `load session`, `list session
 An agent connection is the active ACP link between the client and a running agent process.
 
 The client starts the agent binary, establishes the ACP transport, and maintains the connection until the session closes or the agent exits.
+
+---
+
+## Host Daemon
+
+The host daemon is the long-running background process on the user's machine. It serves the web UI, manages workspaces, broadcasts events to paired clients, and runs the ACP Client Layer. Users interact with it primarily through the `app` CLI for setup tasks (registering folders, pairing devices) and through the web UI for agent sessions.
+
+---
+
+## Paired Client
+
+A paired client is a browser session on a device (phone, laptop, tablet) that has completed device pairing and holds a valid authentication credential. Only paired clients may access the web UI beyond the lock screen. Multiple paired clients may connect simultaneously and receive the same live event stream.
 
 ---
 
@@ -503,7 +546,7 @@ This approach simplifies synchronization across multiple connected clients and i
 
 # 12. Multi-Client Synchronization
 
-The server is the authoritative source of state.
+The server is the authoritative source of state. All files live on the host machine; connected devices are thin clients that render from the global event stream.
 
 Clients subscribe to events using WebSockets.
 
@@ -513,15 +556,19 @@ When a client reconnects:
 2. Missing events are synchronized.
 3. Live streaming resumes automatically.
 
-Multiple devices may observe the same running session simultaneously.
+Multiple paired devices may observe the same running session simultaneously.
 
-A user may begin a session on one device and continue monitoring or interacting from another without interrupting the underlying agent connection.
+A user may begin a session on one device and continue monitoring or interacting from another without interrupting the underlying agent connection. When a second device (e.g., a laptop) completes pairing while a phone session is already active, the new client's UI immediately populates with the same chat history, active agent tasks, and file tree—no manual refresh or session handoff required.
+
+The server broadcasts state globally so every paired client stays in sync, preventing file overwrite collisions by serializing writes through the host.
 
 ---
 
 # 13. Workspace Management
 
-A workspace represents a project directory managed by the server.
+A workspace represents a project directory managed by the server on the host machine.
+
+Workspaces are registered via the host CLI (e.g., `app add-folder .` run inside the project directory).
 
 Each workspace stores:
 
@@ -603,7 +650,9 @@ The UI should expose capabilities dynamically based on negotiated ACP capabiliti
 
 ## Primary Layout
 
-The application consists of:
+Unpaired devices see a **lock screen** prompting for a mnemonic passcode or QR scan.
+
+Paired devices see the full application:
 
 * Top navigation bar
 * Left navigation drawer (collapsible with hamburger menu)
@@ -625,7 +674,7 @@ The navigation drawer provides quick access to:
 * Agent Registry
 * MCP Servers
 * Permission Policies
-* Settings
+* Settings (including paired device management)
 * Logs
 * Diagnostics
 
@@ -723,7 +772,55 @@ The architecture supports:
 
 # 19. Authentication
 
-ACP supports authentication negotiation between client and agent before sessions begin.
+Authentication is split into two independent layers: **application authentication** (pairing a device to access the web UI) and **agent authentication** (connecting to an AI provider via ACP).
+
+---
+
+## Application Authentication (Device Pairing)
+
+Before any browser may access the web UI, the device must be paired with the host daemon. Unpaired requests see only a secure lock screen.
+
+### First Device (QR Code)
+
+1. User registers a workspace on the host: `app add-folder .`
+2. User initiates pairing: `app pair`
+3. The daemon generates a **pairing session** containing:
+   * A QR code encoding the daemon's local URL and a one-time pairing token
+   * A human-readable **four-word mnemonic passcode** (e.g., *purple-fox-delta-wave*)
+4. User scans the QR code with their phone camera.
+5. The phone opens the web UI, submits the token, and receives a long-lived **device credential**.
+6. The phone is paired. The full UI loads immediately.
+
+Pairing sessions are short-lived and single-use. Once consumed, the QR code and passcode are invalidated.
+
+### Additional Devices (Mnemonic Passcode)
+
+1. User opens a browser on the new device and navigates to the daemon's local IP address (e.g., `http://192.168.1.50:8080`).
+2. The browser displays the lock screen.
+3. User runs `app pair` again on the host terminal.
+4. User reads the four-word mnemonic from the host screen and types it into the lock screen on the new device.
+5. The new device receives a device credential and the full UI loads, synchronized with all other active clients.
+
+### Device Credentials
+
+* Each paired device receives a unique, revocable credential stored securely in the browser.
+* Credentials are required for all API and WebSocket connections.
+* Users may revoke paired devices from Settings on any authenticated client.
+* Re-pairing is required after credential revocation or expiry.
+
+### Security Model
+
+The daemon binds to the local network interface and does not expose unauthenticated access to workspaces, files, or agent sessions. This design is safe to use in semi-public environments (e.g., a coffee shop) **as long as the user protects pairing codes**:
+
+* Do not share QR codes or mnemonic passcodes with others.
+* Pairing codes expire quickly and work only once.
+* Without a valid code, the lock screen reveals nothing about workspaces or sessions.
+
+---
+
+## Agent Authentication (ACP Provider Auth)
+
+ACP supports authentication negotiation between the host daemon and an agent before sessions begin.
 
 Authentication methods may include:
 
@@ -733,11 +830,11 @@ Authentication methods may include:
 * Environment variables
 * Provider-managed login
 
-The ACP Client Layer manages authentication flows while presenting a common interface to the server.
+The ACP Client Layer manages agent authentication flows while presenting a common interface to the server.
 
-Credentials should never be stored in plaintext.
+Agent credentials should never be stored in plaintext.
 
-Where supported by the operating system, secure credential storage should be used.
+Where supported by the operating system, secure credential storage should be used on the host machine.
 
 ---
 
@@ -750,7 +847,8 @@ Configuration is organized into separate scopes.
 Examples include:
 
 * Registered agents
-* Network settings
+* Network settings (bind address, port)
+* Paired devices
 * Theme
 * Logging
 * Security
@@ -813,19 +911,22 @@ Recoverable failures should offer retry or resume options.
 
 # 22. Security
 
-The Local Agent Interface is designed primarily for trusted local networks.
+The Local Agent Interface is designed for local network use with mandatory device pairing. It does not assume the network is fully trusted—unpaired devices cannot access any application data.
 
 Security principles include:
 
+* Mandatory device pairing before UI access (QR code or mnemonic passcode)
+* Short-lived, single-use pairing sessions
+* Revocable per-device credentials
 * No unrestricted filesystem access
 * Workspace boundary enforcement
 * Explicit permission prompts for agent actions
 * Configurable trust policies
-* Secure credential storage
-* Authenticated client connections
-* Audit logging for permissions and administrative actions
+* Secure credential storage on the host
+* Audit logging for permissions, pairing events, and administrative actions
+* Host-authoritative file writes to prevent overwrite collisions across clients
 
-If remote access is later introduced, authentication and transport security should be expanded accordingly.
+The pairing model is intentionally safe for use in semi-public environments (coffee shops, co-working spaces) when users treat pairing codes like temporary passwords. Remote access over the public internet is out of scope for v1; if introduced later, transport encryption and stronger authentication should be added.
 
 ---
 
@@ -875,14 +976,16 @@ This separation of concerns keeps the application maintainable, extensible, and 
 
 ## Phase 1 – Core Infrastructure
 
-* Local web server
+* Host daemon and CLI (`app add-folder`, `app pair`)
+* Device pairing (QR code + mnemonic passcode, lock screen)
+* Local web server (LAN binding)
 * Workspace management
 * Session lifecycle
 * ACP Client Layer (transport, sessions, prompts, streaming)
 * Permission Manager (basic allow/deny)
 * Single agent support
 * Event system
-* WebSocket synchronization
+* WebSocket synchronization across paired clients
 
 ---
 
