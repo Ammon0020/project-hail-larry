@@ -2,9 +2,9 @@
 
 ## Product Design Blueprint
 
-> **Version:** 2.0
+> **Version:** 2.1
 >
-> This document defines the architecture for the Local Agent Interface application. It supersedes earlier drafts while preserving all existing functionality. The design is ACP-first, provider-agnostic, and intended to support multiple AI providers, local models, and future expansion without architectural changes.
+> This document defines the architecture for the Local Agent Interface application. It supersedes earlier drafts while preserving all existing functionality. The design is ACP-only, agent-agnostic, and intended to support any ACP-compatible agent without provider-specific integration code.
 
 ---
 
@@ -12,74 +12,86 @@
 
 The Local Agent Interface is a locally hosted web application that provides a single interface for interacting with AI coding agents.
 
-Rather than acting as an AI itself, the application orchestrates one or more external agent providers through a common abstraction layer. The user interacts only with the Local Agent Interface while adapters translate requests to the underlying provider.
+Rather than acting as an AI itself, the application implements an **ACP client** that orchestrates one or more external agents through the Agent Client Protocol. The user interacts only with the Local Agent Interface; all agent communication flows through ACP.
 
 The application is designed to:
 
 * Run entirely on a personal computer.
 * Serve multiple devices over the local network.
 * Support multiple simultaneous users.
-* Allow multiple agent providers.
-* Remain functional even as providers evolve.
-* Prefer ACP wherever possible instead of provider-specific APIs.
+* Connect to any ACP-compatible agent.
+* Remain functional as agents evolve, without custom per-agent integration.
+* Use ACP as the sole communication protocol between the application and agents.
 
 ---
 
 # 2. Core Principles
 
-## ACP First
+## ACP Only
 
-Whenever ACP supports a capability, ACP is the source of truth.
+ACP is the only communication protocol between the Local Agent Interface and agents.
 
-Provider-specific APIs are only used when ACP does not yet expose equivalent functionality.
-
-Whenever ACP gains support for a feature currently implemented with provider APIs, the ACP implementation replaces the custom implementation.
+The application does not implement provider-specific APIs, terminal scraping, process piping, or other bespoke integration mechanisms. If an agent does not expose ACP, it is not supported until it does.
 
 ---
 
-## Provider Independence
+## Client Ownership
 
-The UI never communicates directly with Codex, Claude Code, Gemini CLI, or other providers.
+The Local Agent Interface is the ACP client. It owns:
+
+* The filesystem (within workspace boundaries)
+* The terminal
+* The workspace
+* Permission dialogs and approval decisions
+* Session state and event history
+
+Agents plan work, request tools, and propose changes. The client executes approved actions and returns results through ACP.
+
+---
+
+## Agent Independence
+
+The UI never communicates directly with Claude Code, Codex, Gemini CLI, Cursor CLI, OpenCode, or any other agent implementation.
 
 Instead:
 
-UI
+```
+User
+  │
+  ▼
+Browser UI
+  │
+  ▼
+ACP Client Layer
+  │
+  ▼
+ACP
+  │
+  ▼
+AI Agent
+```
 
-↓
-
-Application Core
-
-↓
-
-Execution Adapter
-
-↓
-
-Provider
-
-Only adapters understand provider-specific behavior.
+The client does not need to know whether the backend is Claude, Codex, Gemini, or another agent—as long as it speaks ACP.
 
 ---
 
-## Capability Discovery
+## Capability Negotiation
 
-Providers advertise supported capabilities.
+During initialization, the client and agent exchange capabilities through ACP.
 
 Examples:
 
-* Session creation
-* Resume session
-* File editing
-* Streaming responses
-* Tool execution
-* Image input
-* MCP support
-* Approval workflow
-* Interrupt
+* Session creation and resume
+* Prompt exchange and streaming
+* Image and audio input
+* Filesystem access
+* Terminal access
+* MCP servers
+* Permission requests
+* Agent modes (Ask, Plan, Agent)
 * Cancellation
-* Background execution
 
-The UI adapts automatically based on discovered capabilities instead of hardcoding provider behavior.
+The UI adapts automatically based on negotiated capabilities instead of hardcoding agent behavior.
 
 ---
 
@@ -100,15 +112,15 @@ Every meaningful action becomes an event.
 Examples include:
 
 * Prompt submitted
-* Stream token received
+* Stream update received
 * Tool started
 * Tool completed
-* Approval requested
-* Approval granted
-* Approval denied
+* Permission requested
+* Permission granted
+* Permission denied
 * Session resumed
-* Worker started
-* Worker exited
+* Agent connected
+* Agent disconnected
 
 The UI renders from the event stream instead of maintaining its own independent state.
 
@@ -116,31 +128,42 @@ The UI renders from the event stream instead of maintaining its own independent 
 
 # 3. Architecture
 
-(Client)
+```
+Browser UI
+─────────────────────────
+Chat
+File Tree
+Terminal
+Permission Dialogs
+Settings
+Session History
+Agent Selector
 
-↓
+        │
+        ▼
+ACP Client Layer
+─────────────────────────
+Start agent
+Send prompts
+Receive events
+Handle permissions
+Stream updates
+Manage sessions
 
-(WebSocket / HTTP)
-
-↓
-
-(Local Agent Server)
-
-↓
-
-Workspace Manager
-
-↓
-
-Execution Adapter
-
-↓
-
+        │
+        ▼
 ACP
+        │
+        ▼
+AI Agent
+(Claude Code, Codex CLI, Gemini CLI, Cursor CLI, OpenCode, etc.)
+```
 
-↓
+The **Browser UI** presents the user experience: chat, file tree, terminal, permission dialogs, settings, and session history.
 
-Provider
+The **ACP Client Layer** implements the protocol: starting agents, sending prompts, receiving streaming updates, handling `session/request_permission`, and managing session lifecycle.
+
+**Agents** handle AI reasoning, tool planning, and code generation. They request capabilities from the client; they do not own the filesystem or terminal directly.
 
 The server owns:
 
@@ -149,16 +172,17 @@ The server owns:
 * Authentication
 * Event storage
 * Workspace management
-* Provider registry
+* Agent registry
+* Permission policies
 
-The provider owns:
+The agent owns:
 
 * AI reasoning
-* Tool execution
+* Tool planning
 * Token generation
 * Model behavior
 
-The Local Agent Interface owns orchestration—not intelligence.
+The Local Agent Interface owns orchestration, workspace resources, and user approval—not intelligence.
 
 ---
 
@@ -166,7 +190,7 @@ The Local Agent Interface owns orchestration—not intelligence.
 
 ## Workspace
 
-A workspace represents a project directory.
+A workspace represents a project directory managed by the client.
 
 A workspace contains:
 
@@ -181,54 +205,49 @@ Workspaces persist indefinitely.
 
 ## Session
 
-A session represents one conversation with an agent.
+A session represents one conversation with an agent over ACP.
 
 A session contains:
 
 * Conversation history
-* Provider metadata
+* Agent metadata
 * Event log
-* Running process reference
+* ACP connection reference
 * Configuration
 
-Sessions may be resumed if supported by the provider.
+Sessions may be resumed via ACP (`create session`, `load session`, `list sessions`).
 
 ---
 
-## Process
+## Agent Connection
 
-A process is the operating system process executing an agent.
+An agent connection is the active ACP link between the client and a running agent process.
 
-Examples:
-
-* codex
-* claude
-* gemini
-
-Processes may terminate independently of sessions.
+The client starts the agent binary, establishes the ACP transport, and maintains the connection until the session closes or the agent exits.
 
 ---
 
 ## Worker
 
-A worker is the server-side object responsible for managing one process.
+A worker is the server-side object responsible for managing one agent connection.
 
 Responsibilities include:
 
-* Starting providers
-* Monitoring stdout/stderr
-* Managing ACP communication
+* Starting agent processes
+* Establishing and maintaining ACP communication
+* Translating ACP messages into internal events
+* Handling `session/request_permission` on behalf of the user
 * Restart detection
-* Cancellation
+* Cancellation (`cancel running work`)
 * Cleanup
 
-One worker manages one process.
+One worker manages one agent connection.
 
 ---
 
-# 5. Provider Registration
+# 5. Agent Registration
 
-Each provider registers:
+Each registered agent declares:
 
 * Name
 * Version
@@ -238,86 +257,171 @@ Each provider registers:
 * Configuration schema
 * Authentication requirements
 * Resume support
-* Execution mode
+* Launch command
 
-The registry allows providers to be added without changing the UI.
+The registry allows new agents to be added without changing the UI, as long as they expose ACP.
 
 ---
 
-# 6. Execution Adapters
+# 6. ACP Client Layer
 
-Execution adapters isolate provider-specific behavior from the rest of the application.
+The ACP Client Layer is the core integration surface. It is not a provider-specific adapter; it implements the ACP protocol on behalf of the application.
 
-Their responsibilities include:
+Responsibilities include:
 
-* Launching provider processes
-* Connecting through ACP when available
-* Translating ACP events into internal events
-* Falling back to provider-specific APIs when ACP does not support a required capability
-* Detecting provider termination
-* Reporting capabilities
-* Managing authentication
-* Handling reconnects
-* Providing a consistent interface to the Workspace Manager
+* Launching agent processes
+* Establishing ACP transport
+* Session management (`create`, `load`, `list`, `close`)
+* Sending prompts (`session/prompt`)
+* Receiving streaming updates
+* Handling permission requests (`session/request_permission`)
+* Capability negotiation during initialization
+* Authentication negotiation
+* Cancellation and interrupt
+* Translating ACP messages into internal events
+* Detecting agent termination
+* Managing reconnects
 
-Execution adapters should be as thin as possible. Business logic belongs in the server, not the adapter.
+Business logic belongs in the server; the ACP Client Layer handles protocol mechanics.
 
 ---
 
 # 7. ACP Integration
 
-ACP is the preferred communication protocol for all providers.
+ACP standardizes nearly everything needed for the Local Agent Interface to talk to an AI coding agent.
 
-Whenever ACP exposes a capability, the application must use ACP rather than implementing provider-specific logic.
+## What ACP Handles
 
-ACP is responsible for:
+### Session Management
 
-* Session creation
-* Prompt submission
-* Streaming responses
-* Tool invocation
-* Tool results
-* Interrupt requests
-* Cancellation
-* Session metadata
-* Capability advertisement
+* Create session
+* Load session
+* List sessions
+* Close session
+* Cancel running work
 
-Provider-specific APIs are reserved for capabilities that ACP does not yet expose.
+### Prompt Exchange
 
-The architecture should make replacing provider-specific implementations with ACP implementations straightforward as ACP evolves.
+```
+User → session/prompt → Agent → streaming updates
+```
+
+### Streaming Updates
+
+While the agent is working, it streams progress back (thinking, reading files, editing, finished). The UI updates in real time from these events.
+
+### Permission Requests
+
+When an agent wants to do something requiring approval (execute a shell command, modify files, etc.), it sends `session/request_permission`. The client shows a dialog, waits for the user's decision, and returns one of:
+
+* Allow once
+* Allow always (for this session or tool, per policy)
+* Reject once
+
+If the client never responds, the agent waits.
+
+### Authentication
+
+ACP supports authentication negotiation so the client can log into providers before sessions begin.
+
+### Capability Negotiation
+
+During initialization, client and agent exchange supported capabilities: images, audio, filesystem access, terminal access, MCP servers, session features, and more.
+
+### Agent Modes
+
+Many ACP implementations expose modes such as Ask, Plan, and Agent. The client can switch between them without changing the protocol.
+
+### Cancellation
+
+The client can interrupt a running task, equivalent to pressing Ctrl+C in many CLIs.
 
 ---
 
-# 8. Provider Lifecycle
+## What ACP Does Not Handle
 
-Each provider follows the same lifecycle.
+ACP intentionally does not define:
+
+* UI design
+* Permission dialog appearance
+* File explorer layout
+* Terminal emulator implementation
+* Editor layout
+* Themes
+* Diff viewer
+* Chat interface
+
+Those belong entirely to the Local Agent Interface (the client application).
+
+---
+
+## Replacing Custom Integration
+
+Earlier architectural approaches—direct CLI integration, terminal multiplexing, stdout/stderr parsing, or provider-specific APIs—are out of scope. ACP is the single integration path.
+
+---
+
+# 8. Permission Manager
+
+Because the client owns approval decisions, the application includes a dedicated Permission Manager.
+
+### Responsibilities
+
+* Receive `session/request_permission` from agents
+* Present permission dialogs to the user
+* Return allow-once, allow-always, or reject-once decisions to the agent
+* Enforce configurable trust policies (e.g., auto-approve reads, always ask before shell commands or writes)
+* Maintain an audit log of approvals and denials
+
+### UI Features
+
+* Allow Once
+* Allow for This Session
+* Always Allow This Tool
+* Deny
+* View full command or change details before deciding
+
+### Policy Examples
+
+* Auto-approve file reads within the workspace
+* Always prompt before shell commands
+* Always prompt before file writes
+* Remember decisions per session or per tool type
+
+Every ACP-compatible agent uses the same permission flow. The client does not implement separate approval logic per agent.
+
+---
+
+# 9. Agent Lifecycle
+
+Each agent connection follows the same lifecycle over ACP.
 
 ## Initialization
 
-The Workspace Manager requests an execution adapter.
+The Workspace Manager requests an agent connection.
 
-The adapter:
+The ACP Client Layer:
 
 1. Validates configuration.
-2. Starts the provider process.
-3. Connects through ACP (or provider API if necessary).
-4. Discovers provider capabilities.
+2. Starts the agent process.
+3. Establishes ACP transport.
+4. Negotiates capabilities.
 5. Registers the active worker.
 
 ---
 
 ## Active Operation
 
-While running, the worker:
+While connected, the worker:
 
-* Receives user prompts
-* Streams responses
-* Executes tools
+* Receives user prompts via `session/prompt`
+* Streams agent updates to clients
+* Handles permission requests
 * Emits events
-* Tracks health
-* Monitors process state
+* Tracks connection health
+* Monitors agent process state
 
-The worker remains active until the provider exits or is explicitly stopped.
+The worker remains active until the agent exits or the session is explicitly closed.
 
 ---
 
@@ -326,46 +430,46 @@ The worker remains active until the provider exits or is explicitly stopped.
 Shutdown may occur because:
 
 * The user stops the session.
-* The provider exits normally.
-* The provider crashes.
+* The agent exits normally.
+* The agent crashes.
 * The operating system terminates the process.
 
 Regardless of the cause, the worker:
 
 * Records the termination event.
 * Cleans up resources.
-* Closes ACP connections.
+* Closes the ACP connection.
 * Updates session state.
 * Notifies connected clients.
 
 ---
 
-# 9. Session Lifecycle
+# 10. Session Lifecycle
 
-Sessions are independent of processes.
+Sessions are independent of agent processes.
 
-A process may terminate while a session remains available for later resumption.
+An agent process may terminate while a session remains available for later resumption via ACP (`load session`).
 
 A session progresses through states such as:
 
 * Created
 * Starting
 * Running
-* Waiting for Approval
+* Waiting for Permission
 * Interrupted
 * Completed
 * Failed
 * Archived
 
-If the provider supports session resume, a new process may reconnect to an existing session.
+If the agent supports session resume, a new process may reconnect to an existing session through ACP.
 
-If resume is unsupported, the application retains the history while creating a new provider session when appropriate.
+If resume is unsupported, the application retains the history while creating a new agent session when appropriate.
 
-Resume behavior is therefore provider-dependent and exposed through capability discovery rather than assumed by the application.
+Resume behavior is exposed through capability negotiation rather than assumed by the application.
 
 ---
 
-# 10. Event System
+# 11. Event System
 
 Every significant action is represented as an immutable event.
 
@@ -375,18 +479,18 @@ Example event types include:
 * SessionStarted
 * PromptSubmitted
 * ResponseStarted
-* ResponseToken
+* StreamUpdate
 * ResponseCompleted
 * ToolRequested
 * ToolStarted
 * ToolCompleted
-* ApprovalRequested
-* ApprovalGranted
-* ApprovalDenied
+* PermissionRequested
+* PermissionGranted
+* PermissionDenied
 * SessionInterrupted
 * SessionCancelled
-* ProviderExited
-* WorkerRestarted
+* AgentExited
+* ConnectionRestarted
 * SessionResumed
 
 Events are appended to the session log in chronological order.
@@ -397,7 +501,7 @@ This approach simplifies synchronization across multiple connected clients and i
 
 ---
 
-# 11. Multi-Client Synchronization
+# 12. Multi-Client Synchronization
 
 The server is the authoritative source of state.
 
@@ -411,11 +515,11 @@ When a client reconnects:
 
 Multiple devices may observe the same running session simultaneously.
 
-A user may begin a session on one device and continue monitoring or interacting from another without interrupting the underlying provider process.
+A user may begin a session on one device and continue monitoring or interacting from another without interrupting the underlying agent connection.
 
 ---
 
-# 12. Workspace Management
+# 13. Workspace Management
 
 A workspace represents a project directory managed by the server.
 
@@ -424,44 +528,54 @@ Each workspace stores:
 * Project path
 * Display name
 * Git information
-* Available providers
+* Available agents
 * Configuration
 * Active sessions
 * Archived sessions
 
 Multiple sessions may exist within a single workspace.
 
-Providers may be switched between sessions without affecting the workspace itself.
+Agents may be switched between sessions without affecting the workspace itself.
 
-Workspace configuration should remain provider-independent wherever possible.
+Workspace configuration remains agent-independent.
 
 ---
 
-# 13. File System Access
+# 14. File System Access
 
-The application never edits files directly unless explicitly instructed.
+The client owns the filesystem within workspace boundaries.
 
-Instead, file modifications are performed through the active provider whenever practical.
+When an agent needs to read or modify files, it requests permission through ACP. The client validates the request, presents it to the user if required, performs the operation, and returns the result to the agent.
 
 The server is responsible for:
 
 * Validating workspace boundaries
 * Preventing access outside approved directories
-* Enforcing permissions
+* Executing approved file operations on behalf of agents
 * Recording file-related events
 
-This maintains a clear audit trail while allowing providers to perform edits using their native capabilities.
+This maintains a clear audit trail and keeps filesystem control with the client, as ACP intends.
 
 ---
 
-# 14. Logging and Diagnostics
+# 15. Terminal Access
+
+The client owns the terminal.
+
+When an agent requests shell execution, it sends a permission request through ACP. The client runs approved commands in its terminal environment and returns stdout, stderr, and exit codes to the agent.
+
+The application does not attach to external terminal sessions or multiplexers. Terminal I/O flows through ACP and the client's terminal implementation.
+
+---
+
+# 16. Logging and Diagnostics
 
 Logging exists at multiple levels:
 
 * Server logs
-* Adapter logs
-* ACP communication logs
-* Provider stdout/stderr
+* ACP Client Layer logs
+* ACP message logs
+* Agent process output (for diagnostics only—not used as a communication channel)
 * Session event logs
 
 Logs should support troubleshooting without exposing unnecessary internal implementation details to end users.
@@ -470,7 +584,7 @@ Diagnostic information should be accessible through developer tooling but separa
 
 ---
 
-# 15. User Interface Architecture
+# 17. User Interface Architecture
 
 The interface is designed as a responsive dashboard that functions well on desktop, tablet, and mobile devices.
 
@@ -479,11 +593,11 @@ The interface is designed as a responsive dashboard that functions well on deskt
 * Fast and responsive
 * Keyboard-friendly
 * Multi-device capable
-* Provider-independent
+* Agent-independent
 * Minimal visual clutter
 * Accessible and extensible
 
-The UI should expose capabilities dynamically based on the connected provider rather than assuming support for specific features.
+The UI should expose capabilities dynamically based on negotiated ACP capabilities rather than assuming support for specific features.
 
 ---
 
@@ -497,7 +611,7 @@ The application consists of:
 * Right-side optional context panel
 * Bottom status bar
 
-The layout should remain consistent regardless of the active provider.
+The layout should remain consistent regardless of the active agent.
 
 ---
 
@@ -508,8 +622,9 @@ The navigation drawer provides quick access to:
 * Workspaces
 * Sessions
 * Running Agents
-* Providers
+* Agent Registry
 * MCP Servers
+* Permission Policies
 * Settings
 * Logs
 * Diagnostics
@@ -523,7 +638,7 @@ Future features should be added here without requiring structural redesign.
 Each workspace displays:
 
 * Project information
-* Current provider
+* Current agent
 * Active sessions
 * Recent activity
 * Git branch and status (when available)
@@ -540,9 +655,10 @@ The primary session interface contains:
 * Conversation history
 * Streaming responses
 * Tool execution timeline
-* Approval requests
+* Permission requests
 * Input composer
 * Session metadata
+* Agent mode selector (when supported)
 
 The conversation view renders directly from the event stream.
 
@@ -554,7 +670,7 @@ A dedicated panel displays currently active work.
 
 Each running worker displays:
 
-* Provider
+* Agent
 * Model
 * Current status
 * Runtime
@@ -566,24 +682,24 @@ Multiple workers may execute simultaneously.
 
 ---
 
-## Provider Management
+## Agent Management
 
 Users may:
 
-* Register providers
-* Remove providers
+* Register agents
+* Remove agents
 * Configure authentication
 * Select default models
-* View capabilities
-* Test connectivity
+* View negotiated capabilities
+* Test ACP connectivity
 
-Provider settings are isolated from workspace configuration wherever possible.
+Agent settings are isolated from workspace configuration.
 
 ---
 
-# 16. MCP Integration
+# 18. MCP Integration
 
-Model Context Protocol (MCP) servers are managed independently of providers.
+Model Context Protocol (MCP) servers are managed by the client and advertised to agents during ACP capability negotiation.
 
 Each MCP server includes:
 
@@ -594,9 +710,9 @@ Each MCP server includes:
 * Resource list
 * Configuration
 
-Providers that support MCP automatically receive configured servers during session initialization.
+Agents that support MCP receive configured servers through ACP during session initialization.
 
-The architecture should support:
+The architecture supports:
 
 * Local MCP servers
 * Remote MCP servers
@@ -605,11 +721,9 @@ The architecture should support:
 
 ---
 
-# 17. Authentication
+# 19. Authentication
 
-Authentication requirements vary by provider.
-
-Execution adapters manage provider-specific authentication mechanisms while presenting a common interface to the server.
+ACP supports authentication negotiation between client and agent before sessions begin.
 
 Authentication methods may include:
 
@@ -619,13 +733,15 @@ Authentication methods may include:
 * Environment variables
 * Provider-managed login
 
+The ACP Client Layer manages authentication flows while presenting a common interface to the server.
+
 Credentials should never be stored in plaintext.
 
 Where supported by the operating system, secure credential storage should be used.
 
 ---
 
-# 18. Configuration
+# 20. Configuration
 
 Configuration is organized into separate scopes.
 
@@ -633,12 +749,13 @@ Configuration is organized into separate scopes.
 
 Examples include:
 
-* Registered providers
+* Registered agents
 * Network settings
 * Theme
 * Logging
 * Security
 * Default models
+* Permission policies
 
 ---
 
@@ -647,7 +764,7 @@ Examples include:
 Examples include:
 
 * Project path
-* Preferred provider
+* Preferred agent
 * Environment variables
 * Workspace permissions
 * Default MCP servers
@@ -661,7 +778,8 @@ Examples include:
 * Selected model
 * Temperature
 * System prompt
-* Approval mode
+* Permission mode
+* Agent mode (Ask, Plan, Agent)
 * Context limits
 
 Configuration inheritance should follow:
@@ -672,16 +790,16 @@ Each level may override values from the previous level.
 
 ---
 
-# 19. Error Handling
+# 21. Error Handling
 
 Errors should be categorized consistently.
 
 Examples include:
 
-* Provider unavailable
+* Agent unavailable
 * Authentication failed
 * ACP communication failure
-* Provider crash
+* Agent crash
 * Session resume unsupported
 * Tool execution failure
 * Network interruption
@@ -693,7 +811,7 @@ Recoverable failures should offer retry or resume options.
 
 ---
 
-# 20. Security
+# 22. Security
 
 The Local Agent Interface is designed primarily for trusted local networks.
 
@@ -701,16 +819,17 @@ Security principles include:
 
 * No unrestricted filesystem access
 * Workspace boundary enforcement
-* Explicit provider permissions
+* Explicit permission prompts for agent actions
+* Configurable trust policies
 * Secure credential storage
 * Authenticated client connections
-* Audit logging for administrative actions
+* Audit logging for permissions and administrative actions
 
 If remote access is later introduced, authentication and transport security should be expanded accordingly.
 
 ---
 
-# 21. Future Expansion
+# 23. Future Expansion
 
 The architecture is intentionally designed to accommodate future capabilities without major refactoring.
 
@@ -720,7 +839,7 @@ Potential future enhancements include:
 * Team collaboration
 * Shared workspaces
 * Plugin system
-* Provider marketplace
+* Agent marketplace
 * Background scheduling
 * Mobile-optimized interface
 * Advanced analytics
@@ -733,48 +852,48 @@ These features should be additive rather than requiring architectural changes.
 
 ---
 
-# 22. Design Philosophy
+# 24. Design Philosophy
 
-The Local Agent Interface is an orchestration platform rather than an AI platform.
+The Local Agent Interface is an ACP client and orchestration platform—not an AI platform.
 
 Its responsibilities are to:
 
-* Manage workspaces
-* Coordinate providers
+* Implement the ACP client role
+* Manage workspaces, filesystem, and terminal
+* Handle permission requests uniformly across all agents
 * Maintain session state
 * Synchronize clients
 * Present a unified user experience
-* Abstract provider differences
-* Prefer open standards such as ACP whenever practical
 
-AI reasoning, model behavior, and tool execution remain the responsibility of the underlying providers.
+AI reasoning, model behavior, and tool planning remain the responsibility of the underlying agents.
 
-This separation of concerns keeps the application maintainable, extensible, and resilient as both providers and ACP continue to evolve.
+This separation of concerns keeps the application maintainable, extensible, and resilient as both agents and ACP continue to evolve.
 
 ---
 
-# 23. Development Phases
+# 25. Development Phases
 
 ## Phase 1 – Core Infrastructure
 
 * Local web server
 * Workspace management
 * Session lifecycle
-* ACP integration
-* Execution adapter framework
-* Single provider support
+* ACP Client Layer (transport, sessions, prompts, streaming)
+* Permission Manager (basic allow/deny)
+* Single agent support
 * Event system
 * WebSocket synchronization
 
 ---
 
-## Phase 2 – Multi-Provider Support
+## Phase 2 – Multi-Agent Support
 
-* Provider registry
-* Capability discovery
+* Agent registry
+* Capability negotiation
 * Multiple simultaneous workers
-* Provider configuration
+* Agent configuration and authentication
 * Session resume support
+* Permission policies and audit log
 * Enhanced diagnostics
 
 ---
@@ -793,4 +912,4 @@ This separation of concerns keeps the application maintainable, extensible, and 
 
 # Conclusion
 
-This architecture establishes a provider-agnostic, ACP-first foundation for the Local Agent Interface. By clearly separating orchestration, provider integration, and user interface responsibilities, the system remains adaptable to future AI providers and protocol enhancements while delivering a consistent experience across devices and workflows.
+This architecture establishes an ACP-only, agent-agnostic foundation for the Local Agent Interface. By implementing a proper ACP client that owns workspace resources and permission decisions, the system works with any ACP-compatible agent through a single integration path—delivering a consistent experience across devices, agents, and workflows.
