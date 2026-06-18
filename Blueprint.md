@@ -2,7 +2,7 @@
 
 ## Product Design Blueprint
 
-> **Version:** 2.2
+> **Version:** 2.3
 >
 > This document defines the architecture for the Local Agent Interface application. It supersedes earlier drafts while preserving all existing functionality. The design is ACP-only, agent-agnostic, and intended to support any ACP-compatible agent without provider-specific integration code.
 
@@ -51,7 +51,7 @@ The application does not implement provider-specific APIs, terminal scraping, pr
 The Local Agent Interface is the ACP client. It owns:
 
 * The filesystem (within workspace boundaries)
-* The terminal
+* Shell execution on behalf of agents (headless; no terminal UI)
 * The workspace
 * Permission dialogs and approval decisions
 * Session state and event history
@@ -96,7 +96,7 @@ Examples:
 * Prompt exchange and streaming
 * Image and audio input
 * Filesystem access
-* Terminal access
+* Shell execution (ACP terminal capability — headless command runner, not a terminal UI panel)
 * MCP servers
 * Permission requests
 * Agent modes (Ask, Plan, Agent)
@@ -106,7 +106,16 @@ The UI adapts automatically based on negotiated capabilities instead of hardcodi
 
 ---
 
-## Stateless UI
+## Non-Goals (v1)
+
+The following are explicitly out of scope for the initial release:
+
+* **Interactive terminal UI panel** — no xterm-style shell tab in the web interface; command output appears in the session tool timeline instead
+* **Public internet / remote access** — LAN-only; paired devices on the local network only
+* **Provider-specific agent APIs** — ACP is the sole integration path
+* **Terminal multiplexing or stdout/stderr scraping** — no attaching to external terminal sessions
+
+Users who need a manual shell for setup use the host machine's real terminal and the `app` CLI.
 
 The web client never owns session state.
 
@@ -126,6 +135,9 @@ Examples include:
 * Stream update received
 * Tool started
 * Tool completed
+* Shell command started
+* Shell output streamed
+* Shell command completed
 * Permission requested
 * Permission granted
 * Permission denied
@@ -194,7 +206,7 @@ The **Browser UI** presents the user experience on any paired device: chat, file
 
 The **ACP Client Layer** implements the protocol: starting agents, sending prompts, receiving streaming updates, handling `session/request_permission`, and managing session lifecycle.
 
-**Agents** handle AI reasoning, tool planning, and code generation. They request capabilities from the client; they do not own the filesystem or terminal directly.
+**Agents** handle AI reasoning, tool planning, and code generation. They request capabilities from the client; they do not own the filesystem or execute shell commands directly.
 
 The server owns:
 
@@ -369,7 +381,7 @@ ACP supports authentication negotiation so the client can log into providers bef
 
 ### Capability Negotiation
 
-During initialization, client and agent exchange supported capabilities: images, audio, filesystem access, terminal access, MCP servers, session features, and more.
+During initialization, client and agent exchange supported capabilities: images, audio, filesystem access, shell execution, MCP servers, session features, and more.
 
 ### Agent Modes
 
@@ -527,6 +539,9 @@ Example event types include:
 * ToolRequested
 * ToolStarted
 * ToolCompleted
+* ShellCommandStarted
+* ShellOutputStreamed
+* ShellCommandCompleted
 * PermissionRequested
 * PermissionGranted
 * PermissionDenied
@@ -605,13 +620,29 @@ This maintains a clear audit trail and keeps filesystem control with the client,
 
 ---
 
-# 15. Terminal Access
+# 15. Shell Execution
 
-The client owns the terminal.
+The host daemon executes approved shell commands on behalf of agents. This is an ACP backend capability—not an interactive terminal in the web UI.
 
-When an agent requests shell execution, it sends a permission request through ACP. The client runs approved commands in its terminal environment and returns stdout, stderr, and exit codes to the agent.
+## Flow
 
-The application does not attach to external terminal sessions or multiplexers. Terminal I/O flows through ACP and the client's terminal implementation.
+1. Agent requests command execution via `session/request_permission` through ACP.
+2. The Permission Manager prompts the user on a paired device.
+3. On approval, the daemon runs the command in a **workspace-scoped subprocess** on the host.
+4. Stdout and stderr are streamed to all paired clients as events (`ShellOutputStreamed`).
+5. Exit code and final results are returned to the agent through ACP.
+
+## UI Presentation
+
+Command output appears in the **session tool timeline** as expandable cards—not in a terminal pane. Users see what the agent ran, a summary (success/failure), and can expand to read full output.
+
+There is no interactive terminal panel in the web UI for v1. Users who need a manual shell use the host machine's terminal or the `app` CLI for setup and administration.
+
+## Constraints
+
+* Commands run only within approved workspace boundaries.
+* The application does not attach to external terminal sessions or multiplexers.
+* All shell I/O flows through ACP permission requests and the host daemon's subprocess runner.
 
 ---
 
@@ -703,7 +734,7 @@ The primary session interface contains:
 
 * Conversation history
 * Streaming responses
-* Tool execution timeline
+* Tool execution timeline (including expandable shell command output)
 * Permission requests
 * Input composer
 * Session metadata
@@ -960,7 +991,7 @@ The Local Agent Interface is an ACP client and orchestration platform—not an A
 Its responsibilities are to:
 
 * Implement the ACP client role
-* Manage workspaces, filesystem, and terminal
+* Manage workspaces, filesystem, and headless shell execution
 * Handle permission requests uniformly across all agents
 * Maintain session state
 * Synchronize clients
@@ -983,6 +1014,7 @@ This separation of concerns keeps the application maintainable, extensible, and 
 * Session lifecycle
 * ACP Client Layer (transport, sessions, prompts, streaming)
 * Permission Manager (basic allow/deny)
+* Headless shell execution (workspace-scoped subprocesses, tool timeline output)
 * Single agent support
 * Event system
 * WebSocket synchronization across paired clients
@@ -1009,6 +1041,7 @@ This separation of concerns keeps the application maintainable, extensible, and 
 * Improved diagnostics
 * Session replay
 * Advanced workspace tools
+* Optional developer terminal (user-initiated manual shell, separate from agent shell execution)
 * UI polish and accessibility improvements
 
 ---

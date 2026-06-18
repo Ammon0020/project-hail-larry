@@ -8,14 +8,7 @@ Tracked gaps and decisions to address in the Local Agent Interface blueprint and
 
 **Decision:** The web UI does **not** need an interactive terminal panel (no xterm-style tab). The host daemon **does** need headless shell execution so agents can run commands via ACP. The host `app` CLI remains the only terminal surface for setup/admin.
 
-- [ ] Rename Blueprint Section 15 from **Terminal Access** → **Shell Execution**
-- [ ] Update **Client Ownership** — replace "The terminal" with "Shell execution (on behalf of agents)"
-- [ ] Update **Capability Negotiation** — clarify "terminal access" means ACP shell execution, not a terminal UI
-- [ ] Update **Design Philosophy** — replace "filesystem, and terminal" with "filesystem, and shell execution"
-- [ ] Document shell execution flow: permission prompt → workspace-scoped subprocess → stdout/stderr streamed as events → results returned to agent via ACP
-- [ ] Document that command output appears in the **session tool timeline** (expandable), not a terminal pane
-- [ ] Explicitly list **terminal UI panel** as a non-goal for v1
-- [ ] (Optional, Phase 3) Note possible future **developer terminal** for user-initiated manual shell — separate from agent shell execution
+_All items addressed in Blueprint v2.3._
 
 ---
 
@@ -45,28 +38,25 @@ Tracked gaps and decisions to address in the Local Agent Interface blueprint and
 ## 4. Lower Priority / Future
 
 - [ ] **TLS on LAN** — Optional HTTPS for local network traffic
-- [ ] **Remote / internet access** — Out of scope for v1; document explicitly in Non-Goals
+- [x] **Remote / internet access** — Non-goal in Blueprint v2.3
 - [ ] **Team collaboration** — Shared workspaces, multiple operators
 - [ ] **Session replay** — Implementation details
-- [ ] **Developer terminal UI** — Optional Phase 3 power-user feature (user-initiated shell, not agent-initiated)
+- [ ] **Developer terminal UI** — Optional Phase 3 power-user feature (user-initiated shell, not agent-initiated) — noted in Blueprint Phase 3
 
 ---
 
 ## 5. Blueprint Hygiene
 
-- [ ] Add a **Non-Goals** section to `Blueprint.md` (terminal UI v1, public internet access v1, provider-specific APIs)
 - [ ] Add **Permission Routing** subsection (see item 2)
 - [ ] Add **Write Serialization** subsection (see item 2)
-- [ ] Align **Phase 1** scope: include headless shell execution; exclude terminal UI panel
-- [ ] Bump blueprint version when open items are incorporated
 
 ---
 
 ## Resolved
 
-_Move completed items here with date, then delete periodically._
-
-<!-- Example:
-- [x] **ACP-only architecture** — Done in Blueprint v2.1 (2026-06-18)
-- [x] **Device pairing auth flow** — Done in Blueprint v2.2 (2026-06-18)
--->
+- [x] **Terminal / shell execution split** — Blueprint v2.3: Section 15 Shell Execution, Non-Goals, tool timeline output, Phase 1/3 scope
+- [x] **Non-Goals section** — Blueprint v2.3 (terminal UI, remote access, provider APIs)
+- [x] **Phase 1 shell execution scope** — Blueprint v2.3
+- [x] **Blueprint version bump** — v2.3
+- [x] **ACP-only architecture** — Blueprint v2.1
+- [x] **Device pairing auth flow** — Blueprint v2.2
