@@ -542,7 +542,13 @@ The host executes all file writes: agent operations through ACP, user saves from
 Users edit from any paired device. On save, the client sends content plus `expectedRevision` (the revision when editing began).
 
 1. **Revision matches** — host applies the save, increments revision, broadcasts to all clients.
-2. **Revision stale** — the file changed since editing began. Host returns current content and revision; the user reviews the diff and saves again.
+2. **Revision stale** — the file changed since editing began (e.g., the agent edited it). The host attempts a **three-way merge** using the user's base revision, the user's new content, and the current file content:
+   - **Merge succeeds without conflicts** — host applies the merged result, increments revision, and broadcasts to all clients. No user intervention needed.
+   - **Merge produces conflicts** — host returns both versions and the client opens a merge UI (Monaco diff editor, side-by-side) so the user can resolve conflicts and save again.
+
+### Live Agent Changes During User Editing
+
+When the agent modifies a file the user is actively editing, the editor shows an indicator (e.g., "File modified by agent") without forcing a reload of the user's unsaved buffer. The user may review incoming changes at any time. The conflict resolution above only triggers on save.
 
 Git operations (branch merges, pull, rebase) are out of scope for v1. Users run git on the host directly.
 
