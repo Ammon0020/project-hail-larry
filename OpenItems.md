@@ -8,6 +8,9 @@ Tracked gaps and decisions to address in the Local Agent Interface blueprint and
 
 _All items addressed in Blueprint v2.4 except sub-workers (deferred)._
 
+- [ ] **TLS on LAN** — Plain HTTP exposes pairing tokens and file contents to anyone on the same network. Needed before claiming coffee-shop safety.
+- [ ] **Event persistence** — Architecture is event-sourced but no storage layer is defined. Daemon can't recover state after restart without it.
+
 ---
 
 ## 3. Medium Priority
@@ -16,34 +19,14 @@ _All items addressed in Blueprint v2.4 except sub-workers (deferred)._
 - [ ] **Device credential expiry** — Permanent until revoked, or time-limited?
 - [ ] **Reconnection behavior** — Phone drops Wi‑Fi mid-session; WebSocket reconnect; in-flight permission prompts
 - [ ] **Image upload flow** — How whiteboard photos / images reach the agent via ACP
-- [ ] **Event persistence** — Where the event log lives on the host (e.g., SQLite, files)
 - [ ] **Multi-user vs multi-device** — One user's devices only, or can multiple people pair to the same daemon?
 
 ---
 
 ## 4. Lower Priority / Future
 
-- [ ] **TLS on LAN** — Optional HTTPS for local network traffic
 - [ ] **Team collaboration** — Shared workspaces, multiple operators
+- [ ] **Monaco on mobile** — Monaco is heavy and poor for touch; need a lightweight fallback (e.g., textarea) for small edits on phones
 - [ ] **Session replay** — Implementation details
 - [ ] **Developer terminal UI** — Optional Phase 3 power-user feature — noted in Blueprint Phase 3
-- [x] **User direct editing** — Blueprint v2.6: simplified to revision-based sync, removed host-specific agent merge rules
 - [ ] **ACP sub-workers** — Deferred until next ACP release (~next quarter)
-
----
-
-## Resolved
-
-- [x] **Collision prevention** — Blueprint v2.6: host-authoritative writes, revision tracking, stale revision detection
-- [x] **Permission prompt routing** — Blueprint v2.4: broadcast to all devices, first response wins
-- [x] **Network discovery** — Blueprint v2.4: `0.0.0.0:7337`, mDNS `app.local`, QR + `app status` fallback
-- [x] **Host CLI surface** — Blueprint v2.4: full command list in help format
-- [x] **Daemon lifecycle** — Blueprint v2.4: install/start/autostart/crash/upgrade table
-- [x] **Editor / file viewing** — Blueprint v2.6: Monaco editing, diff view, direct editing
-- [x] **Permission Routing subsection** — Blueprint v2.4 §8
-- [x] **Write Serialization subsection** — Removed in v2.6; ACP handles agent write semantics
-- [x] **Terminal / shell execution split** — Blueprint v2.3
-- [x] **Non-Goals section** — Blueprint v2.3
-- [x] **Device pairing auth flow** — Blueprint v2.2
-- [x] **ACP-only architecture** — Blueprint v2.1
-- [x] **Remote / internet access** — Non-goal in Blueprint v2.3
