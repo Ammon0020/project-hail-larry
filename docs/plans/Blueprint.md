@@ -34,11 +34,10 @@ The application is designed to:
 
 # 2. Core Principles
 
-## ACP Only
+## ACP
 
-ACP is the only communication protocol between the Local Agent Interface and agents.
+ACP (Agent Client Protocol) is the communication protocol between the Local Agent Interface and agents.
 
-The application does not implement provider-specific APIs, terminal scraping, process piping, or other bespoke integration mechanisms. If an agent does not expose ACP, it is not supported until it does.
 
 ---
 
@@ -96,7 +95,6 @@ The following are explicitly out of scope for the initial release:
 * **Public internet / remote access** — LAN-only; paired devices on the local network only
 * **Git merge orchestration** — branch integration, pull, rebase (users run git on the host)
 * **Provider-specific agent APIs** — ACP is the sole integration path
-* **Terminal multiplexing or stdout/stderr scraping** — no attaching to external terminal sessions
 
 Users who need a manual shell for setup use the host machine's real terminal and the `app` CLI.
 
@@ -334,7 +332,7 @@ ACP standardizes nearly everything needed for the Local Agent Interface to talk 
 
 ## What ACP Does Not Handle
 
-ACP does not define UI concerns—visual design, permission dialog appearance, file explorer/editor layout, themes, diff viewer, or chat interface. Those belong entirely to the Local Agent Interface. Earlier integration approaches (direct CLI integration, terminal multiplexing, stdout/stderr parsing, provider-specific APIs) are out of scope; ACP is the single integration path.
+ACP does not define UI concerns—visual design, permission dialog appearance, file explorer/editor layout, themes, diff viewer, or chat interface. Those belong entirely to the Local Agent Interface.
 
 ---
 
@@ -580,7 +578,6 @@ There is no interactive terminal panel in the web UI for v1. Users who need a ma
 ## Constraints
 
 * Commands run only within approved workspace boundaries.
-* The application does not attach to external terminal sessions or multiplexers.
 * All shell I/O flows through ACP permission requests and the host daemon's subprocess runner.
 
 ---
