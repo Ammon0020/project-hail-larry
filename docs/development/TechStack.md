@@ -14,7 +14,7 @@ Chosen for battery efficiency, single-binary distribution, and dev velocity.
 
 - React component model fits event-driven UI. Vite for hot reload and optimized bundles.
 - TailwindCSS matches the mockup directly.
-- `@monaco-editor/react` for code editor, diff view, and merge UI.
+- CodeMirror 6 for code editor, diff view, and merge UI. Uses `@uiw/react-codemirror` (React wrapper) plus modular `@codemirror/*` packages (`state`, `view`, `commands`, `language`, `autocomplete`, `search`, `merge`) and per-language packages (`@codemirror/lang-javascript`, `@codemirror/lang-python`, etc.).
 - `lucide-react` for icons.
 
 ## Database — SQLite
@@ -41,6 +41,6 @@ Agents communicate over stdin/stdout using JSON-RPC. The daemon spawns the agent
 | QR code | `github.com/skip2/go-qrcode` |
 | mDNS | `github.com/brutella/dnssd` |
 | CLI | `github.com/spf13/cobra` |
-| Monaco | `@monaco-editor/react` |
+| CodeMirror 6 | `@uiw/react-codemirror` + `@codemirror/*` packages |
 | Icons | `lucide-react` |
 | Three-way merge | `github.com/sergi/go-diff` |

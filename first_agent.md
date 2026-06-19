@@ -48,7 +48,7 @@ The following is the recommended split. Adjust if you see obvious coupling or co
 | ws-sync | WebSocket server, event broadcast, reconnection with missing-event sync, in-flight permission prompt re-presentation | events | Sec 12 (Multi-Client Synchronization) |
 | file-sync | Revision tracking, `FileRevisionUpdated` events, three-way merge on save, live agent change indicator | workspace, events | Sec 14 (File System Access — Client File Sync) |
 | frontend-shell | React app shell, layout (sidebar, main area, mobile nav), chat/event stream view, command input, session list | scaffold, ws-sync | Sec 17 (UI Architecture), mockup11.html |
-| frontend-editor | Monaco editor pane, file tree, diff view, merge UI, file save with `expectedRevision` | file-sync, frontend-shell | Sec 14, Sec 17 (Editor and File Viewing), mockup11.html |
+| frontend-editor | CodeMirror 6 editor pane, file tree, diff view, merge UI, file save with `expectedRevision` | file-sync, frontend-shell | Sec 14, Sec 17 (Editor and File Viewing), mockup11.html |
 | frontend-pairing | Lock screen, pairing flow (QR scan / mnemonic entry), permission dialog UI, settings panel | pairing, permissions, frontend-shell | Sec 8, Sec 19, mockup11.html |
 
 ### Rules for the Plan

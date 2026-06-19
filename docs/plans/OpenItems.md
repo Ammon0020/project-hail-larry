@@ -26,7 +26,7 @@ _All items addressed in Blueprint v2.4 except sub-workers (deferred)._
 ## 4. Lower Priority / Future
 
 - [ ] **Team collaboration** — Shared workspaces, multiple operators
-- [ ] **Monaco on mobile** — Monaco is heavy and poor for touch; need a lightweight fallback (e.g., textarea) for small edits on phones
+- [ ] **Editor on mobile** — CodeMirror 6 is lighter than Monaco but still needs touch-optimized configuration (larger line heights, disable drag-and-drop, simplified gutter) for small edits on phones
 - [ ] **Session replay** — Implementation details
 - [ ] **Developer terminal UI** — Optional Phase 3 power-user feature — noted in Blueprint Phase 3
 - [ ] **ACP sub-workers** — Deferred until next ACP release (~next quarter)

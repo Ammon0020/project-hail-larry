@@ -547,7 +547,7 @@ Users edit from any paired device. On save, the client sends content plus `expec
 1. **Revision matches** — host applies the save, increments revision, broadcasts to all clients.
 2. **Revision stale** — the file changed since editing began (e.g., the agent edited it). The host attempts a **three-way merge** using the user's base revision, the user's new content, and the current file content:
    - **Merge succeeds without conflicts** — host applies the merged result, increments revision, and broadcasts to all clients. No user intervention needed.
-   - **Merge produces conflicts** — host returns both versions and the client opens a merge UI (Monaco diff editor, side-by-side) so the user can resolve conflicts and save again.
+   - **Merge produces conflicts** — host returns both versions and the client opens a merge UI (CodeMirror 6 merge view, side-by-side) so the user can resolve conflicts and save again.
 
 ### Live Agent Changes During User Editing
 
@@ -683,11 +683,11 @@ The conversation view renders directly from the event stream.
 
 ## Editor and File Viewing
 
-The main editor uses **Monaco**. Clients render file content from `FileRevisionUpdated` events so the view stays live while files change.
+The main editor uses **CodeMirror 6** with a modular extension-based architecture. Clients render file content from `FileRevisionUpdated` events so the view stays live while files change.
 
 * **Direct editing** — users edit files from any paired device. Saves go to the host with `expectedRevision` (see Client File Sync).
 * **Live viewing** — all clients follow file changes in real time via the event stream.
-* **Diff view** — Monaco's built-in diff editor for reviewing changes.
+* **Diff view** — CodeMirror 6's `@codemirror/merge` extension for side-by-side change review.
 
 ---
 
@@ -976,7 +976,7 @@ This separation of concerns keeps the application maintainable, extensible, and 
 * Single agent support
 * Event system
 * WebSocket synchronization across paired clients
-* Monaco editor with diff view and direct editing
+* CodeMirror 6 editor with diff view and direct editing
 
 ---
 
