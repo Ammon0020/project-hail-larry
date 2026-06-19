@@ -2,7 +2,7 @@
 
 ## Product Design Blueprint
 
-> **Version:** 2.4
+> **Version:** 2.5
 >
 > This document defines the architecture for the Local Agent Interface application. It supersedes earlier drafts while preserving all existing functionality. The design is ACP-only, agent-agnostic, and intended to support any ACP-compatible agent without provider-specific integration code.
 
@@ -112,10 +112,15 @@ The following are explicitly out of scope for the initial release:
 
 * **Interactive terminal UI panel** — no xterm-style shell tab in the web interface; command output appears in the session tool timeline instead
 * **Public internet / remote access** — LAN-only; paired devices on the local network only
+* **Git merge orchestration** — branch integration, pull, rebase (users run git on the host)
 * **Provider-specific agent APIs** — ACP is the sole integration path
 * **Terminal multiplexing or stdout/stderr scraping** — no attaching to external terminal sessions
 
 Users who need a manual shell for setup use the host machine's real terminal and the `app` CLI.
+
+---
+
+## Stateless UI
 
 The web client never owns session state.
 
@@ -280,7 +285,7 @@ The host daemon is the long-running background process on the user's machine. It
 |---|---|
 | **Install** | Single binary added to PATH. State stored in `~/.local-agent/`. |
 | **Start** | `app start` launches the daemon (foreground or `--background`). Binds to the LAN; see Network Discovery. |
-| **Autostart** | Opt-in via `app install-service` (launchd on macOS, systemd on Linux). Default is manual start. |
+| **Autostart** | Opt-in only via `app install-service` (launchd on macOS, systemd on Linux). Default is manual `app start`. |
 | **Running** | One daemon per machine. Owns all workspace writes and ACP agent connections. |
 | **Crash** | Daemon exits; service manager or user restarts it. Paired clients reconnect via WebSocket and resync events. Active ACP sessions resume if the agent supports it. |
 | **Upgrade** | `app stop` → replace binary → `app start`. Event log and paired devices persist across restarts. |
@@ -328,6 +333,18 @@ Responsibilities include:
 * Cleanup
 
 One worker manages one agent connection.
+
+---
+
+## Merge Types
+
+All file writes flow through the host daemon. Three merge categories govern how changes combine:
+
+| Type | When | Behavior |
+|---|---|---|
+| **Agent merge** | Agent writes a file | Saved to disk immediately. Revision history tracks the change. User can review the diff and revert. |
+| **Conflict merge** | User saves but disk has changed | Host attempts an automatic merge. If changes overlap and cannot be reconciled, the user resolves in the editor. |
+| **Git merge** | Branch integration, pull, rebase | Out of scope for v1. Users handle git on the host directly. |
 
 ---
 
@@ -578,6 +595,7 @@ Example event types include:
 * ShellOutputStreamed
 * ShellCommandCompleted
 * FileRevisionUpdated
+* MergeConflict
 * PermissionRequested
 * PermissionGranted
 * PermissionDenied
@@ -654,29 +672,39 @@ The server is responsible for:
 
 This maintains a clear audit trail and keeps filesystem control with the host, as ACP intends.
 
-## Collision Prevention
+## Collision Prevention and Merges
 
-OS file locking does not work here: the agent writes whole files, and users need to **watch live** as the agent edits. The solution is not locking—it is **one writer (the host) and revision-based sync**.
+OS file locking does not work here: the agent writes whole files, and users need to **watch live** and **edit from any device**. The solution is **one writer (the host), revision-based sync, and explicit merge rules**.
 
 ### Rules
 
-1. **Only the host daemon writes to disk.** Agents write through ACP; browsers never touch the filesystem.
+1. **Only the host daemon writes to disk.** Agents write through ACP; browsers send save requests to the host.
 2. **Every file has a monotonic revision number.** Each successful write increments it.
-3. **All clients read from the event stream**, not from independent disk polls. When a file changes, the host emits a `FileRevisionUpdated` event (content snapshot or diff + revision).
-4. **Writes are serialized** through the host. Agent tool writes and any future client saves enter a single queue per file—no concurrent disk writes.
+3. **All clients read from the event stream.** When a file changes, the host emits a `FileRevisionUpdated` event (content snapshot or diff + revision).
+4. **Writes are serialized** through the host. Agent writes and client saves enter a single queue per file.
 
-### Typical Flow (agent editing, user watching)
+### Agent Merges
 
-```
-Agent requests write → permission granted → host writes disk
-  → revision++ → FileRevisionUpdated event → all clients update editor view
-```
+When the agent writes a file:
 
-A user on a phone and a laptop both see the same live content as the agent edits. No lock screen blocks the view.
+1. Permission is granted (if required).
+2. Host writes to disk **immediately**.
+3. Revision increments; prior content is stored in revision history.
+4. All paired clients receive `FileRevisionUpdated` and update the editor live.
 
-### Client Edits (v1: read-only)
+Users can watch the agent edit in real time and **revert** any agent change via the diff view (restores the previous revision through the host).
 
-In v1, the Monaco editor is **read-only** for browsing and reviewing agent changes. Users dispatch work through chat; the agent is the editor. Client-initiated file saves are deferred to a later release and will use **optimistic concurrency** (submit with `expectedRevision`; host rejects if stale).
+### Client Edits
+
+Users edit directly from any paired device (phone, laptop). On save, the client sends content plus `expectedRevision` (the revision when editing began).
+
+1. **Revision matches** — host applies the save, increments revision, broadcasts to all clients.
+2. **Revision stale, auto-merge possible** — host performs a three-way merge (base = user's revision, theirs = user edit, ours = current disk). On success, writes and broadcasts.
+3. **Conflict merge** — auto-merge fails (overlapping edits). Host returns a conflict state; the user resolves in Monaco's diff editor, then saves again.
+
+### Git Merges
+
+Git operations (branch merges, pull, rebase) are **out of scope for v1**. The app does not orchestrate git merges. Users run git on the host as usual.
 
 ---
 
@@ -808,11 +836,14 @@ The conversation view renders directly from the event stream.
 
 The main editor uses **Monaco**. Clients render file content from `FileRevisionUpdated` events so the view stays live while the agent edits.
 
-* **Read-only viewing (v1)** — browse files and follow agent edits in real time across all paired devices.
-* **Diff view** — Monaco's built-in diff editor shows before/after when reviewing agent-proposed changes (e.g., from the tool timeline or permission dialog).
-* **No direct client saves in v1** — prevents collision with in-flight agent writes; see Collision Prevention.
+* **Direct editing** — users edit files from any paired device. Saves go to the host with `expectedRevision` (see Collision Prevention and Merges).
+* **Live viewing** — all clients follow agent edits in real time via the event stream.
+* **Diff view** — Monaco's built-in diff editor for agent changes (review, compare) and **conflict merges** (resolve overlapping edits).
+* **Revert** — agent changes can be backed out from the diff view using revision history.
 
 ---
+
+## Running Tasks Panel
 
 A dedicated panel displays currently active work.
 
@@ -1059,7 +1090,7 @@ Potential future enhancements include:
 * Session replay
 * Distributed workers
 * Cloud synchronization (optional)
-* Client-initiated file editing with revision conflict UI
+* Git merge orchestration (branch integration, pull, rebase)
 * ACP sub-worker support (deferred until next ACP release)
 * Additional ACP capabilities as the protocol evolves
 
@@ -1101,7 +1132,7 @@ This separation of concerns keeps the application maintainable, extensible, and 
 * Single agent support
 * Event system
 * WebSocket synchronization across paired clients
-* Monaco read-only editor with diff view
+* Monaco editor with diff view, direct editing, and conflict resolution
 
 ---
 
