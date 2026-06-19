@@ -10,7 +10,7 @@
 
 # 1. Vision
 
-The Local Agent Interface is a powerful, self-hosted web interface that transforms CLI-based coding agents (like Claude Code and Cursor CLI) into collaborative, multi-device assistants. It moves the agent out of a rigid terminal window and into an intelligent, event-driven web dashboard.
+The Local Agent Interface is a self-hosted web code editor with AI built in. A lightweight daemon runs on the user's computer, serving a browser-based IDE to any device on the local network — phone, laptop, or tablet. The user pairs a device by scanning a QR code or entering a four-word passcode, then works in a familiar VS Code-style layout: an activity bar for switching between file explorer and search, a center editor with tabs and syntax highlighting (CodeMirror 6), and a right-side panel where an AI agent lives alongside the code.
 
 Rather than acting as an AI itself, the application implements an **ACP client** that orchestrates one or more external agents through the Agent Client Protocol. A lightweight **host daemon** runs on the user's machine, serving the web UI to any device on the local network while keeping files on the host computer perfectly synced and safe from overwrite collisions.
 
@@ -620,33 +620,30 @@ The UI should expose capabilities dynamically based on negotiated ACP capabiliti
 
 Unpaired devices see a **lock screen** prompting for a mnemonic passcode or QR scan.
 
-Paired devices see the full application:
+Paired devices see a VS Code-style editor layout:
 
-* Top navigation bar
-* Left navigation drawer (collapsible with hamburger menu)
-* Main workspace area
-* Right-side optional context panel
-* Bottom status bar
+* **Activity bar** (far left, icon-only) — switches between file explorer and search; connection status and settings at the bottom
+* **Left sidebar** (popout) — workspace switcher plus file tree, or VS Code-style search across files
+* **Center editor** — tabbed CodeMirror 6 editor with diff/save actions and a status bar (git branch, errors/warnings, cursor position)
+* **Right sidebar** — AI agent chat panel with harness selector, model selector, chat history popout, streaming responses, tool execution timelines, permission dialogs, and message input
+
+On mobile, the same capabilities are available through a bottom-nav layout that shows one panel at a time: explorer, editor, chat, or settings.
 
 The layout should remain consistent regardless of the active agent.
 
 ---
 
-## Left Navigation
+## Activity Bar and Left Sidebar
 
-The navigation drawer provides quick access to:
+The activity bar provides icon-only navigation between views:
 
-* Workspaces
-* Sessions
-* Running Agents
-* Agent Registry
-* MCP Servers
-* Permission Policies
-* Settings (including paired device management)
-* Logs
-* Diagnostics
+* **Files** — workspace switcher and file tree
+* **Search** — VS Code-style search across all files in the workspace
+* **Settings** — paired device management, theme, configuration
 
-Future features should be added here without requiring structural redesign.
+The left sidebar shows the selected view's content. The workspace switcher at the top allows switching between registered workspaces. The file tree supports expand/collapse, shows unsaved-change indicators, and highlights the active file.
+
+On mobile, the activity bar collapses into a mini horizontal bar within the explorer panel, with Files and Search as pill buttons.
 
 ---
 
@@ -665,19 +662,17 @@ Users may create multiple sessions within the same workspace.
 
 ---
 
-## Session View
+## Right Sidebar — Agent Chat
 
-The primary session interface contains:
+The right sidebar is the AI agent interface, always visible on desktop alongside the editor. It contains:
 
-* Conversation history
-* Streaming responses
-* Tool execution timeline (including expandable shell command output)
-* Permission requests
-* Input composer
-* Session metadata
-* Agent mode selector (when supported)
+* **Harness selector** — choose which ACP-compatible agent to use (Claude Code, Codex CLI, Gemini CLI, etc.)
+* **Model selector** — pick the model for the current session
+* **Chat history popout** — hamburger menu with activity indicators per chat; opens a scrollable, resizable overlay listing past and active sessions
+* **Conversation view** — streaming responses, expandable tool execution timelines, and inline permission dialogs rendered from the event stream
+* **Input composer** — text input with attachment button for multimodal uploads
 
-The conversation view renders directly from the event stream.
+The conversation view renders directly from the event stream. On mobile, the chat panel is a full-screen view accessible via the bottom nav.
 
 ---
 

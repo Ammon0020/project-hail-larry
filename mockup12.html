@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Agent UI Mockup v12 — VS Code Style Layout</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 2px; }
+
+        .header-dropdown {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.5rem center;
+            padding-right: 1.5rem;
+        }
+
+        .session-item .session-actions { opacity: 0; transition: opacity 0.15s; }
+        .session-item:hover .session-actions { opacity: 1; }
+
+        details > summary { list-style: none; }
+        details > summary::-webkit-details-marker { display: none; }
+
+        .activity-item { position: relative; }
+        .activity-item.active::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 2px;
+            height: 24px;
+            background: #3b82f6;
+            border-radius: 0 2px 2px 0;
+        }
+
+        .chat-list-panel {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.2s ease-out;
+        }
+        .chat-list-panel.open {
+            max-height: 400px;
+        }
+
+        .chat-list-overlay {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 50;
+            background: #161925;
+            border-bottom: 1px solid #374151;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            max-height: 60vh;
+            overflow-y: auto;
+            display: none;
+        }
+        .chat-list-overlay.open {
+            display: block;
+        }
+        .chat-list-resize {
+            height: 4px;
+            background: #374151;
+            cursor: ns-resize;
+            flex-shrink: 0;
+        }
+        .chat-list-resize:hover {
+            background: #3b82f6;
+        }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .cm-line { padding: 0 12px; }
+        .cm-gutter { min-width: 48px; text-align: right; padding-right: 12px; color: #4b5563; user-select: none; }
+    </style>
+</head>
+<body class="bg-[#0f111a] text-gray-200 h-screen w-screen overflow-hidden flex font-sans selection:bg-blue-500/30">
+
+    <!-- ============ ACTIVITY BAR (far left, icon-only) ============ -->
+    <div id="activity-bar" class="hidden lg:flex flex-col items-center w-12 bg-[#0d0e16] border-r border-gray-800/50 shrink-0 pt-2 gap-1">
+        <button onclick="switchLeftPanel('files')" id="act-files" class="activity-item active w-full flex items-center justify-center py-2.5 text-blue-400 hover:text-blue-300 transition" title="Explorer">
+            <i data-lucide="files" class="w-5 h-5"></i>
+        </button>
+        <button onclick="switchLeftPanel('search')" id="act-search" class="activity-item w-full flex items-center justify-center py-2.5 text-gray-500 hover:text-gray-300 transition" title="Search">
+            <i data-lucide="search" class="w-5 h-5"></i>
+        </button>
+        <div class="flex-1"></div>
+        <!-- WebSocket status at bottom of activity bar -->
+        <div class="flex items-center justify-center py-2" title="Connected to local daemon">
+            <div class="w-2 h-2 rounded-full bg-green-400"></div>
+        </div>
+        <button class="w-full flex items-center justify-center py-2.5 text-gray-500 hover:text-gray-300 transition" title="Settings">
+            <i data-lucide="settings" class="w-5 h-5"></i>
+        </button>
+    </div>
+
+    <!-- ============ LEFT SIDEBAR (popout — Files or Search) ============ -->
+    <!-- Files Panel -->
+    <aside id="left-files" class="hidden flex-col w-60 bg-[#161925] border-r border-gray-800 h-full shrink-0">
+        <!-- Workspace Switcher -->
+        <div class="p-3 border-b border-gray-800 shrink-0">
+            <div class="flex items-center justify-between mb-2">
+                <label class="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Workspace</label>
+                <div class="flex items-center gap-1 text-[10px] text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full border border-green-500/20" title="Connected to local daemon">
+                    <i data-lucide="wifi" class="w-3 h-3"></i> Online
+                </div>
+            </div>
+            <button class="w-full bg-[#0f111a] border border-gray-700 rounded-lg p-2 flex items-center justify-between hover:border-gray-500 transition shadow-sm">
+                <div class="flex items-center gap-2 overflow-hidden">
+                    <i data-lucide="folder-code" class="w-4 h-4 text-blue-400 shrink-0"></i>
+                    <span class="truncate text-xs font-medium">my-project</span>
+                </div>
+                <i data-lucide="chevrons-up-down" class="w-3.5 h-3.5 text-gray-500 shrink-0"></i>
+            </button>
+        </div>
+
+        <!-- File Tree -->
+        <div class="px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider shrink-0">Explorer</div>
+        <div class="flex-1 overflow-y-auto px-2 pb-2 text-sm">
+            <!-- Expanded folder -->
+            <div class="flex items-center gap-1.5 p-1 hover:bg-gray-800/50 rounded cursor-pointer text-gray-300">
+                <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-gray-500 shrink-0"></i>
+                <i data-lucide="folder-open" class="w-4 h-4 text-blue-400 shrink-0"></i> src
+            </div>
+            <div class="ml-4">
+                <div class="flex items-center gap-1.5 p-1 hover:bg-gray-800/50 rounded cursor-pointer text-gray-400">
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-gray-500 shrink-0"></i>
+                    <i data-lucide="folder-open" class="w-4 h-4 text-blue-400 shrink-0"></i> routes
+                </div>
+                <div class="ml-4">
+                    <div class="flex items-center gap-1.5 p-1 hover:bg-gray-800/50 rounded cursor-pointer text-gray-400">
+                        <i data-lucide="file-code" class="w-4 h-4 text-yellow-400 shrink-0"></i> index.js
+                    </div>
+                    <div class="flex items-center gap-1.5 p-1 hover:bg-gray-800/50 rounded cursor-pointer text-gray-400">
+                        <i data-lucide="file-code" class="w-4 h-4 text-yellow-400 shrink-0"></i> auth.js
+                    </div>
+                </div>
+                <!-- Active file -->
+                <div class="flex items-center justify-between p-1 bg-blue-600/10 rounded cursor-pointer text-blue-300 border-l-2 border-blue-500 group">
+                    <div class="flex items-center gap-1.5">
+                        <i data-lucide="file-code" class="w-4 h-4 text-yellow-400 shrink-0"></i> server.js
+                    </div>
+                    <i data-lucide="circle" class="w-2 h-2 text-blue-400 fill-blue-400" title="Unsaved changes"></i>
+                </div>
+                <div class="flex items-center gap-1.5 p-1 hover:bg-gray-800/50 rounded cursor-pointer text-gray-400">
+                    <i data-lucide="file-code" class="w-4 h-4 text-yellow-400 shrink-0"></i> db.js
+                </div>
+            </div>
+            <!-- Collapsed folder -->
+            <div class="flex items-center gap-1.5 p-1 hover:bg-gray-800/50 rounded cursor-pointer text-gray-300 mt-0.5">
+                <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-gray-500 shrink-0"></i>
+                <i data-lucide="folder" class="w-4 h-4 text-blue-400 shrink-0"></i> tests
+            </div>
+            <div class="flex items-center gap-1.5 p-1 hover:bg-gray-800/50 rounded cursor-pointer text-gray-300 mt-0.5">
+                <i data-lucide="file-text" class="w-4 h-4 text-gray-400 shrink-0"></i> package.json
+            </div>
+            <div class="flex items-center gap-1.5 p-1 hover:bg-gray-800/50 rounded cursor-pointer text-gray-300 mt-0.5">
+                <i data-lucide="file-text" class="w-4 h-4 text-gray-400 shrink-0"></i> README.md
+            </div>
+        </div>
+    </aside>
+
+    <!-- Search Panel -->
+    <aside id="left-search" class="hidden flex-col w-60 bg-[#161925] border-r border-gray-800 h-full shrink-0">
+        <div class="px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider shrink-0">Search</div>
+        <div class="px-3 pb-2 shrink-0">
+            <div class="relative">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2"></i>
+                <input type="text" placeholder="Search files..." class="w-full bg-[#0f111a] border border-gray-700 rounded-md pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:border-blue-500 transition" />
+            </div>
+        </div>
+        <div class="flex-1 overflow-y-auto px-3 pb-2 text-xs space-y-3">
+            <!-- Search results -->
+            <div>
+                <div class="text-gray-500 font-mono mb-1">3 results in 2 files</div>
+                <div class="flex items-center gap-1.5 p-1 hover:bg-gray-800/50 rounded cursor-pointer text-gray-300">
+                    <i data-lucide="file-code" class="w-3.5 h-3.5 text-yellow-400 shrink-0"></i> server.js
+                </div>
+                <div class="ml-4 font-mono text-[11px] text-gray-400 space-y-0.5">
+                    <div class="hover:bg-gray-800/50 rounded px-1 cursor-pointer"><span class="text-gray-600">12:</span> app.<span class="text-blue-400">listen</span>(port, () => {</div>
+                    <div class="hover:bg-gray-800/50 rounded px-1 cursor-pointer"><span class="text-gray-600">28:</span> console.<span class="text-blue-400">log</span>(`Server on ${port}`);</div>
+                </div>
+                <div class="flex items-center gap-1.5 p-1 hover:bg-gray-800/50 rounded cursor-pointer text-gray-300 mt-1">
+                    <i data-lucide="file-code" class="w-3.5 h-3.5 text-yellow-400 shrink-0"></i> routes/index.js
+                </div>
+                <div class="ml-4 font-mono text-[11px] text-gray-400 space-y-0.5">
+                    <div class="hover:bg-gray-800/50 rounded px-1 cursor-pointer"><span class="text-gray-600">7:</span> router.<span class="text-blue-400">get</span>('/', (req, res) => {</div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ============ EDITOR (center) ============ -->
+    <main class="flex-1 flex flex-col min-w-0 h-full bg-[#1e1e1e] relative">
+        <!-- Tab Bar -->
+        <div class="flex items-center bg-[#161925] border-b border-[#0f111a] shrink-0 h-9">
+            <div class="flex overflow-x-auto hide-scrollbar">
+                <!-- Active tab -->
+                <div class="flex items-center gap-2 px-3 h-9 bg-[#1e1e1e] text-sm text-gray-200 border-t-2 border-blue-500 shrink-0 border-r border-[#0f111a]">
+                    <i data-lucide="file-code" class="w-3.5 h-3.5 text-yellow-400"></i> server.js
+                    <i data-lucide="circle" class="w-2 h-2 text-blue-400 fill-blue-400"></i>
+                    <i data-lucide="x" class="w-3.5 h-3.5 text-gray-500 hover:text-white cursor-pointer ml-1"></i>
+                </div>
+                <!-- Inactive tab -->
+                <div class="flex items-center gap-2 px-3 h-9 bg-[#161925] text-sm text-gray-500 border-r border-[#0f111a] shrink-0 hover:bg-[#1e1e1e]/50 transition">
+                    <i data-lucide="file-code" class="w-3.5 h-3.5 text-yellow-400"></i> routes/index.js
+                    <i data-lucide="x" class="w-3.5 h-3.5 text-gray-600 hover:text-gray-300 cursor-pointer ml-1"></i>
+                </div>
+            </div>
+            <!-- Editor actions -->
+            <div class="flex-1"></div>
+            <div class="flex gap-1.5 pr-3">
+                <button class="text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-300 px-2.5 py-1 rounded transition flex items-center gap-1.5">
+                    <i data-lucide="git-compare" class="w-3 h-3"></i> Diff
+                </button>
+                <button class="text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded flex items-center gap-1.5 transition">
+                    <i data-lucide="save" class="w-3 h-3"></i> Save
+                </button>
+            </div>
+        </div>
+
+        <!-- CodeMirror 6 Editor Area -->
+        <div class="flex-1 overflow-auto bg-[#1e1e1e] font-mono text-[13px] leading-[20px]">
+            <!-- Line gutter + code -->
+            <div class="flex">
+                <!-- Gutter -->
+                <div class="cm-gutter shrink-0 select-none py-1 text-[#4b5563] text-right pr-3 pl-2 border-r border-gray-800/30">
+                    <div>1</div><div>2</div><div>3</div><div>4</div><div>5</div>
+                    <div>6</div><div>7</div><div>8</div><div>9</div><div>10</div>
+                    <div>11</div><div>12</div><div>13</div><div>14</div><div>15</div>
+                    <div>16</div><div>17</div><div>18</div><div>19</div><div>20</div>
+                    <div>21</div><div>22</div><div>23</div><div>24</div><div>25</div>
+                </div>
+                <!-- Code -->
+                <div class="flex-1 py-1 px-3 text-gray-300">
+<div><span class="text-purple-400">import</span> express <span class="text-purple-400">from</span> <span class="text-green-400">'express'</span>;</div>
+<div><span class="text-purple-400">import</span> { connect } <span class="text-purple-400">from</span> <span class="text-green-400">'./db.js'</span>;</div>
+<div></div>
+<div><span class="text-purple-400">const</span> app = <span class="text-blue-400">express</span>();</div>
+<div><span class="text-purple-400">const</span> port = process.<span class="text-blue-400">env</span>.PORT || <span class="text-orange-400">3000</span>;</div>
+<div></div>
+<div><span class="text-gray-500">// Middleware</span></div>
+<div>app.<span class="text-blue-400">use</span>(express.<span class="text-blue-400">json</span>());</div>
+<div>app.<span class="text-blue-400">use</span>(<span class="text-purple-400">await</span> <span class="text-blue-400">connect</span>());</div>
+<div></div>
+<div><span class="text-gray-500">// Routes</span></div>
+<div>app.<span class="text-blue-400">use</span>(<span class="text-green-400">'/api'</span>, <span class="text-purple-400">await</span> <span class="text-blue-400">import</span>(<span class="text-green-400">'./routes'</span>));</div>
+<div></div>
+<div>app.<span class="text-blue-400">listen</span>(port, () => {</div>
+<div>&nbsp;&nbsp;console.<span class="text-blue-400">log</span>(<span class="text-green-400">`Server running on port ${port}`</span>);</div>
+<div>});</div>
+<div></div>
+<div><span class="text-gray-500 italic">// Unsaved edit — added error handler</span></div>
+<div>app.<span class="text-blue-400">use</span>((err, req, res, next) => {</div>
+<div>&nbsp;&nbsp;console.<span class="text-blue-400">error</span>(err.<span class="text-blue-400">stack</span>);</div>
+<div>&nbsp;&nbsp;res.<span class="text-blue-400">status</span>(<span class="text-orange-400">500</span>).<span class="text-blue-400">send</span>(<span class="text-green-400">'Something broke!'</span>);</div>
+<div>});</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="flex items-center justify-between bg-[#007acc] text-white text-[11px] px-3 py-0.5 shrink-0">
+            <div class="flex items-center gap-3">
+                <span class="flex items-center gap-1"><i data-lucide="git-branch" class="w-3 h-3"></i> main</span>
+                <span class="flex items-center gap-1"><i data-lucide="circle-alert" class="w-3 h-3"></i> 0 errors</span>
+                <span class="flex items-center gap-1"><i data-lucide="triangle-alert" class="w-3 h-3"></i> 0 warnings</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <span>JavaScript</span>
+                <span>UTF-8</span>
+                <span>LF</span>
+                <span>Ln 21, Col 3</span>
+            </div>
+        </div>
+
+        <!-- Mobile: Editor view (shown when selected via bottom nav) -->
+        <div id="mobile-editor" class="hidden flex-col h-full absolute inset-0 bg-[#1e1e1e] z-30 lg:hidden">
+            <!-- Reuses tab bar + editor + status bar markup (simplified for mockup) -->
+            <div class="flex items-center bg-[#161925] border-b border-[#0f111a] shrink-0 h-9">
+                <div class="flex items-center gap-2 px-3 h-9 bg-[#1e1e1e] text-sm text-gray-200 border-t-2 border-blue-500 shrink-0">
+                    <i data-lucide="file-code" class="w-3.5 h-3.5 text-yellow-400"></i> server.js
+                    <i data-lucide="circle" class="w-2 h-2 text-blue-400 fill-blue-400"></i>
+                </div>
+            </div>
+            <div class="flex-1 overflow-auto font-mono text-[12px] leading-[18px]">
+                <div class="flex">
+                    <div class="cm-gutter shrink-0 select-none py-1 text-[#4b5563] text-right pr-2 pl-2 border-r border-gray-800/30">
+                        <div>1</div><div>2</div><div>3</div><div>4</div><div>5</div>
+                        <div>6</div><div>7</div><div>8</div><div>9</div><div>10</div>
+                        <div>11</div><div>12</div><div>13</div><div>14</div><div>15</div>
+                    </div>
+                    <div class="flex-1 py-1 px-2 text-gray-300">
+<div><span class="text-purple-400">import</span> express <span class="text-purple-400">from</span> <span class="text-green-400">'express'</span>;</div>
+<div><span class="text-purple-400">import</span> { connect } <span class="text-purple-400">from</span> <span class="text-green-400">'./db.js'</span>;</div>
+<div></div>
+<div><span class="text-purple-400">const</span> app = <span class="text-blue-400">express</span>();</div>
+<div><span class="text-purple-400">const</span> port = process.<span class="text-blue-400">env</span>.PORT || <span class="text-orange-400">3000</span>;</div>
+<div></div>
+<div><span class="text-gray-500">// Middleware</span></div>
+<div>app.<span class="text-blue-400">use</span>(express.<span class="text-blue-400">json</span>());</div>
+<div>app.<span class="text-blue-400">use</span>(<span class="text-purple-400">await</span> <span class="text-blue-400">connect</span>());</div>
+<div></div>
+<div><span class="text-gray-500">// Routes</span></div>
+<div>app.<span class="text-blue-400">use</span>(<span class="text-green-400">'/api'</span>, <span class="text-purple-400">await</span> <span class="text-blue-400">import</span>(<span class="text-green-400">'./routes'</span>));</div>
+<div></div>
+<div>app.<span class="text-blue-400">listen</span>(port, () => {</div>
+<div>&nbsp;&nbsp;console.<span class="text-blue-400">log</span>(<span class="text-green-400">`Server on ${port}`</span>);</div>
+<div>});</div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center justify-between bg-[#007acc] text-white text-[10px] px-3 py-1 shrink-0">
+                <span class="flex items-center gap-1"><i data-lucide="git-branch" class="w-3 h-3"></i> main</span>
+                <span>Ln 15</span>
+            </div>
+        </div>
+    </main>
+
+    <!-- ============ RIGHT SIDEBAR — Agent Chat ============ -->
+    <aside id="right-chat" class="hidden lg:flex flex-col w-96 bg-[#0f111a] border-l border-gray-800 h-full shrink-0">
+        <!-- Chat Header (relative container for popout) -->
+        <div class="relative border-b border-gray-800 shrink-0 bg-[#161925]">
+            <!-- Top row: harness + model + hamburger -->
+            <div class="flex items-center gap-2 p-3">
+                <!-- Harness selector -->
+                <select class="header-dropdown bg-[#0f111a] border border-gray-700 text-gray-200 text-xs font-semibold rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-500 cursor-pointer shadow-sm hover:border-gray-500 transition shrink-0" title="Agent Harness">
+                    <option value="claude-code" selected>Claude Code</option>
+                    <option value="codex">Codex CLI</option>
+                    <option value="gemini">Gemini CLI</option>
+                    <option value="cursor">Cursor CLI</option>
+                </select>
+                <!-- Model selector -->
+                <select class="header-dropdown bg-[#0f111a] border border-blue-500/50 text-blue-400 text-xs font-medium rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-400 cursor-pointer shadow-sm hover:border-blue-400 transition shrink-0" title="Model">
+                    <option value="claude-3.5-sonnet" selected>Sonnet 3.5</option>
+                    <option value="claude-3-opus">Opus 3</option>
+                    <option value="claude-3-haiku">Haiku 3</option>
+                </select>
+                <div class="flex-1"></div>
+                <!-- Hamburger menu — toggles chat list popout -->
+                <button onclick="toggleChatList()" id="chat-menu-btn" class="p-1.5 text-gray-400 hover:text-white bg-gray-800 rounded-md transition relative" title="Chat History">
+                    <i data-lucide="menu" class="w-4 h-4"></i>
+                    <!-- Activity dot on hamburger -->
+                    <div class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                </button>
+            </div>
+
+            <!-- Chat list popout (floats over chat messages) -->
+            <div id="chat-list-overlay" class="chat-list-overlay">
+                <!-- Drag handle for resizing -->
+                <div class="chat-list-resize" title="Drag to resize"></div>
+                <div class="p-2 space-y-1">
+                    <div class="flex items-center justify-between px-1 pb-1">
+                        <div class="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Chat History</div>
+                        <button onclick="toggleChatList()" class="text-gray-500 hover:text-white transition"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+                    </div>
+                    <!-- Active chat -->
+                    <div class="flex items-center justify-between p-2 rounded-lg bg-blue-600/10 border border-blue-500/20 cursor-pointer session-item group">
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0"></div>
+                            <span class="truncate text-xs font-medium text-blue-400">Server Setup</span>
+                        </div>
+                        <span class="text-[10px] text-gray-500 shrink-0">2m ago</span>
+                    </div>
+                    <!-- Inactive chats -->
+                    <div class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer session-item group">
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <div class="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0"></div>
+                            <span class="truncate text-xs text-gray-400">Auth refactor</span>
+                        </div>
+                        <span class="text-[10px] text-gray-500 shrink-0">1h ago</span>
+                    </div>
+                    <div class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer session-item group">
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <div class="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0"></div>
+                            <span class="truncate text-xs text-gray-400">DB migration</span>
+                        </div>
+                        <span class="text-[10px] text-gray-500 shrink-0">3h ago</span>
+                    </div>
+                    <div class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer session-item group">
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <div class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></div>
+                            <span class="truncate text-xs text-gray-400">Fix CORS issue</span>
+                        </div>
+                        <span class="text-[10px] text-gray-500 shrink-0">Yesterday</span>
+                    </div>
+                    <div class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer session-item group">
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <div class="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0"></div>
+                            <span class="truncate text-xs text-gray-400">Deploy script</span>
+                        </div>
+                        <span class="text-[10px] text-gray-500 shrink-0">2d ago</span>
+                    </div>
+                    <div class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer session-item group">
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <div class="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0"></div>
+                            <span class="truncate text-xs text-gray-400">Refactor utils</span>
+                        </div>
+                        <span class="text-[10px] text-gray-500 shrink-0">3d ago</span>
+                    </div>
+                    <button class="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer text-gray-400 text-xs transition">
+                        <i data-lucide="plus" class="w-3.5 h-3.5"></i> New Chat
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Messages -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-4">
+            <!-- User message -->
+            <div class="flex gap-3">
+                <div class="w-7 h-7 rounded-lg bg-gray-800 flex items-center justify-center shrink-0 border border-gray-700 text-xs font-medium">U</div>
+                <div class="flex-1 pt-0.5">
+                    <p class="text-sm text-gray-200">Add error handling middleware to server.js and make sure the routes are properly imported.</p>
+                </div>
+            </div>
+
+            <!-- Agent response -->
+            <div class="flex gap-3">
+                <div class="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
+                    <i data-lucide="bot" class="w-4 h-4"></i>
+                </div>
+                <div class="flex-1 pt-0.5">
+                    <p class="text-sm text-gray-300 mb-2">I'll add error handling middleware and verify the route imports. Let me check the current file first.</p>
+
+                    <!-- Tool execution accordion -->
+                    <details class="group mt-2 border-l-2 border-gray-800 pl-3 open:border-blue-500/50 transition-colors">
+                        <summary class="flex items-center gap-2 cursor-pointer text-xs font-mono text-gray-400 hover:text-gray-300 w-max select-none">
+                            <i data-lucide="chevron-right" class="w-3.5 h-3.5 group-open:rotate-90 transition-transform"></i>
+                            <i data-lucide="wrench" class="w-3.5 h-3.5 text-purple-400"></i>
+                            edit_file: server.js <span class="text-gray-600">[completed]</span>
+                        </summary>
+                        <div class="mt-2 space-y-1.5 pl-1">
+                            <div class="bg-[#12141d] rounded-md border border-gray-800/80 p-2 text-xs">
+                                <span class="text-purple-400 font-mono">tool_call</span>: Added error handler at line 17-21
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- Permission request -->
+                    <div class="mt-2 bg-blue-900/10 border border-blue-500/30 rounded-lg p-2.5">
+                        <div class="flex items-center gap-2 text-xs text-blue-400 font-semibold mb-2">
+                            <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i> Permission Required
+                        </div>
+                        <p class="text-xs text-gray-300 mb-2.5">
+                            <span class="font-mono text-gray-400 bg-black/40 px-1 rounded">shell: npm test</span>
+                        </p>
+                        <div class="flex gap-2">
+                            <button class="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium py-1.5 rounded transition">Allow</button>
+                            <button class="flex-1 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-1.5 rounded transition">Deny</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Streaming indicator -->
+            <div class="flex gap-3">
+                <div class="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
+                    <i data-lucide="bot" class="w-4 h-4"></i>
+                </div>
+                <div class="flex-1 pt-1">
+                    <div class="flex items-center gap-1.5 text-xs text-gray-500">
+                        <div class="flex gap-1">
+                            <div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 0ms"></div>
+                            <div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 150ms"></div>
+                            <div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 300ms"></div>
+                        </div>
+                        Running tests...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Input -->
+        <div class="p-3 bg-gradient-to-t from-[#0f111a] to-transparent shrink-0 border-t border-gray-800/50">
+            <div class="relative flex items-end gap-2">
+                <button class="p-2.5 bg-[#161925] border border-gray-700 rounded-xl hover:bg-gray-800 hover:border-gray-500 transition text-gray-400 shrink-0" title="Upload Artifact">
+                    <i data-lucide="paperclip" class="w-4 h-4"></i>
+                </button>
+                <div class="relative flex-1">
+                    <textarea placeholder="Message agent..." class="w-full bg-[#161925] border border-gray-700 rounded-xl pl-3 pr-10 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none h-12 transition-all"></textarea>
+                    <button class="absolute right-2 bottom-2 p-1.5 bg-blue-600 rounded-lg hover:bg-blue-500 transition">
+                        <i data-lucide="arrow-up" class="w-3.5 h-3.5 text-white"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ============ MOBILE: Full-screen panels ============ -->
+    <!-- Mobile Explorer Panel (Files + Search combined with mini activity bar) -->
+    <div id="mobile-explorer" class="hidden flex-col absolute inset-0 bg-[#161925] z-30 lg:hidden h-full">
+        <!-- Workspace Switcher -->
+        <div class="p-3 border-b border-gray-800 shrink-0">
+            <div class="flex items-center justify-between mb-2">
+                <label class="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Workspace</label>
+                <div class="flex items-center gap-1 text-[10px] text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full border border-green-500/20">
+                    <i data-lucide="wifi" class="w-3 h-3"></i> Online
+                </div>
+            </div>
+            <button class="w-full bg-[#0f111a] border border-gray-700 rounded-lg p-2.5 flex items-center justify-between hover:border-gray-500 transition">
+                <div class="flex items-center gap-2 overflow-hidden">
+                    <i data-lucide="folder-code" class="w-4 h-4 text-blue-400 shrink-0"></i>
+                    <span class="truncate text-sm font-medium">my-project</span>
+                </div>
+                <i data-lucide="chevrons-up-down" class="w-4 h-4 text-gray-500 shrink-0"></i>
+            </button>
+        </div>
+
+        <!-- Mini horizontal activity bar -->
+        <div class="flex items-center gap-1 px-3 py-1.5 border-b border-gray-800/50 shrink-0 bg-[#0d0e16]">
+            <button onclick="switchMobileExplorer('files')" id="mact-files" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-blue-400 bg-blue-600/10 transition">
+                <i data-lucide="files" class="w-4 h-4"></i> Files
+            </button>
+            <button onclick="switchMobileExplorer('search')" id="mact-search" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-gray-500 hover:text-gray-300 transition">
+                <i data-lucide="search" class="w-4 h-4"></i> Search
+            </button>
+        </div>
+
+        <!-- Mobile Files sub-panel -->
+        <div id="mobile-files-sub" class="flex-1 min-h-0 overflow-y-auto p-2 text-sm">
+            <div class="flex items-center gap-2 p-2 hover:bg-gray-800 rounded-lg cursor-pointer text-gray-300">
+                <i data-lucide="chevron-down" class="w-4 h-4 text-gray-500"></i>
+                <i data-lucide="folder-open" class="w-5 h-5 text-blue-400"></i> src
+            </div>
+            <div class="ml-4">
+                <div class="flex items-center gap-2 p-2 hover:bg-gray-800/50 rounded-lg cursor-pointer text-gray-400">
+                    <i data-lucide="folder-open" class="w-5 h-5 text-blue-400"></i> routes
+                </div>
+                <div class="ml-4">
+                    <div class="flex items-center gap-2 p-2 hover:bg-gray-800/50 rounded-lg cursor-pointer text-gray-400">
+                        <i data-lucide="file-code" class="w-5 h-5 text-yellow-400"></i> index.js
+                    </div>
+                    <div class="flex items-center gap-2 p-2 hover:bg-gray-800/50 rounded-lg cursor-pointer text-gray-400">
+                        <i data-lucide="file-code" class="w-5 h-5 text-yellow-400"></i> auth.js
+                    </div>
+                </div>
+                <div class="flex items-center justify-between p-2 bg-blue-600/10 rounded-lg cursor-pointer text-blue-300 border-l-2 border-blue-500">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="file-code" class="w-5 h-5 text-yellow-400"></i> server.js
+                    </div>
+                    <i data-lucide="circle" class="w-2 h-2 text-blue-400 fill-blue-400"></i>
+                </div>
+                <div class="flex items-center gap-2 p-2 hover:bg-gray-800/50 rounded-lg cursor-pointer text-gray-400">
+                    <i data-lucide="file-code" class="w-5 h-5 text-yellow-400"></i> db.js
+                </div>
+            </div>
+            <div class="flex items-center gap-2 p-2 hover:bg-gray-800 rounded-lg cursor-pointer text-gray-300 mt-1">
+                <i data-lucide="chevron-right" class="w-4 h-4 text-gray-500"></i>
+                <i data-lucide="folder" class="w-5 h-5 text-blue-400"></i> tests
+            </div>
+            <div class="flex items-center gap-2 p-2 hover:bg-gray-800 rounded-lg cursor-pointer text-gray-300 mt-1">
+                <i data-lucide="file-text" class="w-5 h-5 text-gray-400"></i> package.json
+            </div>
+            <div class="flex items-center gap-2 p-2 hover:bg-gray-800 rounded-lg cursor-pointer text-gray-300 mt-1">
+                <i data-lucide="file-text" class="w-5 h-5 text-gray-400"></i> README.md
+            </div>
+        </div>
+
+        <!-- Mobile Search sub-panel -->
+        <div id="mobile-search-sub" class="hidden flex-1 flex-col overflow-y-auto">
+            <div class="p-3 shrink-0">
+                <div class="relative">
+                    <i data-lucide="search" class="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2"></i>
+                    <input type="text" placeholder="Search files..." class="w-full bg-[#0f111a] border border-gray-700 rounded-lg pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition" />
+                </div>
+            </div>
+            <div class="flex-1 overflow-y-auto px-3 pb-3 text-xs space-y-3">
+                <div class="text-gray-500 font-mono">3 results in 2 files</div>
+                <div>
+                    <div class="flex items-center gap-2 p-2 hover:bg-gray-800/50 rounded cursor-pointer text-gray-300">
+                        <i data-lucide="file-code" class="w-4 h-4 text-yellow-400"></i> server.js
+                    </div>
+                    <div class="ml-4 font-mono text-[11px] text-gray-400 space-y-1">
+                        <div class="hover:bg-gray-800/50 rounded px-1 py-0.5 cursor-pointer"><span class="text-gray-600">12:</span> app.<span class="text-blue-400">listen</span>(port, () => {</div>
+                        <div class="hover:bg-gray-800/50 rounded px-1 py-0.5 cursor-pointer"><span class="text-gray-600">28:</span> console.<span class="text-blue-400">log</span>(`Server on ${port}`);</div>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2 p-2 hover:bg-gray-800/50 rounded cursor-pointer text-gray-300">
+                        <i data-lucide="file-code" class="w-4 h-4 text-yellow-400"></i> routes/index.js
+                    </div>
+                    <div class="ml-4 font-mono text-[11px] text-gray-400 space-y-1">
+                        <div class="hover:bg-gray-800/50 rounded px-1 py-0.5 cursor-pointer"><span class="text-gray-600">7:</span> router.<span class="text-blue-400">get</span>('/', (req, res) => {</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Chat Panel -->
+    <div id="mobile-chat" class="hidden flex-col absolute inset-0 bg-[#0f111a] z-30 lg:hidden h-full">
+        <!-- Header -->
+        <div class="border-b border-gray-800 shrink-0 bg-[#161925]">
+            <div class="flex items-center gap-2 p-2.5">
+                <select class="header-dropdown bg-[#0f111a] border border-gray-700 text-gray-200 text-xs font-semibold rounded-md py-1.5 pl-2 pr-6 focus:outline-none focus:border-blue-500 cursor-pointer shrink-0">
+                    <option selected>Claude Code</option>
+                    <option>Codex CLI</option>
+                    <option>Gemini CLI</option>
+                </select>
+                <select class="header-dropdown bg-[#0f111a] border border-blue-500/50 text-blue-400 text-xs font-medium rounded-md py-1.5 pl-2 pr-6 focus:outline-none focus:border-blue-400 cursor-pointer shrink-0">
+                    <option selected>Sonnet 3.5</option>
+                    <option>Opus 3</option>
+                </select>
+                <div class="flex-1"></div>
+                <button class="p-1.5 text-gray-400 hover:text-white bg-gray-800 rounded-md transition relative">
+                    <i data-lucide="menu" class="w-4 h-4"></i>
+                    <div class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                </button>
+            </div>
+        </div>
+        <!-- Messages (simplified) -->
+        <div class="flex-1 overflow-y-auto p-3 space-y-3">
+            <div class="flex gap-2.5">
+                <div class="w-6 h-6 rounded-lg bg-gray-800 flex items-center justify-center shrink-0 border border-gray-700 text-[10px] font-medium">U</div>
+                <div class="flex-1 pt-0.5">
+                    <p class="text-sm text-gray-200">Add error handling middleware to server.js.</p>
+                </div>
+            </div>
+            <div class="flex gap-2.5">
+                <div class="w-6 h-6 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
+                    <i data-lucide="bot" class="w-3.5 h-3.5"></i>
+                </div>
+                <div class="flex-1 pt-0.5">
+                    <p class="text-sm text-gray-300">I'll add error handling middleware. Let me check the current file.</p>
+                    <details class="group mt-2 border-l-2 border-gray-800 pl-2.5 open:border-blue-500/50">
+                        <summary class="flex items-center gap-1.5 cursor-pointer text-[11px] font-mono text-gray-400 select-none">
+                            <i data-lucide="chevron-right" class="w-3 h-3 group-open:rotate-90 transition-transform"></i>
+                            edit_file: server.js <span class="text-gray-600">[done]</span>
+                        </summary>
+                    </details>
+                    <div class="mt-2 bg-blue-900/10 border border-blue-500/30 rounded-lg p-2">
+                        <div class="flex items-center gap-1.5 text-[11px] text-blue-400 font-semibold mb-1.5">
+                            <i data-lucide="shield-alert" class="w-3 h-3"></i> Permission: npm test
+                        </div>
+                        <div class="flex gap-1.5">
+                            <button class="flex-1 bg-blue-600 text-white text-[11px] font-medium py-1 rounded">Allow</button>
+                            <button class="flex-1 bg-gray-700 text-white text-[11px] font-medium py-1 rounded">Deny</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Input -->
+        <div class="p-2.5 bg-[#0f111a] shrink-0 border-t border-gray-800/50 pb-20">
+            <div class="flex items-end gap-1.5">
+                <button class="p-2 bg-[#161925] border border-gray-700 rounded-xl hover:bg-gray-800 transition text-gray-400 shrink-0">
+                    <i data-lucide="paperclip" class="w-4 h-4"></i>
+                </button>
+                <div class="relative flex-1">
+                    <textarea placeholder="Message agent..." class="w-full bg-[#161925] border border-gray-700 rounded-xl pl-3 pr-9 py-2.5 text-sm focus:outline-none focus:border-blue-500 resize-none h-11"></textarea>
+                    <button class="absolute right-1.5 bottom-1.5 p-1.5 bg-blue-600 rounded-lg">
+                        <i data-lucide="arrow-up" class="w-3.5 h-3.5 text-white"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ MOBILE BOTTOM NAV ============ -->
+    <nav class="lg:hidden fixed bottom-0 left-0 w-full h-16 bg-[#161925] border-t border-gray-800 flex items-center justify-around z-50 px-2 pb-safe">
+        <button onclick="switchMobileView('explorer')" id="nav-explorer" class="flex flex-col items-center justify-center w-16 h-full text-gray-500 hover:text-gray-300 transition">
+            <i data-lucide="files" class="w-5 h-5 mb-0.5"></i>
+            <span class="text-[10px] font-medium">Explorer</span>
+        </button>
+        <button onclick="switchMobileView('editor')" id="nav-editor" class="flex flex-col items-center justify-center w-16 h-full text-blue-400 transition relative">
+            <div class="absolute top-1.5 right-3 w-1.5 h-1.5 rounded-full bg-blue-400"></div>
+            <i data-lucide="code" class="w-5 h-5 mb-0.5"></i>
+            <span class="text-[10px] font-medium">Editor</span>
+        </button>
+        <button onclick="switchMobileView('chat')" id="nav-chat" class="flex flex-col items-center justify-center w-16 h-full text-gray-500 hover:text-gray-300 transition relative">
+            <div class="absolute top-1.5 right-3 w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+            <i data-lucide="message-square" class="w-5 h-5 mb-0.5"></i>
+            <span class="text-[10px] font-medium">Chat</span>
+        </button>
+        <button onclick="switchMobileView('settings')" id="nav-settings" class="flex flex-col items-center justify-center w-16 h-full text-gray-500 hover:text-gray-300 transition">
+            <i data-lucide="settings" class="w-5 h-5 mb-0.5"></i>
+            <span class="text-[10px] font-medium">Settings</span>
+        </button>
+    </nav>
+
+        <!-- ============ MOBILE SETTINGS PANEL ============ -->
+    <div id="mobile-settings" class="hidden flex-col absolute inset-0 bg-[#161925] z-30 lg:hidden h-full">
+        <div class="p-3 border-b border-gray-800 shrink-0">
+            <h2 class="text-sm font-bold text-gray-400 uppercase tracking-wider">Settings</h2>
+        </div>
+        <div class="flex-1 overflow-y-auto p-3 space-y-3">
+            <div class="bg-[#0f111a] border border-gray-800 rounded-lg p-3">
+                <div class="text-xs font-semibold text-gray-300 mb-2">Connection</div>
+                <div class="flex items-center justify-between text-xs text-gray-400 py-1">
+                    <span class="flex items-center gap-2"><i data-lucide="wifi" class="w-4 h-4 text-green-400"></i> Status</span>
+                    <span class="text-green-400">Online</span>
+                </div>
+                <div class="flex items-center justify-between text-xs text-gray-400 py-1">
+                    <span class="flex items-center gap-2"><i data-lucide="server" class="w-4 h-4 text-gray-500"></i> Daemon</span>
+                    <span>localhost:7337</span>
+                </div>
+            </div>
+            <div class="bg-[#0f111a] border border-gray-800 rounded-lg p-3">
+                <div class="text-xs font-semibold text-gray-300 mb-2">Paired Devices</div>
+                <div class="flex items-center justify-between text-xs text-gray-400 py-1">
+                    <span class="flex items-center gap-2"><i data-lucide="smartphone" class="w-4 h-4 text-gray-500"></i> iPhone</span>
+                    <button class="text-red-400 hover:text-red-300">Revoke</button>
+                </div>
+                <div class="flex items-center justify-between text-xs text-gray-400 py-1">
+                    <span class="flex items-center gap-2"><i data-lucide="laptop" class="w-4 h-4 text-gray-500"></i> MacBook</span>
+                    <button class="text-red-400 hover:text-red-300">Revoke</button>
+                </div>
+            </div>
+            <div class="bg-[#0f111a] border border-gray-800 rounded-lg p-3">
+                <div class="text-xs font-semibold text-gray-300 mb-2">Theme</div>
+                <div class="flex items-center gap-2">
+                    <button class="flex-1 bg-blue-600/20 border border-blue-500/40 text-blue-400 text-xs py-2 rounded-md">Dark</button>
+                    <button class="flex-1 bg-gray-800 border border-gray-700 text-gray-400 text-xs py-2 rounded-md">Light</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        // ---- Desktop: Activity bar left panel switching ----
+        function switchLeftPanel(panel) {
+            document.getElementById('left-files').classList.add('hidden');
+            document.getElementById('left-files').classList.remove('flex');
+            document.getElementById('left-search').classList.add('hidden');
+            document.getElementById('left-search').classList.remove('flex');
+
+            document.querySelectorAll('#activity-bar .activity-item').forEach(el => {
+                el.classList.remove('active', 'text-blue-400');
+                el.classList.add('text-gray-500');
+            });
+
+            if (panel === 'files') {
+                document.getElementById('left-files').classList.remove('hidden');
+                document.getElementById('left-files').classList.add('flex');
+                document.getElementById('act-files').classList.add('active', 'text-blue-400');
+                document.getElementById('act-files').classList.remove('text-gray-500');
+            } else if (panel === 'search') {
+                document.getElementById('left-search').classList.remove('hidden');
+                document.getElementById('left-search').classList.add('flex');
+                document.getElementById('act-search').classList.add('active', 'text-blue-400');
+                document.getElementById('act-search').classList.remove('text-gray-500');
+            }
+            lucide.createIcons();
+        }
+
+        // ---- Desktop: Chat list toggle ----
+        function toggleChatList() {
+            document.getElementById('chat-list-overlay').classList.toggle('open');
+        }
+
+        // ---- Desktop: Chat list drag-to-resize ----
+        (function() {
+            const resizeHandle = document.querySelector('.chat-list-resize');
+            const overlay = document.getElementById('chat-list-overlay');
+            let isDragging = false;
+            let startY = 0;
+            let startMaxHeight = 0;
+
+            if (resizeHandle) {
+                resizeHandle.addEventListener('mousedown', function(e) {
+                    isDragging = true;
+                    startY = e.clientY;
+                    const computed = window.getComputedStyle(overlay);
+                    startMaxHeight = parseInt(computed.maxHeight) || 60 * window.innerHeight / 100;
+                    document.body.style.cursor = 'ns-resize';
+                    document.body.style.userSelect = 'none';
+                    e.preventDefault();
+                });
+
+                document.addEventListener('mousemove', function(e) {
+                    if (!isDragging) return;
+                    const delta = startY - e.clientY;
+                    const newHeight = Math.max(150, Math.min(window.innerHeight * 0.8, startMaxHeight + delta));
+                    overlay.style.maxHeight = newHeight + 'px';
+                });
+
+                document.addEventListener('mouseup', function() {
+                    if (isDragging) {
+                        isDragging = false;
+                        document.body.style.cursor = '';
+                        document.body.style.userSelect = '';
+                    }
+                });
+            }
+        })();
+
+        // ---- Mobile: Explorer sub-panel switching (files vs search) ----
+        function switchMobileExplorer(tab) {
+            const filesSub = document.getElementById('mobile-files-sub');
+            const searchSub = document.getElementById('mobile-search-sub');
+            const mactFiles = document.getElementById('mact-files');
+            const mactSearch = document.getElementById('mact-search');
+
+            if (tab === 'files') {
+                filesSub.classList.remove('hidden');
+                filesSub.classList.add('flex');
+                searchSub.classList.add('hidden');
+                searchSub.classList.remove('flex');
+                mactFiles.classList.add('text-blue-400', 'bg-blue-600/10');
+                mactFiles.classList.remove('text-gray-500');
+                mactSearch.classList.remove('text-blue-400', 'bg-blue-600/10');
+                mactSearch.classList.add('text-gray-500');
+            } else {
+                searchSub.classList.remove('hidden');
+                searchSub.classList.add('flex');
+                filesSub.classList.add('hidden');
+                filesSub.classList.remove('flex');
+                mactSearch.classList.add('text-blue-400', 'bg-blue-600/10');
+                mactSearch.classList.remove('text-gray-500');
+                mactFiles.classList.remove('text-blue-400', 'bg-blue-600/10');
+                mactFiles.classList.add('text-gray-500');
+            }
+            lucide.createIcons();
+        }
+
+        // ---- Mobile: Bottom nav view switching ----
+        function switchMobileView(view) {
+            if (window.innerWidth >= 1024) return;
+
+            const panels = ['mobile-explorer', 'mobile-editor', 'mobile-chat', 'mobile-settings'];
+            const navs = ['nav-explorer', 'nav-editor', 'nav-chat', 'nav-settings'];
+
+            panels.forEach(id => {
+                const el = document.getElementById(id);
+                el.classList.add('hidden');
+                el.classList.remove('flex');
+            });
+            navs.forEach(id => {
+                const el = document.getElementById(id);
+                el.classList.remove('text-blue-400');
+                el.classList.add('text-gray-500');
+            });
+
+            const panelMap = { explorer: 'mobile-explorer', editor: 'mobile-editor', chat: 'mobile-chat', settings: 'mobile-settings' };
+            const navMap = { explorer: 'nav-explorer', editor: 'nav-editor', chat: 'nav-chat', settings: 'nav-settings' };
+
+            const panelEl = document.getElementById(panelMap[view]);
+            panelEl.classList.remove('hidden');
+            panelEl.classList.add('flex');
+
+            const navEl = document.getElementById(navMap[view]);
+            navEl.classList.add('text-blue-400');
+            navEl.classList.remove('text-gray-500');
+
+            lucide.createIcons();
+        }
+
+        // ---- Desktop: Show default panels on load ----
+        if (window.innerWidth >= 1024) {
+            document.getElementById('left-files').classList.remove('hidden');
+            document.getElementById('left-files').classList.add('flex');
+            document.getElementById('right-chat').classList.remove('hidden');
+            document.getElementById('right-chat').classList.add('flex');
+        }
+
+        // Default: show editor on mobile
+        if (window.innerWidth < 1024) {
+            switchMobileView('editor');
+        }
+    </script>
+</body>
+</html>

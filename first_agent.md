@@ -11,7 +11,7 @@ Read these files in order before doing anything:
 1. `docs/Blueprint.md` — full architecture and design. This is the source of truth.
 2. `docs/TechStack.md` — technology decisions and library choices.
 3. `docs/OpenItems.md` — known gaps and deferred decisions. Do not implement deferred items. If you encounter a blocker that maps to an open item, note it and move on.
-4. `mockup11.html` — the UI mockup. The frontend agent should reference this closely.
+4. `mockup12.html` — the UI mockup. The frontend agent should reference this closely.
 
 Do not proceed to planning until you have read all four.
 
@@ -47,9 +47,9 @@ The following is the recommended split. Adjust if you see obvious coupling or co
 | shell-exec | Workspace-scoped subprocess runner, output streaming as events | acp-client, permissions | Sec 15 (Shell Execution) |
 | ws-sync | WebSocket server, event broadcast, reconnection with missing-event sync, in-flight permission prompt re-presentation | events | Sec 12 (Multi-Client Synchronization) |
 | file-sync | Revision tracking, `FileRevisionUpdated` events, three-way merge on save, live agent change indicator | workspace, events | Sec 14 (File System Access — Client File Sync) |
-| frontend-shell | React app shell, layout (sidebar, main area, mobile nav), chat/event stream view, command input, session list | scaffold, ws-sync | Sec 17 (UI Architecture), mockup11.html |
-| frontend-editor | CodeMirror 6 editor pane, file tree, diff view, merge UI, file save with `expectedRevision` | file-sync, frontend-shell | Sec 14, Sec 17 (Editor and File Viewing), mockup11.html |
-| frontend-pairing | Lock screen, pairing flow (QR scan / mnemonic entry), permission dialog UI, settings panel | pairing, permissions, frontend-shell | Sec 8, Sec 19, mockup11.html |
+| frontend-shell | React app shell, layout (sidebar, main area, mobile nav), chat/event stream view, command input, session list | scaffold, ws-sync | Sec 17 (UI Architecture), mockup12.html |
+| frontend-editor | CodeMirror 6 editor pane, file tree, diff view, merge UI, file save with `expectedRevision` | file-sync, frontend-shell | Sec 14, Sec 17 (Editor and File Viewing), mockup12.html |
+| frontend-pairing | Lock screen, pairing flow (QR scan / mnemonic entry), permission dialog UI, settings panel | pairing, permissions, frontend-shell | Sec 8, Sec 19, mockup12.html |
 
 ### Rules for the Plan
 
