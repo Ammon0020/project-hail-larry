@@ -14,8 +14,13 @@ Chosen for battery efficiency, single-binary distribution, and dev velocity.
 
 - React component model fits event-driven UI. Vite for hot reload and optimized bundles.
 - TailwindCSS matches the mockup directly.
-- CodeMirror 6 for code editor, diff view, and merge UI. Uses `@uiw/react-codemirror` (React wrapper) plus modular `@codemirror/*` packages (`state`, `view`, `commands`, `language`, `autocomplete`, `search`, `merge`) and per-language packages (`@codemirror/lang-javascript`, `@codemirror/lang-python`, etc.).
-- `lucide-react` for icons.
+- CodeMirror 6 for code editor, diff view, and merge UI. Uses `@uiw/react-codemirror` (React wrapper) plus modular `@codemirror/*` packages:
+  - Core: `@codemirror/state`, `@codemirror/view`, `@codemirror/commands`, `@codemirror/language`, `@codemirror/autocomplete`, `@codemirror/search`
+  - Merge/diff: `@codemirror/merge` (side-by-side conflict resolution per Blueprint Sec 14)
+  - Language support: `@codemirror/lang-javascript`, `@codemirror/lang-python`, `@codemirror/lang-html`, `@codemirror/lang-css`
+  - Theme: `@codemirror/theme-one-dark` (matches mockup's dark UI)
+- `lucide-react` for icons (tree-shakeable, matches mockup's Lucide usage).
+- shadcn/ui (Radix Primitives + TailwindCSS) for reusable UI components — dropdowns, dialogs, accordions, resizable panels. Tailwind-native, copy-paste components that match the mockup's styling.
 
 ## Database — SQLite
 
@@ -41,6 +46,7 @@ Agents communicate over stdin/stdout using JSON-RPC. The daemon spawns the agent
 | QR code | `github.com/skip2/go-qrcode` |
 | mDNS | `github.com/brutella/dnssd` |
 | CLI | `github.com/spf13/cobra` |
-| CodeMirror 6 | `@uiw/react-codemirror` + `@codemirror/*` packages |
+| CodeMirror 6 | `@uiw/react-codemirror` + `@codemirror/*` (state, view, commands, language, autocomplete, search, merge, lang-*, theme-one-dark) |
+| UI components | shadcn/ui (Radix Primitives + TailwindCSS) |
 | Icons | `lucide-react` |
 | Three-way merge | `github.com/sergi/go-diff` |
