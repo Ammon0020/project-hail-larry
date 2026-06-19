@@ -27,21 +27,21 @@ _All items addressed in Blueprint v2.4 except sub-workers (deferred)._
 - [ ] **Team collaboration** — Shared workspaces, multiple operators
 - [ ] **Session replay** — Implementation details
 - [ ] **Developer terminal UI** — Optional Phase 3 power-user feature — noted in Blueprint Phase 3
-- [x] **User direct editing and merge types** — Blueprint v2.5: agent merges, conflict merges, git merges out of scope
+- [x] **User direct editing** — Blueprint v2.6: simplified to revision-based sync, removed host-specific agent merge rules
 - [ ] **ACP sub-workers** — Deferred until next ACP release (~next quarter)
 
 ---
 
 ## Resolved
 
-- [x] **Collision prevention** — Blueprint v2.5: agent/conflict/git merge types, direct user editing
+- [x] **Collision prevention** — Blueprint v2.6: host-authoritative writes, revision tracking, stale revision detection
 - [x] **Permission prompt routing** — Blueprint v2.4: broadcast to all devices, first response wins
 - [x] **Network discovery** — Blueprint v2.4: `0.0.0.0:7337`, mDNS `app.local`, QR + `app status` fallback
 - [x] **Host CLI surface** — Blueprint v2.4: full command list in help format
 - [x] **Daemon lifecycle** — Blueprint v2.4: install/start/autostart/crash/upgrade table
-- [x] **Editor / file viewing** — Blueprint v2.5: Monaco editing, diff view, conflict merges, agent revert
+- [x] **Editor / file viewing** — Blueprint v2.6: Monaco editing, diff view, direct editing
 - [x] **Permission Routing subsection** — Blueprint v2.4 §8
-- [x] **Write Serialization subsection** — Blueprint v2.4 §14 Collision Prevention
+- [x] **Write Serialization subsection** — Removed in v2.6; ACP handles agent write semantics
 - [x] **Terminal / shell execution split** — Blueprint v2.3
 - [x] **Non-Goals section** — Blueprint v2.3
 - [x] **Device pairing auth flow** — Blueprint v2.2

@@ -2,7 +2,7 @@
 
 ## Product Design Blueprint
 
-> **Version:** 2.5
+> **Version:** 2.6
 >
 > This document defines the architecture for the Local Agent Interface application. It supersedes earlier drafts while preserving all existing functionality. The design is ACP-only, agent-agnostic, and intended to support any ACP-compatible agent without provider-specific integration code.
 
@@ -17,22 +17,18 @@ Rather than acting as an AI itself, the application implements an **ACP client**
 The application is designed to:
 
 * Run entirely on a personal computer via a background daemon and CLI.
-* Serve multiple devices over the local network (desktop, laptop, phone).
-* Keep all authoritative state on the host; connected devices are thin clients.
-* Connect to any ACP-compatible agent.
-* Remain functional as agents evolve, without custom per-agent integration.
-* Use ACP as the sole communication protocol between the application and agents.
+* Serve multiple devices (desktop, laptop, phone) over the local network as thin clients, with all authoritative state on the host.
+* Provide a built-in code editor so users can view, edit, and diff files directly alongside the agent chat.
+* Connect to any ACP-compatible agent through ACP alone, with no per-agent integration code.
 * Require explicit device pairing before any web client may access the UI.
 
 ---
 
 ## Product Summary
 
-**This app is** a powerful, self-hosted web interface that transforms CLI-based coding agents (like Claude Code and Cursor CLI) into collaborative, multi-device assistants. It moves the agent out of a rigid terminal window and into an intelligent, event-driven web dashboard. By running a lightweight background daemon on the host machine, it allows users to securely access, monitor, and direct AI coding agents from any desktop, laptop, or phone on the local network—all while keeping files perfectly synced and safe from overwrite collisions.
+**Setup and first device:** The user runs `app add-folder .` in a project directory to register the workspace, then `app pair` to generate a QR code. Scanning it with a phone pairs the device and opens the web UI, where they select a model, type instructions, attach images, and watch the agent write code, run shell commands, and spawn sub-workers—rendered as a chat stream while files are modified on the host.
 
-**The user interaction starts by** opening the host computer's terminal and running a simple CLI command (like `app add-folder .`) inside a project directory to register the workspace. They then run `app pair` to generate a secure QR code. Scanning this QR code with a phone instantly pairs the device and opens a sleek, Gemini-style web UI. From there, they can select an AI model (like Claude 3.5 Sonnet), type coding instructions, upload photos of whiteboard architectures, and watch as the agent writes code, executes shell commands, and spins up sub-workers—all rendered as a clean, interactive chat stream on the phone while the actual files are modified on the host computer.
-
-**To add a second client, like a laptop, while already using a phone, the user** opens a web browser on the laptop and navigates to the app's local IP address, where they are met with a secure lock screen. They run `app pair` again on the host computer's terminal. Instead of scanning the QR code, they read the short, four-word mnemonic passcode displayed on screen (e.g., *purple-fox-delta-wave*) and type it into the laptop's browser. The laptop is instantly authenticated. Because the backend broadcasts event state globally, the laptop's UI immediately populates with the same active chat, ongoing agent tasks, and file tree currently visible on the phone. The user can set the phone down and seamlessly continue on a full keyboard without skipping a beat.
+**Adding a second device:** On a laptop, the user navigates to the app's local IP and is met with a lock screen. They run `app pair` again, read the four-word mnemonic passcode (e.g., *purple-fox-delta-wave*), and type it in. Because state is broadcast globally, the laptop immediately shows the same active chat, agent tasks, and file tree as the phone.
 
 ---
 
@@ -88,21 +84,7 @@ The client does not need to know whether the backend is Claude, Codex, Gemini, o
 
 ## Capability Negotiation
 
-During initialization, the client and agent exchange capabilities through ACP.
-
-Examples:
-
-* Session creation and resume
-* Prompt exchange and streaming
-* Image and audio input
-* Filesystem access
-* Shell execution (ACP terminal capability — headless command runner, not a terminal UI panel)
-* MCP servers
-* Permission requests
-* Agent modes (Ask, Plan, Agent)
-* Cancellation
-
-The UI adapts automatically based on negotiated capabilities instead of hardcoding agent behavior.
+During initialization, the client and agent exchange capabilities through ACP (sessions, streaming, image/audio input, filesystem access, headless shell execution, MCP servers, permissions, agent modes, cancellation). The UI adapts automatically to negotiated capabilities instead of hardcoding agent behavior. See Section 7 for details.
 
 ---
 
@@ -122,37 +104,13 @@ Users who need a manual shell for setup use the host machine's real terminal and
 
 ## Stateless UI
 
-The web client never owns session state.
-
-All authoritative state lives on the server.
-
-Any device may disconnect and reconnect without affecting running agents.
+The web client never owns session state. All authoritative state lives on the server, so any device may disconnect and reconnect without affecting running agents.
 
 ---
 
 ## Event Driven
 
-Every meaningful action becomes an event.
-
-Examples include:
-
-* Prompt submitted
-* Stream update received
-* Tool started
-* Tool completed
-* Shell command started
-* Shell output streamed
-* Shell command completed
-* Permission requested
-* Permission granted
-* Permission denied
-* Session resumed
-* Agent connected
-* Agent disconnected
-* DevicePaired
-* DeviceRevoked
-
-The UI renders from the event stream instead of maintaining its own independent state.
+Every meaningful action becomes an event (prompts, stream updates, tool and shell activity, permission decisions, session and agent lifecycle, device pairing—see Section 11). The UI renders from the event stream instead of maintaining its own independent state.
 
 ---
 
@@ -213,24 +171,7 @@ The **ACP Client Layer** implements the protocol: starting agents, sending promp
 
 **Agents** handle AI reasoning, tool planning, and code generation. They request capabilities from the client; they do not own the filesystem or execute shell commands directly.
 
-The server owns:
-
-* Sessions
-* Routing
-* Device pairing and application authentication
-* Event storage and broadcast
-* Workspace management
-* Agent registry
-* Permission policies
-
-The agent owns:
-
-* AI reasoning
-* Tool planning
-* Token generation
-* Model behavior
-
-The Local Agent Interface owns orchestration, workspace resources, and user approval—not intelligence.
+In short, the **server** owns sessions, routing, device pairing/auth, event storage and broadcast, workspace management, the agent registry, and permission policies. The **agent** owns AI reasoning, tool planning, and model behavior. The Local Agent Interface owns orchestration, workspace resources, and user approval—not intelligence.
 
 ---
 
@@ -336,18 +277,6 @@ One worker manages one agent connection.
 
 ---
 
-## Merge Types
-
-All file writes flow through the host daemon. Three merge categories govern how changes combine:
-
-| Type | When | Behavior |
-|---|---|---|
-| **Agent merge** | Agent writes a file | Saved to disk immediately. Revision history tracks the change. User can review the diff and revert. |
-| **Conflict merge** | User saves but disk has changed | Host attempts an automatic merge. If changes overlap and cannot be reconciled, the user resolves in the editor. |
-| **Git merge** | Branch integration, pull, rebase | Out of scope for v1. Users handle git on the host directly. |
-
----
-
 # 5. Agent Registration
 
 Each registered agent declares:
@@ -391,76 +320,21 @@ Business logic belongs in the server; the ACP Client Layer handles protocol mech
 
 # 7. ACP Integration
 
-ACP standardizes nearly everything needed for the Local Agent Interface to talk to an AI coding agent.
+ACP standardizes nearly everything needed for the Local Agent Interface to talk to an AI coding agent. The ACP Client Layer (Section 6) implements these mechanics.
 
 ## What ACP Handles
 
-### Session Management
-
-* Create session
-* Load session
-* List sessions
-* Close session
-* Cancel running work
-
-### Prompt Exchange
-
-```
-User → session/prompt → Agent → streaming updates
-```
-
-### Streaming Updates
-
-While the agent is working, it streams progress back (thinking, reading files, editing, finished). The UI updates in real time from these events.
-
-### Permission Requests
-
-When an agent wants to do something requiring approval (execute a shell command, modify files, etc.), it sends `session/request_permission`. The client shows a dialog, waits for the user's decision, and returns one of:
-
-* Allow once
-* Allow always (for this session or tool, per policy)
-* Reject once
-
-If the client never responds, the agent waits.
-
-### Authentication
-
-ACP supports authentication negotiation so the client can log into providers before sessions begin.
-
-### Capability Negotiation
-
-During initialization, client and agent exchange supported capabilities: images, audio, filesystem access, shell execution, MCP servers, session features, and more.
-
-### Agent Modes
-
-Many ACP implementations expose modes such as Ask, Plan, and Agent. The client can switch between them without changing the protocol.
-
-### Cancellation
-
-The client can interrupt a running task, equivalent to pressing Ctrl+C in many CLIs.
-
----
+* **Session management** — create, load, list, close, and cancel running work.
+* **Prompt exchange & streaming** — `User → session/prompt → Agent → streaming updates`; the UI renders progress (thinking, reading, editing, finished) in real time.
+* **Permission requests** — agents send `session/request_permission`; the client returns *allow once*, *allow always* (per session or tool), or *reject once*. If the client never responds, the agent waits.
+* **Authentication** — providers can be logged into before sessions begin.
+* **Capability negotiation** — client and agent exchange supported features (images, audio, filesystem, shell, MCP, session features) at initialization.
+* **Agent modes** — Ask, Plan, and Agent, switchable without protocol changes.
+* **Cancellation** — interrupt a running task, like Ctrl+C.
 
 ## What ACP Does Not Handle
 
-ACP intentionally does not define:
-
-* UI design
-* Permission dialog appearance
-* File explorer layout
-* Terminal emulator implementation
-* Editor layout
-* Themes
-* Diff viewer
-* Chat interface
-
-Those belong entirely to the Local Agent Interface (the client application).
-
----
-
-## Replacing Custom Integration
-
-Earlier architectural approaches—direct CLI integration, terminal multiplexing, stdout/stderr parsing, or provider-specific APIs—are out of scope. ACP is the single integration path.
+ACP does not define UI concerns—visual design, permission dialog appearance, file explorer/editor layout, themes, diff viewer, or chat interface. Those belong entirely to the Local Agent Interface. Earlier integration approaches (direct CLI integration, terminal multiplexing, stdout/stderr parsing, provider-specific APIs) are out of scope; ACP is the single integration path.
 
 ---
 
@@ -595,7 +469,6 @@ Example event types include:
 * ShellOutputStreamed
 * ShellCommandCompleted
 * FileRevisionUpdated
-* MergeConflict
 * PermissionRequested
 * PermissionGranted
 * PermissionDenied
@@ -605,11 +478,7 @@ Example event types include:
 * ConnectionRestarted
 * SessionResumed
 
-Events are appended to the session log in chronological order.
-
-The current application state is derived from the event history rather than maintained as an independent source of truth.
-
-This approach simplifies synchronization across multiple connected clients and improves debugging and future replay capabilities.
+Events are appended to the session log in chronological order, and application state is derived from this history rather than maintained as an independent source of truth—simplifying multi-client synchronization, debugging, and future replay.
 
 ---
 
@@ -625,11 +494,7 @@ When a client reconnects:
 2. Missing events are synchronized.
 3. Live streaming resumes automatically.
 
-Multiple paired devices may observe the same running session simultaneously.
-
-A user may begin a session on one device and continue monitoring or interacting from another without interrupting the underlying agent connection. When a second device (e.g., a laptop) completes pairing while a phone session is already active, the new client's UI immediately populates with the same chat history, active agent tasks, and file tree—no manual refresh or session handoff required.
-
-The server broadcasts state globally so every paired client stays in sync. File collision prevention is handled by host-authoritative writes and revision tracking (see File System Access).
+Multiple paired devices may observe and interact with the same running session simultaneously without interrupting the underlying agent connection. A newly paired device immediately populates with the current chat history, active tasks, and file tree—no manual refresh or handoff. File changes propagate via revision tracking and `FileRevisionUpdated` events (see File System Access).
 
 ---
 
@@ -649,11 +514,7 @@ Each workspace stores:
 * Active sessions
 * Archived sessions
 
-Multiple sessions may exist within a single workspace.
-
-Agents may be switched between sessions without affecting the workspace itself.
-
-Workspace configuration remains agent-independent.
+Multiple sessions may exist within a single workspace, and agents may be switched between sessions without affecting the workspace. Workspace configuration remains agent-independent.
 
 ---
 
@@ -670,41 +531,20 @@ The server is responsible for:
 * Executing approved file operations on behalf of agents
 * Recording file-related events
 
-This maintains a clear audit trail and keeps filesystem control with the host, as ACP intends.
+This keeps filesystem control with the host and maintains a clear audit trail, as ACP intends.
 
-## Collision Prevention and Merges
+## Client File Sync
 
-OS file locking does not work here: the agent writes whole files, and users need to **watch live** and **edit from any device**. The solution is **one writer (the host), revision-based sync, and explicit merge rules**.
+The host executes all file writes: agent operations through ACP, user saves from browser clients. Every file has a monotonic revision number that increments on each write. When a file changes, the host emits a `FileRevisionUpdated` event so all paired clients update their editor view live.
 
-### Rules
+### User Edits
 
-1. **Only the host daemon writes to disk.** Agents write through ACP; browsers send save requests to the host.
-2. **Every file has a monotonic revision number.** Each successful write increments it.
-3. **All clients read from the event stream.** When a file changes, the host emits a `FileRevisionUpdated` event (content snapshot or diff + revision).
-4. **Writes are serialized** through the host. Agent writes and client saves enter a single queue per file.
-
-### Agent Merges
-
-When the agent writes a file:
-
-1. Permission is granted (if required).
-2. Host writes to disk **immediately**.
-3. Revision increments; prior content is stored in revision history.
-4. All paired clients receive `FileRevisionUpdated` and update the editor live.
-
-Users can watch the agent edit in real time and **revert** any agent change via the diff view (restores the previous revision through the host).
-
-### Client Edits
-
-Users edit directly from any paired device (phone, laptop). On save, the client sends content plus `expectedRevision` (the revision when editing began).
+Users edit from any paired device. On save, the client sends content plus `expectedRevision` (the revision when editing began).
 
 1. **Revision matches** — host applies the save, increments revision, broadcasts to all clients.
-2. **Revision stale, auto-merge possible** — host performs a three-way merge (base = user's revision, theirs = user edit, ours = current disk). On success, writes and broadcasts.
-3. **Conflict merge** — auto-merge fails (overlapping edits). Host returns a conflict state; the user resolves in Monaco's diff editor, then saves again.
+2. **Revision stale** — the file changed since editing began. Host returns current content and revision; the user reviews the diff and saves again.
 
-### Git Merges
-
-Git operations (branch merges, pull, rebase) are **out of scope for v1**. The app does not orchestrate git merges. Users run git on the host as usual.
+Git operations (branch merges, pull, rebase) are out of scope for v1. Users run git on the host directly.
 
 ---
 
@@ -744,9 +584,7 @@ Logging exists at multiple levels:
 * Agent process output (for diagnostics only—not used as a communication channel)
 * Session event logs
 
-Logs should support troubleshooting without exposing unnecessary internal implementation details to end users.
-
-Diagnostic information should be accessible through developer tooling but separated from the primary user experience.
+Logs should support troubleshooting via developer tooling, kept separate from the primary user experience and without exposing unnecessary internal details.
 
 ---
 
@@ -834,12 +672,11 @@ The conversation view renders directly from the event stream.
 
 ## Editor and File Viewing
 
-The main editor uses **Monaco**. Clients render file content from `FileRevisionUpdated` events so the view stays live while the agent edits.
+The main editor uses **Monaco**. Clients render file content from `FileRevisionUpdated` events so the view stays live while files change.
 
-* **Direct editing** — users edit files from any paired device. Saves go to the host with `expectedRevision` (see Collision Prevention and Merges).
-* **Live viewing** — all clients follow agent edits in real time via the event stream.
-* **Diff view** — Monaco's built-in diff editor for agent changes (review, compare) and **conflict merges** (resolve overlapping edits).
-* **Revert** — agent changes can be backed out from the diff view using revision history.
+* **Direct editing** — users edit files from any paired device. Saves go to the host with `expectedRevision` (see Client File Sync).
+* **Live viewing** — all clients follow file changes in real time via the event stream.
+* **Diff view** — Monaco's built-in diff editor for reviewing changes.
 
 ---
 
@@ -940,11 +777,7 @@ Pairing sessions are short-lived and single-use. Once consumed, the QR code and 
 
 ### Security Model
 
-The daemon binds to the local network interface and does not expose unauthenticated access to workspaces, files, or agent sessions. This design is safe to use in semi-public environments (e.g., a coffee shop) **as long as the user protects pairing codes**:
-
-* Do not share QR codes or mnemonic passcodes with others.
-* Pairing codes expire quickly and work only once.
-* Without a valid code, the lock screen reveals nothing about workspaces or sessions.
+The daemon binds to the local network interface and exposes no unauthenticated access to workspaces, files, or sessions. Pairing codes expire quickly, work only once, and must not be shared; without a valid code the lock screen reveals nothing. See Section 22 for the full security model.
 
 ---
 
@@ -1132,7 +965,7 @@ This separation of concerns keeps the application maintainable, extensible, and 
 * Single agent support
 * Event system
 * WebSocket synchronization across paired clients
-* Monaco editor with diff view, direct editing, and conflict resolution
+* Monaco editor with diff view and direct editing
 
 ---
 
