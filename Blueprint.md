@@ -371,6 +371,8 @@ Every ACP-compatible agent uses the same permission flow. The client does not im
 
 Permission prompts are **broadcast to all paired devices** simultaneously. Any device may respond; the first response is applied and synchronized to all clients. This lets a user approve a shell command or file write from whichever device is in hand.
 
+**Single-user model:** Pairing assumes one user with multiple devices. If multiple people pair to the same daemon, the first-response-wins model could let one person approve a command another is trying to deny. Multi-user support is a future concern (see OpenItems).
+
 ---
 
 # 9. Agent Lifecycle
@@ -493,6 +495,7 @@ When a client reconnects:
 1. The current session state is retrieved.
 2. Missing events are synchronized.
 3. Live streaming resumes automatically.
+4. Any in-flight permission prompt is re-presented. The agent waits until a response arrives or the prompt times out (configurable, default 5 minutes).
 
 Multiple paired devices may observe and interact with the same running session simultaneously without interrupting the underlying agent connection. A newly paired device immediately populates with the current chat history, active tasks, and file tree—no manual refresh or handoff. File changes propagate via revision tracking and `FileRevisionUpdated` events (see File System Access).
 
@@ -551,6 +554,8 @@ Users edit from any paired device. On save, the client sends content plus `expec
 When the agent modifies a file the user is actively editing, the editor shows an indicator (e.g., "File modified by agent") without forcing a reload of the user's unsaved buffer. The user may review incoming changes at any time. The conflict resolution above only triggers on save.
 
 Git operations (branch merges, pull, rebase) are out of scope for v1. Users run git on the host directly.
+
+**v1 limitation:** File sync sends full file content on every save and `FileRevisionUpdated` event. This is fine for typical source files but may be slow for very large files over Wi-Fi. Incremental/delta sync is a future optimization.
 
 ---
 
