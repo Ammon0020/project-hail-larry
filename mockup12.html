@@ -7,6 +7,41 @@
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
+        /* Sidebar overlay — shared responsive pattern for left-files, left-search, right-chat */
+        .sidebar-overlay {
+            display: none;
+            flex-direction: column;
+            position: absolute;
+            inset: 0;
+            z-index: 30;
+            height: 100%;
+            flex-shrink: 0;
+        }
+        .sidebar-overlay.show {
+            display: flex;
+        }
+        @media (min-width: 1024px) {
+            .sidebar-overlay {
+                position: relative;
+                inset: auto;
+                z-index: auto;
+            }
+        }
+        .sidebar-overlay-left {
+            width: 100%;
+            background: var(--color-panel);
+            border-right: 1px solid var(--color-gray-800);
+        }
+        .sidebar-overlay-right {
+            width: 100%;
+            background: var(--color-background);
+            border-left: 1px solid var(--color-gray-800);
+        }
+        @media (min-width: 1024px) {
+            .sidebar-overlay-left { width: 15rem; }
+            .sidebar-overlay-right { width: 24rem; }
+        }
+
         /* Component classes (extracted from repeated Tailwind utility patterns) */
         .sidebar-header {
             padding: 0.5rem 0.75rem;
@@ -56,6 +91,18 @@
             padding: 0.125rem 0.5rem;
             border-radius: 9999px;
             border: 1px solid color-mix(in srgb, var(--color-green-500) 20%, transparent);
+        }
+        .agent-avatar {
+            width: 1.75rem;
+            height: 1.75rem;
+            border-radius: 0.5rem;
+            background-color: color-mix(in srgb, var(--color-blue-600) 20%, transparent);
+            color: var(--color-blue-400);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            border: 1px solid color-mix(in srgb, var(--color-blue-500) 30%, transparent);
         }
 
         ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -153,16 +200,9 @@
 
     <!-- ============ LEFT SIDEBAR (popout — Files or Search) ============ -->
     <!-- Files Panel -->
-    <aside id="left-files" class="hidden flex-col w-full lg:w-60 absolute lg:relative inset-0 lg:inset-auto z-30 lg:z-auto bg-panel border-r border-gray-800 h-full shrink-0">
-        <!-- Mini horizontal activity bar (mobile only) -->
-        <div class="flex lg:hidden items-center gap-1 px-3 py-1.5 border-b border-gray-800/50 shrink-0 bg-activity-bar">
-            <button onclick="switchMobileExplorer('files')" class="mact-files flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-blue-400 bg-blue-600/10 transition">
-                <i data-lucide="files" class="w-4 h-4"></i> Files
-            </button>
-            <button onclick="switchMobileExplorer('search')" class="mact-search flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-gray-500 hover:text-gray-300 transition">
-                <i data-lucide="search" class="w-4 h-4"></i> Search
-            </button>
-        </div>
+    <aside id="left-files" class="sidebar-overlay sidebar-overlay-left">
+        <!-- Mini horizontal activity bar (mobile only, injected by JS) -->
+        <div class="mini-act-bar flex lg:hidden items-center gap-1 px-3 py-1.5 border-b border-gray-800/50 shrink-0 bg-activity-bar" data-active="files"></div>
         <!-- Workspace Switcher -->
         <div class="p-3 border-b border-gray-800 shrink-0">
             <div class="flex items-center justify-between mb-2">
@@ -227,16 +267,9 @@
     </aside>
 
     <!-- Search Panel -->
-    <aside id="left-search" class="hidden flex-col w-full lg:w-60 absolute lg:relative inset-0 lg:inset-auto z-30 lg:z-auto bg-panel border-r border-gray-800 h-full shrink-0">
-        <!-- Mini horizontal activity bar (mobile only) -->
-        <div class="flex lg:hidden items-center gap-1 px-3 py-1.5 border-b border-gray-800/50 shrink-0 bg-activity-bar">
-            <button onclick="switchMobileExplorer('files')" class="mact-files flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-gray-500 hover:text-gray-300 transition">
-                <i data-lucide="files" class="w-4 h-4"></i> Files
-            </button>
-            <button onclick="switchMobileExplorer('search')" class="mact-search flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-blue-400 bg-blue-600/10 transition">
-                <i data-lucide="search" class="w-4 h-4"></i> Search
-            </button>
-        </div>
+    <aside id="left-search" class="sidebar-overlay sidebar-overlay-left">
+        <!-- Mini horizontal activity bar (mobile only, injected by JS) -->
+        <div class="mini-act-bar flex lg:hidden items-center gap-1 px-3 py-1.5 border-b border-gray-800/50 shrink-0 bg-activity-bar" data-active="search"></div>
         <div class="sidebar-header">Search</div>
         <div class="px-3 pb-2 shrink-0">
             <div class="relative">
@@ -351,7 +384,7 @@
     </main>
 
     <!-- ============ RIGHT SIDEBAR — Agent Chat ============ -->
-    <aside id="right-chat" class="hidden flex-col w-full lg:w-96 absolute lg:relative inset-0 lg:inset-auto z-30 lg:z-auto bg-background border-l border-gray-800 h-full shrink-0">
+    <aside id="right-chat" class="sidebar-overlay sidebar-overlay-right">
         <!-- Chat Header (relative container for popout) -->
         <div class="relative border-b border-gray-800 shrink-0 bg-panel">
             <!-- Top row: harness + model + hamburger -->
@@ -387,50 +420,7 @@
                         <div class="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Chat History</div>
                         <button onclick="toggleChatList()" class="text-gray-500 hover:text-white transition"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
                     </div>
-                    <!-- Active chat -->
-                    <div class="flex items-center justify-between p-2 rounded-lg bg-blue-600/10 border border-blue-500/20 cursor-pointer session-item group">
-                        <div class="flex items-center gap-2 overflow-hidden">
-                            <div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0"></div>
-                            <span class="truncate text-xs font-medium text-blue-400">Server Setup</span>
-                        </div>
-                        <span class="text-[10px] text-gray-500 shrink-0">2m ago</span>
-                    </div>
-                    <!-- Inactive chats -->
-                    <div class="session-row session-item group">
-                        <div class="flex items-center gap-2 overflow-hidden">
-                            <div class="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0"></div>
-                            <span class="truncate text-xs text-gray-400">Auth refactor</span>
-                        </div>
-                        <span class="text-[10px] text-gray-500 shrink-0">1h ago</span>
-                    </div>
-                    <div class="session-row session-item group">
-                        <div class="flex items-center gap-2 overflow-hidden">
-                            <div class="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0"></div>
-                            <span class="truncate text-xs text-gray-400">DB migration</span>
-                        </div>
-                        <span class="text-[10px] text-gray-500 shrink-0">3h ago</span>
-                    </div>
-                    <div class="session-row session-item group">
-                        <div class="flex items-center gap-2 overflow-hidden">
-                            <div class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></div>
-                            <span class="truncate text-xs text-gray-400">Fix CORS issue</span>
-                        </div>
-                        <span class="text-[10px] text-gray-500 shrink-0">Yesterday</span>
-                    </div>
-                    <div class="session-row session-item group">
-                        <div class="flex items-center gap-2 overflow-hidden">
-                            <div class="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0"></div>
-                            <span class="truncate text-xs text-gray-400">Deploy script</span>
-                        </div>
-                        <span class="text-[10px] text-gray-500 shrink-0">2d ago</span>
-                    </div>
-                    <div class="session-row session-item group">
-                        <div class="flex items-center gap-2 overflow-hidden">
-                            <div class="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0"></div>
-                            <span class="truncate text-xs text-gray-400">Refactor utils</span>
-                        </div>
-                        <span class="text-[10px] text-gray-500 shrink-0">3d ago</span>
-                    </div>
+                    <div id="chat-history-list"></div>
                     <button class="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer text-gray-400 text-xs transition">
                         <i data-lucide="plus" class="w-3.5 h-3.5"></i> New Chat
                     </button>
@@ -450,7 +440,7 @@
 
             <!-- Agent response -->
             <div class="flex gap-3">
-                <div class="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
+                <div class="agent-avatar">
                     <i data-lucide="bot" class="w-4 h-4"></i>
                 </div>
                 <div class="flex-1 pt-0.5">
@@ -488,7 +478,7 @@
 
             <!-- Streaming indicator -->
             <div class="flex gap-3">
-                <div class="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
+                <div class="agent-avatar">
                     <i data-lucide="bot" class="w-4 h-4"></i>
                 </div>
                 <div class="flex-1 pt-1">
@@ -521,26 +511,7 @@
     </aside>
 
     <!-- ============ MOBILE BOTTOM NAV ============ -->
-    <nav class="lg:hidden fixed bottom-0 left-0 w-full h-16 bg-panel border-t border-gray-800 flex items-center justify-around z-50 px-2 pb-safe">
-        <button onclick="switchMobileView('explorer')" id="nav-explorer" class="flex flex-col items-center justify-center w-16 h-full text-gray-500 hover:text-gray-300 transition">
-            <i data-lucide="files" class="w-5 h-5 mb-0.5"></i>
-            <span class="text-[10px] font-medium">Explorer</span>
-        </button>
-        <button onclick="switchMobileView('editor')" id="nav-editor" class="flex flex-col items-center justify-center w-16 h-full text-blue-400 transition relative">
-            <div class="absolute top-1.5 right-3 w-1.5 h-1.5 rounded-full bg-blue-400"></div>
-            <i data-lucide="code" class="w-5 h-5 mb-0.5"></i>
-            <span class="text-[10px] font-medium">Editor</span>
-        </button>
-        <button onclick="switchMobileView('chat')" id="nav-chat" class="flex flex-col items-center justify-center w-16 h-full text-gray-500 hover:text-gray-300 transition relative">
-            <div class="absolute top-1.5 right-3 w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-            <i data-lucide="message-square" class="w-5 h-5 mb-0.5"></i>
-            <span class="text-[10px] font-medium">Chat</span>
-        </button>
-        <button onclick="switchMobileView('settings')" id="nav-settings" class="flex flex-col items-center justify-center w-16 h-full text-gray-500 hover:text-gray-300 transition">
-            <i data-lucide="settings" class="w-5 h-5 mb-0.5"></i>
-            <span class="text-[10px] font-medium">Settings</span>
-        </button>
-    </nav>
+    <nav id="mobile-nav" class="lg:hidden fixed bottom-0 left-0 w-full h-16 bg-panel border-t border-gray-800 flex items-center justify-around z-50 px-2 pb-safe"></nav>
 
         <!-- ============ MOBILE SETTINGS PANEL ============ -->
     <div id="mobile-settings" class="hidden flex-col absolute inset-0 bg-panel z-30 lg:hidden h-full">
@@ -598,16 +569,84 @@
 
         lucide.createIcons();
 
+        // ---- Generate chat history rows from data ----
+        (function() {
+            const chats = [
+                { name: 'Server Setup',    time: '2m ago',    dot: 'bg-blue-400 animate-pulse', active: true },
+                { name: 'Auth refactor',   time: '1h ago',    dot: 'bg-gray-600' },
+                { name: 'DB migration',    time: '3h ago',    dot: 'bg-gray-600' },
+                { name: 'Fix CORS issue',  time: 'Yesterday', dot: 'bg-green-400' },
+                { name: 'Deploy script',   time: '2d ago',    dot: 'bg-gray-600' },
+                { name: 'Refactor utils',  time: '3d ago',    dot: 'bg-gray-600' },
+            ];
+            const container = document.getElementById('chat-history-list');
+            container.innerHTML = chats.map(c => {
+                const cls = c.active
+                    ? 'flex items-center justify-between p-2 rounded-lg bg-blue-600/10 border border-blue-500/20 cursor-pointer session-item group'
+                    : 'session-row session-item group';
+                const textCls = c.active ? 'truncate text-xs font-medium text-blue-400' : 'truncate text-xs text-gray-400';
+                return `<div class="${cls}">
+                    <div class="flex items-center gap-2 overflow-hidden">
+                        <div class="w-1.5 h-1.5 rounded-full ${c.dot} shrink-0"></div>
+                        <span class="${textCls}">${c.name}</span>
+                    </div>
+                    <span class="text-[10px] text-gray-500 shrink-0">${c.time}</span>
+                </div>`;
+            }).join('');
+        })();
+
+        // ---- Generate mobile bottom nav from data ----
+        (function() {
+            const navItems = [
+                { view: 'explorer', icon: 'files',           label: 'Explorer', id: 'nav-explorer' },
+                { view: 'editor',   icon: 'code',            label: 'Editor',   id: 'nav-editor', badge: 'w-1.5 h-1.5 bg-blue-400' },
+                { view: 'chat',     icon: 'message-square',  label: 'Chat',     id: 'nav-chat',   badge: 'w-2 h-2 bg-blue-500 animate-pulse' },
+                { view: 'settings', icon: 'settings',        label: 'Settings', id: 'nav-settings' },
+            ];
+            const nav = document.getElementById('mobile-nav');
+            nav.innerHTML = navItems.map(n => `
+                <button onclick="switchMobileView('${n.view}')" id="${n.id}" class="flex flex-col items-center justify-center w-16 h-full text-gray-500 hover:text-gray-300 transition relative">
+                    ${n.badge ? `<div class="absolute top-1.5 right-3 w-1.5 h-1.5 rounded-full ${n.badge}"></div>` : ''}
+                    <i data-lucide="${n.icon}" class="w-5 h-5 mb-0.5"></i>
+                    <span class="text-[10px] font-medium">${n.label}</span>
+                </button>`).join('');
+        })();
+
+        // ---- Generate mini activity bars in left sidebars ----
+        (function() {
+            const tabs = [
+                { id: 'files',  icon: 'files',  label: 'Files' },
+                { id: 'search', icon: 'search', label: 'Search' },
+            ];
+            document.querySelectorAll('.mini-act-bar').forEach(bar => {
+                const active = bar.dataset.active;
+                bar.innerHTML = tabs.map(t => {
+                    const isActive = t.id === active;
+                    return `<button onclick="switchMobileExplorer('${t.id}')" class="mact-${t.id} flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition ${isActive ? 'text-blue-400 bg-blue-600/10' : 'text-gray-500 hover:text-gray-300'}">
+                        <i data-lucide="${t.icon}" class="w-4 h-4"></i> ${t.label}
+                    </button>`;
+                }).join('');
+            });
+        })();
+
         // ---- Helper: show/hide a panel element ----
         function showPanel(id) {
             const el = document.getElementById(id);
-            el.classList.remove('hidden');
-            el.classList.add('flex');
+            if (el.classList.contains('sidebar-overlay')) {
+                el.classList.add('show');
+            } else {
+                el.classList.remove('hidden');
+                el.classList.add('flex');
+            }
         }
         function hidePanel(id) {
             const el = document.getElementById(id);
-            el.classList.add('hidden');
-            el.classList.remove('flex');
+            if (el.classList.contains('sidebar-overlay')) {
+                el.classList.remove('show');
+            } else {
+                el.classList.add('hidden');
+                el.classList.remove('flex');
+            }
         }
 
         // ---- Helper: set active state on a group of nav buttons ----
@@ -637,7 +676,6 @@
             const actBtn = document.getElementById('act-' + panel);
             actBtn.classList.add('active', 'text-blue-400');
             actBtn.classList.remove('text-gray-500');
-            lucide.createIcons();
         }
 
         // ---- Desktop: Chat list toggle ----
@@ -695,7 +733,6 @@
                 el.classList.add('text-blue-400', 'bg-blue-600/10');
                 el.classList.remove('text-gray-500');
             });
-            lucide.createIcons();
         }
 
         // ---- Mobile: Bottom nav view switching ----
@@ -712,8 +749,6 @@
 
             if (panelMap[view]) showPanel(panelMap[view]);
             setActiveNav(navIds, navMap[view]);
-
-            lucide.createIcons();
         }
 
         // ---- Desktop: Show default panels on load ----

@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Local Agent Interface — Mockup</title>
+
+    <!-- Tailwind CSS v4 browser runtime — in production, use a build step (Vite + @tailwindcss/vite) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!--
+        Tailwind v4 theme tokens. In production these go in your main CSS file
+        with `@theme { ... }` and are processed by the Tailwind Vite plugin.
+
+        These custom colors map to Blueprint Section 17 (UI Architecture):
+        - background:  app background
+        - panel:       sidebar / header backgrounds
+        - activity-bar: far-left icon strip
+        - editor:      CodeMirror editor background
+        - status-bar:  bottom status bar (VS Code blue)
+        - tool-call:   tool execution accordion cards
+    -->
+    <style type="text/tailwindcss">
+        @theme {
+            --color-background: #0f111a;
+            --color-panel: #161925;
+            --color-activity-bar: #0d0e16;
+            --color-editor: #1e1e1e;
+            --color-status-bar: #007acc;
+            --color-tool-call: #12141d;
+        }
+
+        /*
+            Component classes — extracted from repeated utility patterns.
+            These are Tailwind SOURCE (not compiled output). A dev reading
+            these knows exactly which utilities to put on their JSX elements.
+
+            In production React, you'd use cva variants or shared components
+            instead of @apply, but this keeps the mockup DRY and readable.
+        */
+        @layer components {
+            /* Sidebar panel — shared responsive overlay pattern (Blueprint Sec 17) */
+            .sidebar-panel {
+                @apply hidden flex-col h-full shrink-0
+                       absolute inset-0 z-30
+                       lg:relative lg:inset-auto lg:z-auto lg:flex;
+            }
+            .sidebar-left {
+                @apply w-full bg-panel border-r border-gray-800
+                       lg:w-60;
+            }
+            .sidebar-right {
+                @apply w-full bg-background border-l border-gray-800
+                       lg:w-96;
+            }
+
+            /* Section headers in sidebars */
+            .sidebar-header {
+                @apply px-3 py-2 text-[10px] font-semibold text-gray-500
+                       uppercase tracking-wider shrink-0;
+            }
+
+            /* File tree items (Blueprint Sec 17 — file explorer) */
+            .tree-item {
+                @apply flex items-center gap-1.5 p-1 rounded cursor-pointer
+                       hover:bg-gray-800/50;
+            }
+            .tree-item-active {
+                @apply flex items-center justify-between p-1 rounded cursor-pointer
+                       bg-blue-600/10 text-blue-300 border-l-2 border-blue-500;
+            }
+
+            /* Chat session rows (Blueprint Sec 17 — chat history popout) */
+            .session-row {
+                @apply flex items-center justify-between p-2 rounded-lg
+                       hover:bg-gray-800/50 cursor-pointer;
+            }
+
+            /* Online status badge (Blueprint Sec 20 — network discovery) */
+            .online-badge {
+                @apply flex items-center gap-1 text-[10px] text-green-400
+                       bg-green-400/10 px-2 py-0.5 rounded-full
+                       border border-green-500/20;
+            }
+
+            /* Agent avatar in chat messages */
+            .agent-avatar {
+                @apply w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400
+                       flex items-center justify-center shrink-0
+                       border border-blue-500/30;
+            }
+
+            /* Activity bar items (Blueprint Sec 17 — activity bar) */
+            .activity-item {
+                @apply w-full flex items-center justify-center py-2.5
+                       text-gray-500 hover:text-gray-300 transition relative;
+            }
+            .activity-item.active {
+                @apply text-blue-400 hover:text-blue-300;
+            }
+            .activity-item.active::before {
+                content: '';
+                @apply absolute left-0 top-1/2 -translate-y-1/2
+                       w-0.5 h-6 bg-blue-500 rounded-r;
+            }
+
+            /* Permission dialog (Blueprint Sec 8 — permission manager) */
+            .perm-dialog {
+                @apply mt-2 bg-blue-900/10 border border-blue-500/30
+                       rounded-lg p-2.5;
+            }
+            .perm-btn-allow {
+                @apply flex-1 bg-blue-600 hover:bg-blue-500 text-white
+                       text-xs font-medium py-1.5 rounded transition;
+            }
+            .perm-btn-deny {
+                @apply flex-1 bg-gray-700 hover:bg-gray-600 text-white
+                       text-xs font-medium py-1.5 rounded transition;
+            }
+        }
+    </style>
+
+    <!-- Minimal plain CSS — only things Tailwind utilities can't express -->
+    <style>
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--color-gray-600); border-radius: 2px; }
+
+        /* Custom select arrow */
+        .header-dropdown {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.5rem center;
+            padding-right: 1.5rem;
+        }
+
+        /* Chat list popout animation */
+        .chat-list-overlay {
+            position: absolute; top: 100%; left: 0; right: 0; z-index: 50;
+            background: var(--color-panel);
+            border-bottom: 1px solid var(--color-gray-700);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            max-height: 60vh; overflow-y: auto; display: none;
+        }
+        .chat-list-overlay.open { display: block; }
+        .chat-list-resize {
+            height: 4px; background: var(--color-gray-700);
+            cursor: ns-resize; flex-shrink: 0;
+        }
+        .chat-list-resize:hover { background: var(--color-blue-500); }
+
+        /* Hide scrollbar on tab bar */
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* CodeMirror-like gutter */
+        .cm-gutter {
+            min-width: 48px; text-align: right; padding-right: 12px;
+            color: var(--color-gray-600); user-select: none;
+        }
+
+        /* Session action buttons (hover-reveal) */
+        .session-item .session-actions { opacity: 0; transition: opacity 0.15s; }
+        .session-item:hover .session-actions { opacity: 1; }
+
+        /* Details/summary reset */
+        details > summary { list-style: none; }
+        details > summary::-webkit-details-marker { display: none; }
+    </style>
+</head>
+
+<!--
+    Body: the app shell. Two top-level views:
+    1. #lock-screen — shown to unpaired devices (Blueprint Sec 19)
+    2. #app — shown to paired devices (Blueprint Sec 17)
+
+    The JS toggles between them based on mock auth state.
+-->
+<body class="bg-background text-gray-200 h-screen w-screen overflow-hidden flex font-sans selection:bg-blue-500/30">
+
+    <!-- ================================================================
+         LOCK SCREEN — unpaired devices see only this (Blueprint Sec 19)
+         ================================================================ -->
+    <div id="lock-screen" class="flex flex-col items-center justify-center h-full w-full bg-background px-4">
+        <div class="w-full max-w-sm space-y-6">
+            <!-- Logo / title -->
+            <div class="text-center space-y-2">
+                <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600/20 border border-blue-500/30">
+                    <i data-lucide="terminal" class="w-8 h-8 text-blue-400"></i>
+                </div>
+                <h1 class="text-xl font-bold text-gray-100">Local Agent Interface</h1>
+                <p class="text-sm text-gray-500">Enter the four-word passcode from <code class="text-blue-400 font-mono">app pair</code></p>
+            </div>
+
+            <!-- Passcode input -->
+            <div class="space-y-3">
+                <input
+                    type="text"
+                    id="passcode-input"
+                    placeholder="purple-fox-delta-wave"
+                    class="w-full bg-panel border border-gray-700 rounded-xl px-4 py-3 text-sm font-mono text-center text-gray-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                    autocomplete="off"
+                    spellcheck="false"
+                />
+                <button
+                    onclick="attemptPair()"
+                    class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-xl transition"
+                >
+                    Pair Device
+                </button>
+                <p id="pair-error" class="text-xs text-red-400 text-center hidden">Invalid passcode. Try again.</p>
+            </div>
+
+            <!-- Manual connection -->
+            <div class="pt-4 border-t border-gray-800">
+                <div class="text-xs text-gray-500 mb-2">Or connect manually:</div>
+                <div class="flex gap-2">
+                    <input
+                        type="text"
+                        placeholder="192.168.1.100:7337"
+                        class="flex-1 bg-panel border border-gray-700 rounded-lg px-3 py-2 text-xs font-mono text-gray-300 focus:outline-none focus:border-blue-500 transition"
+                    />
+                    <button class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition">
+                        Connect
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================
+         MAIN APP — paired devices see this VS Code-style layout
+         Blueprint Section 17: Primary Layout
+         ================================================================ -->
+    <div id="app" class="hidden h-full w-full flex">
+
+        <!-- ============ ACTIVITY BAR (far left, icon-only) ============ -->
+        <!-- Blueprint Sec 17: "Activity bar (far left, icon-only) — file explorer, search; connection status and settings at bottom" -->
+        <div id="activity-bar" class="hidden lg:flex flex-col items-center w-12 bg-activity-bar border-r border-gray-800/50 shrink-0 pt-2 gap-1">
+            <button onclick="switchLeftPanel('files')" id="act-files" class="activity-item active" title="Explorer">
+                <i data-lucide="files" class="w-5 h-5"></i>
+            </button>
+            <button onclick="switchLeftPanel('search')" id="act-search" class="activity-item" title="Search">
+                <i data-lucide="search" class="w-5 h-5"></i>
+            </button>
+            <div class="flex-1"></div>
+            <!-- WebSocket connection status -->
+            <div class="flex items-center justify-center py-2" title="Connected to local daemon">
+                <div class="w-2 h-2 rounded-full bg-green-400"></div>
+            </div>
+            <button onclick="switchMobileView('settings')" class="activity-item" title="Settings">
+                <i data-lucide="settings" class="w-5 h-5"></i>
+            </button>
+        </div>
+
+        <!-- ============ LEFT SIDEBAR — Files Panel ============ -->
+        <!-- Blueprint Sec 17: "Left sidebar (popout) — workspace switcher + file tree" -->
+        <aside id="left-files" class="sidebar-panel sidebar-left">
+            <!-- Mini horizontal activity bar (mobile only) -->
+            <div class="mini-act-bar flex lg:hidden items-center gap-1 px-3 py-1.5 border-b border-gray-800/50 shrink-0 bg-activity-bar" data-active="files"></div>
+
+            <!-- Workspace Switcher (Blueprint Sec 13) -->
+            <div class="p-3 border-b border-gray-800 shrink-0">
+                <div class="flex items-center justify-between mb-2">
+                    <label class="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Workspace</label>
+                    <div class="online-badge" title="Connected to local daemon">
+                        <i data-lucide="wifi" class="w-3 h-3"></i> Online
+                    </div>
+                </div>
+                <button class="w-full bg-background border border-gray-700 rounded-lg p-2 flex items-center justify-between hover:border-gray-500 transition shadow-sm">
+                    <div class="flex items-center gap-2 overflow-hidden">
+                        <i data-lucide="folder-code" class="w-4 h-4 text-blue-400 shrink-0"></i>
+                        <span class="truncate text-xs font-medium" id="workspace-name">my-project</span>
+                    </div>
+                    <i data-lucide="chevrons-up-down" class="w-3.5 h-3.5 text-gray-500 shrink-0"></i>
+                </button>
+            </div>
+
+            <!-- File Tree — rendered by JS from mock fileTree data -->
+            <div class="sidebar-header">Explorer</div>
+            <div id="file-tree" class="flex-1 overflow-y-auto px-2 pb-2 text-sm"></div>
+        </aside>
+
+        <!-- ============ LEFT SIDEBAR — Search Panel ============ -->
+        <aside id="left-search" class="sidebar-panel sidebar-left">
+            <!-- Mini horizontal activity bar (mobile only) -->
+            <div class="mini-act-bar flex lg:hidden items-center gap-1 px-3 py-1.5 border-b border-gray-800/50 shrink-0 bg-activity-bar" data-active="search"></div>
+
+            <div class="sidebar-header">Search</div>
+            <div class="px-3 pb-2 shrink-0">
+                <div class="relative">
+                    <i data-lucide="search" class="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2"></i>
+                    <input type="text" placeholder="Search files..." class="w-full bg-background border border-gray-700 rounded-md pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:border-blue-500 transition" />
+                </div>
+            </div>
+            <div class="flex-1 overflow-y-auto px-3 pb-2 text-xs space-y-3">
+                <div>
+                    <div class="text-gray-500 font-mono mb-1">3 results in 2 files</div>
+                    <div class="tree-item text-gray-300">
+                        <i data-lucide="file-code" class="w-3.5 h-3.5 text-yellow-400 shrink-0"></i> server.js
+                    </div>
+                    <div class="ml-4 font-mono text-[11px] text-gray-400 space-y-0.5">
+                        <div class="hover:bg-gray-800/50 rounded px-1 cursor-pointer"><span class="text-gray-600">12:</span> app.<span class="text-blue-400">listen</span>(port, () => {</div>
+                        <div class="hover:bg-gray-800/50 rounded px-1 cursor-pointer"><span class="text-gray-600">28:</span> console.<span class="text-blue-400">log</span>(`Server on ${port}`);</div>
+                    </div>
+                    <div class="tree-item text-gray-300 mt-1">
+                        <i data-lucide="file-code" class="w-3.5 h-3.5 text-yellow-400 shrink-0"></i> routes/index.js
+                    </div>
+                    <div class="ml-4 font-mono text-[11px] text-gray-400 space-y-0.5">
+                        <div class="hover:bg-gray-800/50 rounded px-1 cursor-pointer"><span class="text-gray-600">7:</span> router.<span class="text-blue-400">get</span>('/', (req, res) => {</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ============ EDITOR (center) ============ -->
+        <!-- Blueprint Sec 17: "Center editor — tabbed CodeMirror 6 with diff/save and status bar" -->
+        <main class="flex-1 flex flex-col min-w-0 h-full bg-editor relative pb-16 lg:pb-0">
+            <!-- Tab Bar -->
+            <div class="flex items-center bg-panel border-b border-background shrink-0 h-9">
+                <div class="flex overflow-x-auto hide-scrollbar">
+                    <!-- Active tab -->
+                    <div class="flex items-center gap-2 px-3 h-9 bg-editor text-sm text-gray-200 border-t-2 border-blue-500 shrink-0 border-r border-background">
+                        <i data-lucide="file-code" class="w-3.5 h-3.5 text-yellow-400"></i> server.js
+                        <i data-lucide="circle" class="w-2 h-2 text-blue-400 fill-blue-400"></i>
+                        <i data-lucide="x" class="w-3.5 h-3.5 text-gray-500 hover:text-white cursor-pointer ml-1"></i>
+                    </div>
+                    <!-- Inactive tab -->
+                    <div class="hidden md:flex items-center gap-2 px-3 h-9 bg-panel text-sm text-gray-500 border-r border-background shrink-0 hover:bg-editor/50 transition">
+                        <i data-lucide="file-code" class="w-3.5 h-3.5 text-yellow-400"></i> routes/index.js
+                        <i data-lucide="x" class="w-3.5 h-3.5 text-gray-600 hover:text-gray-300 cursor-pointer ml-1"></i>
+                    </div>
+                </div>
+                <div class="flex-1"></div>
+                <!-- Editor actions: Diff + Save (Blueprint Sec 14 — file sync) -->
+                <div class="hidden md:flex gap-1.5 pr-3">
+                    <button class="text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-300 px-2.5 py-1 rounded transition flex items-center gap-1.5">
+                        <i data-lucide="git-compare" class="w-3 h-3"></i> Diff
+                    </button>
+                    <button class="text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded flex items-center gap-1.5 transition">
+                        <i data-lucide="save" class="w-3 h-3"></i> Save
+                    </button>
+                </div>
+            </div>
+
+            <!-- CodeMirror 6 Editor Area (Blueprint Sec 17 — CodeMirror 6) -->
+            <div class="flex-1 overflow-auto bg-editor font-mono text-[12px] leading-[18px] md:text-[13px] md:leading-[20px]">
+                <div class="flex">
+                    <!-- Gutter -->
+                    <div class="cm-gutter shrink-0 select-none py-1 text-gray-600 text-right pr-3 pl-2 border-r border-gray-800/30">
+                        <div>1</div><div>2</div><div>3</div><div>4</div><div>5</div>
+                        <div>6</div><div>7</div><div>8</div><div>9</div><div>10</div>
+                        <div>11</div><div>12</div><div>13</div><div>14</div><div>15</div>
+                        <div>16</div><div>17</div><div>18</div><div>19</div><div>20</div>
+                        <div>21</div><div>22</div><div>23</div><div>24</div><div>25</div>
+                    </div>
+                    <!-- Code content -->
+                    <div id="editor-content" class="flex-1 py-1 px-3 text-gray-300"></div>
+                </div>
+            </div>
+
+            <!-- Status Bar (Blueprint Sec 17) -->
+            <div class="flex items-center justify-between bg-status-bar text-white text-[10px] md:text-[11px] px-3 py-0.5 shrink-0">
+                <div class="flex items-center gap-3">
+                    <span class="flex items-center gap-1"><i data-lucide="git-branch" class="w-3 h-3"></i> main</span>
+                    <span class="hidden md:flex items-center gap-1"><i data-lucide="circle-alert" class="w-3 h-3"></i> 0 errors</span>
+                    <span class="hidden md:flex items-center gap-1"><i data-lucide="triangle-alert" class="w-3 h-3"></i> 0 warnings</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span class="hidden md:inline">JavaScript</span>
+                    <span class="hidden md:inline">UTF-8</span>
+                    <span class="hidden md:inline">LF</span>
+                    <span>Ln 21, Col 3</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- ============ RIGHT SIDEBAR — Agent Chat ============ -->
+        <!-- Blueprint Sec 17: "Right sidebar — agent chat with harness/model selectors, chat history, streaming responses, tool timelines, permissions, input" -->
+        <aside id="right-chat" class="sidebar-panel sidebar-right">
+            <!-- Chat Header (relative container for popout) -->
+            <div class="relative border-b border-gray-800 shrink-0 bg-panel">
+                <!-- Top row: harness + model + hamburger -->
+                <div class="flex items-center gap-2 p-3">
+                    <!-- Harness selector — pick agent (Blueprint Sec 5 — agent registration) -->
+                    <select id="harness-select" class="header-dropdown bg-background border border-gray-700 text-gray-200 text-xs font-semibold rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-500 cursor-pointer shadow-sm hover:border-gray-500 transition shrink-0" title="Agent Harness">
+                        <!-- Options populated by JS from mockAgents data -->
+                    </select>
+                    <!-- Model selector — pick model for selected agent -->
+                    <select id="model-select" class="header-dropdown bg-background border border-blue-500/50 text-blue-400 text-xs font-medium rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-400 cursor-pointer shadow-sm hover:border-blue-400 transition shrink-0" title="Model">
+                        <!-- Options populated by JS based on selected harness -->
+                    </select>
+                    <div class="flex-1"></div>
+                    <!-- Hamburger menu — toggles chat list popout -->
+                    <button onclick="toggleChatList()" id="chat-menu-btn" class="p-1.5 text-gray-400 hover:text-white bg-gray-800 rounded-md transition relative" title="Chat History">
+                        <i data-lucide="menu" class="w-4 h-4"></i>
+                        <div class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                    </button>
+                </div>
+
+                <!-- Chat list popout (floats over chat messages) -->
+                <div id="chat-list-overlay" class="chat-list-overlay">
+                    <div class="chat-list-resize" title="Drag to resize"></div>
+                    <div class="p-2 space-y-1">
+                        <div class="flex items-center justify-between px-1 pb-1">
+                            <div class="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Chat History</div>
+                            <button onclick="toggleChatList()" class="text-gray-500 hover:text-white transition"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+                        </div>
+                        <!-- Session rows populated by JS from mockSessions data -->
+                        <div id="chat-history-list"></div>
+                        <button class="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer text-gray-400 text-xs transition">
+                            <i data-lucide="plus" class="w-3.5 h-3.5"></i> New Chat
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Messages — rendered by JS from event stream (Blueprint Sec 11) -->
+            <div id="chat-messages" class="flex-1 overflow-y-auto p-3 lg:p-4 space-y-3 lg:space-y-4 pb-20 lg:pb-4"></div>
+
+            <!-- Chat Input (Blueprint Sec 17 — input composer) -->
+            <div class="p-2.5 lg:p-3 bg-gradient-to-t from-background to-transparent shrink-0 border-t border-gray-800/50 pb-20 lg:pb-3">
+                <div class="relative flex items-end gap-2">
+                    <button class="p-2.5 bg-panel border border-gray-700 rounded-xl hover:bg-gray-800 hover:border-gray-500 transition text-gray-400 shrink-0" title="Upload Artifact">
+                        <i data-lucide="paperclip" class="w-4 h-4"></i>
+                    </button>
+                    <div class="relative flex-1">
+                        <textarea
+                            id="chat-input"
+                            placeholder="Message agent..."
+                            class="w-full bg-panel border border-gray-700 rounded-xl pl-3 pr-10 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none h-12 transition-all"
+                        ></textarea>
+                        <button onclick="sendMessage()" class="absolute right-2 bottom-2 p-1.5 bg-blue-600 rounded-lg hover:bg-blue-500 transition">
+                            <i data-lucide="arrow-up" class="w-3.5 h-3.5 text-white"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ============ MOBILE BOTTOM NAV ============ -->
+        <!-- Blueprint Sec 17: "Mobile: bottom-nav layout, one panel at a time" -->
+        <nav id="mobile-nav" class="lg:hidden fixed bottom-0 left-0 w-full h-16 bg-panel border-t border-gray-800 flex items-center justify-around z-50 px-2 pb-safe"></nav>
+
+        <!-- ============ MOBILE SETTINGS PANEL ============ -->
+        <!-- Blueprint Sec 20 — configuration, paired devices, theme -->
+        <div id="mobile-settings" class="hidden flex-col absolute inset-0 bg-panel z-30 lg:hidden h-full">
+            <div class="p-3 border-b border-gray-800 shrink-0">
+                <h2 class="text-sm font-bold text-gray-400 uppercase tracking-wider">Settings</h2>
+            </div>
+            <div class="flex-1 overflow-y-auto p-3 space-y-3">
+                <!-- Connection status -->
+                <div class="bg-background border border-gray-800 rounded-lg p-3">
+                    <div class="text-xs font-semibold text-gray-300 mb-2">Connection</div>
+                    <div class="flex items-center justify-between text-xs text-gray-400 py-1">
+                        <span class="flex items-center gap-2"><i data-lucide="wifi" class="w-4 h-4 text-green-400"></i> Status</span>
+                        <span class="text-green-400">Online</span>
+                    </div>
+                    <div class="flex items-center justify-between text-xs text-gray-400 py-1">
+                        <span class="flex items-center gap-2"><i data-lucide="server" class="w-4 h-4 text-gray-500"></i> Daemon</span>
+                        <span>localhost:7337</span>
+                    </div>
+                </div>
+                <!-- Paired devices (Blueprint Sec 19 — device pairing) -->
+                <div class="bg-background border border-gray-800 rounded-lg p-3">
+                    <div class="text-xs font-semibold text-gray-300 mb-2">Paired Devices</div>
+                    <div id="paired-devices-list"></div>
+                </div>
+                <!-- Theme -->
+                <div class="bg-background border border-gray-800 rounded-lg p-3">
+                    <div class="text-xs font-semibold text-gray-300 mb-2">Theme</div>
+                    <div class="flex items-center gap-2">
+                        <button class="flex-1 bg-blue-600/20 border border-blue-500/40 text-blue-400 text-xs py-2 rounded-md">Dark</button>
+                        <button class="flex-1 bg-gray-800 border border-gray-700 text-gray-400 text-xs py-2 rounded-md">Light</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================
+         JAVASCRIPT
+         Organized in three layers:
+         1. Mock data — shapes that match what the Go backend will send
+         2. Mock backend — simulates WebSocket events and ACP messages
+         3. UI logic — rendering, panel switching, mobile nav
+         ================================================================ -->
+    <script>
+    // ====================================================================
+    // 1. MOCK DATA — shapes match what the Go daemon sends over WebSocket
+    // ====================================================================
+
+    /*
+        File tree shape (Blueprint Sec 13 — workspace management).
+        The backend sends this as JSON over WebSocket on connect and on
+        FileRevisionUpdated events. Each node has a revision number for
+        three-way merge conflict detection (Blueprint Sec 14).
+    */
+    const mockFileTree = [
+        {
+            name: 'src', type: 'folder', expanded: true,
+            icon: 'folder-open', iconColor: 'text-blue-400',
+            children: [
+                {
+                    name: 'routes', type: 'folder', expanded: true,
+                    icon: 'folder-open', iconColor: 'text-blue-400',
+                    children: [
+                        { name: 'index.js', type: 'file', icon: 'file-code', iconColor: 'text-yellow-400' },
+                        { name: 'auth.js', type: 'file', icon: 'file-code', iconColor: 'text-yellow-400' },
+                    ]
+                },
+                { name: 'server.js', type: 'file', icon: 'file-code', iconColor: 'text-yellow-400', active: true, unsaved: true, revision: 3 },
+                { name: 'db.js', type: 'file', icon: 'file-code', iconColor: 'text-yellow-400' },
+            ]
+        },
+        { name: 'tests', type: 'folder', expanded: false, icon: 'folder', iconColor: 'text-blue-400' },
+        { name: 'package.json', type: 'file', icon: 'file-text', iconColor: 'text-gray-400' },
+        { name: 'README.md', type: 'file', icon: 'file-text', iconColor: 'text-gray-400' },
+    ];
+
+    /*
+        File content — what the editor displays.
+        In production, the backend sends file content on open and on
+        FileRevisionUpdated events. The editor uses CodeMirror 6 with
+        expectedRevision for conflict detection (Blueprint Sec 14).
+    */
+    const mockFileContent = [
+        { text: 'import', cls: 'text-purple-400' }, { text: ' express ', raw: true }, { text: 'from', cls: 'text-purple-400' }, { text: " 'express';", cls: 'text-green-400' },
+    ];
+
+    // Pre-rendered code lines for the editor (mockup only)
+    const mockCodeLines = `
+<div><span class="text-purple-400">import</span> express <span class="text-purple-400">from</span> <span class="text-green-400">'express'</span>;</div>
+<div><span class="text-purple-400">import</span> { connect } <span class="text-purple-400">from</span> <span class="text-green-400">'./db.js'</span>;</div>
+<div></div>
+<div><span class="text-purple-400">const</span> app = <span class="text-blue-400">express</span>();</div>
+<div><span class="text-purple-400">const</span> port = process.<span class="text-blue-400">env</span>.PORT || <span class="text-orange-400">3000</span>;</div>
+<div></div>
+<div><span class="text-gray-500">// Middleware</span></div>
+<div>app.<span class="text-blue-400">use</span>(express.<span class="text-blue-400">json</span>());</div>
+<div>app.<span class="text-blue-400">use</span>(<span class="text-purple-400">await</span> <span class="text-blue-400">connect</span>());</div>
+<div></div>
+<div><span class="text-gray-500">// Routes</span></div>
+<div>app.<span class="text-blue-400">use</span>(<span class="text-green-400">'/api'</span>, <span class="text-purple-400">await</span> <span class="text-blue-400">import</span>(<span class="text-green-400">'./routes'</span>));</div>
+<div></div>
+<div>app.<span class="text-blue-400">listen</span>(port, () => {</div>
+<div>&nbsp;&nbsp;console.<span class="text-blue-400">log</span>(<span class="text-green-400">\`Server running on port \${port}\`</span>);</div>
+<div>});</div>
+<div></div>
+<div><span class="text-gray-500 italic">// Unsaved edit — added error handler</span></div>
+<div>app.<span class="text-blue-400">use</span>((err, req, res, next) => {</div>
+<div>&nbsp;&nbsp;console.<span class="text-blue-400">error</span>(err.<span class="text-blue-400">stack</span>);</div>
+<div>&nbsp;&nbsp;res.<span class="text-blue-400">status</span>(<span class="text-orange-400">500</span>).<span class="text-blue-400">send</span>(<span class="text-green-400">'Something broke!'</span>);</div>
+<div>});</div>
+    `.trim();
+
+    /*
+        Registered agents (Blueprint Sec 5 — agent registration).
+        Each agent declares: name, version, supported models, capabilities.
+        The UI populates harness + model selectors from this data.
+    */
+    const mockAgents = [
+        {
+            id: 'claude-code',
+            name: 'Claude Code',
+            models: [
+                { id: 'claude-3.5-sonnet', name: 'Sonnet 3.5' },
+                { id: 'claude-3-opus', name: 'Opus 3' },
+                { id: 'claude-3-haiku', name: 'Haiku 3' },
+            ]
+        },
+        {
+            id: 'codex',
+            name: 'Codex CLI',
+            models: [
+                { id: 'gpt-4o', name: 'GPT-4o' },
+                { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+            ]
+        },
+        {
+            id: 'gemini',
+            name: 'Gemini CLI',
+            models: [
+                { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+                { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
+            ]
+        },
+        {
+            id: 'cursor',
+            name: 'Cursor CLI',
+            models: [
+                { id: 'cursor-small', name: 'Cursor Small' },
+            ]
+        },
+    ];
+
+    /*
+        Chat sessions (Blueprint Sec 4 — session, Sec 10 — session lifecycle).
+        States: Created → Starting → Running → WaitingForPermission →
+                Interrupted → Completed → Failed → Archived
+    */
+    const mockSessions = [
+        { id: 's1', name: 'Server Setup',    time: '2m ago',    status: 'running',   active: true },
+        { id: 's2', name: 'Auth refactor',   time: '1h ago',    status: 'completed' },
+        { id: 's3', name: 'DB migration',    time: '3h ago',    status: 'completed' },
+        { id: 's4', name: 'Fix CORS issue',  time: 'Yesterday', status: 'completed' },
+        { id: 's5', name: 'Deploy script',   time: '2d ago',    status: 'failed' },
+        { id: 's6', name: 'Refactor utils',  time: '3d ago',    status: 'archived' },
+    ];
+
+    /*
+        Paired devices (Blueprint Sec 19 — device pairing).
+        Each device gets a unique, revocable credential.
+    */
+    const mockDevices = [
+        { id: 'd1', name: 'iPhone',  icon: 'smartphone', pairedAt: '2024-01-15' },
+        { id: 'd2', name: 'MacBook', icon: 'laptop',     pairedAt: '2024-01-10' },
+    ];
+
+    /*
+        Event types (Blueprint Sec 11 — event system).
+        The UI renders chat messages, tool timelines, and permission
+        dialogs from this event stream. Every meaningful action becomes
+        an immutable, chronologically appended event.
+
+        In production, events arrive over WebSocket as JSON:
+        { type: 'StreamUpdate', sessionId: 's1', content: '...', ... }
+    */
+    const mockEvents = [
+        {
+            type: 'PromptSubmitted',
+            sessionId: 's1',
+            role: 'user',
+            content: 'Add error handling middleware to server.js and make sure the routes are properly imported.',
+        },
+        {
+            type: 'ResponseStarted',
+            sessionId: 's1',
+            role: 'agent',
+            content: "I'll add error handling middleware and verify the route imports. Let me check the current file first.",
+        },
+        {
+            type: 'ToolCompleted',
+            sessionId: 's1',
+            tool: 'edit_file',
+            target: 'server.js',
+            summary: 'Added error handler at line 17-21',
+        },
+        {
+            type: 'PermissionRequested',
+            sessionId: 's1',
+            tool: 'shell',
+            command: 'npm test',
+            options: ['allow_once', 'allow_session', 'allow_always', 'deny'],
+        },
+        {
+            type: 'StreamUpdate',
+            sessionId: 's1',
+            role: 'agent',
+            content: 'Running tests...',
+            streaming: true,
+        },
+    ];
+
+    // ====================================================================
+    // 2. MOCK BACKEND — simulates the Go daemon's WebSocket + ACP layer
+    // ====================================================================
+
+    /*
+        MockWebSocket simulates the real WebSocket connection to the
+        Go daemon. In production, the browser connects to:
+            ws://app.local:7337/ws  (mDNS)  or
+            ws://192.168.x.x:7337/ws  (direct IP)
+
+        The daemon broadcasts events to all paired clients (Blueprint Sec 12).
+        This mock simulates: connect, send prompt, receive streaming events.
+    */
+    const MockBackend = {
+        connected: true,
+
+        /** Simulate sending a prompt to the agent via ACP (Blueprint Sec 6) */
+        sendPrompt(sessionId, content) {
+            // In production: client sends { type: 'PromptSubmitted', ... }
+            // → daemon forwards to agent via ACP session/prompt
+            // → agent streams back responses
+
+            // Mock: add user message immediately
+            mockEvents.push({
+                type: 'PromptSubmitted',
+                sessionId,
+                role: 'user',
+                content,
+            });
+            renderChatMessages();
+
+            // Mock: simulate agent response after delay
+            setTimeout(() => {
+                mockEvents.push({
+                    type: 'ResponseStarted',
+                    sessionId,
+                    role: 'agent',
+                    content: 'I\'ll help with that. Let me analyze the current state of the code.',
+                });
+                renderChatMessages();
+
+                // Mock: simulate streaming indicator
+                setTimeout(() => {
+                    mockEvents.push({
+                        type: 'StreamUpdate',
+                        sessionId,
+                        role: 'agent',
+                        content: 'Analyzing file structure...',
+                        streaming: true,
+                    });
+                    renderChatMessages();
+                }, 800);
+            }, 500);
+        },
+
+        /** Simulate permission response (Blueprint Sec 8) */
+        respondPermission(sessionId, decision) {
+            mockEvents.push({
+                type: decision === 'allow' ? 'PermissionGranted' : 'PermissionDenied',
+                sessionId,
+            });
+            renderChatMessages();
+        },
+    };
+
+    // ====================================================================
+    // 3. UI LOGIC — rendering, panel switching, mobile nav
+    // ====================================================================
+
+    // ---- Render: file tree from mock data ----
+    function renderFileTree(nodes, depth = 0) {
+        return nodes.map(node => {
+            const indent = depth > 0 ? `ml-${depth * 4}` : '';
+            if (node.type === 'folder') {
+                const chevron = node.expanded ? 'chevron-down' : 'chevron-right';
+                const folderIcon = node.expanded ? 'folder-open' : 'folder';
+                let html = `<div class="tree-item text-gray-300 ${indent}">
+                    <i data-lucide="${chevron}" class="w-3.5 h-3.5 text-gray-500 shrink-0"></i>
+                    <i data-lucide="${folderIcon}" class="w-4 h-4 ${node.iconColor} shrink-0"></i> ${node.name}
+                </div>`;
+                if (node.expanded && node.children) {
+                    html += renderFileTree(node.children, depth + 1);
+                }
+                return html;
+            } else {
+                if (node.active) {
+                    return `<div class="tree-item-active group ${indent}">
+                        <div class="flex items-center gap-1.5">
+                            <i data-lucide="${node.icon}" class="w-4 h-4 ${node.iconColor} shrink-0"></i> ${node.name}
+                        </div>
+                        ${node.unsaved ? '<i data-lucide="circle" class="w-2 h-2 text-blue-400 fill-blue-400" title="Unsaved changes"></i>' : ''}
+                    </div>`;
+                }
+                return `<div class="tree-item text-gray-400 ${indent}">
+                    <i data-lucide="${node.icon}" class="w-4 h-4 ${node.iconColor} shrink-0"></i> ${node.name}
+                </div>`;
+            }
+        }).join('');
+    }
+
+    // ---- Render: chat messages from event stream (Blueprint Sec 11) ----
+    function renderChatMessages() {
+        const container = document.getElementById('chat-messages');
+        container.innerHTML = mockEvents.map(event => {
+            switch (event.type) {
+                case 'PromptSubmitted':
+                    return `
+                        <div class="flex gap-3">
+                            <div class="w-7 h-7 rounded-lg bg-gray-800 flex items-center justify-center shrink-0 border border-gray-700 text-xs font-medium">U</div>
+                            <div class="flex-1 pt-0.5">
+                                <p class="text-sm text-gray-200">${event.content}</p>
+                            </div>
+                        </div>`;
+
+                case 'ResponseStarted':
+                    return `
+                        <div class="flex gap-3">
+                            <div class="agent-avatar"><i data-lucide="bot" class="w-4 h-4"></i></div>
+                            <div class="flex-1 pt-0.5">
+                                <p class="text-sm text-gray-300 mb-2">${event.content}</p>
+                            </div>
+                        </div>`;
+
+                case 'ToolCompleted':
+                    return `
+                        <div class="flex gap-3">
+                            <div class="agent-avatar"><i data-lucide="bot" class="w-4 h-4"></i></div>
+                            <div class="flex-1 pt-0.5">
+                                <details class="group mt-2 border-l-2 border-gray-800 pl-3 open:border-blue-500/50 transition-colors">
+                                    <summary class="flex items-center gap-2 cursor-pointer text-xs font-mono text-gray-400 hover:text-gray-300 w-max select-none">
+                                        <i data-lucide="chevron-right" class="w-3.5 h-3.5 group-open:rotate-90 transition-transform"></i>
+                                        <i data-lucide="wrench" class="w-3.5 h-3.5 text-purple-400"></i>
+                                        ${event.tool}: ${event.target} <span class="text-gray-600">[completed]</span>
+                                    </summary>
+                                    <div class="mt-2 space-y-1.5 pl-1">
+                                        <div class="bg-tool-call rounded-md border border-gray-800/80 p-2 text-xs">
+                                            <span class="text-purple-400 font-mono">tool_call</span>: ${event.summary}
+                                        </div>
+                                    </div>
+                                </details>
+                            </div>
+                        </div>`;
+
+                case 'PermissionRequested':
+                    return `
+                        <div class="flex gap-3">
+                            <div class="agent-avatar"><i data-lucide="bot" class="w-4 h-4"></i></div>
+                            <div class="flex-1 pt-0.5">
+                                <div class="perm-dialog">
+                                    <div class="flex items-center gap-2 text-xs text-blue-400 font-semibold mb-2">
+                                        <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i> Permission Required
+                                    </div>
+                                    <p class="text-xs text-gray-300 mb-2.5">
+                                        <span class="font-mono text-gray-400 bg-black/40 px-1 rounded">${event.tool}: ${event.command}</span>
+                                    </p>
+                                    <div class="flex gap-2">
+                                        <button onclick="MockBackend.respondPermission('${event.sessionId}', 'allow')" class="perm-btn-allow">Allow</button>
+                                        <button onclick="MockBackend.respondPermission('${event.sessionId}', 'deny')" class="perm-btn-deny">Deny</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>`;
+
+                case 'StreamUpdate':
+                    if (event.streaming) {
+                        return `
+                            <div class="flex gap-3">
+                                <div class="agent-avatar"><i data-lucide="bot" class="w-4 h-4"></i></div>
+                                <div class="flex-1 pt-1">
+                                    <div class="flex items-center gap-1.5 text-xs text-gray-500">
+                                        <div class="flex gap-1">
+                                            <div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 0ms"></div>
+                                            <div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 150ms"></div>
+                                            <div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 300ms"></div>
+                                        </div>
+                                        ${event.content}
+                                    </div>
+                                </div>
+                            </div>`;
+                    }
+                    return `
+                        <div class="flex gap-3">
+                            <div class="agent-avatar"><i data-lucide="bot" class="w-4 h-4"></i></div>
+                            <div class="flex-1 pt-0.5">
+                                <p class="text-sm text-gray-300">${event.content}</p>
+                            </div>
+                        </div>`;
+
+                case 'PermissionGranted':
+                case 'PermissionDenied':
+                    // These events don't render as separate messages —
+                    // in production, the permission dialog would update its state
+                    return '';
+
+                default:
+                    return '';
+            }
+        }).join('');
+        lucide.createIcons();
+    }
+
+    // ---- Render: chat history session rows ----
+    function renderSessionList() {
+        const container = document.getElementById('chat-history-list');
+        const statusDot = {
+            running: 'bg-blue-400 animate-pulse',
+            completed: 'bg-gray-600',
+            failed: 'bg-red-400',
+            archived: 'bg-gray-600',
+        };
+        container.innerHTML = mockSessions.map(s => {
+            const cls = s.active
+                ? 'flex items-center justify-between p-2 rounded-lg bg-blue-600/10 border border-blue-500/20 cursor-pointer session-item group'
+                : 'session-row session-item group';
+            const textCls = s.active ? 'truncate text-xs font-medium text-blue-400' : 'truncate text-xs text-gray-400';
+            return `<div class="${cls}">
+                <div class="flex items-center gap-2 overflow-hidden">
+                    <div class="w-1.5 h-1.5 rounded-full ${statusDot[s.status]} shrink-0"></div>
+                    <span class="${textCls}">${s.name}</span>
+                </div>
+                <span class="text-[10px] text-gray-500 shrink-0">${s.time}</span>
+            </div>`;
+        }).join('');
+    }
+
+    // ---- Render: paired devices list ----
+    function renderDevices() {
+        const container = document.getElementById('paired-devices-list');
+        if (!container) return;
+        container.innerHTML = mockDevices.map(d => `
+            <div class="flex items-center justify-between text-xs text-gray-400 py-1">
+                <span class="flex items-center gap-2"><i data-lucide="${d.icon}" class="w-4 h-4 text-gray-500"></i> ${d.name}</span>
+                <button class="text-red-400 hover:text-red-300" onclick="revokeDevice('${d.id}')">Revoke</button>
+            </div>
+        `).join('');
+    }
+
+    function revokeDevice(id) {
+        const idx = mockDevices.findIndex(d => d.id === id);
+        if (idx >= 0) mockDevices.splice(idx, 1);
+        renderDevices();
+        lucide.createIcons();
+    }
+
+    // ---- Render: harness + model selectors from agent registry ----
+    function renderAgentSelectors() {
+        const harnessSel = document.getElementById('harness-select');
+        harnessSel.innerHTML = mockAgents.map((a, i) =>
+            `<option value="${a.id}" ${i === 0 ? 'selected' : ''}>${a.name}</option>`
+        ).join('');
+
+        const modelSel = document.getElementById('model-select');
+        const updateModels = () => {
+            const agent = mockAgents.find(a => a.id === harnessSel.value);
+            modelSel.innerHTML = agent.models.map((m, i) =>
+                `<option value="${m.id}" ${i === 0 ? 'selected' : ''}>${m.name}</option>`
+            ).join('');
+        };
+        updateModels();
+        harnessSel.addEventListener('change', updateModels);
+    }
+
+    // ---- Render: mobile bottom nav ----
+    function renderMobileNav() {
+        const navItems = [
+            { view: 'explorer', icon: 'files',          label: 'Explorer', id: 'nav-explorer' },
+            { view: 'editor',   icon: 'code',           label: 'Editor',   id: 'nav-editor', badge: 'w-1.5 h-1.5 bg-blue-400' },
+            { view: 'chat',     icon: 'message-square', label: 'Chat',     id: 'nav-chat',   badge: 'w-2 h-2 bg-blue-500 animate-pulse' },
+            { view: 'settings', icon: 'settings',       label: 'Settings', id: 'nav-settings' },
+        ];
+        document.getElementById('mobile-nav').innerHTML = navItems.map(n => `
+            <button onclick="switchMobileView('${n.view}')" id="${n.id}" class="flex flex-col items-center justify-center w-16 h-full text-gray-500 hover:text-gray-300 transition relative">
+                ${n.badge ? `<div class="absolute top-1.5 right-3 w-1.5 h-1.5 rounded-full ${n.badge}"></div>` : ''}
+                <i data-lucide="${n.icon}" class="w-5 h-5 mb-0.5"></i>
+                <span class="text-[10px] font-medium">${n.label}</span>
+            </button>
+        `).join('');
+    }
+
+    // ---- Render: mini activity bars (mobile Files/Search toggle) ----
+    function renderMiniActBars() {
+        const tabs = [
+            { id: 'files',  icon: 'files',  label: 'Files' },
+            { id: 'search', icon: 'search', label: 'Search' },
+        ];
+        document.querySelectorAll('.mini-act-bar').forEach(bar => {
+            const active = bar.dataset.active;
+            bar.innerHTML = tabs.map(t => {
+                const isActive = t.id === active;
+                return `<button onclick="switchMobileExplorer('${t.id}')" class="mact-${t.id} flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition ${isActive ? 'text-blue-400 bg-blue-600/10' : 'text-gray-500 hover:text-gray-300'}">
+                    <i data-lucide="${t.icon}" class="w-4 h-4"></i> ${t.label}
+                </button>`;
+            }).join('');
+        });
+    }
+
+    // ---- Panel switching helpers ----
+    function showPanel(id) {
+        const el = document.getElementById(id);
+        if (el.classList.contains('sidebar-panel')) {
+            el.classList.remove('hidden');
+            el.classList.add('flex');
+        } else {
+            el.classList.remove('hidden');
+            el.classList.add('flex');
+        }
+    }
+    function hidePanel(id) {
+        const el = document.getElementById(id);
+        el.classList.add('hidden');
+        el.classList.remove('flex');
+    }
+    function setActiveNav(navIds, activeId) {
+        navIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (id === activeId) {
+                el.classList.add('text-blue-400');
+                el.classList.remove('text-gray-500');
+            } else {
+                el.classList.remove('text-blue-400');
+                el.classList.add('text-gray-500');
+            }
+        });
+    }
+
+    // ---- Desktop: activity bar left panel switching ----
+    function switchLeftPanel(panel) {
+        ['left-files', 'left-search'].forEach(hidePanel);
+        document.querySelectorAll('#activity-bar .activity-item').forEach(el => {
+            el.classList.remove('active', 'text-blue-400');
+            el.classList.add('text-gray-500');
+        });
+        showPanel('left-' + panel);
+        const actBtn = document.getElementById('act-' + panel);
+        actBtn.classList.add('active', 'text-blue-400');
+        actBtn.classList.remove('text-gray-500');
+    }
+
+    // ---- Desktop: chat list popout toggle ----
+    function toggleChatList() {
+        document.getElementById('chat-list-overlay').classList.toggle('open');
+    }
+
+    // ---- Mobile: explorer sub-panel switching (files vs search) ----
+    function switchMobileExplorer(tab) {
+        hidePanel('left-files');
+        hidePanel('left-search');
+        showPanel('left-' + tab);
+        document.querySelectorAll('.mact-files, .mact-search').forEach(el => {
+            el.classList.remove('text-blue-400', 'bg-blue-600/10');
+            el.classList.add('text-gray-500');
+        });
+        document.querySelectorAll('.mact-' + tab).forEach(el => {
+            el.classList.add('text-blue-400', 'bg-blue-600/10');
+            el.classList.remove('text-gray-500');
+        });
+    }
+
+    // ---- Mobile: bottom nav view switching ----
+    function switchMobileView(view) {
+        if (window.innerWidth >= 1024) return;
+        ['left-files', 'left-search', 'right-chat', 'mobile-settings'].forEach(hidePanel);
+        const navIds = ['nav-explorer', 'nav-editor', 'nav-chat', 'nav-settings'];
+        const panelMap = { explorer: 'left-files', chat: 'right-chat', settings: 'mobile-settings' };
+        const navMap = { explorer: 'nav-explorer', editor: 'nav-editor', chat: 'nav-chat', settings: 'nav-settings' };
+        if (panelMap[view]) showPanel(panelMap[view]);
+        setActiveNav(navIds, navMap[view]);
+    }
+
+    // ---- Chat: send message via mock backend ----
+    function sendMessage() {
+        const input = document.getElementById('chat-input');
+        const content = input.value.trim();
+        if (!content) return;
+        MockBackend.sendPrompt('s1', content);
+        input.value = '';
+    }
+
+    // ---- Lock screen: attempt pairing (Blueprint Sec 19) ----
+    function attemptPair() {
+        const input = document.getElementById('passcode-input');
+        const error = document.getElementById('pair-error');
+        const passcode = input.value.trim().toLowerCase();
+        // Mock: accept any non-empty 4-word passcode
+        if (passcode.split(/[\s-]+/).filter(Boolean).length === 4) {
+            document.getElementById('lock-screen').classList.add('hidden');
+            document.getElementById('app').classList.remove('hidden');
+            document.getElementById('app').classList.add('flex');
+            lucide.createIcons();
+        } else {
+            error.classList.remove('hidden');
+        }
+    }
+
+    // ---- Chat list drag-to-resize ----
+    (function() {
+        const resizeHandle = document.querySelector('.chat-list-resize');
+        const overlay = document.getElementById('chat-list-overlay');
+        let isDragging = false, startY = 0, startMaxHeight = 0;
+        if (resizeHandle) {
+            resizeHandle.addEventListener('mousedown', e => {
+                isDragging = true;
+                startY = e.clientY;
+                startMaxHeight = parseInt(window.getComputedStyle(overlay).maxHeight) || 60 * window.innerHeight / 100;
+                document.body.style.cursor = 'ns-resize';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+            });
+            document.addEventListener('mousemove', e => {
+                if (!isDragging) return;
+                overlay.style.maxHeight = Math.max(150, Math.min(window.innerHeight * 0.8, startMaxHeight + startY - e.clientY)) + 'px';
+            });
+            document.addEventListener('mouseup', () => {
+                if (isDragging) { isDragging = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; }
+            });
+        }
+    })();
+
+    // ---- Init: render everything ----
+    document.getElementById('file-tree').innerHTML = renderFileTree(mockFileTree);
+    document.getElementById('editor-content').innerHTML = mockCodeLines;
+    renderSessionList();
+    renderDevices();
+    renderAgentSelectors();
+    renderMobileNav();
+    renderMiniActBars();
+    renderChatMessages();
+
+    // ---- Init: show default panels ----
+    if (window.innerWidth >= 1024) {
+        showPanel('left-files');
+        showPanel('right-chat');
+    } else {
+        switchMobileView('editor');
+    }
+
+    // ---- Init: process icons ----
+    lucide.createIcons();
+
+    // ---- Keyboard: Enter to send chat, Enter to pair ----
+    document.getElementById('chat-input')?.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+    document.getElementById('passcode-input')?.addEventListener('keydown', e => {
+        if (e.key === 'Enter') attemptPair();
+    });
+    </script>
+</body>
+</html>
