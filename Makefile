@@ -1,4 +1,4 @@
-.PHONY: all build-frontend build-backend build test vet clean
+.PHONY: all build-frontend build-backend build test lint vet clean
 
 # Build the frontend and copy it into the Go embed directory.
 build-frontend:
@@ -17,6 +17,10 @@ build: build-frontend build-backend
 test:
 	go test ./...
 	cd web && npm run build
+
+# Run golangci-lint (cross-platform: Windows, macOS, Linux).
+lint:
+	golangci-lint run
 
 # Run go vet.
 vet:

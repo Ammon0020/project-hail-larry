@@ -40,7 +40,7 @@ func NewFileSync() *FileSync {
 //
 // In Phase 1, a stale revision returns ErrStaleRevision without attempting
 // a three-way merge. The merge UI is handled by the frontend using @codemirror/merge.
-func (f *FileSync) Save(ctx context.Context, workspacePath, relPath, content string, expectedRevision int64) (int64, error) {
+func (f *FileSync) Save(_ context.Context, workspacePath, relPath, content string, expectedRevision int64) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -59,11 +59,11 @@ func (f *FileSync) Save(ctx context.Context, workspacePath, relPath, content str
 
 	// Ensure parent directory exists.
 	dir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil { //nolint:gosec // workspace files should use normal project directory permissions.
 		return 0, fmt.Errorf("create dir: %w", err)
 	}
 
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil { //nolint:gosec // workspace files should remain user-editable by normal tools.
 		return 0, fmt.Errorf("write file: %w", err)
 	}
 
@@ -80,7 +80,7 @@ func (f *FileSync) Save(ctx context.Context, workspacePath, relPath, content str
 
 // CurrentRevision returns the latest revision of a file.
 // Returns 0 if the file has not been tracked yet.
-func (f *FileSync) CurrentRevision(ctx context.Context, workspacePath, relPath string) (int64, error) {
+func (f *FileSync) CurrentRevision(_ context.Context, workspacePath, relPath string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

@@ -11,7 +11,7 @@ import (
 // processExists checks whether a process with the given PID is running.
 // On Windows, Signal(0) is not supported, so we use tasklist instead.
 func processExists(pid int) bool {
-	cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH", "/FO", "CSV")
+	cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH", "/FO", "CSV") //nolint:gosec // tasklist is a fixed system command; pid is parsed from the daemon pid file.
 	output, err := cmd.Output()
 	if err != nil {
 		return false

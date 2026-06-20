@@ -9,12 +9,17 @@ import (
 	"path/filepath"
 )
 
+const (
+	appDataDirPerm = 0700
+	configFilePerm = 0600
+)
+
 // Config is the persistent application configuration.
 type Config struct {
-	Port       int    `json:"port"`
-	Host       string `json:"host"`
-	DataDir    string `json:"dataDir"`
-	DBPath     string `json:"dbPath"`
+	Port       int      `json:"port"`
+	Host       string   `json:"host"`
+	DataDir    string   `json:"dataDir"`
+	DBPath     string   `json:"dbPath"`
 	Workspaces []string `json:"workspaces"`
 }
 
@@ -44,7 +49,7 @@ func Load() (*Config, error) {
 	}
 	configPath := filepath.Join(homeDir, ".local-agent", "config.json")
 
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) //nolint:gosec // configPath is constructed from the current user's home directory.
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Default(), nil
@@ -81,7 +86,7 @@ func Load() (*Config, error) {
 // Save writes the config to ~/.local-agent/config.json.
 func (c *Config) Save() error {
 	dir := filepath.Dir(filepath.Join(c.DataDir, "config.json"))
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, appDataDirPerm); err != nil {
 		return err
 	}
 
@@ -91,5 +96,5 @@ func (c *Config) Save() error {
 	}
 
 	configPath := filepath.Join(c.DataDir, "config.json")
-	return os.WriteFile(configPath, data, 0644)
+	return os.WriteFile(configPath, data, configFilePerm)
 }

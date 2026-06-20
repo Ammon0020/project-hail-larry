@@ -4,15 +4,19 @@
 package server
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"io/fs"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
+	"time"
 
 	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/events"
+	"github.com/adama/local-agent/internal/interfaces"
 	"github.com/adama/local-agent/internal/pairing"
 	"github.com/adama/local-agent/internal/permissions"
 	"github.com/adama/local-agent/internal/sync"
@@ -102,7 +106,7 @@ func (s *Server) apiRoutes() {
 }
 
 // handleHealth responds with a simple JSON health check.
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -143,7 +147,13 @@ func (s *Server) serveFrontend() {
 // ListenAndServe starts the HTTP server on the given address.
 func (s *Server) ListenAndServe(addr string) error {
 	log.Printf("Server listening on %s", addr)
-	return http.ListenAndServe(addr, s.mux)
+
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           s.mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	return httpServer.ListenAndServe()
 }
 
 // Handler returns the http.Handler for testing.
@@ -151,10 +161,29 @@ func (s *Server) Handler() http.Handler {
 	return s.mux
 }
 
+// recordEvent persists an event to the event store and broadcasts it via
+// WebSocket. It is a no-op when EventStore is nil.
+func (s *Server) recordEvent(ctx context.Context, e interfaces.Event) {
+	if s.deps == nil || s.deps.EventStore == nil {
+		return
+	}
+	event, _ := s.deps.EventStore.Append(ctx, e)
+	if s.deps.SyncHub != nil {
+		s.deps.SyncHub.Broadcast(event)
+	}
+}
+
 // writeJSON writes a JSON response with the given status code.
+// Nil slices are converted to empty slices so they serialize as [] not null.
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
+	if v != nil {
+		rv := reflect.ValueOf(v)
+		if rv.Kind() == reflect.Slice && rv.IsNil() {
+			v = reflect.MakeSlice(rv.Type(), 0, 0).Interface()
+		}
+	}
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("write json: %v", err)
 	}
@@ -167,6 +196,6 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 
 // decodeJSON decodes a JSON request body into v.
 func decodeJSON(r *http.Request, v interface{}) error {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	return json.NewDecoder(r.Body).Decode(v)
 }

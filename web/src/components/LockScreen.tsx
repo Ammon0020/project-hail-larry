@@ -1,22 +1,44 @@
 import { useState, type KeyboardEvent } from 'react'
 import { Terminal } from 'lucide-react'
+import { api } from '@/lib/api'
 
 /**
  * Lock screen shown to unpaired devices (Blueprint Sec 19 — device pairing).
  * Accepts a four-word mnemonic passcode from `app pair`.
- * In production, this submits a one-time token to the daemon.
+ * Submits the passcode to the daemon's /api/pair/verify-passcode endpoint.
  */
 export function LockScreen({ onPaired }: { onPaired: () => void }) {
   const [passcode, setPasscode] = useState('')
   const [error, setError] = useState(false)
+  const [errorMsg, setErrorMsg] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  /** Validates the passcode format (4 words separated by hyphens or spaces). */
-  const attemptPair = () => {
+  /**
+   * Validates the passcode format (4 words) and submits to the backend.
+   * On success, stores the device credential and calls onPaired.
+   */
+  const attemptPair = async () => {
     const words = passcode.trim().toLowerCase().split(/[\s-]+/).filter(Boolean)
-    if (words.length === 4) {
-      onPaired()
-    } else {
+    if (words.length !== 4) {
       setError(true)
+      setErrorMsg('Passcode must be 4 words.')
+      return
+    }
+
+    setLoading(true)
+    setError(false)
+
+    try {
+      const deviceName = navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Browser'
+      const cred = await api.verifyPasscode(passcode.trim(), deviceName)
+      // Store credential in localStorage (Blueprint Sec 19).
+      localStorage.setItem('deviceCredential', JSON.stringify(cred))
+      onPaired()
+    } catch (err) {
+      setError(true)
+      setErrorMsg(err instanceof Error ? err.message : 'Invalid or expired passcode.')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -56,12 +78,13 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
           />
           <button
             onClick={attemptPair}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-xl transition"
+            disabled={loading}
+            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium py-3 rounded-xl transition"
           >
-            Pair Device
+            {loading ? 'Pairing...' : 'Pair Device'}
           </button>
           {error && (
-            <p className="text-xs text-red-400 text-center">Invalid passcode. Try again.</p>
+            <p className="text-xs text-red-400 text-center">{errorMsg}</p>
           )}
         </div>
 

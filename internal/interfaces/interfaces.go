@@ -19,6 +19,7 @@ import (
 type EventType string
 
 const (
+	//nolint:revive // event type enum — names are self-documenting
 	EventPromptSubmitted       EventType = "PromptSubmitted"
 	EventResponseStarted       EventType = "ResponseStarted"
 	EventStreamUpdate          EventType = "StreamUpdate"
@@ -46,7 +47,7 @@ type Event struct {
 	Timestamp time.Time `json:"timestamp"`
 	Role      string    `json:"role,omitempty"`      // "user" | "agent"
 	Content   string    `json:"content,omitempty"`   // message text
-	Streaming  bool     `json:"streaming,omitempty"` // true during streaming
+	Streaming bool      `json:"streaming,omitempty"` // true during streaming
 	Tool      string    `json:"tool,omitempty"`      // tool name
 	Target    string    `json:"target,omitempty"`    // file path or target
 	Summary   string    `json:"summary,omitempty"`   // tool result summary
@@ -161,6 +162,7 @@ type ACPClient interface {
 type PermissionDecision string
 
 const (
+	//nolint:revive // permission decision enum — names are self-documenting
 	PermissionAllowOnce    PermissionDecision = "allow_once"
 	PermissionAllowSession PermissionDecision = "allow_session"
 	PermissionAllowAlways  PermissionDecision = "allow_always"
@@ -169,11 +171,11 @@ const (
 
 // PermissionRequest represents a pending permission prompt.
 type PermissionRequest struct {
-	ID        string              `json:"id"`
-	SessionID string              `json:"sessionId"`
-	Tool      string              `json:"tool"`
-	Command   string              `json:"command,omitempty"`
-	Target    string              `json:"target,omitempty"`
+	ID        string               `json:"id"`
+	SessionID string               `json:"sessionId"`
+	Tool      string               `json:"tool"`
+	Command   string               `json:"command,omitempty"`
+	Target    string               `json:"target,omitempty"`
 	Options   []PermissionDecision `json:"options"`
 }
 

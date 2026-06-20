@@ -33,7 +33,7 @@ func NewManager() *Manager {
 
 // Register adds a directory as a workspace.
 // Returns the workspace info with a generated ID.
-func (m *Manager) Register(ctx context.Context, path string) (interfaces.WorkspaceInfo, error) {
+func (m *Manager) Register(_ context.Context, path string) (interfaces.WorkspaceInfo, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return interfaces.WorkspaceInfo{}, fmt.Errorf("abs path: %w", err)
@@ -64,7 +64,7 @@ func (m *Manager) Register(ctx context.Context, path string) (interfaces.Workspa
 }
 
 // List returns all registered workspaces.
-func (m *Manager) List(ctx context.Context) ([]interfaces.WorkspaceInfo, error) {
+func (m *Manager) List(_ context.Context) ([]interfaces.WorkspaceInfo, error) {
 	workspaces := make([]interfaces.WorkspaceInfo, 0, len(m.workspaces))
 	for id, path := range m.workspaces {
 		workspaces = append(workspaces, interfaces.WorkspaceInfo{
@@ -83,7 +83,7 @@ func (m *Manager) List(ctx context.Context) ([]interfaces.WorkspaceInfo, error) 
 // FileTree returns the file tree for a workspace.
 // Directories are listed first, then files, both alphabetically.
 // Hidden files/directories (starting with .) are excluded.
-func (m *Manager) FileTree(ctx context.Context, workspaceID string) ([]interfaces.FileNode, error) {
+func (m *Manager) FileTree(_ context.Context, workspaceID string) ([]interfaces.FileNode, error) {
 	path, ok := m.workspaces[workspaceID]
 	if !ok {
 		return nil, fmt.Errorf("workspace not found: %s", workspaceID)
@@ -94,7 +94,7 @@ func (m *Manager) FileTree(ctx context.Context, workspaceID string) ([]interface
 
 // ReadFile returns the content of a file and its current revision.
 // The revision is a hash of the file content, used for optimistic locking.
-func (m *Manager) ReadFile(ctx context.Context, workspaceID, relPath string) (string, int64, error) {
+func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (string, int64, error) {
 	wsPath, ok := m.workspaces[workspaceID]
 	if !ok {
 		return "", 0, fmt.Errorf("workspace not found: %s", workspaceID)
@@ -106,7 +106,7 @@ func (m *Manager) ReadFile(ctx context.Context, workspaceID, relPath string) (st
 		return "", 0, err
 	}
 
-	content, err := os.ReadFile(fullPath)
+	content, err := os.ReadFile(fullPath) //nolint:gosec // fullPath is constrained by safeJoin to the registered workspace root.
 	if err != nil {
 		return "", 0, fmt.Errorf("read file: %w", err)
 	}

@@ -121,7 +121,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 func (c *Client) readPump(ctx context.Context) {
 	defer func() {
 		c.hub.Unregister(c)
-		c.conn.Close(websocket.StatusNormalClosure, "")
+		_ = c.conn.Close(websocket.StatusNormalClosure, "")
 	}()
 
 	for {
@@ -137,7 +137,7 @@ func (c *Client) readPump(ctx context.Context) {
 
 // writePump sends queued events to the WebSocket client.
 func (c *Client) writePump(ctx context.Context) {
-	defer c.conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = c.conn.Close(websocket.StatusNormalClosure, "") }()
 
 	for {
 		select {

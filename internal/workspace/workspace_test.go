@@ -117,14 +117,14 @@ func TestFileTree(t *testing.T) {
 
 	// Find the src folder and verify it has children.
 	var srcNode *struct {
-		i       int
-		found   bool
+		i     int
+		found bool
 	}
 	for i, node := range tree {
 		if node.Name == "src" {
 			srcNode = &struct {
-				i       int
-				found   bool
+				i     int
+				found bool
 			}{i: i, found: true}
 			if node.Type != "folder" {
 				t.Error("expected src to be a folder")

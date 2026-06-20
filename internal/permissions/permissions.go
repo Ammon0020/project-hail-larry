@@ -97,7 +97,7 @@ func (m *Manager) Request(ctx context.Context, req interfaces.PermissionRequest)
 
 // Respond records a decision from a device. First response wins.
 // Returns an error if the request doesn't exist or already has a response.
-func (m *Manager) Respond(ctx context.Context, requestID string, decision interfaces.PermissionDecision) error {
+func (m *Manager) Respond(_ context.Context, requestID string, decision interfaces.PermissionDecision) error {
 	m.mu.Lock()
 	pending, ok := m.pending[requestID]
 	m.mu.Unlock()

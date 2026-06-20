@@ -38,14 +38,7 @@ func (e *Executor) Run(ctx context.Context, command string) (Result, error) {
 		return Result{}, fmt.Errorf("empty command")
 	}
 
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/C", command)
-	} else {
-		cmd = exec.CommandContext(ctx, "sh", "-c", command)
-	}
-
-	// Set the working directory to the workspace path.
+	cmd := shellCommand(ctx, command)
 	cmd.Dir = e.workspacePath
 
 	var stdout, stderr bytes.Buffer
@@ -82,13 +75,7 @@ func (e *Executor) RunAsync(ctx context.Context, command string, onStdout, onStd
 		return Result{}, fmt.Errorf("empty command")
 	}
 
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/C", command)
-	} else {
-		cmd = exec.CommandContext(ctx, "sh", "-c", command)
-	}
-
+	cmd := shellCommand(ctx, command)
 	cmd.Dir = e.workspacePath
 
 	// Get pipes for streaming.
@@ -101,8 +88,8 @@ func (e *Executor) RunAsync(ctx context.Context, command string, onStdout, onStd
 		return Result{}, fmt.Errorf("stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
-		return Result{}, fmt.Errorf("start command: %w", err)
+	if startErr := cmd.Start(); startErr != nil {
+		return Result{}, fmt.Errorf("start command: %w", startErr)
 	}
 
 	// Read stdout and stderr in goroutines.
@@ -129,6 +116,14 @@ func (e *Executor) RunAsync(ctx context.Context, command string, onStdout, onStd
 	}
 
 	return result, nil
+}
+
+// shellCommand builds the OS-specific shell invocation for an approved command.
+func shellCommand(ctx context.Context, command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.CommandContext(ctx, "cmd", "/C", command) //nolint:gosec // commands are executed only after client permission approval.
+	}
+	return exec.CommandContext(ctx, "sh", "-c", command) //nolint:gosec // commands are executed only after client permission approval.
 }
 
 // readPipe reads from a pipe, writing to the buffer and calling the callback.

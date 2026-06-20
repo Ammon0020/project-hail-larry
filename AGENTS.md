@@ -30,6 +30,11 @@ Self-hosted web code editor with AI built in. A Go daemon runs on the user's mac
 - Stay on task — if a test fails in another task, note it in `docs/known-issues.md` and move on
 - Plans must be summary (see `docs/Blueprint.md`) or executable in one branch under a single work item (see `docs/plans/`)
 - No inline CSS or hard-to-read styling
+- Use linters: 
+ - `golangci-lint` for Go
+ - `eslint` for JavaScript/TypeScript
+
+Note: Cap lint output — fix a few errors per pass, not the whole dump.
 
 ## Tailwind CSS Standards
 

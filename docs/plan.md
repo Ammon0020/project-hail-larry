@@ -205,3 +205,4 @@ Built from `docs/plans/Blueprint.md` and `docs/development/TechStack.md`.
 - [x] `frontend-shell`
 - [x] `frontend-editor`
 - [x] `frontend-pairing`
+- [x] `integration` — wired all managers into daemon, added HTTP API routes, WebSocket /ws endpoint, frontend wired to real backend API, Windows stop fix, default agent registration

@@ -12,17 +12,7 @@ func TestRunEcho(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(dir)
 
-	var command string
-	var expected string
-	if runtime.GOOS == "windows" {
-		command = "echo hello"
-		expected = "hello"
-	} else {
-		command = "echo hello"
-		expected = "hello"
-	}
-
-	result, err := executor.Run(context.Background(), command)
+	result, err := executor.Run(context.Background(), "echo hello")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -33,8 +23,8 @@ func TestRunEcho(t *testing.T) {
 
 	// Trim whitespace for comparison (echo adds newline on some platforms).
 	output := strings.TrimSpace(result.Stdout)
-	if output != expected {
-		t.Errorf("expected stdout '%s', got '%s'", expected, output)
+	if output != "hello" {
+		t.Errorf("expected stdout %q, got %q", "hello", output)
 	}
 }
 
@@ -99,15 +89,8 @@ func TestRunAsync(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(dir)
 
-	var command string
-	if runtime.GOOS == "windows" {
-		command = "echo streaming"
-	} else {
-		command = "echo streaming"
-	}
-
 	var stdoutChunks []string
-	result, err := executor.RunAsync(context.Background(), command,
+	result, err := executor.RunAsync(context.Background(), "echo streaming",
 		func(s string) { stdoutChunks = append(stdoutChunks, s) },
 		nil,
 	)

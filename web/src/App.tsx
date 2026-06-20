@@ -6,16 +6,9 @@ import { EditorPane } from '@/components/EditorPane'
 import { ChatPanel } from '@/components/ChatPanel'
 import { MobileNav } from '@/components/MobileNav'
 import { MobileSettings } from '@/components/MobileSettings'
-import { useMockBackend } from '@/hooks/useMockBackend'
-import {
-  mockFileTree,
-  mockAgents,
-  mockSessions,
-  mockDevices,
-  mockEvents,
-  mockCodeContent,
-} from '@/data/mockData'
-import type { LeftPanel, MobileView } from '@/types'
+import { useBackend } from '@/hooks/useBackend'
+import { mockAgents, mockSessions } from '@/data/mockData'
+import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Session } from '@/types'
 
 /**
  * App shell — the Local Agent Interface (Blueprint Sec 17).
@@ -28,8 +21,10 @@ import type { LeftPanel, MobileView } from '@/types'
  * Mobile: bottom-nav layout, one panel at a time
  */
 export default function App() {
-  // Pairing state (Blueprint Sec 19)
-  const [paired, setPaired] = useState(false)
+  // Pairing state — check localStorage for existing credential (Blueprint Sec 19).
+  const [paired, setPaired] = useState(() => {
+    return !!localStorage.getItem('deviceCredential')
+  })
 
   // Panel state
   const [leftPanel, setLeftPanel] = useState<LeftPanel>('files')
@@ -38,11 +33,8 @@ export default function App() {
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true,
   )
 
-  // Devices (Blueprint Sec 19 — revocable credentials)
-  const [devices, setDevices] = useState(mockDevices)
-
-  // Mock backend (replaced by real WebSocket in production)
-  const { events, sendPrompt, respondPermission } = useMockBackend(mockEvents)
+  // Real backend connection
+  const backend = useBackend()
 
   /** Track viewport changes for responsive layout switching. */
   useEffect(() => {
@@ -51,19 +43,23 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  /** Revokes a paired device's access (Blueprint Sec 19). */
-  const revokeDevice = (id: string) => {
-    setDevices((prev) => prev.filter((d) => d.id !== id))
-  }
-
   // ---- Lock screen for unpaired devices ----
   if (!paired) {
     return <LockScreen onPaired={() => setPaired(true)} />
   }
 
+  // Convert backend file tree to the component's expected format.
+  const fileTree: FileTreeNode[] = backend.fileTree.map((n) => ({
+    name: n.name,
+    type: n.type as 'folder' | 'file',
+    children: n.children?.map((c) => ({
+      name: c.name,
+      type: c.type as 'folder' | 'file',
+      children: c.children,
+    })),
+  }))
+
   // ---- Determine panel visibility based on viewport and state ----
-  // Desktop: left sidebar + editor + chat always visible
-  // Mobile: one panel at a time based on mobileView
   const showLeftSidebar = isDesktop || mobileView === 'explorer'
   const showEditor = isDesktop || mobileView === 'editor'
   const showChat = isDesktop || mobileView === 'chat'
@@ -82,28 +78,48 @@ export default function App() {
       <LeftSidebar
         activePanel={leftPanel}
         onSwitchPanel={setLeftPanel}
-        fileTree={mockFileTree}
+        fileTree={fileTree}
         visible={showLeftSidebar}
       />
 
       {/* Center Editor — tabbed CodeMirror 6 with status bar */}
-      <EditorPane content={mockCodeContent} visible={showEditor} />
+      <EditorPane content={''} visible={showEditor} />
 
       {/* Right Sidebar — agent chat */}
       <ChatPanel
-        events={events}
-        agents={mockAgents}
-        sessions={mockSessions}
+        events={backend.events as AppEvent[]}
+        agents={backend.agents.length > 0 ? backend.agents : mockAgents}
+        sessions={
+          backend.sessions.length > 0
+            ? backend.sessions.map((s) => ({
+                id: s.id,
+                name: s.name,
+                time: '',
+                status: s.status as Session['status'],
+              }))
+            : mockSessions
+        }
         visible={showChat}
-        onSendMessage={(content) => sendPrompt('s1', content)}
-        onPermissionResponse={respondPermission}
+        onSendMessage={(content) => {
+          // Use the first session or create one implicitly.
+          const sessionId = backend.sessions[0]?.id || 's1'
+          backend.sendPrompt(sessionId, content)
+        }}
+        onPermissionResponse={(id, decision) =>
+          backend.respondPermission(id, decision)
+        }
       />
 
       {/* Mobile Settings Panel (full-screen overlay) */}
       <MobileSettings
-        devices={devices}
+        devices={backend.devices.map((d) => ({
+          id: d.id,
+          name: d.name,
+          icon: 'monitor',
+          pairedAt: d.pairedAt,
+        }))}
         visible={showMobileSettings}
-        onRevokeDevice={revokeDevice}
+        onRevokeDevice={(id) => backend.revokeDevice(id)}
       />
 
       {/* Mobile Bottom Nav (hidden on desktop) */}

@@ -78,7 +78,7 @@ func (c *Client) RegisterAgent(agent AgentInfo) {
 }
 
 // ListAgents returns registered agent harnesses and their models.
-func (c *Client) ListAgents(ctx context.Context) ([]interfaces.AgentInfo, error) {
+func (c *Client) ListAgents(_ context.Context) ([]interfaces.AgentInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -103,7 +103,7 @@ func (c *Client) ListAgents(ctx context.Context) ([]interfaces.AgentInfo, error)
 // CreateSession starts a new agent session.
 // In Phase 1, this creates the session record. The actual agent process
 // launch via os/exec will be wired in during integration.
-func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceID string) (interfaces.SessionInfo, error) {
+func (c *Client) CreateSession(_ context.Context, agentID, modelID, workspaceID string) (interfaces.SessionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -125,7 +125,11 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 		return interfaces.SessionInfo{}, fmt.Errorf("model %s not available for agent %s", modelID, agentID)
 	}
 
-	sessionID := generateSessionID()
+	sessionID, err := generateSessionID()
+	if err != nil {
+		return interfaces.SessionInfo{}, fmt.Errorf("generate session ID: %w", err)
+	}
+
 	session := &Session{
 		ID:        sessionID,
 		AgentID:   agentID,
@@ -156,7 +160,7 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 // SendPrompt sends a user prompt to the agent and streams responses.
 // In Phase 1, this emits a PromptSubmitted event. The actual ACP session/prompt
 // JSON-RPC call will be wired in during integration.
-func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) error {
+func (c *Client) SendPrompt(_ context.Context, sessionID, content string) error {
 	c.mu.Lock()
 	session, ok := c.sessions[sessionID]
 	c.mu.Unlock()
@@ -183,7 +187,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) erro
 }
 
 // CancelSession interrupts a running session.
-func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
+func (c *Client) CancelSession(_ context.Context, sessionID string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -212,7 +216,7 @@ func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
 }
 
 // CloseSession closes a session.
-func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
+func (c *Client) CloseSession(_ context.Context, sessionID string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -257,8 +261,10 @@ func (c *Client) ListSessions() []Session {
 }
 
 // generateSessionID generates a unique session ID using crypto/rand.
-func generateSessionID() string {
+func generateSessionID() (string, error) {
 	b := make([]byte, 8)
-	rand.Read(b)
-	return "sess-" + hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "sess-" + hex.EncodeToString(b), nil
 }

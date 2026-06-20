@@ -21,6 +21,11 @@ import (
 	"github.com/adama/local-agent/internal/workspace"
 )
 
+const (
+	appDataDirPerm = 0700
+	pidFilePerm    = 0600
+)
+
 // Config holds daemon configuration loaded from ~/.local-agent/.
 type Config struct {
 	Port    int    `json:"port"`
@@ -63,7 +68,7 @@ type Daemon struct {
 // It initializes all managers and wires them into the server.
 func New(cfg *Config) (*Daemon, error) {
 	// Ensure data directory exists before opening the database.
-	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.DataDir, appDataDirPerm); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 
@@ -79,6 +84,18 @@ func New(cfg *Config) (*Daemon, error) {
 	acpClient := acp.NewClient()
 	permissionMgr := permissions.NewManager()
 	syncHub := sync.NewHub()
+
+	// Register a default agent so the UI has something to show.
+	// In production, agents are discovered via ACP capability negotiation.
+	acpClient.RegisterAgent(acp.AgentInfo{
+		ID:      "claude-code",
+		Name:    "Claude Code",
+		Command: "claude",
+		Models: []acp.AgentModel{
+			{ID: "claude-sonnet-4", Name: "Claude Sonnet 4"},
+			{ID: "claude-opus-4", Name: "Claude Opus 4"},
+		},
+	})
 
 	// Create the server with all dependencies wired in.
 	srv := server.New(&server.Deps{
@@ -106,13 +123,13 @@ func New(cfg *Config) (*Daemon, error) {
 // It writes a PID file to the data directory for stop/status commands.
 func (d *Daemon) Start(ctx context.Context) error {
 	// Ensure data directory exists.
-	if err := os.MkdirAll(d.config.DataDir, 0755); err != nil {
+	if err := os.MkdirAll(d.config.DataDir, appDataDirPerm); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
 
 	// Write PID file for stop/status commands.
 	pidFile := filepath.Join(d.config.DataDir, "daemon.pid")
-	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), pidFilePerm); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
 	}
 	defer func() {
@@ -156,7 +173,7 @@ func (d *Daemon) cleanup() {
 // Returns the PID if running, 0 otherwise.
 func IsRunning(dataDir string) (int, error) {
 	pidFile := filepath.Join(dataDir, "daemon.pid")
-	data, err := os.ReadFile(pidFile)
+	data, err := os.ReadFile(pidFile) //nolint:gosec // pidFile is constructed from the configured app data directory.
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
@@ -194,8 +211,8 @@ func Stop(dataDir string) error {
 		return fmt.Errorf("find process: %w", err)
 	}
 
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("send signal: %w", err)
+	if err := stopProcess(proc); err != nil {
+		return fmt.Errorf("stop process: %w", err)
 	}
 
 	// Clean up PID file.

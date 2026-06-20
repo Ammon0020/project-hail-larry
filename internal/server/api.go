@@ -1,4 +1,4 @@
-// API route handlers for the Local Agent Interface server.
+// Package server provides the HTTP server that serves the web UI and API.
 // Blueprint references: Sec 3 (Architecture), Sec 19 (Authentication),
 // Sec 13 (Workspace), Sec 11 (Events), Sec 8 (Permissions), Sec 6 (ACP).
 package server
@@ -76,7 +76,7 @@ func (s *Server) handlePairVerifyToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleListDevices returns all paired devices.
-func (s *Server) handleListDevices(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListDevices(w http.ResponseWriter, _ *http.Request) {
 	devices := s.deps.PairingMgr.ListDevices()
 	writeJSON(w, http.StatusOK, devices)
 }
@@ -162,14 +162,7 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 
 // handleGetEvents returns events across all sessions.
 func (s *Server) handleGetEvents(w http.ResponseWriter, r *http.Request) {
-	afterIDStr := r.URL.Query().Get("after")
-	limitStr := r.URL.Query().Get("limit")
-
-	afterID, _ := strconv.ParseInt(afterIDStr, 10, 64)
-	limit, _ := strconv.Atoi(limitStr)
-	if limit == 0 {
-		limit = 100
-	}
+	afterID, limit := parseEventParams(r)
 
 	events, err := s.deps.EventStore.QueryAll(r.Context(), afterID, limit)
 	if err != nil {
@@ -182,14 +175,7 @@ func (s *Server) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 // handleGetSessionEvents returns events for a specific session.
 func (s *Server) handleGetSessionEvents(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("sessionId")
-	afterIDStr := r.URL.Query().Get("after")
-	limitStr := r.URL.Query().Get("limit")
-
-	afterID, _ := strconv.ParseInt(afterIDStr, 10, 64)
-	limit, _ := strconv.Atoi(limitStr)
-	if limit == 0 {
-		limit = 100
-	}
+	afterID, limit := parseEventParams(r)
 
 	events, err := s.deps.EventStore.Query(r.Context(), sessionID, afterID, limit)
 	if err != nil {
@@ -197,6 +183,17 @@ func (s *Server) handleGetSessionEvents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+// parseEventParams extracts the after cursor and limit from query params,
+// applying a default limit of 100 when unset or zero.
+func parseEventParams(r *http.Request) (afterID int64, limit int) {
+	afterID, _ = strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit == 0 {
+		limit = 100
+	}
+	return afterID, limit
 }
 
 // ----------------------------------------------------------------------------
@@ -249,18 +246,12 @@ func (s *Server) handleSendPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist the event and broadcast via WebSocket.
-	if s.deps.EventStore != nil {
-		event, _ := s.deps.EventStore.Append(r.Context(), interfaces.Event{
-			Type:      interfaces.EventPromptSubmitted,
-			SessionID: sessionID,
-			Role:      "user",
-			Content:   req.Content,
-		})
-		if s.deps.SyncHub != nil {
-			s.deps.SyncHub.Broadcast(event)
-		}
-	}
+	s.recordEvent(r.Context(), interfaces.Event{
+		Type:      interfaces.EventPromptSubmitted,
+		SessionID: sessionID,
+		Role:      "user",
+		Content:   req.Content,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
 }
@@ -274,16 +265,10 @@ func (s *Server) handleCancelSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist and broadcast the cancellation event.
-	if s.deps.EventStore != nil {
-		event, _ := s.deps.EventStore.Append(r.Context(), interfaces.Event{
-			Type:      interfaces.EventSessionCancelled,
-			SessionID: sessionID,
-		})
-		if s.deps.SyncHub != nil {
-			s.deps.SyncHub.Broadcast(event)
-		}
-	}
+	s.recordEvent(r.Context(), interfaces.Event{
+		Type:      interfaces.EventSessionCancelled,
+		SessionID: sessionID,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }
@@ -305,7 +290,7 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 // ----------------------------------------------------------------------------
 
 // handlePendingPermissions returns all pending permission requests.
-func (s *Server) handlePendingPermissions(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePendingPermissions(w http.ResponseWriter, _ *http.Request) {
 	pending := s.deps.PermissionMgr.GetPending()
 	writeJSON(w, http.StatusOK, pending)
 }
@@ -327,20 +312,13 @@ func (s *Server) handleRespondPermission(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Persist and broadcast the permission decision event.
-	if s.deps.EventStore != nil {
-		eventType := interfaces.EventPermissionGranted
-		if decision == interfaces.PermissionDeny {
-			eventType = interfaces.EventPermissionDenied
-		}
-		event, _ := s.deps.EventStore.Append(r.Context(), interfaces.Event{
-			Type:      eventType,
-			SessionID: "",
-		})
-		if s.deps.SyncHub != nil {
-			s.deps.SyncHub.Broadcast(event)
-		}
+	eventType := interfaces.EventPermissionGranted
+	if decision == interfaces.PermissionDeny {
+		eventType = interfaces.EventPermissionDenied
 	}
+	s.recordEvent(r.Context(), interfaces.Event{
+		Type: eventType,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "responded"})
 }

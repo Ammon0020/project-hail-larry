@@ -15,7 +15,7 @@ import (
 
 	"github.com/adama/local-agent/internal/interfaces"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // pure-Go SQLite driver (no CGO required)
 )
 
 // Store implements interfaces.EventStore using SQLite.
@@ -33,7 +33,7 @@ func New(dbPath string) (*Store, error) {
 
 	// Enable WAL mode for append-heavy workloads with concurrent readers.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
@@ -50,7 +50,7 @@ func New(dbPath string) (*Store, error) {
 	CREATE INDEX IF NOT EXISTS idx_events_session_id_id ON events(session_id, id);
 	`
 	if _, err := db.Exec(schema); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
@@ -113,7 +113,7 @@ func (s *Store) Query(ctx context.Context, sessionID string, afterID int64, limi
 	if err != nil {
 		return nil, fmt.Errorf("query events: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanEvents(rows)
 }
@@ -131,7 +131,7 @@ func (s *Store) QueryAll(ctx context.Context, afterID int64, limit int) ([]inter
 	if err != nil {
 		return nil, fmt.Errorf("query all events: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanEvents(rows)
 }

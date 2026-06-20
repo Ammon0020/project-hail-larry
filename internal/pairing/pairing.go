@@ -17,6 +17,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,8 @@ var wordList = []string{
 }
 
 // PairingSession represents a short-lived, single-use pairing session.
+//
+//nolint:revive // intentional name for clarity in API responses
 type PairingSession struct {
 	ID        string    `json:"id"`
 	Token     string    `json:"token"`
@@ -123,46 +126,13 @@ func (m *Manager) VerifyPasscode(passcode, deviceName string) (*DeviceCredential
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Find the matching session.
-	var session *PairingSession
-	for _, s := range m.sessions {
-		if s.Passcode == passcode && !s.Used && time.Now().UTC().Before(s.ExpiresAt) {
-			session = s
-			break
-		}
-	}
-
+	session := m.findSession(func(s *PairingSession) bool {
+		return s.Passcode == passcode
+	})
 	if session == nil {
 		return nil, fmt.Errorf("invalid or expired passcode")
 	}
-
-	// Mark session as used.
-	session.Used = true
-
-	// Generate device credential.
-	credID, err := generateToken(16)
-	if err != nil {
-		return nil, fmt.Errorf("generate credential id: %w", err)
-	}
-
-	secret, err := generateToken(32)
-	if err != nil {
-		return nil, fmt.Errorf("generate secret: %w", err)
-	}
-
-	cred := &DeviceCredential{
-		ID:       credID,
-		Name:     deviceName,
-		Secret:   secret,
-		PairedAt: time.Now().UTC(),
-	}
-
-	m.devices[credID] = cred
-
-	// Clean up QR code file.
-	_ = os.Remove(session.QRPath)
-
-	return cred, nil
+	return m.issueCredential(session, deviceName)
 }
 
 // VerifyToken validates a QR code token and issues a device credential.
@@ -170,18 +140,30 @@ func (m *Manager) VerifyToken(token, deviceName string) (*DeviceCredential, erro
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var session *PairingSession
-	for _, s := range m.sessions {
-		if s.Token == token && !s.Used && time.Now().UTC().Before(s.ExpiresAt) {
-			session = s
-			break
-		}
-	}
-
+	session := m.findSession(func(s *PairingSession) bool {
+		return s.Token == token
+	})
 	if session == nil {
 		return nil, fmt.Errorf("invalid or expired token")
 	}
+	return m.issueCredential(session, deviceName)
+}
 
+// findSession returns the first unused, non-expired session matching match,
+// or nil if none is found. Caller must hold m.mu.
+func (m *Manager) findSession(match func(*PairingSession) bool) *PairingSession {
+	now := time.Now().UTC()
+	for _, s := range m.sessions {
+		if match(s) && !s.Used && now.Before(s.ExpiresAt) {
+			return s
+		}
+	}
+	return nil
+}
+
+// issueCredential marks the session used, generates a device credential, and
+// cleans up the QR code file. Caller must hold m.mu.
+func (m *Manager) issueCredential(session *PairingSession, deviceName string) (*DeviceCredential, error) {
 	session.Used = true
 
 	credID, err := generateToken(16)
@@ -263,19 +245,7 @@ func generatePasscode(wordCount int) (string, error) {
 		}
 		words[i] = wordList[n.Int64()]
 	}
-	return joinWords(words, "-"), nil
-}
-
-// joinWords joins words with the given separator.
-func joinWords(words []string, sep string) string {
-	result := ""
-	for i, w := range words {
-		if i > 0 {
-			result += sep
-		}
-		result += w
-	}
-	return result
+	return strings.Join(words, "-"), nil
 }
 
 // HashSecret returns a SHA-256 hash of a secret for safe comparison/storage.

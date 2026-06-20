@@ -69,7 +69,7 @@ func TestBroadcast(t *testing.T) {
 }
 
 // TestBroadcastNoClients verifies broadcast doesn't panic with no clients.
-func TestBroadcastNoClients(t *testing.T) {
+func TestBroadcastNoClients(_ *testing.T) {
 	hub := NewHub()
 
 	// Should not panic.
