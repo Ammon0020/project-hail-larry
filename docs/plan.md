@@ -192,7 +192,7 @@ Built from `docs/plans/Blueprint.md` and `docs/development/TechStack.md`.
 
 ## Progress
 
-- [~] `scaffold`
+- [x] `scaffold`
 - [ ] `cli-daemon`
 - [ ] `events`
 - [ ] `pairing`
