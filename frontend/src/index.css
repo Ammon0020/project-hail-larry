@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+/*
+ * Theme tokens — ported from mockup13.html @theme block.
+ * Maps to Blueprint Section 17 (UI Architecture) color scheme.
+ * Uses the Tailwind v4 @theme inline pattern: CSS variables in :root/.dark,
+ * mapped to utility-generating names in @theme inline.
+ */
+
+:root {
+  /* App-specific colors (from mockup) */
+  --background: #0f111a;
+  --panel: #161925;
+  --activity-bar: #0d0e16;
+  --editor: #1e1e1e;
+  --status-bar: #007acc;
+  --tool-call: #12141d;
+
+  /* shadcn/ui semantic tokens */
+  --foreground: #e5e7eb;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --muted: #1f2937;
+  --muted-foreground: #6b7280;
+  --border: #1f2937;
+  --input: #1f2937;
+  --ring: #3b82f6;
+}
+
+.dark {
+  --background: #0f111a;
+  --panel: #161925;
+  --activity-bar: #0d0e16;
+  --editor: #1e1e1e;
+  --status-bar: #007acc;
+  --tool-call: #12141d;
+
+  --foreground: #e5e7eb;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --muted: #1f2937;
+  --muted-foreground: #6b7280;
+  --border: #1f2937;
+  --input: #1f2937;
+  --ring: #3b82f6;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-panel: var(--panel);
+  --color-activity-bar: var(--activity-bar);
+  --color-editor: var(--editor);
+  --color-status-bar: var(--status-bar);
+  --color-tool-call: var(--tool-call);
+
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    width: 100%;
+    min-height: 100vh;
+  }
+}
+
+/* Custom scrollbar — matches mockup */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #4b5563;
+  border-radius: 2px;
+}
+
+/* Hide scrollbar on tab bars */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
