@@ -5,49 +5,109 @@ package server
 
 import (
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"log"
 	"net/http"
 	"strings"
+
+	"github.com/adama/local-agent/internal/acp"
+	"github.com/adama/local-agent/internal/events"
+	"github.com/adama/local-agent/internal/pairing"
+	"github.com/adama/local-agent/internal/permissions"
+	"github.com/adama/local-agent/internal/sync"
+	"github.com/adama/local-agent/internal/workspace"
 )
 
 //go:embed all:dist
 var frontendFS embed.FS
 
-// Server is the main HTTP server for the Local Agent Interface.
-type Server struct {
-	mux *http.ServeMux
+// Deps holds all the manager dependencies the server needs.
+type Deps struct {
+	EventStore    *events.Store
+	PairingMgr    *pairing.Manager
+	WorkspaceMgr  *workspace.Manager
+	ACPClient     *acp.Client
+	PermissionMgr *permissions.Manager
+	SyncHub       *sync.Hub
 }
 
-// New creates a new Server with the health check and embedded frontend.
-func New() *Server {
-	s := &Server{mux: http.NewServeMux()}
+// Server is the main HTTP server for the Local Agent Interface.
+type Server struct {
+	mux  *http.ServeMux
+	deps *Deps
+}
+
+// New creates a new Server with the given dependencies.
+// If deps is nil, only health check and frontend serving are enabled.
+func New(deps *Deps) *Server {
+	s := &Server{
+		mux:  http.NewServeMux(),
+		deps: deps,
+	}
 	s.routes()
 	return s
 }
 
 // routes sets up all HTTP routes.
 func (s *Server) routes() {
-	// Health check endpoint (Blueprint Sec 25 — basic HTTP server).
+	// Health check.
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 
-	// API routes will be added by subagents (pairing, workspace, events, etc.)
-	// For now, just the health check and frontend serving.
+	// API routes (only if deps are provided).
+	if s.deps != nil {
+		s.apiRoutes()
+	}
 
-	// Serve embedded frontend in production.
+	// Serve embedded frontend.
 	s.serveFrontend()
+}
+
+// apiRoutes registers all /api/* and /ws routes.
+func (s *Server) apiRoutes() {
+	d := s.deps
+
+	// Pairing routes.
+	s.mux.HandleFunc("POST /api/pair/initiate", s.handlePairInitiate)
+	s.mux.HandleFunc("POST /api/pair/verify-passcode", s.handlePairVerifyPasscode)
+	s.mux.HandleFunc("POST /api/pair/verify-token", s.handlePairVerifyToken)
+	s.mux.HandleFunc("GET /api/devices", s.handleListDevices)
+	s.mux.HandleFunc("DELETE /api/devices/{id}", s.handleRevokeDevice)
+
+	// Workspace routes.
+	s.mux.HandleFunc("GET /api/workspaces", s.handleListWorkspaces)
+	s.mux.HandleFunc("POST /api/workspaces", s.handleRegisterWorkspace)
+	s.mux.HandleFunc("GET /api/workspaces/{id}/files", s.handleFileTree)
+	s.mux.HandleFunc("GET /api/workspaces/{id}/file", s.handleReadFile)
+
+	// Event routes.
+	s.mux.HandleFunc("GET /api/events", s.handleGetEvents)
+	s.mux.HandleFunc("GET /api/events/{sessionId}", s.handleGetSessionEvents)
+
+	// Session routes.
+	s.mux.HandleFunc("GET /api/agents", s.handleListAgents)
+	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
+	s.mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handleSendPrompt)
+	s.mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancelSession)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleCloseSession)
+
+	// Permission routes.
+	s.mux.HandleFunc("GET /api/permissions/pending", s.handlePendingPermissions)
+	s.mux.HandleFunc("POST /api/permissions/{id}/respond", s.handleRespondPermission)
+
+	// WebSocket endpoint.
+	if d.SyncHub != nil {
+		s.mux.HandleFunc("/ws", d.SyncHub.HandleWS)
+	}
 }
 
 // handleHealth responds with a simple JSON health check.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // serveFrontend sets up the embedded React build as static files.
 func (s *Server) serveFrontend() {
-	// Get the dist subdirectory from the embedded FS.
 	distFS, err := fs.Sub(frontendFS, "dist")
 	if err != nil {
 		log.Printf("WARNING: frontend dist not embedded: %v", err)
@@ -56,30 +116,25 @@ func (s *Server) serveFrontend() {
 
 	fileServer := http.FileServer(http.FS(distFS))
 
-	// Serve static assets from /assets/ directly.
 	s.mux.Handle("GET /assets/", fileServer)
 
 	// SPA fallback: any non-API route serves index.html.
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Skip API routes (they'll be handled by their own handlers).
 		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/ws") {
 			http.NotFound(w, r)
 			return
 		}
 
-		// Try to serve the actual file first.
 		path := r.URL.Path
 		if path == "/" {
 			path = "/index.html"
 		}
 
-		// Check if the file exists in the embedded FS.
 		if _, err := fs.Stat(distFS, strings.TrimPrefix(path, "/")); err == nil {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
 
-		// SPA fallback: serve index.html for client-side routing.
 		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)
 	})
@@ -94,4 +149,24 @@ func (s *Server) ListenAndServe(addr string) error {
 // Handler returns the http.Handler for testing.
 func (s *Server) Handler() http.Handler {
 	return s.mux
+}
+
+// writeJSON writes a JSON response with the given status code.
+func writeJSON(w http.ResponseWriter, code int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("write json: %v", err)
+	}
+}
+
+// writeError writes a JSON error response.
+func writeError(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// decodeJSON decodes a JSON request body into v.
+func decodeJSON(r *http.Request, v interface{}) error {
+	defer r.Body.Close()
+	return json.NewDecoder(r.Body).Decode(v)
 }

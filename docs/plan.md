@@ -193,15 +193,15 @@ Built from `docs/plans/Blueprint.md` and `docs/development/TechStack.md`.
 ## Progress
 
 - [x] `scaffold`
-- [ ] `cli-daemon`
-- [ ] `events`
-- [ ] `pairing`
-- [ ] `workspace`
-- [ ] `acp-client`
-- [ ] `permissions`
-- [ ] `ws-sync`
-- [ ] `file-sync`
-- [ ] `shell-exec`
-- [ ] `frontend-shell`
-- [ ] `frontend-editor`
-- [ ] `frontend-pairing`
+- [x] `cli-daemon`
+- [x] `events`
+- [x] `pairing`
+- [x] `workspace`
+- [x] `acp-client`
+- [x] `permissions`
+- [x] `ws-sync`
+- [x] `file-sync`
+- [x] `shell-exec`
+- [x] `frontend-shell`
+- [x] `frontend-editor`
+- [x] `frontend-pairing`
