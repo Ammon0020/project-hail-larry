@@ -16,6 +16,32 @@ Self-hosted web code editor with AI built in. A Go daemon runs on the user's mac
 - **Permissions:** Inline prompts for shell commands / file writes — approve from any paired device
 - **Mobile:** Bottom-nav layout — one panel at a time (explorer, editor, chat, settings)
 
+## Project Layout
+
+```
+cmd/app/                 → CLI entry point (cobra commands)
+internal/
+  daemon/                → Daemon lifecycle, wires all managers
+  server/                → HTTP server, go:embed frontend, REST API, /ws
+  config/                → Config storage in ~/.local-agent/
+  events/                → SQLite event store (WAL, append-only)
+  pairing/               → QR + mnemonic pairing, device credentials
+  workspace/             → Registration, file tree, git info
+  acp/                   → ACP client (stdio JSON-RPC to agents)
+  permissions/           → Permission request/response, policies
+  sync/                  → WebSocket hub, broadcast, reconnection
+  files/                 → Revision tracking, three-way merge
+  shell/                 → Workspace-scoped subprocess runner
+  interfaces/            → Shared Go interfaces (EventStore, ACPClient, etc.)
+web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
+  src/components/        → UI components
+  src/hooks/             → useBackend (real backend), useMockBackend
+  src/lib/               → api.ts (REST client), utils.ts
+  src/data/              → Mock data
+  src/types/             → TypeScript types
+docs/                    → Blueprint, plan, status, open items
+```
+
 ## Architecture Rules
 
 - ACP is the communication protocol with agents — no per-agent integration code
@@ -33,6 +59,7 @@ Self-hosted web code editor with AI built in. A Go daemon runs on the user's mac
 - Use linters: 
  - `golangci-lint` for Go
  - `eslint` for JavaScript/TypeScript
+- **Keep `docs/STATUS.md` current.** When you start, modify, or complete a task, update the relevant row in STATUS.md immediately. Mark gaps honestly — "⚠️ Partial" or "⚠️ Stub" over false "✅ Done". Include short notes on what's missing.
 
 Note: Cap lint output — fix a few errors per pass, not the whole dump.
 
@@ -53,4 +80,5 @@ Note: Cap lint output — fix a few errors per pass, not the whole dump.
 - `docs/development/TechStack.md` — technology choices and library list
 - `docs/plans/Blueprint.md` — phased implementation plan
 - `docs/plans/OpenItems.md` — tracked gaps and deferred decisions; do not implement deferred items
+- `docs/STATUS.md` — task-level status tracking; keep updated as work progresses
 - `mockup12.html` — UI mockup; frontend agents should reference this closely

@@ -14,31 +14,27 @@ Local Agent Interface — self-hosted web code editor with AI. Go daemon serves 
 
 ## Current State
 
-**Done:**
-- `docs/plan.md` created with 13 Phase 1 tasks
-- Frontend ported from `mockup13.html` → React + TypeScript in `web/`
-- Tailwind v4 + shadcn/ui setup, `@theme` tokens, `@` path alias
-- Components: LockScreen, ActivityBar, LeftSidebar, FileTree, SearchPanel, EditorPane (CodeMirror 6), ChatPanel, ChatHistory, ChatMessageItem, MobileNav, MobileSettings
-- Mock data layer (`web/src/data/mockData.ts`) and mock backend hook (`web/src/hooks/useMockBackend.ts`)
-- `npm run build` passes ✅
-- Directory structure created: `cmd/`, `internal/{daemon,config,workspace,pairing,acp,events,permissions,shell,sync,files,interfaces}/`, `web/`
+**Phase 1 COMPLETE.** All 14 tasks done (13 planned + integration). See `docs/STATUS.md` for per-task status.
 
-**Blocked:**
-- Go is not installed on this machine. Cannot proceed with `go mod init`, HTTP server, `go:embed`, or shared interfaces.
-- Install Go: `winget install GoLang.Go` or download from https://go.dev/dl/
-- After install, run `go mod init github.com/adama/local-agent`
+**Verification (2026-06-20):**
+- `go build ./...` ✅
+- `go test ./...` ✅ (all packages)
+- `go vet ./...` ✅
+- `npm run build` ✅
 
-## Next Steps (in order)
+**What's been built:**
+- Go 1.26.4 installed, module `github.com/adama/local-agent`
+- All internal packages: daemon, config, server, events, pairing, workspace, acp, permissions, sync, files, shell, interfaces
+- HTTP server on `0.0.0.0:7337` with full REST API + WebSocket `/ws`
+- Frontend embedded via `go:embed` in `internal/server/dist/`
+- Frontend wired to real backend via `useBackend` hook (replaced mock)
+- Cobra CLI: start, stop, status, add-folder, pair, devices, revoke, logs
 
-1. Install Go, run `go mod init github.com/adama/local-agent`
-2. Add deps from TechStack.md: cobra, gorilla/websocket, mattn/go-sqlite3, etc.
-3. Write `cmd/app/main.go` — HTTP server on `0.0.0.0:7337` with `/health` endpoint
-4. Wire `go:embed` to serve `web/dist/` in production
-5. Define shared interfaces in `internal/interfaces/` (EventStore, WorkspaceManager, ACPCClient, PermissionManager)
-6. Add Vite proxy config in `web/vite.config.ts` → proxy `/api` and `/ws` to `localhost:7337`
-7. Verify: `go build ./...`, `go test ./...`, `go vet ./...`, `npm run build`
-8. Mark `scaffold` as `[x]` in `docs/plan.md`
-9. Spawn subagents per spawn order in `first_agent.md` Sec 4
+## Next Steps
+
+1. **Runtime verification** — `app start`, pair a device, verify UI loads and chat/editor/file-tree work
+2. **Open items** — TLS on LAN, pairing TTL config (see `docs/plans/OpenItems.md`)
+3. **Phase 2** — per `docs/plans/Blueprint.md` (don't start until runtime verified)
 
 ## Key Decisions
 
@@ -48,7 +44,7 @@ Local Agent Interface — self-hosted web code editor with AI. Go daemon serves 
 - Theme tokens use Tailwind v4 `@theme inline` pattern (CSS vars in `:root`/`.dark`, mapped in `@theme inline`)
 - Custom colors: `background`, `panel`, `activity-bar`, `editor`, `status-bar`, `tool-call` (beyond standard shadcn tokens)
 - Event-driven UI: all chat/tool/permission rendering derives from `AppEvent[]` stream (Blueprint Sec 11)
-- `useMockBackend` hook simulates WebSocket + ACP; replace with real `ws://` connection when `ws-sync` task is done
+- `useBackend` hook connects to real Go backend via REST + WebSocket (replaced former `useMockBackend`)
 
 ## File Map
 
