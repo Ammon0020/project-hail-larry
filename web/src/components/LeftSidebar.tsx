@@ -1,4 +1,5 @@
-import { FolderCode, ChevronsUpDown, Wifi, Files, Search } from 'lucide-react'
+import { useState } from 'react'
+import { FolderCode, ChevronsUpDown, Wifi, Files, Search, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileTree } from './FileTree'
 import { SearchPanel } from './SearchPanel'
@@ -13,12 +14,22 @@ export function LeftSidebar({
   onSwitchPanel,
   fileTree,
   visible,
+  onFileSelect,
+  workspaces,
+  activeWorkspace,
+  onWorkspaceSelect,
 }: {
   activePanel: LeftPanel
   onSwitchPanel: (panel: LeftPanel) => void
   fileTree: FileTreeNode[]
   visible: boolean
+  onFileSelect: (path: string) => void
+  workspaces: { id: string; name: string; path: string }[]
+  activeWorkspace: { id: string; name: string; path: string } | null
+  onWorkspaceSelect: (ws: { id: string; name: string; path: string }) => void
 }) {
+  const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false)
+
   /** Mini horizontal activity bar for mobile (files/search toggle). */
   const miniTabs: { id: LeftPanel; icon: typeof Files; label: string }[] = [
     { id: 'files', icon: Files, label: 'Files' },
@@ -62,20 +73,52 @@ export function LeftSidebar({
                 <Wifi className="w-3 h-3" /> Online
               </div>
             </div>
-            <button className="w-full bg-background border border-gray-700 rounded-lg p-2 flex items-center justify-between hover:border-gray-500 transition shadow-sm">
-              <div className="flex items-center gap-2 overflow-hidden">
-                <FolderCode className="w-4 h-4 text-blue-400 shrink-0" />
-                <span className="truncate text-xs font-medium">my-project</span>
-              </div>
-              <ChevronsUpDown className="w-3.5 h-3.5 text-gray-500 shrink-0" />
-            </button>
+            <div className="relative">
+              <button 
+                onClick={() => setShowWorkspaceDropdown(!showWorkspaceDropdown)}
+                className="w-full bg-background border border-gray-700 rounded-lg p-2 flex items-center justify-between hover:border-gray-500 transition shadow-sm"
+              >
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <FolderCode className="w-4 h-4 text-blue-400 shrink-0" />
+                  <span className="truncate text-xs font-medium">{activeWorkspace?.name || 'No workspace'}</span>
+                </div>
+                <ChevronsUpDown className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+              </button>
+              
+              {/* Dropdown Menu */}
+              {showWorkspaceDropdown && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowWorkspaceDropdown(false)} />
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-panel border border-gray-700 rounded-lg shadow-xl z-50 py-1 max-h-60 overflow-y-auto">
+                    {workspaces.map((ws) => (
+                      <button
+                        key={ws.id}
+                        onClick={() => {
+                          onWorkspaceSelect(ws)
+                          setShowWorkspaceDropdown(false)
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs hover:bg-blue-500/20 flex items-center justify-between transition group"
+                      >
+                        <span className="truncate">{ws.name}</span>
+                        {activeWorkspace?.id === ws.id && (
+                          <Check className="w-3.5 h-3.5 text-blue-400" />
+                        )}
+                      </button>
+                    ))}
+                    {workspaces.length === 0 && (
+                      <div className="px-3 py-2 text-xs text-gray-500 italic">No workspaces found</div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           {/* File Tree */}
           <div className="px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider shrink-0">
             Explorer
           </div>
-          <FileTree nodes={fileTree} />
+          <FileTree nodes={fileTree} onFileSelect={onFileSelect} />
         </>
       )}
 

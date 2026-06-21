@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/adama/local-agent/internal/acp"
+	"github.com/adama/local-agent/internal/config"
 	"github.com/adama/local-agent/internal/events"
 	"github.com/adama/local-agent/internal/pairing"
 	"github.com/adama/local-agent/internal/permissions"
@@ -81,6 +82,17 @@ func New(cfg *Config) (*Daemon, error) {
 	// Initialize all managers.
 	pairingMgr := pairing.NewManager(cfg.DataDir)
 	workspaceMgr := workspace.NewManager()
+
+	// Load persisted workspaces from config.
+	appCfg, err := config.Load()
+	if err == nil {
+		for _, wsPath := range appCfg.Workspaces {
+			if _, regErr := workspaceMgr.Register(context.Background(), wsPath); regErr != nil {
+				log.Printf("WARNING: failed to load workspace %s: %v", wsPath, regErr)
+			}
+		}
+	}
+
 	acpClient := acp.NewClient()
 	permissionMgr := permissions.NewManager()
 	syncHub := sync.NewHub()

@@ -83,6 +83,7 @@ func (s *Server) apiRoutes() {
 	s.mux.HandleFunc("POST /api/workspaces", s.handleRegisterWorkspace)
 	s.mux.HandleFunc("GET /api/workspaces/{id}/files", s.handleFileTree)
 	s.mux.HandleFunc("GET /api/workspaces/{id}/file", s.handleReadFile)
+	s.mux.HandleFunc("POST /api/workspaces/{id}/file", s.handleWriteFile)
 
 	// Event routes.
 	s.mux.HandleFunc("GET /api/events", s.handleGetEvents)
@@ -90,6 +91,7 @@ func (s *Server) apiRoutes() {
 
 	// Session routes.
 	s.mux.HandleFunc("GET /api/agents", s.handleListAgents)
+	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	s.mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handleSendPrompt)
 	s.mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancelSession)

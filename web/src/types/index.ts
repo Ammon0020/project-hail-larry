@@ -8,6 +8,7 @@
 export interface FileTreeNode {
   name: string
   type: 'folder' | 'file'
+  path?: string
   icon?: string
   iconColor?: string
   expanded?: boolean
@@ -15,6 +16,17 @@ export interface FileTreeNode {
   unsaved?: boolean
   revision?: number
   children?: FileTreeNode[]
+}
+
+/** An open editor tab with file content and metadata. */
+export interface Tab {
+  id: string
+  name: string
+  path: string
+  content: string
+  revision: number
+  unsaved: boolean
+  language: string
 }
 
 /** A registered AI agent (Blueprint Sec 5 — agent registration). */

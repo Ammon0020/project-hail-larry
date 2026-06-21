@@ -108,6 +108,11 @@ export const api = {
     apiFetch<{ content: string; revision: number; path: string }>(
       `/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
     ),
+  saveFile: (workspaceId: string, path: string, content: string, expectedRevision: number) =>
+    apiFetch<{ revision: number; path: string }>(`/workspaces/${workspaceId}/file`, {
+      method: 'POST',
+      body: JSON.stringify({ path, content, expectedRevision }),
+    }),
 
   // Events
   getEvents: (afterId = 0, limit = 100) =>
@@ -117,6 +122,7 @@ export const api = {
 
   // Agents & Sessions
   listAgents: () => apiFetch<AgentInfo[]>('/agents'),
+  listSessions: () => apiFetch<SessionInfo[]>('/sessions'),
   createSession: (agentId: string, modelId: string, workspaceId: string) =>
     apiFetch<SessionInfo>('/sessions', {
       method: 'POST',

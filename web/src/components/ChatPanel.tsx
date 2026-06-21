@@ -18,15 +18,21 @@ export function ChatPanel({
   agents,
   sessions,
   visible,
+  activeSessionId,
   onSendMessage,
+  onCreateSession,
   onPermissionResponse,
+  onSelectSession,
 }: {
   events: AppEvent[]
   agents: Agent[]
   sessions: Session[]
   visible: boolean
-  onSendMessage: (content: string) => void
+  activeSessionId: string | null
+  onSendMessage: (sessionId: string, content: string) => void
+  onCreateSession: (agentId: string, modelId: string) => Promise<string>
   onPermissionResponse: (sessionId: string, decision: 'allow' | 'deny') => void
+  onSelectSession: (sessionId: string) => void
 }) {
   const [selectedAgent, setSelectedAgent] = useState(agents[0]?.id ?? '')
   const [selectedModel, setSelectedModel] = useState(agents[0]?.models[0]?.id ?? '')
@@ -40,11 +46,21 @@ export function ChatPanel({
     if (agent) setSelectedModel(agent.models[0]?.id ?? '')
   }
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const content = input.trim()
     if (!content) return
-    onSendMessage(content)
     setInput('')
+
+    let sessionId = activeSessionId
+    if (!sessionId) {
+      try {
+        sessionId = await onCreateSession(selectedAgent, selectedModel)
+      } catch (err) {
+        console.error('Failed to create session:', err)
+        return
+      }
+    }
+    onSendMessage(sessionId, content)
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -55,6 +71,13 @@ export function ChatPanel({
   }
 
   const currentAgent = agents.find((a) => a.id === selectedAgent)
+
+  const handleNewChat = () => {
+    // Create session with currently selected agent/model
+    onCreateSession(selectedAgent, selectedModel).catch((err) =>
+      console.error('Failed to create session:', err),
+    )
+  }
 
   return (
     <aside
@@ -120,6 +143,8 @@ export function ChatPanel({
           sessions={sessions}
           open={chatHistoryOpen}
           onClose={() => setChatHistoryOpen(false)}
+          onCreateSession={handleNewChat}
+          onSelectSession={onSelectSession}
         />
       </div>
 

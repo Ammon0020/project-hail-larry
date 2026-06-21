@@ -187,3 +187,42 @@ func safeJoin(root, relPath string) (string, error) {
 
 	return fullPath, nil
 }
+
+// WriteFile writes content to a file in a workspace with optimistic locking.
+// If expectedRevision > 0, the file's current ModTime().UnixNano() must match;
+// otherwise the write is rejected (conflict). Returns the new revision.
+func (m *Manager) WriteFile(_ context.Context, workspaceID, relPath, content string, expectedRevision int64) (int64, error) {
+	wsPath, ok := m.workspaces[workspaceID]
+	if !ok {
+		return 0, fmt.Errorf("workspace not found: %s", workspaceID)
+	}
+
+	// Prevent path traversal outside the workspace.
+	fullPath, err := safeJoin(wsPath, relPath)
+	if err != nil {
+		return 0, err
+	}
+
+	// Optimistic locking: check current revision if expected.
+	if expectedRevision > 0 {
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			return 0, fmt.Errorf("stat file: %w", err)
+		}
+		if info.ModTime().UnixNano() != expectedRevision {
+			return 0, fmt.Errorf("conflict: file has been modified (expected revision %d, current %d)", expectedRevision, info.ModTime().UnixNano())
+		}
+	}
+
+	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil { //nolint:gosec // fullPath is constrained by safeJoin to the registered workspace root.
+		return 0, fmt.Errorf("write file: %w", err)
+	}
+
+	// Return the new revision (new ModTime).
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return 0, fmt.Errorf("stat file after write: %w", err)
+	}
+
+	return info.ModTime().UnixNano(), nil
+}

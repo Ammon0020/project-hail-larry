@@ -23,10 +23,14 @@ export function ChatHistory({
   sessions,
   open,
   onClose,
+  onCreateSession,
+  onSelectSession,
 }: {
   sessions: Session[]
   open: boolean
   onClose: () => void
+  onCreateSession: () => void
+  onSelectSession: (sessionId: string) => void
 }) {
   return (
     <div
@@ -56,6 +60,7 @@ export function ChatHistory({
                 ? 'bg-blue-600/10 border border-blue-500/20'
                 : 'hover:bg-gray-800/50',
             )}
+            onClick={() => onSelectSession(s.id)}
           >
             <div className="flex items-center gap-2 overflow-hidden">
               <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', statusDotClass[s.status])} />
@@ -71,7 +76,10 @@ export function ChatHistory({
         ))}
 
         {/* New chat button */}
-        <button className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer text-gray-400 text-xs transition">
+        <button
+          className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer text-gray-400 text-xs transition"
+          onClick={onCreateSession}
+        >
           <Plus className="w-3.5 h-3.5" /> New Chat
         </button>
       </div>

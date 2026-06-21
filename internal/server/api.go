@@ -4,6 +4,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -156,6 +157,35 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleWriteFile writes content to a file in a workspace.
+func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.PathValue("id")
+	var req struct {
+		Path             string `json:"path"`
+		Content          string `json:"content"`
+		ExpectedRevision int64  `json:"expectedRevision"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	newRevision, err := s.deps.WorkspaceMgr.WriteFile(r.Context(), workspaceID, req.Path, req.Content, req.ExpectedRevision)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	// Emit FileRevisionUpdated event.
+	s.recordEvent(r.Context(), interfaces.Event{
+		Type:      interfaces.EventFileRevisionUpdated,
+		SessionID: "",
+		Content:   req.Path,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"revision": newRevision, "path": req.Path})
+}
+
 // ----------------------------------------------------------------------------
 // Event Handlers (Blueprint Sec 11)
 // ----------------------------------------------------------------------------
@@ -208,6 +238,21 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, agents)
+}
+
+// handleListSessions returns all active sessions.
+func (s *Server) handleListSessions(w http.ResponseWriter, _ *http.Request) {
+	sessions := s.deps.ACPClient.ListSessions()
+	// Convert to interface type for JSON serialization.
+	result := make([]map[string]string, 0, len(sessions))
+	for _, sess := range sessions {
+		result = append(result, map[string]string{
+			"id":     sess.ID,
+			"name":   fmt.Sprintf("Session %s", sess.ID[:8]),
+			"status": sess.Status,
+		})
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // handleCreateSession creates a new agent session.

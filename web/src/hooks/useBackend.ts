@@ -28,6 +28,7 @@ export function useBackend() {
     loadAgents()
     loadDevices()
     loadEvents()
+    loadSessions()
     connectWebSocket()
     return () => {
       wsRef.current?.close()
@@ -99,6 +100,14 @@ export function useBackend() {
     }
   }, [])
 
+  const loadSessions = useCallback(async () => {
+    try {
+      setSessions(await api.listSessions())
+    } catch {
+      // No sessions yet.
+    }
+  }, [])
+
   // ---- Workspace actions ----
   const selectWorkspace = useCallback(async (ws: WorkspaceInfo) => {
     setActiveWorkspace(ws)
@@ -115,6 +124,17 @@ export function useBackend() {
     await selectWorkspace(ws)
     return ws
   }, [selectWorkspace])
+
+  // ---- File actions ----
+  const readFile = useCallback(async (path: string) => {
+    const wsId = activeWorkspace?.id || ''
+    return await api.readFile(wsId, path)
+  }, [activeWorkspace])
+
+  const saveFile = useCallback(async (path: string, content: string, expectedRevision: number) => {
+    const wsId = activeWorkspace?.id || ''
+    return await api.saveFile(wsId, path, content, expectedRevision)
+  }, [activeWorkspace])
 
   // ---- Session actions ----
   const createSession = useCallback(async (agentId: string, modelId: string) => {
@@ -179,6 +199,8 @@ export function useBackend() {
     // Actions
     selectWorkspace,
     registerWorkspace,
+    readFile,
+    saveFile,
     createSession,
     sendPrompt,
     cancelSession,
@@ -188,5 +210,6 @@ export function useBackend() {
     loadWorkspaces,
     loadAgents,
     loadDevices,
+    loadSessions,
   }
 }
