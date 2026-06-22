@@ -83,8 +83,10 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
 - `workspace.Manager` workspaces now loaded from `~/.local-agent/config.json` on daemon start
 - `WriteFile` endpoint added: `POST /api/workspaces/{id}/file` with optimistic locking
 - `ListSessions` endpoint added: `GET /api/sessions`
+- `app add-folder` now checks for duplicate registrations
+- LeftSidebar workspace switcher wired to `backend.workspaces` with dropdown UI
 - Missing CLI commands: no `app remove-folder`, no `app list-folders`
-- LeftSidebar workspace switcher is hardcoded to `"my-project"` — doesn't use `backend.workspaces`
+- **Note:** Must rebuild binary (`.\build.ps1`) after frontend changes — `go:embed` freezes frontend at compile time
 
 ## What's Left
 

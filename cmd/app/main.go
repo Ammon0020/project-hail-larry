@@ -131,6 +131,13 @@ func runAddFolder(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve workspace path: %w", err)
 	}
 
+	// Check for duplicate workspace registration.
+	for _, ws := range cfg.Workspaces {
+		if ws == absPath {
+			return writef(cmd.OutOrStdout(), "Workspace already registered: %s\n", absPath)
+		}
+	}
+
 	cfg.Workspaces = append(cfg.Workspaces, absPath)
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("save config: %w", err)
