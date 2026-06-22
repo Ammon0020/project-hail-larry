@@ -52,6 +52,7 @@ docs/                    → Blueprint, plan, status, open items
 
 ## Development Standards
 
+- **Build:** Run `.\build.ps1` to rebuild frontend + backend. This is required after any frontend change — `go:embed` freezes the frontend into the binary at compile time. A stale binary will serve old UI. The script builds the frontend, copies dist to `internal/server/dist/`, and compiles the Go binary.
 - Run tests and linting before marking a task complete — `go test ./...`, `go vet ./...`, `npm run build`
 - Stay on task — if a test fails in another task, note it in `docs/known-issues.md` and move on
 - Plans must be summary (see `docs/Blueprint.md`) or executable in one branch under a single work item (see `docs/plans/`)
