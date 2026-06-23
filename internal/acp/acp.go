@@ -211,18 +211,21 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) error {
 	c.mu.Lock()
 	session, ok := c.sessions[sessionID]
+	if ok {
+		session.Status = "running"
+	}
+	callbacks := c.callbacks
 	c.mu.Unlock()
 
 	if !ok {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
+	if session.transport == nil {
+		return fmt.Errorf("session transport not initialized: %s", sessionID)
+	}
 
-	// Update session status.
-	session.Status = "running"
-
-	// Emit prompt submitted event.
-	if c.callbacks != nil {
-		c.callbacks.OnEvent(interfaces.Event{
+	if callbacks != nil {
+		callbacks.OnEvent(interfaces.Event{
 			Type:      interfaces.EventPromptSubmitted,
 			SessionID: sessionID,
 			Timestamp: time.Now().UTC(),
@@ -231,21 +234,37 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) erro
 		})
 	}
 
-	// Call the ACP agent in a goroutine so we don't block.
+	promptCtx := context.WithoutCancel(ctx)
 	go func() {
-		if session.transport != nil {
-			if c.callbacks != nil {
-				c.callbacks.OnEvent(interfaces.Event{
-					Type:      interfaces.EventResponseStarted,
+		if callbacks != nil {
+			callbacks.OnEvent(interfaces.Event{
+				Type:      interfaces.EventResponseStarted,
+				SessionID: sessionID,
+				Timestamp: time.Now().UTC(),
+				Content:   "Agent is thinking…",
+			})
+		}
+
+		if err := session.transport.Prompt(promptCtx, session.acpSessionID, content); err != nil {
+			c.mu.Lock()
+			session.Status = "failed"
+			c.mu.Unlock()
+			if callbacks != nil {
+				callbacks.OnEvent(interfaces.Event{
+					Type:      interfaces.EventAgentExited,
 					SessionID: sessionID,
 					Timestamp: time.Now().UTC(),
+					Summary:   err.Error(),
 				})
 			}
-			err := session.transport.Prompt(context.Background(), session.acpSessionID, content)
-			if err != nil {
-				fmt.Printf("Error prompting agent: %v\n", err)
-			}
+			return
 		}
+
+		c.mu.Lock()
+		if session.Status == "running" {
+			session.Status = "completed"
+		}
+		c.mu.Unlock()
 	}()
 
 	return nil

@@ -35,7 +35,25 @@ export function ChatMessageItem({
             <Bot className="w-4 h-4" />
           </div>
           <div className="flex-1 pt-0.5">
-            <p className="text-sm text-gray-300 mb-2">{event.content}</p>
+            <p className="text-sm text-gray-300 mb-2">{event.content || 'Agent is thinking…'}</p>
+          </div>
+        </div>
+      )
+
+    case 'ToolStarted':
+      return (
+        <div className="flex gap-3">
+          <div className="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
+            <Bot className="w-4 h-4" />
+          </div>
+          <div className="flex-1 pt-0.5">
+            <details className="group mt-2 border-l-2 border-gray-800 pl-3 open:border-blue-500/50 transition-colors" open>
+              <summary className="flex items-center gap-2 cursor-pointer text-xs font-mono text-gray-400 hover:text-gray-300 w-max select-none">
+                <ChevronRight className="w-3.5 h-3.5 group-open:rotate-90 transition-transform" />
+                <Wrench className="w-3.5 h-3.5 text-purple-400" />
+                {event.tool || 'Tool'} <span className="text-gray-600">[running]</span>
+              </summary>
+            </details>
           </div>
         </div>
       )
@@ -99,40 +117,31 @@ export function ChatMessageItem({
       )
 
     case 'StreamUpdate':
-      if (event.streaming) {
-        return (
-          <div className="flex gap-3">
-            <div className="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
-              <Bot className="w-4 h-4" />
-            </div>
-            <div className="flex-1 pt-1">
-              <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                <div className="flex gap-1">
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-                {event.content}
-              </div>
-            </div>
-          </div>
-        )
-      }
       return (
         <div className="flex gap-3">
           <div className="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
             <Bot className="w-4 h-4" />
           </div>
           <div className="flex-1 pt-0.5">
-            <p className="text-sm text-gray-300">{event.content}</p>
+            <p className="whitespace-pre-wrap text-sm text-gray-300">{event.content}</p>
+          </div>
+        </div>
+      )
+
+    case 'AgentExited':
+      return (
+        <div className="flex gap-3">
+          <div className="w-7 h-7 rounded-lg bg-red-600/20 text-red-400 flex items-center justify-center shrink-0 border border-red-500/30">
+            <Bot className="w-4 h-4" />
+          </div>
+          <div className="flex-1 pt-0.5">
+            <p className="text-sm text-red-300">Agent exited: {event.summary || event.content || 'unknown error'}</p>
           </div>
         </div>
       )
 
     case 'PermissionGranted':
     case 'PermissionDenied':
-      // These events don't render as separate messages —
-      // in production, the permission dialog updates its state
       return null
 
     default:

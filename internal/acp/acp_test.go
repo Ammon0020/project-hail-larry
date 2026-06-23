@@ -2,9 +2,13 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/adama/local-agent/internal/interfaces"
+
+	acpsdk "github.com/coder/acp-go-sdk"
 )
 
 // mockCallbacks captures events for testing.
@@ -231,5 +235,25 @@ func TestListSessions(t *testing.T) {
 	sessions := client.ListSessions()
 	if len(sessions) != 2 {
 		t.Fatalf("expected 2 sessions, got %d", len(sessions))
+	}
+}
+
+// TestNewSessionRequestMcpServersIsEmptyList verifies that the ACP NewSessionRequest
+// serializes mcpServers as an empty list rather than null. A null value causes
+// Pydantic validation errors in strict ACP agents (e.g., devstral-small).
+func TestNewSessionRequestMcpServersIsEmptyList(t *testing.T) {
+	req := acpsdk.NewSessionRequest{
+		Cwd:        "/tmp",
+		McpServers: []acpsdk.McpServer{},
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal NewSessionRequest: %v", err)
+	}
+	if strings.Contains(string(data), `"mcpServers":null`) {
+		t.Errorf("NewSessionRequest serialized mcpServers as null: %s", data)
+	}
+	if !strings.Contains(string(data), `"mcpServers":[]`) {
+		t.Errorf("NewSessionRequest did not serialize mcpServers as []: %s", data)
 	}
 }

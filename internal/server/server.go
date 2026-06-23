@@ -51,6 +51,9 @@ func New(deps *Deps) *Server {
 		mux:  http.NewServeMux(),
 		deps: deps,
 	}
+	if deps != nil && deps.ACPClient != nil {
+		deps.ACPClient.SetCallbacks(s)
+	}
 	s.routes()
 	return s
 }
@@ -168,13 +171,22 @@ func (s *Server) Handler() http.Handler {
 	return s.mux
 }
 
+// OnEvent receives ACP client events and publishes them to connected clients.
+func (s *Server) OnEvent(event interfaces.Event) {
+	s.recordEvent(context.Background(), event)
+}
+
 // recordEvent persists an event to the event store and broadcasts it via
 // WebSocket. It is a no-op when EventStore is nil.
 func (s *Server) recordEvent(ctx context.Context, e interfaces.Event) {
 	if s.deps == nil || s.deps.EventStore == nil {
 		return
 	}
-	event, _ := s.deps.EventStore.Append(ctx, e)
+	event, err := s.deps.EventStore.Append(ctx, e)
+	if err != nil {
+		log.Printf("server: record event: %v", err)
+		return
+	}
 	if s.deps.SyncHub != nil {
 		s.deps.SyncHub.Broadcast(event)
 	}

@@ -1,8 +1,5 @@
 /* eslint-disable react-hooks/exhaustive-deps */
-/* eslint-disable react-hooks/rules-of-hooks */
-/* eslint-disable @typescript-eslint/no-explicit-any */
-// @ts-nocheck
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential } from '@/lib/api'
 
 /**
@@ -40,7 +37,7 @@ export function useBackend() {
   }, [])
 
   // ---- WebSocket connection for real-time events ----
-  const connectWebSocket = useCallback(() => {
+  function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${protocol}//${window.location.host}/ws`
 
@@ -63,27 +60,27 @@ export function useBackend() {
         // Ignore malformed messages.
       }
     }
-  }, [])
+  }
 
   // ---- Workspace actions ----
-  const selectWorkspace = useCallback(async (ws: WorkspaceInfo) => {
+  async function selectWorkspace(ws: WorkspaceInfo) {
     setActiveWorkspace(ws)
     try {
       setFileTree(await api.getFileTree(ws.id))
     } catch {
       setFileTree([])
     }
-  }, [])
+  }
 
-  const registerWorkspace = useCallback(async (path: string) => {
+  async function registerWorkspace(path: string) {
     const ws = await api.registerWorkspace(path)
     setWorkspaces((prev) => [...prev, ws])
     await selectWorkspace(ws)
     return ws
-  }, [selectWorkspace])
+  }
 
   // ---- Data loading methods ----
-  const loadWorkspaces = useCallback(async () => {
+  async function loadWorkspaces() {
     try {
       const ws = await api.listWorkspaces()
       setWorkspaces(ws)
@@ -93,40 +90,40 @@ export function useBackend() {
     } catch {
       // Backend not ready yet.
     }
-  }, [activeWorkspace, selectWorkspace])
+  }
 
-  const loadAgents = useCallback(async () => {
+  async function loadAgents() {
     try {
       setAgents(await api.listAgents())
     } catch {
       // No agents registered yet — that's OK.
     }
-  }, [])
+  }
 
-  const addAgent = useCallback(async (agent: AgentInfo) => {
+  async function addAgent(agent: AgentInfo) {
     await api.addAgent(agent)
     await loadAgents()
-  }, [loadAgents])
+  }
 
-  const deleteAgent = useCallback(async (agentId: string) => {
+  async function deleteAgent(agentId: string) {
     await api.deleteAgent(agentId)
     await loadAgents()
-  }, [loadAgents])
+  }
 
-  const autodetectAgents = useCallback(async () => {
+  async function autodetectAgents() {
     const detected = await api.autodetectAgents()
     return detected
-  }, [])
+  }
 
-  const loadDevices = useCallback(async () => {
+  async function loadDevices() {
     try {
       setDevices(await api.listDevices())
     } catch {
       // No devices paired yet.
     }
-  }, [])
+  }
 
-  const loadEvents = useCallback(async () => {
+  async function loadEvents() {
     try {
       const evts = await api.getEvents(0, 200)
       eventsRef.current = evts
@@ -134,75 +131,61 @@ export function useBackend() {
     } catch {
       // Event store may be empty.
     }
-  }, [])
+  }
 
-  const loadSessions = useCallback(async () => {
+  async function loadSessions() {
     try {
       setSessions(await api.listSessions())
     } catch {
       // No sessions yet.
     }
-  }, [])
+  }
 
   // ---- File actions ----
-  const readFile = useCallback(async (path: string) => {
+  async function readFile(path: string) {
     const wsId = activeWorkspace?.id || ''
     return await api.readFile(wsId, path)
-  }, [activeWorkspace])
+  }
 
-  const saveFile = useCallback(async (path: string, content: string, expectedRevision: number) => {
+  async function saveFile(path: string, content: string, expectedRevision: number) {
     const wsId = activeWorkspace?.id || ''
     return await api.saveFile(wsId, path, content, expectedRevision)
-  }, [activeWorkspace])
+  }
 
   // ---- Session actions ----
-  const createSession = useCallback(async (agentId: string, modelId: string) => {
+  async function createSession(agentId: string, modelId: string) {
     const wsId = activeWorkspace?.id || ''
     const session = await api.createSession(agentId, modelId, wsId)
     setSessions((prev) => [...prev, session])
     return session
-  }, [activeWorkspace])
+  }
 
-  const sendPrompt = useCallback(async (sessionId: string, content: string) => {
-    // Optimistically add the user message to the event list.
-    const optimisticEvent: AppEvent = {
-      type: 'PromptSubmitted',
-      sessionId,
-      role: 'user',
-      content,
-    }
-    eventsRef.current = [...eventsRef.current, optimisticEvent]
-    setEvents(eventsRef.current)
+  async function sendPrompt(sessionId: string, content: string) {
+    await api.sendPrompt(sessionId, content)
+  }
 
-    try {
-      await api.sendPrompt(sessionId, content)
-    } catch {
-      // The event was still persisted server-side; the error is non-fatal.
-    }
-  }, [])
-
-  const cancelSession = useCallback(async (sessionId: string) => {
+  async function cancelSession(sessionId: string) {
     await api.cancelSession(sessionId)
-  }, [])
+  }
 
   // ---- Pairing actions ----
-  const verifyPasscode = useCallback(async (passcode: string, deviceName: string) => {
+  async function verifyPasscode(passcode: string, deviceName: string) {
     const cred = await api.verifyPasscode(passcode, deviceName)
     // Store credential in localStorage (Blueprint Sec 19 — browser-stored).
     localStorage.setItem('deviceCredential', JSON.stringify(cred))
     await loadDevices()
     return cred
-  }, [loadDevices])
+  }
 
-  const revokeDevice = useCallback(async (deviceId: string) => {
+  async function revokeDevice(deviceId: string) {
     await api.revokeDevice(deviceId)
     setDevices((prev) => prev.filter((d) => d.id !== deviceId))
-  }, [])
+  }
 
   // ---- Permission actions ----
-  const respondPermission = useCallback(async (requestId: string, decision: string) => {
+  async function respondPermission(requestId: string, decision: string) {
     await api.respondPermission(requestId, decision)
-  }, [])
+  }
 
   return {
     // State

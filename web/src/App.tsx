@@ -140,8 +140,8 @@ export default function App() {
     setActiveSessionId(sessionId)
   }
 
-  const handleSendMessage = (sessionId: string, content: string) => {
-    backend.sendPrompt(sessionId, content)
+  const handleSendMessage = async (sessionId: string, content: string) => {
+    await backend.sendPrompt(sessionId, content)
   }
 
   // ---- Computed values ----
@@ -199,6 +199,7 @@ export default function App() {
           name: s.name,
           time: '',
           status: s.status as Session['status'],
+          active: s.id === activeSessionId,
         }))}
         visible={showChat}
         activeSessionId={activeSessionId}

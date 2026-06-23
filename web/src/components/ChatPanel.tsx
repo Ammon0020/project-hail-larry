@@ -1,4 +1,4 @@
-import { useState, useEffect, type KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { Menu, Paperclip, ArrowUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ChatMessageItem } from './ChatMessageItem'
@@ -29,7 +29,7 @@ export function ChatPanel({
   sessions: Session[]
   visible: boolean
   activeSessionId: string | null
-  onSendMessage: (sessionId: string, content: string) => void
+  onSendMessage: (sessionId: string, content: string) => Promise<void>
   onCreateSession: (agentId: string, modelId: string) => Promise<string>
   onPermissionResponse: (sessionId: string, decision: 'allow' | 'deny') => void
   onSelectSession: (sessionId: string) => void
@@ -38,14 +38,12 @@ export function ChatPanel({
   const [selectedModel, setSelectedModel] = useState(agents[0]?.models[0]?.id ?? '')
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false)
   const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  // Update defaults once agents are loaded from the backend
-  useEffect(() => {
-    if (!selectedAgent && agents.length > 0) {
-      setSelectedAgent(agents[0].id)
-      setSelectedModel(agents[0].models[0]?.id ?? '')
-    }
-  }, [agents, selectedAgent])
+  const effectiveAgentId = selectedAgent || agents[0]?.id || ''
+  const currentAgent = agents.find((a) => a.id === effectiveAgentId)
+  const effectiveModelId = selectedModel || currentAgent?.models[0]?.id || ''
 
   /** Updates available models when the agent harness changes. */
   const handleAgentChange = (agentId: string) => {
@@ -56,19 +54,25 @@ export function ChatPanel({
 
   const handleSend = async () => {
     const content = input.trim()
-    if (!content) return
+    if (!content || sending || !effectiveAgentId || !effectiveModelId) return
+
+    setSending(true)
+    setError(null)
     setInput('')
 
-    let sessionId = activeSessionId
-    if (!sessionId) {
-      try {
-        sessionId = await onCreateSession(selectedAgent, selectedModel)
-      } catch (err) {
-        console.error('Failed to create session:', err)
-        return
+    try {
+      let sessionId = activeSessionId
+      if (!sessionId) {
+        sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
       }
+      await onSendMessage(sessionId, content)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to send message'
+      setError(message)
+      setInput(content)
+    } finally {
+      setSending(false)
     }
-    onSendMessage(sessionId, content)
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -78,11 +82,11 @@ export function ChatPanel({
     }
   }
 
-  const currentAgent = agents.find((a) => a.id === selectedAgent)
+  const canSend = Boolean(input.trim() && effectiveAgentId && effectiveModelId && !sending)
 
   const handleNewChat = () => {
     // Create session with currently selected agent/model
-    onCreateSession(selectedAgent, selectedModel).catch((err) =>
+    onCreateSession(effectiveAgentId, effectiveModelId).catch((err) =>
       console.error('Failed to create session:', err),
     )
   }
@@ -101,9 +105,10 @@ export function ChatPanel({
         <div className="flex items-center gap-2 p-3">
           {/* Harness selector — pick agent (Blueprint Sec 5) */}
           <select
-            value={selectedAgent}
+            value={effectiveAgentId}
             onChange={(e) => handleAgentChange(e.target.value)}
-            className="appearance-none bg-background border border-gray-700 text-gray-200 text-xs font-semibold rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-500 cursor-pointer shadow-sm hover:border-gray-500 transition shrink-0"
+            disabled={sending}
+            className="appearance-none bg-background border border-gray-700 text-gray-200 text-xs font-semibold rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-500 cursor-pointer shadow-sm hover:border-gray-500 disabled:opacity-60 disabled:cursor-not-allowed transition shrink-0"
             style={{
               backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
               backgroundRepeat: 'no-repeat',
@@ -118,9 +123,10 @@ export function ChatPanel({
 
           {/* Model selector — pick model for selected agent */}
           <select
-            value={selectedModel}
+            value={effectiveModelId}
             onChange={(e) => setSelectedModel(e.target.value)}
-            className="appearance-none bg-background border border-blue-500/50 text-blue-400 text-xs font-medium rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-400 cursor-pointer shadow-sm hover:border-blue-400 transition shrink-0"
+            disabled={sending || !currentAgent}
+            className="appearance-none bg-background border border-blue-500/50 text-blue-400 text-xs font-medium rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-400 cursor-pointer shadow-sm hover:border-blue-400 disabled:opacity-60 disabled:cursor-not-allowed transition shrink-0"
             style={{
               backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
               backgroundRepeat: 'no-repeat',
@@ -158,6 +164,11 @@ export function ChatPanel({
 
       {/* Chat Messages — rendered from event stream (Blueprint Sec 11) */}
       <div className="flex-1 overflow-y-auto p-3 lg:p-4 space-y-3 lg:space-y-4 pb-20 lg:pb-4">
+        {events.length === 0 && (
+          <div className="rounded-lg border border-gray-800 bg-panel/50 p-3 text-xs text-gray-500">
+            Send a message to start a conversation.
+          </div>
+        )}
         {events.map((event, i) => (
           <ChatMessageItem
             key={i}
@@ -165,6 +176,11 @@ export function ChatPanel({
             onPermissionResponse={onPermissionResponse}
           />
         ))}
+        {error && (
+          <div className="rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-300">
+            {error}
+          </div>
+        )}
       </div>
 
       {/* Chat Input (Blueprint Sec 17 — input composer) */}
@@ -181,12 +197,14 @@ export function ChatPanel({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Message agent..."
-              className="w-full bg-panel border border-gray-700 rounded-xl pl-3 pr-10 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none h-12 transition-all"
+              placeholder={agents.length === 0 ? 'Configure an agent first...' : 'Message agent...'}
+              disabled={sending || agents.length === 0}
+              className="w-full bg-panel border border-gray-700 rounded-xl pl-3 pr-10 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none h-12 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
             />
             <button
               onClick={handleSend}
-              className="absolute right-2 bottom-2 p-1.5 bg-blue-600 rounded-lg hover:bg-blue-500 transition"
+              disabled={!canSend}
+              className="absolute right-2 bottom-2 p-1.5 bg-blue-600 rounded-lg hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed transition"
             >
               <ArrowUp className="w-3.5 h-3.5 text-white" />
             </button>

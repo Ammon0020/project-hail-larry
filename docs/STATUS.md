@@ -1,6 +1,6 @@
 # Project Status — Local Agent Interface
 
-> Last updated: 2026-06-20. Source of truth for task-level status.
+> Last updated: 2026-06-22. Source of truth for task-level status.
 > See `docs/plan.md` for full task definitions and `docs/pass-off.md` for prior session context.
 
 ## Verification Summary
@@ -11,7 +11,9 @@
 | `go test ./...` | ✅ All packages pass |
 | `go vet ./...` | ✅ Pass |
 | `npm run build` | ✅ Pass (web/) |
-| Runtime: `app start` serves UI | ⏳ Not verified this session |
+| `npm run lint` (web) | ✅ Pass (no errors) |
+| `..\build.ps1` | ✅ Pass (frontend embedded) |
+| Runtime: `app start` serves UI | ✅ Clean startup, no autodetect noise |
 | Runtime: pairing flow works | ⏳ Not verified this session |
 
 ## Phase 1 — Core Infrastructure: ~100% COMPLETE
@@ -64,6 +66,7 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
 - Full JSON-RPC 2.0 via `NewClientSideConnection` (stdio)
 - Bridges `SessionUpdate` to system events (`StreamUpdate`, `ToolStarted`, `ToolCompleted`)
 - Bridges `RequestPermission` to `PermissionManager` (prompts UI for allow/deny)
+- `NewSessionRequest` now sends `mcpServers: []` instead of `null` to satisfy strict ACP agents (devstral-small). Regression test added.
 
 ### Agent Configuration UI & Autodetection — ✅ RESOLVED
 - Implemented full Agent CRUD operations (`POST /api/agents`, `DELETE`, etc.) backed by local storage.
@@ -103,8 +106,8 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
 
 ### UI & Chat Implementation Gaps
 - [ ] **UI Persistence** — On reload, the UI loses state. Needs to maintain selected files, active model, and active conversation.
-- [ ] **Chat Messages** — Chat history/messages are not being shown properly in the UI.
-- [ ] **Conversation Management** — Missing the ability to add new conversations or rename existing conversations.
+- [x] **Chat Messages** — Send prompt now persists/broadcasts events, awaits completion, shows errors, and renders all event types (PromptSubmitted, ResponseStarted, StreamUpdate, ToolStarted, ToolCompleted, AgentExited). Lint clean.
+- [ ] **Conversation Management** — Missing the ability to rename existing conversations.
 
 ## Development Phases (from Blueprint Sec 25)
 

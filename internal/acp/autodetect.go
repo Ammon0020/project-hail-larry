@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,15 +93,20 @@ func detectAgent(spec agentSpec) (AgentInfo, bool) {
 		return AgentInfo{}, false
 	}
 
-	models, warning := tryACPProvidersList(path)
+	models, acpWarning := tryACPProvidersList(path)
+	var warning string
 	if len(models) == 0 && spec.fileModels != nil {
 		models = spec.fileModels()
 	}
 	if len(models) == 0 {
 		models = spec.fallbackModels
-		if warning == "" {
-			warning = "Using fallback model list"
+		warning = "Using fallback model list"
+		if acpWarning != "" {
+			log.Printf("autodetect: %s — ACP probe failed (%s), no config file, using fallback models", spec.name, acpWarning)
 		}
+	} else if acpWarning != "" && len(models) > 0 {
+		// ACP failed but file-based detection succeeded — quiet warning
+		warning = ""
 	}
 
 	return AgentInfo{
@@ -126,11 +133,13 @@ func findFirstCommand(commands []string) string {
 // and queries available models via the unstable providers/list method.
 // Returns nil plus a warning if any step fails.
 func tryACPProvidersList(command string) ([]AgentModel, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, command)
-	cmd.Stderr = os.Stderr // surface agent errors in daemon logs
+	// Discard stderr — autodetect is a probe, not a real session.
+	// Agent stderr (e.g. "stdin is not a terminal") should not pollute daemon output.
+	cmd.Stderr = io.Discard
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Sprintf("open stdin pipe: %v", err)
@@ -141,25 +150,24 @@ func tryACPProvidersList(command string) ([]AgentModel, string) {
 	}
 	if err := cmd.Start(); err != nil {
 		warning := fmt.Sprintf("start %s: %v", command, err)
-		log.Printf("autodetect: %s", warning)
 		return nil, warning
 	}
 	defer cleanupAutodetectProcess(cmd, stdin)
 
 	client := acp.NewClientSideConnection(&dummyClientImpl{}, stdin, stdout)
+	// Suppress ACP SDK diagnostic logging (e.g. "connection closed") during probing.
+	client.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if _, err = client.Initialize(ctx, acp.InitializeRequest{
 		ClientInfo:         &acp.Implementation{Name: "local-agent-autodetect", Version: "1.0"},
 		ClientCapabilities: acp.ClientCapabilities{},
 	}); err != nil {
 		warning := fmt.Sprintf("initialize failed: %v", err)
-		log.Printf("autodetect: %s %s", command, warning)
 		return nil, warning
 	}
 
 	listRes, err := client.UnstableListProviders(ctx, acp.UnstableListProvidersRequest{})
 	if err != nil {
 		warning := fmt.Sprintf("providers/list failed: %v", err)
-		log.Printf("autodetect: %s %s", command, warning)
 		return nil, warning
 	}
 

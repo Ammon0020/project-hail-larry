@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/interfaces"
@@ -338,17 +339,16 @@ func (s *Server) handleSendPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.deps.ACPClient.SendPrompt(r.Context(), sessionID, req.Content); err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		writeError(w, http.StatusBadRequest, "prompt content is required")
 		return
 	}
 
-	s.recordEvent(r.Context(), interfaces.Event{
-		Type:      interfaces.EventPromptSubmitted,
-		SessionID: sessionID,
-		Role:      "user",
-		Content:   req.Content,
-	})
+	if err := s.deps.ACPClient.SendPrompt(r.Context(), sessionID, content); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
 }

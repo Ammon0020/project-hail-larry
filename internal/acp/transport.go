@@ -3,6 +3,8 @@ package acp
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -187,6 +189,9 @@ func (t *Transport) Start(ctx context.Context, command string, args []string, wo
 	}
 
 	t.conn = acp.NewClientSideConnection(impl, stdin, stdout)
+	// Suppress ACP SDK diagnostic logging (e.g. "connection closed") —
+	// these are noisy during normal operation and not actionable.
+	t.conn.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return nil
 }
 
@@ -201,7 +206,10 @@ func (t *Transport) Initialize(ctx context.Context) (acp.InitializeResponse, err
 }
 
 func (t *Transport) NewSession(ctx context.Context, cwd string) (string, error) {
-	result, err := t.conn.NewSession(ctx, acp.NewSessionRequest{Cwd: cwd})
+	result, err := t.conn.NewSession(ctx, acp.NewSessionRequest{
+		Cwd:        cwd,
+		McpServers: []acp.McpServer{},
+	})
 	if err != nil {
 		return "", err
 	}
