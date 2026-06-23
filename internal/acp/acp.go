@@ -38,6 +38,7 @@ type AgentInfo struct {
 	Command string       `json:"command"` // launch command (e.g., "claude", "codex")
 	Args    []string     `json:"args,omitempty"`
 	Models  []AgentModel `json:"models"`
+	Warning string       `json:"warning,omitempty"`
 }
 
 // AgentModel describes a model offered by an agent.
@@ -82,6 +83,13 @@ func (c *Client) RegisterAgent(agent AgentInfo) {
 	c.agents[agent.ID] = agent
 }
 
+// RemoveAgent removes an agent from the registry.
+func (c *Client) RemoveAgent(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.agents, id)
+}
+
 // ListAgents returns registered agent harnesses and their models.
 func (c *Client) ListAgents(_ context.Context) ([]interfaces.AgentInfo, error) {
 	c.mu.Lock()
@@ -97,9 +105,10 @@ func (c *Client) ListAgents(_ context.Context) ([]interfaces.AgentInfo, error) {
 			})
 		}
 		agents = append(agents, interfaces.AgentInfo{
-			ID:     a.ID,
-			Name:   a.Name,
-			Models: models,
+			ID:      a.ID,
+			Name:    a.Name,
+			Models:  models,
+			Warning: a.Warning,
 		})
 	}
 	return agents, nil
@@ -163,13 +172,13 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 	}
 
 	if _, err := transport.Initialize(ctx); err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return interfaces.SessionInfo{}, fmt.Errorf("initialize transport: %w", err)
 	}
 
 	acpSessionID, err := transport.NewSession(ctx, workspacePath)
 	if err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return interfaces.SessionInfo{}, fmt.Errorf("new acp session: %w", err)
 	}
 
@@ -261,8 +270,8 @@ func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
 	session.Status = "interrupted"
 
 	if session.transport != nil {
-		session.transport.Cancel(ctx, session.acpSessionID)
-		session.transport.Close()
+		_ = session.transport.Cancel(ctx, session.acpSessionID)
+		_ = session.transport.Close()
 	}
 
 	// Emit cancellation event.
@@ -288,7 +297,7 @@ func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
 	}
 
 	if session.transport != nil {
-		session.transport.Close()
+		_ = session.transport.Close()
 	}
 
 	session.Status = "completed"

@@ -1,6 +1,7 @@
 import { Wifi, Server, Smartphone, Laptop } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { PairedDevice } from '@/types'
+import type { AgentInfo } from '@/lib/api'
 
 /** Maps device icon names to Lucide React components. */
 const deviceIconMap: Record<string, typeof Smartphone> = {
@@ -15,12 +16,16 @@ const deviceIconMap: Record<string, typeof Smartphone> = {
  */
 export function MobileSettings({
   devices,
+  agents,
   visible,
   onRevokeDevice,
+  onAutodetectAgents,
 }: {
   devices: PairedDevice[]
+  agents: AgentInfo[]
   visible: boolean
   onRevokeDevice: (id: string) => void
+  onAutodetectAgents: () => void
 }) {
   return (
     <div
@@ -66,6 +71,23 @@ export function MobileSettings({
               </div>
             )
           })}
+        </div>
+
+        {/* Agents */}
+        <div className="bg-background border border-gray-800 rounded-lg p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-semibold text-gray-300">Agents</div>
+            <button onClick={onAutodetectAgents} className="text-[10px] text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded hover:bg-blue-500/10 transition">Auto-detect</button>
+          </div>
+          {agents.length === 0 ? (
+            <div className="text-xs text-gray-500 py-1">No agents configured.</div>
+          ) : (
+            agents.map(a => (
+              <div key={a.id} className="flex items-center justify-between text-xs text-gray-400 py-1">
+                <span>{a.name} <span className="text-[10px] text-gray-600 bg-gray-900 px-1 rounded ml-1">{a.command}</span></span>
+              </div>
+            ))
+          )}
         </div>
 
         {/* Theme */}

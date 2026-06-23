@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/interfaces"
 )
 
@@ -238,6 +239,57 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, agents)
+}
+
+// handleUpsertAgent adds or updates an agent.
+func (s *Server) handleUpsertAgent(w http.ResponseWriter, r *http.Request) {
+	var agent acp.AgentInfo
+	if err := decodeJSON(r, &agent); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if s.deps.Config != nil {
+		found := false
+		for i, a := range s.deps.Config.Agents {
+			if a.ID == agent.ID {
+				s.deps.Config.Agents[i] = agent
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.deps.Config.Agents = append(s.deps.Config.Agents, agent)
+		}
+		_ = s.deps.Config.Save()
+	}
+
+	s.deps.ACPClient.RegisterAgent(agent)
+	writeJSON(w, http.StatusOK, agent)
+}
+
+// handleDeleteAgent removes an agent.
+func (s *Server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	if s.deps.Config != nil {
+		for i, a := range s.deps.Config.Agents {
+			if a.ID == id {
+				s.deps.Config.Agents = append(s.deps.Config.Agents[:i], s.deps.Config.Agents[i+1:]...)
+				break
+			}
+		}
+		_ = s.deps.Config.Save()
+	}
+
+	s.deps.ACPClient.RemoveAgent(id)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// handleAutodetectAgents triggers manual autodetection.
+func (s *Server) handleAutodetectAgents(w http.ResponseWriter, _ *http.Request) {
+	detected := acp.Autodetect()
+	writeJSON(w, http.StatusOK, detected)
 }
 
 // handleListSessions returns all active sessions.

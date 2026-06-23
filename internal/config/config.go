@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/adama/local-agent/internal/acp"
 )
 
 const (
@@ -16,11 +18,12 @@ const (
 
 // Config is the persistent application configuration.
 type Config struct {
-	Port       int      `json:"port"`
-	Host       string   `json:"host"`
-	DataDir    string   `json:"dataDir"`
-	DBPath     string   `json:"dbPath"`
-	Workspaces []string `json:"workspaces"`
+	Port       int             `json:"port"`
+	Host       string          `json:"host"`
+	DataDir    string          `json:"dataDir"`
+	DBPath     string          `json:"dbPath"`
+	Workspaces []string        `json:"workspaces"`
+	Agents     []acp.AgentInfo `json:"agents"`
 }
 
 // Default returns the default configuration.
@@ -37,6 +40,7 @@ func Default() *Config {
 		DataDir:    dataDir,
 		DBPath:     filepath.Join(dataDir, "local-agent.db"),
 		Workspaces: []string{},
+		Agents:     []acp.AgentInfo{},
 	}
 }
 
@@ -78,6 +82,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Workspaces == nil {
 		cfg.Workspaces = []string{}
+	}
+	if cfg.Agents == nil {
+		cfg.Agents = []acp.AgentInfo{}
 	}
 
 	return &cfg, nil

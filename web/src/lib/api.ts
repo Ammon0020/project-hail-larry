@@ -44,7 +44,10 @@ export interface FileNode {
 export interface AgentInfo {
   id: string
   name: string
+  command: string
+  args: string[]
   models: AgentModel[]
+  warning?: string
 }
 
 export interface AgentModel {
@@ -122,6 +125,19 @@ export const api = {
 
   // Agents & Sessions
   listAgents: () => apiFetch<AgentInfo[]>('/agents'),
+  addAgent: (agent: AgentInfo) =>
+    apiFetch<AgentInfo>('/agents', {
+      method: 'POST',
+      body: JSON.stringify(agent),
+    }),
+  deleteAgent: (agentId: string) =>
+    apiFetch<{ status: string }>(`/agents/${agentId}`, {
+      method: 'DELETE',
+    }),
+  autodetectAgents: () =>
+    apiFetch<AgentInfo[]>('/agents/autodetect', {
+      method: 'POST',
+    }),
   listSessions: () => apiFetch<SessionInfo[]>('/sessions'),
   createSession: (agentId: string, modelId: string, workspaceId: string) =>
     apiFetch<SessionInfo>('/sessions', {

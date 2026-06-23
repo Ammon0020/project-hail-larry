@@ -110,9 +110,10 @@ type WorkspaceManager interface {
 
 // AgentInfo describes a registered agent.
 type AgentInfo struct {
-	ID     string       `json:"id"`
-	Name   string       `json:"name"`
-	Models []AgentModel `json:"models"`
+	ID      string       `json:"id"`
+	Name    string       `json:"name"`
+	Models  []AgentModel `json:"models"`
+	Warning string       `json:"warning,omitempty"`
 }
 
 // AgentModel describes a model offered by an agent.

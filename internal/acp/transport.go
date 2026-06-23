@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/coder/acp-go-sdk"
 	"github.com/adama/local-agent/internal/interfaces"
+	"github.com/coder/acp-go-sdk"
 )
 
 // acpClientImpl implements the coder/acp-go-sdk Client interface.
@@ -211,7 +211,7 @@ func (t *Transport) Cancel(ctx context.Context, sessionID string) error {
 
 func (t *Transport) Close() error {
 	if t.cmd != nil && t.cmd.Process != nil {
-		t.cmd.Process.Kill()
+		_ = t.cmd.Process.Kill()
 	}
 	return nil
 }

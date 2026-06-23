@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/adama/local-agent/internal/acp"
+	"github.com/adama/local-agent/internal/config"
 	"github.com/adama/local-agent/internal/events"
 	"github.com/adama/local-agent/internal/interfaces"
 	"github.com/adama/local-agent/internal/pairing"
@@ -34,6 +35,7 @@ type Deps struct {
 	ACPClient     *acp.Client
 	PermissionMgr *permissions.Manager
 	SyncHub       *sync.Hub
+	Config        *config.Config
 }
 
 // Server is the main HTTP server for the Local Agent Interface.
@@ -91,6 +93,9 @@ func (s *Server) apiRoutes() {
 
 	// Session routes.
 	s.mux.HandleFunc("GET /api/agents", s.handleListAgents)
+	s.mux.HandleFunc("POST /api/agents", s.handleUpsertAgent)
+	s.mux.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
+	s.mux.HandleFunc("POST /api/agents/autodetect", s.handleAutodetectAgents)
 	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	s.mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handleSendPrompt)

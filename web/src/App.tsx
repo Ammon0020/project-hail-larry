@@ -6,6 +6,7 @@ import { EditorPane } from '@/components/EditorPane'
 import { ChatPanel } from '@/components/ChatPanel'
 import { MobileNav } from '@/components/MobileNav'
 import { MobileSettings } from '@/components/MobileSettings'
+import { SettingsModal } from '@/components/SettingsModal'
 import { useBackend } from '@/hooks/useBackend'
 import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Session, Tab } from '@/types'
 
@@ -31,6 +32,7 @@ export default function App() {
   const [isDesktop, setIsDesktop] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true,
   )
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
 
   // Tab state
   const [openTabs, setOpenTabs] = useState<Tab[]>([])
@@ -159,7 +161,10 @@ export default function App() {
       <ActivityBar
         activePanel={leftPanel}
         onSwitchPanel={setLeftPanel}
-        onOpenSettings={() => !isDesktop && setMobileView('settings')}
+        onOpenSettings={() => {
+          if (isDesktop) setIsSettingsModalOpen(true)
+          else setMobileView('settings')
+        }}
       />
 
       {/* Left Sidebar — workspace switcher + file tree / search */}
@@ -213,12 +218,31 @@ export default function App() {
           icon: 'monitor',
           pairedAt: d.pairedAt,
         }))}
+        agents={backend.agents}
         visible={showMobileSettings}
         onRevokeDevice={(id) => backend.revokeDevice(id)}
+        onAutodetectAgents={async () => {
+          const detected = await backend.autodetectAgents()
+          for (const d of detected) {
+            if (!backend.agents.find(a => a.id === d.id)) {
+              await backend.addAgent(d)
+            }
+          }
+        }}
       />
 
       {/* Mobile Bottom Nav (hidden on desktop) */}
       <MobileNav activeView={mobileView} onSwitchView={setMobileView} />
+
+      {/* Desktop Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        agents={backend.agents}
+        onAddAgent={backend.addAgent}
+        onDeleteAgent={backend.deleteAgent}
+        onAutodetect={backend.autodetectAgents}
+      />
     </div>
   )
 }

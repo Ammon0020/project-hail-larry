@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -97,17 +98,46 @@ func New(cfg *Config) (*Daemon, error) {
 	acpClient := acp.NewClient(workspaceMgr, permissionMgr)
 	syncHub := sync.NewHub()
 
-	// Register a default agent so the UI has something to show.
-	// In production, agents are discovered via ACP capability negotiation.
-	acpClient.RegisterAgent(acp.AgentInfo{
-		ID:      "claude-code",
-		Name:    "Claude Code",
-		Command: "claude",
-		Models: []acp.AgentModel{
-			{ID: "claude-sonnet-4", Name: "Claude Sonnet 4"},
-			{ID: "claude-opus-4", Name: "Claude Opus 4"},
-		},
-	})
+	// Load persisted agents from config and run autodetection
+	activeAgents := appCfg.Agents
+	detected := acp.Autodetect()
+	changed := false
+
+	// Merge autodetected agents
+	for _, d := range detected {
+		found := false
+		for _, a := range activeAgents {
+			if a.ID == d.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			activeAgents = append(activeAgents, d)
+			changed = true
+		}
+	}
+
+	// Verify executables and register
+	for i := range activeAgents {
+		// Use acp.AgentInfo struct defined in acp.go
+		if _, err := os.Stat(activeAgents[i].Command); err != nil {
+			// fallback to LookPath
+			if _, lpErr := exec.LookPath(activeAgents[i].Command); lpErr != nil {
+				activeAgents[i].Warning = "Executable not found in PATH"
+			} else {
+				activeAgents[i].Warning = ""
+			}
+		} else {
+			activeAgents[i].Warning = ""
+		}
+		acpClient.RegisterAgent(activeAgents[i])
+	}
+
+	if changed && appCfg != nil {
+		appCfg.Agents = activeAgents
+		_ = appCfg.Save()
+	}
 
 	// Create the server with all dependencies wired in.
 	srv := server.New(&server.Deps{
@@ -117,6 +147,7 @@ func New(cfg *Config) (*Daemon, error) {
 		ACPClient:     acpClient,
 		PermissionMgr: permissionMgr,
 		SyncHub:       syncHub,
+		Config:        appCfg,
 	})
 
 	return &Daemon{
