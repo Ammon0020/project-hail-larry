@@ -93,8 +93,8 @@ func New(cfg *Config) (*Daemon, error) {
 		}
 	}
 
-	acpClient := acp.NewClient()
 	permissionMgr := permissions.NewManager()
+	acpClient := acp.NewClient(workspaceMgr, permissionMgr)
 	syncHub := sync.NewHub()
 
 	// Register a default agent so the UI has something to show.

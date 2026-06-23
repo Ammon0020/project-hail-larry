@@ -13,7 +13,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -24,10 +23,12 @@ import (
 // In Phase 1, this manages agent registration and session state in-memory.
 // The actual ACP stdio JSON-RPC transport will be wired in during integration.
 type Client struct {
-	mu        sync.Mutex
-	agents    map[string]AgentInfo
-	sessions  map[string]*Session
-	callbacks interfaces.ACPCallbacks
+	mu           sync.Mutex
+	agents       map[string]AgentInfo
+	sessions     map[string]*Session
+	callbacks    interfaces.ACPCallbacks
+	workspaceMgr interfaces.WorkspaceManager
+	permMgr      interfaces.PermissionManager
 }
 
 // AgentInfo describes a registered agent harness.
@@ -35,6 +36,7 @@ type AgentInfo struct {
 	ID      string       `json:"id"`
 	Name    string       `json:"name"`
 	Command string       `json:"command"` // launch command (e.g., "claude", "codex")
+	Args    []string     `json:"args,omitempty"`
 	Models  []AgentModel `json:"models"`
 }
 
@@ -46,20 +48,23 @@ type AgentModel struct {
 
 // Session represents an active agent session.
 type Session struct {
-	ID        string    `json:"id"`
-	AgentID   string    `json:"agentId"`
-	ModelID   string    `json:"modelId"`
-	Workspace string    `json:"workspace"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	cmd       *exec.Cmd
+	ID           string    `json:"id"`
+	AgentID      string    `json:"agentId"`
+	ModelID      string    `json:"modelId"`
+	Workspace    string    `json:"workspace"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"createdAt"`
+	transport    *Transport
+	acpSessionID string
 }
 
 // NewClient creates a new ACP client with no registered agents.
-func NewClient() *Client {
+func NewClient(workspaceMgr interfaces.WorkspaceManager, permMgr interfaces.PermissionManager) *Client {
 	return &Client{
-		agents:   make(map[string]AgentInfo),
-		sessions: make(map[string]*Session),
+		agents:       make(map[string]AgentInfo),
+		sessions:     make(map[string]*Session),
+		workspaceMgr: workspaceMgr,
+		permMgr:      permMgr,
 	}
 }
 
@@ -103,7 +108,7 @@ func (c *Client) ListAgents(_ context.Context) ([]interfaces.AgentInfo, error) {
 // CreateSession starts a new agent session.
 // In Phase 1, this creates the session record. The actual agent process
 // launch via os/exec will be wired in during integration.
-func (c *Client) CreateSession(_ context.Context, agentID, modelID, workspaceID string) (interfaces.SessionInfo, error) {
+func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceID string) (interfaces.SessionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -130,13 +135,53 @@ func (c *Client) CreateSession(_ context.Context, agentID, modelID, workspaceID 
 		return interfaces.SessionInfo{}, fmt.Errorf("generate session ID: %w", err)
 	}
 
+	// Determine workspace path for the agent process
+	workspacePath := workspaceID
+	if c.workspaceMgr != nil {
+		wlist, err := c.workspaceMgr.List(ctx)
+		if err == nil {
+			for _, w := range wlist {
+				if w.ID == workspaceID {
+					workspacePath = w.Path
+					break
+				}
+			}
+		}
+	}
+
+	transport := NewTransport()
+	impl := &acpClientImpl{
+		callbacks:    c.callbacks,
+		workspaceMgr: c.workspaceMgr,
+		permMgr:      c.permMgr,
+		workspaceID:  workspaceID,
+		sessionID:    sessionID,
+	}
+
+	if err := transport.Start(ctx, agent.Command, agent.Args, workspacePath, impl); err != nil {
+		return interfaces.SessionInfo{}, fmt.Errorf("start transport: %w", err)
+	}
+
+	if _, err := transport.Initialize(ctx); err != nil {
+		transport.Close()
+		return interfaces.SessionInfo{}, fmt.Errorf("initialize transport: %w", err)
+	}
+
+	acpSessionID, err := transport.NewSession(ctx, workspacePath)
+	if err != nil {
+		transport.Close()
+		return interfaces.SessionInfo{}, fmt.Errorf("new acp session: %w", err)
+	}
+
 	session := &Session{
-		ID:        sessionID,
-		AgentID:   agentID,
-		ModelID:   modelID,
-		Workspace: workspaceID,
-		Status:    "created",
-		CreatedAt: time.Now().UTC(),
+		ID:           sessionID,
+		AgentID:      agentID,
+		ModelID:      modelID,
+		Workspace:    workspaceID,
+		Status:       "created",
+		CreatedAt:    time.Now().UTC(),
+		transport:    transport,
+		acpSessionID: acpSessionID,
 	}
 
 	c.sessions[sessionID] = session
@@ -160,7 +205,7 @@ func (c *Client) CreateSession(_ context.Context, agentID, modelID, workspaceID 
 // SendPrompt sends a user prompt to the agent and streams responses.
 // In Phase 1, this emits a PromptSubmitted event. The actual ACP session/prompt
 // JSON-RPC call will be wired in during integration.
-func (c *Client) SendPrompt(_ context.Context, sessionID, content string) error {
+func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) error {
 	c.mu.Lock()
 	session, ok := c.sessions[sessionID]
 	c.mu.Unlock()
@@ -183,11 +228,28 @@ func (c *Client) SendPrompt(_ context.Context, sessionID, content string) error 
 		})
 	}
 
+	// Call the ACP agent in a goroutine so we don't block.
+	go func() {
+		if session.transport != nil {
+			if c.callbacks != nil {
+				c.callbacks.OnEvent(interfaces.Event{
+					Type:      interfaces.EventResponseStarted,
+					SessionID: sessionID,
+					Timestamp: time.Now().UTC(),
+				})
+			}
+			err := session.transport.Prompt(context.Background(), session.acpSessionID, content)
+			if err != nil {
+				fmt.Printf("Error prompting agent: %v\n", err)
+			}
+		}
+	}()
+
 	return nil
 }
 
 // CancelSession interrupts a running session.
-func (c *Client) CancelSession(_ context.Context, sessionID string) error {
+func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -198,9 +260,9 @@ func (c *Client) CancelSession(_ context.Context, sessionID string) error {
 
 	session.Status = "interrupted"
 
-	// Kill the agent process if it's running.
-	if session.cmd != nil && session.cmd.Process != nil {
-		_ = session.cmd.Process.Kill()
+	if session.transport != nil {
+		session.transport.Cancel(ctx, session.acpSessionID)
+		session.transport.Close()
 	}
 
 	// Emit cancellation event.
@@ -216,7 +278,7 @@ func (c *Client) CancelSession(_ context.Context, sessionID string) error {
 }
 
 // CloseSession closes a session.
-func (c *Client) CloseSession(_ context.Context, sessionID string) error {
+func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -225,9 +287,8 @@ func (c *Client) CloseSession(_ context.Context, sessionID string) error {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Kill the agent process if running.
-	if session.cmd != nil && session.cmd.Process != nil {
-		_ = session.cmd.Process.Kill()
+	if session.transport != nil {
+		session.transport.Close()
 	}
 
 	session.Status = "completed"

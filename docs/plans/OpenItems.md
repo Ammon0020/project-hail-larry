@@ -1,4 +1,4 @@
-# Open Items
+# OpenItems
 
 Tracked gaps and decisions to address in the Local Agent Interface blueprint and implementation. Check items off as they land in `Blueprint.md` or ship in code. Delete sections when fully resolved.
 
