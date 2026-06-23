@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 
@@ -119,10 +120,23 @@ func (c *acpClientImpl) ReadTextFile(ctx context.Context, params acp.ReadTextFil
 }
 
 func (c *acpClientImpl) WriteTextFile(ctx context.Context, params acp.WriteTextFileRequest) (acp.WriteTextFileResponse, error) {
-	// Our workspace manager's WriteFile currently doesn't easily expose this to the agent
-	// unless we add WriteFile to workspace manager without expecting a specific revision (or 0).
-	// We'll leave it simple for now or return an error if not fully implemented.
-	return acp.WriteTextFileResponse{}, fmt.Errorf("unimplemented")
+	if c.workspaceMgr == nil {
+		return acp.WriteTextFileResponse{}, fmt.Errorf("workspace manager not configured")
+	}
+	// Agent writes don't use optimistic locking — pass expectedRevision=0.
+	// The file-sync layer tracks revisions for user-facing edits; agent writes
+	// are tracked via FileRevisionUpdated events emitted by the daemon.
+	type fileWriter interface {
+		WriteFile(ctx context.Context, workspaceID, relPath, content string, expectedRevision int64) (int64, error)
+	}
+	fw, ok := c.workspaceMgr.(fileWriter)
+	if !ok {
+		return acp.WriteTextFileResponse{}, fmt.Errorf("workspace manager does not support writing")
+	}
+	if _, err := fw.WriteFile(ctx, c.workspaceID, filepath.Clean(params.Path), params.Content, 0); err != nil {
+		return acp.WriteTextFileResponse{}, err
+	}
+	return acp.WriteTextFileResponse{}, nil
 }
 
 func (c *acpClientImpl) CreateTerminal(ctx context.Context, params acp.CreateTerminalRequest) (acp.CreateTerminalResponse, error) {
@@ -158,6 +172,8 @@ func NewTransport() *Transport {
 func (t *Transport) Start(ctx context.Context, command string, args []string, workdir string, impl *acpClientImpl) error {
 	t.cmd = exec.CommandContext(ctx, command, args...)
 	t.cmd.Dir = workdir
+	// Inherit stderr so agent crash logs are visible in the daemon output.
+	t.cmd.Stderr = os.Stderr
 	stdin, err := t.cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("stdin pipe: %w", err)
@@ -212,6 +228,7 @@ func (t *Transport) Cancel(ctx context.Context, sessionID string) error {
 func (t *Transport) Close() error {
 	if t.cmd != nil && t.cmd.Process != nil {
 		_ = t.cmd.Process.Kill()
+		_ = t.cmd.Wait()
 	}
 	return nil
 }

@@ -32,8 +32,11 @@ export function SettingsModal({
     try {
       const detected = await onAutodetect()
       for (const d of detected) {
-        if (!agents.find(a => a.id === d.id)) {
+        const existing = agents.find(a => a.id === d.id)
+        if (!existing) {
           await onAddAgent(d)
+        } else {
+          await onAddAgent({ ...existing, models: d.models, command: d.command })
         }
       }
     } catch (err) {

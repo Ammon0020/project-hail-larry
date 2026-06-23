@@ -20,8 +20,8 @@ import (
 )
 
 // Client implements interfaces.ACPClient.
-// In Phase 1, this manages agent registration and session state in-memory.
-// The actual ACP stdio JSON-RPC transport will be wired in during integration.
+// It manages agent registration, session lifecycle, and delegates to the
+// ACP stdio JSON-RPC transport (transport.go) for real agent communication.
 type Client struct {
 	mu           sync.Mutex
 	agents       map[string]AgentInfo
@@ -115,8 +115,8 @@ func (c *Client) ListAgents(_ context.Context) ([]interfaces.AgentInfo, error) {
 }
 
 // CreateSession starts a new agent session.
-// In Phase 1, this creates the session record. The actual agent process
-// launch via os/exec will be wired in during integration.
+// Spawns the agent process, performs ACP handshake (Initialize + NewSession),
+// and stores the transport for subsequent prompt/cancel calls.
 func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceID string) (interfaces.SessionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -195,14 +195,8 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 
 	c.sessions[sessionID] = session
 
-	// Emit a session created event if callbacks are set.
-	if c.callbacks != nil {
-		c.callbacks.OnEvent(interfaces.Event{
-			Type:      interfaces.EventPromptSubmitted,
-			SessionID: sessionID,
-			Timestamp: time.Now().UTC(),
-		})
-	}
+	// Note: no event emitted here — session creation is not a prompt.
+	// The UI learns about the session via the ListSessions API.
 
 	return interfaces.SessionInfo{
 		ID:     sessionID,
@@ -212,8 +206,8 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 }
 
 // SendPrompt sends a user prompt to the agent and streams responses.
-// In Phase 1, this emits a PromptSubmitted event. The actual ACP session/prompt
-// JSON-RPC call will be wired in during integration.
+// Emits a PromptSubmitted event, then calls transport.Prompt in a goroutine.
+// Response chunks arrive asynchronously via acpClientImpl.SessionUpdate.
 func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) error {
 	c.mu.Lock()
 	session, ok := c.sessions[sessionID]

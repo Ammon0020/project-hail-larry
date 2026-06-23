@@ -52,6 +52,43 @@ func DefaultConfig() *Config {
 	}
 }
 
+func mergeAutodetectedAgents(configured, detected []acp.AgentInfo) ([]acp.AgentInfo, bool) {
+	merged := append([]acp.AgentInfo(nil), configured...)
+	changed := false
+
+	for _, detectedAgent := range detected {
+		found := false
+		for i := range merged {
+			if merged[i].ID != detectedAgent.ID {
+				continue
+			}
+			found = true
+			if merged[i].Name == "" {
+				merged[i].Name = detectedAgent.Name
+				changed = true
+			}
+			if merged[i].Command == "" {
+				merged[i].Command = detectedAgent.Command
+				changed = true
+			}
+			if len(merged[i].Models) == 0 {
+				merged[i].Models = detectedAgent.Models
+				changed = true
+			}
+			if merged[i].Warning == "" {
+				merged[i].Warning = detectedAgent.Warning
+			}
+			break
+		}
+		if !found {
+			merged = append(merged, detectedAgent)
+			changed = true
+		}
+	}
+
+	return merged, changed
+}
+
 // Daemon is the background process that serves the web UI and API.
 type Daemon struct {
 	config *Config
@@ -86,11 +123,13 @@ func New(cfg *Config) (*Daemon, error) {
 
 	// Load persisted workspaces from config.
 	appCfg, err := config.Load()
-	if err == nil {
-		for _, wsPath := range appCfg.Workspaces {
-			if _, regErr := workspaceMgr.Register(context.Background(), wsPath); regErr != nil {
-				log.Printf("WARNING: failed to load workspace %s: %v", wsPath, regErr)
-			}
+	if err != nil {
+		log.Printf("WARNING: failed to load config: %v", err)
+		appCfg = config.Default()
+	}
+	for _, wsPath := range appCfg.Workspaces {
+		if _, regErr := workspaceMgr.Register(context.Background(), wsPath); regErr != nil {
+			log.Printf("WARNING: failed to load workspace %s: %v", wsPath, regErr)
 		}
 	}
 
@@ -99,24 +138,7 @@ func New(cfg *Config) (*Daemon, error) {
 	syncHub := sync.NewHub()
 
 	// Load persisted agents from config and run autodetection
-	activeAgents := appCfg.Agents
-	detected := acp.Autodetect()
-	changed := false
-
-	// Merge autodetected agents
-	for _, d := range detected {
-		found := false
-		for _, a := range activeAgents {
-			if a.ID == d.ID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			activeAgents = append(activeAgents, d)
-			changed = true
-		}
-	}
+	activeAgents, changed := mergeAutodetectedAgents(appCfg.Agents, acp.Autodetect())
 
 	// Verify executables and register
 	for i := range activeAgents {
@@ -125,10 +147,10 @@ func New(cfg *Config) (*Daemon, error) {
 			// fallback to LookPath
 			if _, lpErr := exec.LookPath(activeAgents[i].Command); lpErr != nil {
 				activeAgents[i].Warning = "Executable not found in PATH"
-			} else {
+			} else if activeAgents[i].Warning == "Executable not found in PATH" {
 				activeAgents[i].Warning = ""
 			}
-		} else {
+		} else if activeAgents[i].Warning == "Executable not found in PATH" {
 			activeAgents[i].Warning = ""
 		}
 		acpClient.RegisterAgent(activeAgents[i])

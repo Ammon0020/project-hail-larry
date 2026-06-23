@@ -224,8 +224,11 @@ export default function App() {
         onAutodetectAgents={async () => {
           const detected = await backend.autodetectAgents()
           for (const d of detected) {
-            if (!backend.agents.find(a => a.id === d.id)) {
+            const existing = backend.agents.find(a => a.id === d.id)
+            if (!existing) {
               await backend.addAgent(d)
+            } else {
+              await backend.addAgent({ ...existing, models: d.models, command: d.command })
             }
           }
         }}

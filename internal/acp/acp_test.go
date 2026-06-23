@@ -73,8 +73,8 @@ func TestCreateSession(t *testing.T) {
 }
 
 // TestCreateSessionInvalidAgent verifies that creating a session with an unknown agent fails.
+// This fails at the agent lookup before any transport is spawned.
 func TestCreateSessionInvalidAgent(t *testing.T) {
-	t.Skip("Requires a mock ACP agent for testing real stdio transport")
 	client := NewClient(nil, nil)
 	ctx := context.Background()
 
@@ -85,8 +85,8 @@ func TestCreateSessionInvalidAgent(t *testing.T) {
 }
 
 // TestCreateSessionInvalidModel verifies that using an unoffered model fails.
+// This fails at model validation before any transport is spawned.
 func TestCreateSessionInvalidModel(t *testing.T) {
-	t.Skip("Requires a mock ACP agent for testing real stdio transport")
 	client := NewClient(nil, nil)
 	ctx := context.Background()
 
@@ -146,8 +146,8 @@ func TestSendPrompt(t *testing.T) {
 }
 
 // TestSendPromptInvalidSession verifies that sending a prompt to a nonexistent session fails.
+// This fails at session lookup before any transport is touched.
 func TestSendPromptInvalidSession(t *testing.T) {
-	t.Skip("Requires a mock ACP agent for testing real stdio transport")
 	client := NewClient(nil, nil)
 	ctx := context.Background()
 

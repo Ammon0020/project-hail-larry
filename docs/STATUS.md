@@ -56,7 +56,7 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
   src/components/         → 11+ UI components
 ```
 
-## Critical Gaps in Phase 1
+## Recently Resolved Gaps (Phase 1)
 
 ### ACP Transport — ✅ RESOLVED
 `internal/acp/transport.go` implements the `coder/acp-go-sdk` `Client` interface:
@@ -65,11 +65,10 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
 - Bridges `SessionUpdate` to system events (`StreamUpdate`, `ToolStarted`, `ToolCompleted`)
 - Bridges `RequestPermission` to `PermissionManager` (prompts UI for allow/deny)
 
-### Agent Configuration UI — MISSING
-- `internal/daemon/daemon.go:90-98` — hardcodes one agent (`claude-code`) at startup
-- No UI to register/configure agents (command, models, auth)
-- ChatPanel has agent/model selectors but they only list what the daemon returns
-- Agent registry is in-memory only (no persistence)
+### Agent Configuration UI & Autodetection — ✅ RESOLVED
+- Implemented full Agent CRUD operations (`POST /api/agents`, `DELETE`, etc.) backed by local storage.
+- Added `SettingsModal.tsx` and `MobileSettings.tsx` to configure agents from the UI.
+- Implemented **dynamic model autodetection** in `internal/acp/autodetect.go` which modularly attempts an ACP `providers/list` JSON-RPC handshake, and gracefully falls back to reading `models_cache.json` and `config.toml` for `codex` and `vibe`.
 
 ### Editor + File Explorer — ✅ RESOLVED
 - **File tree:** Fully interactive. Folders expand/collapse, clicking files opens them in editor tabs.
@@ -101,6 +100,11 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
 - [ ] **Device credential expiry** — permanent until revoked
 - [ ] **Editor on mobile** — CodeMirror needs touch optimization
 - [ ] **ACP sub-workers** — deferred until next ACP release
+
+### UI & Chat Implementation Gaps
+- [ ] **UI Persistence** — On reload, the UI loses state. Needs to maintain selected files, active model, and active conversation.
+- [ ] **Chat Messages** — Chat history/messages are not being shown properly in the UI.
+- [ ] **Conversation Management** — Missing the ability to add new conversations or rename existing conversations.
 
 ## Development Phases (from Blueprint Sec 25)
 

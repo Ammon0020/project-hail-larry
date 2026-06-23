@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	"github.com/adama/local-agent/internal/acp"
 )
 
 // TestDefaultConfig verifies the default configuration has sensible values.
@@ -86,5 +88,85 @@ func TestStopNotRunning(t *testing.T) {
 	err := Stop(tmpDir)
 	if err == nil {
 		t.Error("expected error when stopping non-running daemon")
+	}
+}
+
+func TestMergeAutodetectedAgentsPreservesConfiguredAgent(t *testing.T) {
+	configured := []acp.AgentInfo{
+		{
+			ID:      "codex",
+			Name:    "My Codex",
+			Command: `C:\custom\codex.exe`,
+			Models:  []acp.AgentModel{{ID: "custom-model", Name: "Custom Model"}},
+			Warning: "manual warning",
+		},
+	}
+	detected := []acp.AgentInfo{
+		{
+			ID:      "codex",
+			Name:    "Codex CLI",
+			Command: `C:\path\codex.exe`,
+			Models:  []acp.AgentModel{{ID: "detected-model", Name: "Detected Model"}},
+			Warning: "detected warning",
+		},
+	}
+
+	merged, changed := mergeAutodetectedAgents(configured, detected)
+	if changed {
+		t.Fatal("expected unchanged config when detected agent matches fully configured agent")
+	}
+	if got := merged[0].Command; got != configured[0].Command {
+		t.Fatalf("command was overwritten: got %q, want %q", got, configured[0].Command)
+	}
+	if got := merged[0].Models[0].ID; got != "custom-model" {
+		t.Fatalf("models were overwritten: got %q", got)
+	}
+	if got := merged[0].Warning; got != "manual warning" {
+		t.Fatalf("warning was overwritten: got %q", got)
+	}
+}
+
+func TestMergeAutodetectedAgentsFillsEmptyConfiguredFields(t *testing.T) {
+	configured := []acp.AgentInfo{{ID: "codex"}}
+	detected := []acp.AgentInfo{
+		{
+			ID:      "codex",
+			Name:    "Codex CLI",
+			Command: `C:\path\codex.exe`,
+			Models:  []acp.AgentModel{{ID: "detected-model", Name: "Detected Model"}},
+			Warning: "detected warning",
+		},
+	}
+
+	merged, changed := mergeAutodetectedAgents(configured, detected)
+	if !changed {
+		t.Fatal("expected config change when filling empty configured fields")
+	}
+	if got := merged[0].Name; got != "Codex CLI" {
+		t.Fatalf("name not filled: got %q", got)
+	}
+	if got := merged[0].Command; got != `C:\path\codex.exe` {
+		t.Fatalf("command not filled: got %q", got)
+	}
+	if got := merged[0].Models[0].ID; got != "detected-model" {
+		t.Fatalf("models not filled: got %q", got)
+	}
+	if got := merged[0].Warning; got != "detected warning" {
+		t.Fatalf("warning not filled: got %q", got)
+	}
+}
+
+func TestMergeAutodetectedAgentsAddsNewAgent(t *testing.T) {
+	detected := []acp.AgentInfo{{ID: "mistral-vibe", Name: "Mistral Vibe", Command: "vibe-acp"}}
+
+	merged, changed := mergeAutodetectedAgents(nil, detected)
+	if !changed {
+		t.Fatal("expected config change when adding detected agent")
+	}
+	if len(merged) != 1 {
+		t.Fatalf("expected one merged agent, got %d", len(merged))
+	}
+	if merged[0].ID != "mistral-vibe" {
+		t.Fatalf("unexpected merged agent ID %q", merged[0].ID)
 	}
 }

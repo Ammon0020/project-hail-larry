@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState, useEffect, type KeyboardEvent } from 'react'
 import { Menu, Paperclip, ArrowUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ChatMessageItem } from './ChatMessageItem'
@@ -38,6 +38,14 @@ export function ChatPanel({
   const [selectedModel, setSelectedModel] = useState(agents[0]?.models[0]?.id ?? '')
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false)
   const [input, setInput] = useState('')
+
+  // Update defaults once agents are loaded from the backend
+  useEffect(() => {
+    if (!selectedAgent && agents.length > 0) {
+      setSelectedAgent(agents[0].id)
+      setSelectedModel(agents[0].models[0]?.id ?? '')
+    }
+  }, [agents, selectedAgent])
 
   /** Updates available models when the agent harness changes. */
   const handleAgentChange = (agentId: string) => {
