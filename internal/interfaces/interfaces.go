@@ -25,6 +25,7 @@ const (
 	EventStreamUpdate          EventType = "StreamUpdate"
 	EventToolCompleted         EventType = "ToolCompleted"
 	EventToolStarted           EventType = "ToolStarted"
+	EventPlanUpdated           EventType = "PlanUpdated"
 	EventPermissionRequested   EventType = "PermissionRequested"
 	EventPermissionGranted     EventType = "PermissionGranted"
 	EventPermissionDenied      EventType = "PermissionDenied"
@@ -41,18 +42,23 @@ const (
 
 // Event is a single entry in the append-only event log.
 type Event struct {
-	ID        int64     `json:"id"`
-	Type      EventType `json:"type"`
-	SessionID string    `json:"sessionId"`
-	Timestamp time.Time `json:"timestamp"`
-	Role      string    `json:"role,omitempty"`      // "user" | "agent"
-	Content   string    `json:"content,omitempty"`   // message text
-	Streaming bool      `json:"streaming,omitempty"` // true during streaming
-	Tool      string    `json:"tool,omitempty"`      // tool name
-	Target    string    `json:"target,omitempty"`    // file path or target
-	Summary   string    `json:"summary,omitempty"`   // tool result summary
-	Command   string    `json:"command,omitempty"`   // shell command
-	Options   []string  `json:"options,omitempty"`   // permission options
+	ID         int64     `json:"id"`
+	Type       EventType `json:"type"`
+	SessionID  string    `json:"sessionId"`
+	Timestamp  time.Time `json:"timestamp"`
+	Role       string    `json:"role,omitempty"`       // "user" | "agent"
+	Content    string    `json:"content,omitempty"`    // message text
+	Streaming  bool      `json:"streaming,omitempty"`  // true during streaming
+	Tool       string    `json:"tool,omitempty"`       // tool name
+	Target     string    `json:"target,omitempty"`     // file path or target
+	Summary    string    `json:"summary,omitempty"`    // tool result summary
+	Command    string    `json:"command,omitempty"`    // shell command
+	Options    []string  `json:"options,omitempty"`    // permission options
+	RequestID  string    `json:"requestId,omitempty"`  // permission request ID (for respond)
+	ToolKind   string    `json:"toolKind,omitempty"`   // ACP tool kind (read/edit/execute/...)
+	ToolCallID string    `json:"toolCallId,omitempty"` // ACP tool call ID (for correlation)
+	Thought    bool      `json:"thought,omitempty"`    // true if this is an agent thought chunk
+	ExitCode   *int      `json:"exitCode,omitempty"`   // shell/terminal exit code when finished
 }
 
 // EventStore is the contract for the event persistence layer.
@@ -170,14 +176,25 @@ const (
 	PermissionDeny         PermissionDecision = "deny"
 )
 
+// PermissionOptionInfo describes a single selectable permission option as
+// offered by the agent. ID is the value echoed back when responding; Name is
+// the human-readable label; Kind is the ACP option kind (allow_once,
+// reject_once, etc.) used by the UI to pick styling.
+type PermissionOptionInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
 // PermissionRequest represents a pending permission prompt.
 type PermissionRequest struct {
-	ID        string               `json:"id"`
-	SessionID string               `json:"sessionId"`
-	Tool      string               `json:"tool"`
-	Command   string               `json:"command,omitempty"`
-	Target    string               `json:"target,omitempty"`
-	Options   []PermissionDecision `json:"options"`
+	ID            string                 `json:"id"`
+	SessionID     string                 `json:"sessionId"`
+	Tool          string                 `json:"tool"`
+	Command       string                 `json:"command,omitempty"`
+	Target        string                 `json:"target,omitempty"`
+	Options       []PermissionDecision   `json:"options"`
+	OptionDetails []PermissionOptionInfo `json:"optionDetails,omitempty"`
 }
 
 // PermissionManager is the contract for permission handling.

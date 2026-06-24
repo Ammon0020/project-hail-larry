@@ -109,8 +109,10 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 	h.Register(client)
 
-	// Start read and write pumps.
-	ctx := r.Context()
+	// Use a detached context — r.Context() is cancelled when HandleWS returns,
+	// which would immediately kill the pumps. The pumps exit naturally when
+	// the WebSocket read/write fails (client disconnects).
+	ctx := context.Background()
 	go client.writePump(ctx)
 	go client.readPump(ctx)
 }

@@ -69,14 +69,19 @@ func (s *Store) Append(ctx context.Context, e interfaces.Event) (interfaces.Even
 	}
 
 	payload, err := json.Marshal(eventPayload{
-		Role:      e.Role,
-		Content:   e.Content,
-		Streaming: e.Streaming,
-		Tool:      e.Tool,
-		Target:    e.Target,
-		Summary:   e.Summary,
-		Command:   e.Command,
-		Options:   e.Options,
+		Role:       e.Role,
+		Content:    e.Content,
+		Streaming:  e.Streaming,
+		Tool:       e.Tool,
+		Target:     e.Target,
+		Summary:    e.Summary,
+		Command:    e.Command,
+		Options:    e.Options,
+		RequestID:  e.RequestID,
+		ToolKind:   e.ToolKind,
+		ToolCallID: e.ToolCallID,
+		Thought:    e.Thought,
+		ExitCode:   e.ExitCode,
 	})
 	if err != nil {
 		return e, fmt.Errorf("marshal payload: %w", err)
@@ -138,14 +143,19 @@ func (s *Store) QueryAll(ctx context.Context, afterID int64, limit int) ([]inter
 
 // eventPayload holds the variable fields of an event, stored as JSON in the payload column.
 type eventPayload struct {
-	Role      string   `json:"role,omitempty"`
-	Content   string   `json:"content,omitempty"`
-	Streaming bool     `json:"streaming,omitempty"`
-	Tool      string   `json:"tool,omitempty"`
-	Target    string   `json:"target,omitempty"`
-	Summary   string   `json:"summary,omitempty"`
-	Command   string   `json:"command,omitempty"`
-	Options   []string `json:"options,omitempty"`
+	Role       string   `json:"role,omitempty"`
+	Content    string   `json:"content,omitempty"`
+	Streaming  bool     `json:"streaming,omitempty"`
+	Tool       string   `json:"tool,omitempty"`
+	Target     string   `json:"target,omitempty"`
+	Summary    string   `json:"summary,omitempty"`
+	Command    string   `json:"command,omitempty"`
+	Options    []string `json:"options,omitempty"`
+	RequestID  string   `json:"requestId,omitempty"`
+	ToolKind   string   `json:"toolKind,omitempty"`
+	ToolCallID string   `json:"toolCallId,omitempty"`
+	Thought    bool     `json:"thought,omitempty"`
+	ExitCode   *int     `json:"exitCode,omitempty"`
 }
 
 // scanEvents converts sql.Rows into a slice of Event structs.
@@ -188,6 +198,11 @@ func scanEvents(rows *sql.Rows) ([]interfaces.Event, error) {
 		e.Summary = payload.Summary
 		e.Command = payload.Command
 		e.Options = payload.Options
+		e.RequestID = payload.RequestID
+		e.ToolKind = payload.ToolKind
+		e.ToolCallID = payload.ToolCallID
+		e.Thought = payload.Thought
+		e.ExitCode = payload.ExitCode
 
 		events = append(events, e)
 	}

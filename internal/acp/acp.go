@@ -5,7 +5,7 @@
 // This layer handles protocol mechanics: process launch, session management,
 // prompts, streaming, permissions, cancellation, and event translation.
 // It does NOT contain provider-specific code — all agent communication goes
-// through ACP (stdio JSON-RPC).
+// through the Agent Client Protocol (via coder/acp-go-sdk).
 package acp
 
 import (
@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 
 // Client implements interfaces.ACPClient.
 // It manages agent registration, session lifecycle, and delegates to the
-// ACP stdio JSON-RPC transport (transport.go) for real agent communication.
+// ACP transport (transport.go) which uses coder/acp-go-sdk for real agent communication.
 type Client struct {
 	mu           sync.Mutex
 	agents       map[string]AgentInfo
@@ -29,6 +30,7 @@ type Client struct {
 	callbacks    interfaces.ACPCallbacks
 	workspaceMgr interfaces.WorkspaceManager
 	permMgr      interfaces.PermissionManager
+	storePath    string // file path for persisted conversation metadata
 }
 
 // AgentInfo describes a registered agent harness.
@@ -47,17 +49,24 @@ type AgentModel struct {
 	Name string `json:"name"`
 }
 
-// Session represents an active agent session.
+// Session represents a conversation with an agent. It persists across daemon
+// restarts (metadata only); the live ACP transport is (re)started lazily.
 type Session struct {
 	ID           string    `json:"id"`
+	Name         string    `json:"name"`
 	AgentID      string    `json:"agentId"`
 	ModelID      string    `json:"modelId"`
 	Workspace    string    `json:"workspace"`
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 	transport    *Transport
 	acpSessionID string
 }
+
+// defaultConversationName is the placeholder name used until the first prompt
+// (or an explicit rename) gives the conversation a real title.
+const defaultConversationName = "New chat"
 
 // NewClient creates a new ACP client with no registered agents.
 func NewClient(workspaceMgr interfaces.WorkspaceManager, permMgr interfaces.PermissionManager) *Client {
@@ -144,13 +153,51 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 		return interfaces.SessionInfo{}, fmt.Errorf("generate session ID: %w", err)
 	}
 
-	// Determine workspace path for the agent process
-	workspacePath := workspaceID
+	now := time.Now().UTC()
+	session := &Session{
+		ID:        sessionID,
+		Name:      defaultConversationName,
+		AgentID:   agentID,
+		ModelID:   modelID,
+		Workspace: workspaceID,
+		Status:    "created",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := c.startTransportLocked(ctx, session); err != nil {
+		return interfaces.SessionInfo{}, err
+	}
+
+	c.sessions[sessionID] = session
+	c.persistLocked()
+
+	// Note: no event emitted here — session creation is not a prompt.
+	// The UI learns about the session via the ListSessions API.
+
+	return interfaces.SessionInfo{
+		ID:     sessionID,
+		Name:   session.Name,
+		Status: session.Status,
+	}, nil
+}
+
+// startTransportLocked spawns the agent process for a session and performs the
+// ACP handshake (Initialize + NewSession). The caller must hold c.mu. It is used
+// both on initial creation and to lazily (re)start a session loaded from disk or
+// rebound to a different agent/model.
+func (c *Client) startTransportLocked(ctx context.Context, session *Session) error {
+	agent, ok := c.agents[session.AgentID]
+	if !ok {
+		return fmt.Errorf("agent not found: %s", session.AgentID)
+	}
+
+	// Determine workspace path for the agent process.
+	workspacePath := session.Workspace
 	if c.workspaceMgr != nil {
-		wlist, err := c.workspaceMgr.List(ctx)
-		if err == nil {
+		if wlist, err := c.workspaceMgr.List(ctx); err == nil {
 			for _, w := range wlist {
-				if w.ID == workspaceID {
+				if w.ID == session.Workspace {
 					workspacePath = w.Path
 					break
 				}
@@ -160,49 +207,31 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 
 	transport := NewTransport()
 	impl := &acpClientImpl{
-		callbacks:    c.callbacks,
-		workspaceMgr: c.workspaceMgr,
-		permMgr:      c.permMgr,
-		workspaceID:  workspaceID,
-		sessionID:    sessionID,
+		callbacks:     c.callbacks,
+		workspaceMgr:  c.workspaceMgr,
+		permMgr:       c.permMgr,
+		workspaceID:   session.Workspace,
+		workspacePath: workspacePath,
+		sessionID:     session.ID,
+		terminals:     make(map[string]*terminalEntry),
 	}
 
-	if err := transport.Start(ctx, agent.Command, agent.Args, workspacePath, impl); err != nil {
-		return interfaces.SessionInfo{}, fmt.Errorf("start transport: %w", err)
+	if err := transport.Start(context.Background(), agent.Command, agent.Args, workspacePath, impl); err != nil {
+		return fmt.Errorf("start transport: %w", err)
 	}
-
 	if _, err := transport.Initialize(ctx); err != nil {
 		_ = transport.Close()
-		return interfaces.SessionInfo{}, fmt.Errorf("initialize transport: %w", err)
+		return fmt.Errorf("initialize transport: %w", err)
 	}
-
 	acpSessionID, err := transport.NewSession(ctx, workspacePath)
 	if err != nil {
 		_ = transport.Close()
-		return interfaces.SessionInfo{}, fmt.Errorf("new acp session: %w", err)
+		return fmt.Errorf("new acp session: %w", err)
 	}
 
-	session := &Session{
-		ID:           sessionID,
-		AgentID:      agentID,
-		ModelID:      modelID,
-		Workspace:    workspaceID,
-		Status:       "created",
-		CreatedAt:    time.Now().UTC(),
-		transport:    transport,
-		acpSessionID: acpSessionID,
-	}
-
-	c.sessions[sessionID] = session
-
-	// Note: no event emitted here — session creation is not a prompt.
-	// The UI learns about the session via the ListSessions API.
-
-	return interfaces.SessionInfo{
-		ID:     sessionID,
-		Name:   fmt.Sprintf("Session %s", sessionID[:8]),
-		Status: session.Status,
-	}, nil
+	session.transport = transport
+	session.acpSessionID = acpSessionID
+	return nil
 }
 
 // SendPrompt sends a user prompt to the agent and streams responses.
@@ -211,18 +240,29 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) error {
 	c.mu.Lock()
 	session, ok := c.sessions[sessionID]
-	if ok {
-		session.Status = "running"
-	}
-	callbacks := c.callbacks
-	c.mu.Unlock()
-
 	if !ok {
+		c.mu.Unlock()
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
+
+	// Lazily (re)start the agent process — sessions loaded from disk or rebound
+	// to another model start without a live transport.
 	if session.transport == nil {
-		return fmt.Errorf("session transport not initialized: %s", sessionID)
+		if err := c.startTransportLocked(ctx, session); err != nil {
+			c.mu.Unlock()
+			return fmt.Errorf("start session %s: %w", sessionID, err)
+		}
 	}
+
+	session.Status = "running"
+	session.UpdatedAt = time.Now().UTC()
+	// Auto-title the conversation from the first user prompt.
+	if session.Name == "" || session.Name == defaultConversationName {
+		session.Name = titleFromPrompt(content)
+	}
+	c.persistLocked()
+	callbacks := c.callbacks
+	c.mu.Unlock()
 
 	if callbacks != nil {
 		callbacks.OnEvent(interfaces.Event{
@@ -248,16 +288,42 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) erro
 		if err := session.transport.Prompt(promptCtx, session.acpSessionID, content); err != nil {
 			c.mu.Lock()
 			session.Status = "failed"
+			// The transport is likely dead; drop it so the next prompt restarts.
+			tail := ""
+			if session.transport != nil {
+				tail = session.transport.StderrTail()
+			}
+			session.transport = nil
+			session.acpSessionID = ""
 			c.mu.Unlock()
+
+			summary := err.Error()
+			if tail != "" {
+				summary = summary + "\n" + tail
+			}
 			if callbacks != nil {
 				callbacks.OnEvent(interfaces.Event{
 					Type:      interfaces.EventAgentExited,
 					SessionID: sessionID,
 					Timestamp: time.Now().UTC(),
-					Summary:   err.Error(),
+					Summary:   summary,
 				})
 			}
 			return
+		}
+
+		// Prompt completed successfully — emit a final empty StreamUpdate
+		// with streaming=false so the frontend knows the response is complete
+		// and removes the typing cursor.
+		if callbacks != nil {
+			callbacks.OnEvent(interfaces.Event{
+				Type:      interfaces.EventStreamUpdate,
+				SessionID: sessionID,
+				Timestamp: time.Now().UTC(),
+				Role:      "agent",
+				Content:   "",
+				Streaming: false,
+			})
 		}
 
 		c.mu.Lock()
@@ -281,11 +347,14 @@ func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
 	}
 
 	session.Status = "interrupted"
+	session.UpdatedAt = time.Now().UTC()
 
+	// Send an ACP cancel notification to stop the current turn but keep the
+	// agent process alive so the conversation can continue.
 	if session.transport != nil {
 		_ = session.transport.Cancel(ctx, session.acpSessionID)
-		_ = session.transport.Close()
 	}
+	c.persistLocked()
 
 	// Emit cancellation event.
 	if c.callbacks != nil {
@@ -299,8 +368,9 @@ func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// CloseSession closes a session.
-func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
+// CloseSession terminates the live agent process for a session and removes the
+// conversation record. Event history is retained in the event store.
+func (c *Client) CloseSession(_ context.Context, sessionID string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -313,10 +383,77 @@ func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
 		_ = session.transport.Close()
 	}
 
-	session.Status = "completed"
 	delete(c.sessions, sessionID)
+	c.persistLocked()
 
 	return nil
+}
+
+// RenameSession changes a conversation's display name.
+func (c *Client) RenameSession(sessionID, name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	session, ok := c.sessions[sessionID]
+	if !ok {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	session.Name = name
+	session.UpdatedAt = time.Now().UTC()
+	c.persistLocked()
+	return nil
+}
+
+// RebindSession switches a conversation to a different agent and/or model while
+// preserving its id and event history. The live ACP session is closed; a fresh
+// one starts on the next prompt (the new agent does not inherit prior context).
+func (c *Client) RebindSession(_ context.Context, sessionID, agentID, modelID string) (interfaces.SessionInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	session, ok := c.sessions[sessionID]
+	if !ok {
+		return interfaces.SessionInfo{}, fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	agent, ok := c.agents[agentID]
+	if !ok {
+		return interfaces.SessionInfo{}, fmt.Errorf("agent not found: %s", agentID)
+	}
+	modelValid := false
+	for _, m := range agent.Models {
+		if m.ID == modelID {
+			modelValid = true
+			break
+		}
+	}
+	if !modelValid {
+		return interfaces.SessionInfo{}, fmt.Errorf("model %s not available for agent %s", modelID, agentID)
+	}
+
+	// Tear down the old transport; it restarts lazily on the next prompt.
+	if session.transport != nil {
+		_ = session.transport.Close()
+		session.transport = nil
+		session.acpSessionID = ""
+	}
+
+	session.AgentID = agentID
+	session.ModelID = modelID
+	session.Status = "idle"
+	session.UpdatedAt = time.Now().UTC()
+	c.persistLocked()
+
+	if c.callbacks != nil {
+		c.callbacks.OnEvent(interfaces.Event{
+			Type:      interfaces.EventConnectionRestarted,
+			SessionID: sessionID,
+			Timestamp: time.Now().UTC(),
+			Content:   fmt.Sprintf("Switched to %s / %s — prior history kept; the agent's memory restarts.", agent.Name, modelID),
+		})
+	}
+
+	return interfaces.SessionInfo{ID: sessionID, Name: session.Name, Status: session.Status}, nil
 }
 
 // GetSession returns session info by ID.
@@ -331,7 +468,7 @@ func (c *Client) GetSession(sessionID string) (*Session, error) {
 	return session, nil
 }
 
-// ListSessions returns all active sessions.
+// ListSessions returns all conversations, newest activity first.
 func (c *Client) ListSessions() []Session {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -340,6 +477,9 @@ func (c *Client) ListSessions() []Session {
 	for _, s := range c.sessions {
 		sessions = append(sessions, *s)
 	}
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
+	})
 	return sessions
 }
 

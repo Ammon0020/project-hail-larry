@@ -1,7 +1,20 @@
 # Project Status — Local Agent Interface
 
-> Last updated: 2026-06-22. Source of truth for task-level status.
+> Last updated: 2026-06-23. Source of truth for task-level status.
 > See `docs/plan.md` for full task definitions and `docs/pass-off.md` for prior session context.
+> ACP stability + chat UX work: see `docs/specs/ui-spec.md`, `docs/specs/backend-spec.md`, `docs/plans/acp-stability.md`.
+
+## ACP Stability & Chat UX Pass (2026-06-23)
+
+Backend (all green: `go test ./...`, `go vet`, `npm run build`, `npm run lint`, `.\build.ps1`):
+- ✅ Client capabilities advertised (fs + terminal); terminal methods implemented (`internal/acp/terminal.go`).
+- ✅ Permission prompts now reach the UI (`PermissionManager.SetCallback` → `PermissionRequested` event); UI responds with correct `requestId` + dynamic options.
+- ✅ Conversations persist across restarts (`~/.local-agent/conversations.json`); rename/delete/rebind via `PATCH/DELETE /api/sessions/{id}`.
+- ✅ Mid-conversation model/agent switch (client-side rebind; ACP has no model API in v0.13.5).
+- ✅ Enriched SessionUpdate: thoughts, plans, tool kind/target/diff; agent stderr captured into failure events.
+- ⚠️ Deferred: graceful `session/close` on shutdown (kill used); `session/load`/`resume`; mock-agent terminal/permission regression coverage (WI-15).
+
+Frontend: connection indicator + reconnect re-sync, Stop/cancel, render of thoughts/plans/shell/file/system events, conversation rename/delete UI, active conversation persisted to localStorage.
 
 ## Verification Summary
 
@@ -27,7 +40,7 @@
 | 3 | events | ✅ Done | SQLite event store, WAL mode, append/query, all event types |
 | 4 | pairing | ✅ Done | QR + mnemonic passcode, device credentials, revocation |
 | 5 | workspace | ⚠️ Partial | File tree + file read + file write work. Workspaces now load from config on daemon startup. No `remove-folder` or `list-folders` CLI commands. |
-| 6 | acp-client | ✅ Done | Session lifecycle uses `coder/acp-go-sdk` for full stdio JSON-RPC. `transport.go` bridges ACP events to system managers. |
+| 6 | acp-client | ✅ Done | Session lifecycle uses `coder/acp-go-sdk` for Agent Client Protocol communication. `transport.go` bridges ACP events to system managers. |
 | 7 | permissions | ✅ Done | Request/response, allow-once/session/always, deny, audit |
 | 8 | ws-sync | ✅ Done | WebSocket hub, broadcast, reconnection sync |
 | 9 | file-sync | ✅ Done | Revision tracking, FileRevisionUpdated events, three-way merge |
@@ -46,7 +59,7 @@ internal/server/         → HTTP server, go:embed frontend, REST API, /ws
 internal/events/         → SQLite event store (WAL, append-only)
 internal/pairing/        → QR + mnemonic pairing, device credentials
 internal/workspace/      → Registration, file tree, git info
-internal/acp/            → ACP JSON-RPC stdio client, session lifecycle
+internal/acp/            → ACP (Agent Client Protocol) client using coder/acp-go-sdk, session lifecycle
 internal/permissions/    → Permission request/response, policies
 internal/sync/           → WebSocket hub, broadcast, reconnection
 internal/files/          → Revision tracking, three-way merge
@@ -63,7 +76,7 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
 ### ACP Transport — ✅ RESOLVED
 `internal/acp/transport.go` implements the `coder/acp-go-sdk` `Client` interface:
 - Spawns agent process using `os/exec` inside the workspace directory
-- Full JSON-RPC 2.0 via `NewClientSideConnection` (stdio)
+- Full Agent Client Protocol via `NewClientSideConnection` (stdio)
 - Bridges `SessionUpdate` to system events (`StreamUpdate`, `ToolStarted`, `ToolCompleted`)
 - Bridges `RequestPermission` to `PermissionManager` (prompts UI for allow/deny)
 - `NewSessionRequest` now sends `mcpServers: []` instead of `null` to satisfy strict ACP agents (devstral-small). Regression test added.
@@ -71,7 +84,7 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
 ### Agent Configuration UI & Autodetection — ✅ RESOLVED
 - Implemented full Agent CRUD operations (`POST /api/agents`, `DELETE`, etc.) backed by local storage.
 - Added `SettingsModal.tsx` and `MobileSettings.tsx` to configure agents from the UI.
-- Implemented **dynamic model autodetection** in `internal/acp/autodetect.go` which modularly attempts an ACP `providers/list` JSON-RPC handshake, and gracefully falls back to reading `models_cache.json` and `config.toml` for `codex` and `vibe`.
+- Implemented **dynamic model autodetection** in `internal/acp/autodetect.go` which modularly attempts an ACP `providers/list` handshake, and gracefully falls back to reading `models_cache.json` and `config.toml` for `codex` and `vibe`.
 
 ### Editor + File Explorer — ✅ RESOLVED
 - **File tree:** Fully interactive. Folders expand/collapse, clicking files opens them in editor tabs.

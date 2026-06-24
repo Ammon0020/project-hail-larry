@@ -27,7 +27,7 @@ internal/
   events/                → SQLite event store (WAL, append-only)
   pairing/               → QR + mnemonic pairing, device credentials
   workspace/             → Registration, file tree, git info
-  acp/                   → ACP client (stdio JSON-RPC to agents)
+  acp/                   → ACP (Agent Client Protocol) client using coder/acp-go-sdk
   permissions/           → Permission request/response, policies
   sync/                  → WebSocket hub, broadcast, reconnection
   files/                 → Revision tracking, three-way merge

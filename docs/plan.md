@@ -86,12 +86,12 @@ Built from `docs/plans/Blueprint.md` and `docs/development/TechStack.md`.
 
 ### 6. `acp-client` — ACP client layer
 
-- **Scope:** ACP transport (stdio JSON-RPC), session lifecycle, prompt exchange, streaming, capability negotiation
+- **Scope:** ACP transport (using coder/acp-go-sdk), session lifecycle, prompt exchange, streaming, capability negotiation
 - **Files:** `internal/acp/*.go`
 - **Dependencies:** `workspace`, `events`
 - **Blueprint refs:** Sec 6 (ACP Client Layer), Sec 7 (ACP Integration), Sec 9 (Agent Lifecycle), Sec 10 (Session Lifecycle)
 - **Acceptance criteria:**
-  - Spawns an agent process and communicates over stdin/stdout JSON-RPC
+  - Spawns an agent process and communicates over stdin/stdout using the Agent Client Protocol
   - Session create/load/list/close implemented
   - Prompt exchange and streaming events work
   - Capability negotiation at init

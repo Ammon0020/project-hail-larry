@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/adama/local-agent/internal/interfaces"
@@ -13,10 +14,13 @@ import (
 
 // mockCallbacks captures events for testing.
 type mockCallbacks struct {
+	mu     sync.Mutex
 	events []interfaces.Event
 }
 
 func (m *mockCallbacks) OnEvent(event interfaces.Event) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.events = append(m.events, event)
 }
 

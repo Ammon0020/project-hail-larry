@@ -135,6 +135,11 @@ func New(cfg *Config) (*Daemon, error) {
 
 	permissionMgr := permissions.NewManager()
 	acpClient := acp.NewClient(workspaceMgr, permissionMgr)
+	// Persist conversation metadata so chats are remembered across restarts.
+	acpClient.SetStorePath(filepath.Join(cfg.DataDir, "conversations.json"))
+	if err := acpClient.LoadConversations(); err != nil {
+		log.Printf("WARNING: failed to load conversations: %v", err)
+	}
 	syncHub := sync.NewHub()
 
 	// Load persisted agents from config and run autodetection

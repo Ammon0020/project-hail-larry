@@ -1,4 +1,5 @@
-import { Plus, X } from 'lucide-react'
+import { useState, type KeyboardEvent } from 'react'
+import { Plus, X, Pencil, Trash2, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Session, SessionStatus } from '@/types'
 
@@ -25,13 +26,42 @@ export function ChatHistory({
   onClose,
   onCreateSession,
   onSelectSession,
+  onRenameSession,
+  onDeleteSession,
 }: {
   sessions: Session[]
   open: boolean
   onClose: () => void
   onCreateSession: () => void
   onSelectSession: (sessionId: string) => void
+  onRenameSession: (sessionId: string, name: string) => void
+  onDeleteSession: (sessionId: string) => void
 }) {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+
+  const startRename = (s: Session) => {
+    setEditingId(s.id)
+    setEditValue(s.name)
+  }
+
+  const commitRename = () => {
+    if (editingId && editValue.trim()) {
+      onRenameSession(editingId, editValue.trim())
+    }
+    setEditingId(null)
+  }
+
+  const handleRenameKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      commitRename()
+    } else if (e.key === 'Escape') {
+      setEditingId(null)
+    }
+  }
+
   return (
     <div
       className={cn(
@@ -55,23 +85,67 @@ export function ChatHistory({
           <div
             key={s.id}
             className={cn(
-              'flex items-center justify-between p-2 rounded-lg cursor-pointer session-item group',
+              'flex items-center justify-between p-2 rounded-lg session-item group',
               s.active
                 ? 'bg-blue-600/10 border border-blue-500/20'
                 : 'hover:bg-gray-800/50',
             )}
-            onClick={() => onSelectSession(s.id)}
           >
-            <div className="flex items-center gap-2 overflow-hidden">
-              <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', statusDotClass[s.status])} />
-              <span className={cn(
-                'truncate text-xs',
-                s.active ? 'font-medium text-blue-400' : 'text-gray-400',
-              )}>
-                {s.name}
-              </span>
-            </div>
-            <span className="text-[10px] text-gray-500 shrink-0">{s.time}</span>
+            {editingId === s.id ? (
+              // Inline rename input.
+              <div className="flex items-center gap-1.5 flex-1">
+                <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', statusDotClass[s.status])} />
+                <input
+                  ref={(el) => el?.focus()}
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onKeyDown={handleRenameKey}
+                  onBlur={commitRename}
+                  className="flex-1 bg-black/30 text-xs text-gray-200 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button onMouseDown={(e) => e.preventDefault()} onClick={commitRename} className="text-gray-400 hover:text-green-400" title="Save">
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : confirmId === s.id ? (
+              // Delete confirmation.
+              <div className="flex items-center gap-2 flex-1 text-xs">
+                <span className="text-red-300 truncate flex-1">Delete "{s.name}"?</span>
+                <button
+                  onClick={() => { setConfirmId(null); onDeleteSession(s.id) }}
+                  className="text-red-400 hover:text-red-300 font-medium"
+                >
+                  Delete
+                </button>
+                <button onClick={() => setConfirmId(null)} className="text-gray-400 hover:text-white">
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <>
+                <button
+                  className="flex items-center gap-2 overflow-hidden flex-1 text-left cursor-pointer"
+                  onClick={() => onSelectSession(s.id)}
+                >
+                  <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', statusDotClass[s.status])} />
+                  <span className={cn(
+                    'truncate text-xs',
+                    s.active ? 'font-medium text-blue-400' : 'text-gray-400',
+                  )}>
+                    {s.name}
+                  </span>
+                </button>
+                <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition">
+                  {s.modelId && <span className="text-[10px] text-gray-600 mr-1">{s.modelId}</span>}
+                  <button onClick={() => startRename(s)} className="text-gray-500 hover:text-white" title="Rename">
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                  <button onClick={() => setConfirmId(s.id)} className="text-gray-500 hover:text-red-400" title="Delete">
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         ))}
 

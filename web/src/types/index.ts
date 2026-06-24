@@ -60,6 +60,8 @@ export interface Session {
   time: string
   status: SessionStatus
   active?: boolean
+  agentId?: string
+  modelId?: string
 }
 
 /** A paired device (Blueprint Sec 19 — device pairing). */
@@ -80,6 +82,7 @@ export type EventType =
   | 'StreamUpdate'
   | 'ToolCompleted'
   | 'ToolStarted'
+  | 'PlanUpdated'
   | 'PermissionRequested'
   | 'PermissionGranted'
   | 'PermissionDenied'
@@ -105,6 +108,11 @@ export interface AppEvent {
   summary?: string
   command?: string
   options?: string[]
+  requestId?: string
+  toolKind?: string
+  toolCallId?: string
+  thought?: boolean
+  exitCode?: number
 }
 
 /** Left panel view options (Blueprint Sec 17 — activity bar). */

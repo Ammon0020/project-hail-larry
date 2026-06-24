@@ -59,6 +59,9 @@ export interface SessionInfo {
   id: string
   name: string
   status: string
+  agentId?: string
+  modelId?: string
+  updatedAt?: string
 }
 
 export interface AppEvent {
@@ -72,6 +75,27 @@ export interface AppEvent {
   summary?: string
   command?: string
   options?: string[]
+  requestId?: string
+  toolKind?: string
+  toolCallId?: string
+  thought?: boolean
+  exitCode?: number
+}
+
+export interface PermissionOptionInfo {
+  id: string
+  name: string
+  kind: string
+}
+
+export interface PendingPermission {
+  id: string
+  sessionId: string
+  tool: string
+  command?: string
+  target?: string
+  options: string[]
+  optionDetails?: PermissionOptionInfo[]
 }
 
 export interface DeviceCredential {
@@ -144,6 +168,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ agentId, modelId, workspaceId }),
     }),
+  patchSession: (
+    sessionId: string,
+    patch: { name?: string; agentId?: string; modelId?: string },
+  ) =>
+    apiFetch<{ status: string }>(`/sessions/${sessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
   sendPrompt: (sessionId: string, content: string) =>
     apiFetch<{ status: string }>(`/sessions/${sessionId}/prompt`, {
       method: 'POST',
@@ -184,7 +216,7 @@ export const api = {
 
   // Permissions
   getPendingPermissions: () =>
-    apiFetch<unknown[]>('/permissions/pending'),
+    apiFetch<PendingPermission[]>('/permissions/pending'),
   respondPermission: (requestId: string, decision: string) =>
     apiFetch<{ status: string }>(`/permissions/${requestId}/respond`, {
       method: 'POST',

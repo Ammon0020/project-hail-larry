@@ -38,8 +38,11 @@ export default function App() {
   const [openTabs, setOpenTabs] = useState<Tab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
 
-  // Session state
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  // Session state — restored from localStorage so the active conversation
+  // survives a page reload (UI Spec §6.2).
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(
+    () => localStorage.getItem('activeSessionId') || null,
+  )
 
   // Real backend connection
   const backend = useBackend()
@@ -50,6 +53,12 @@ export default function App() {
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
+
+  /** Persist the active conversation so it is restored on reload. */
+  useEffect(() => {
+    if (activeSessionId) localStorage.setItem('activeSessionId', activeSessionId)
+    else localStorage.removeItem('activeSessionId')
+  }, [activeSessionId])
 
   // ---- Lock screen for unpaired devices ----
   if (!paired) {
@@ -137,7 +146,13 @@ export default function App() {
   }
 
   const handleSelectSession = (sessionId: string) => {
+    if (sessionId === '') {
+      // "New Chat" — reset to a fresh state, no backend session yet
+      setActiveSessionId(null)
+      return
+    }
     setActiveSessionId(sessionId)
+    backend.loadSessionEvents(sessionId)
   }
 
   const handleSendMessage = async (sessionId: string, content: string) => {
@@ -147,7 +162,7 @@ export default function App() {
   // ---- Computed values ----
   const sessionEvents = activeSessionId
     ? (backend.events as AppEvent[]).filter((e) => e.sessionId === activeSessionId)
-    : (backend.events as AppEvent[])
+    : []
 
   // ---- Determine panel visibility based on viewport and state ----
   const showLeftSidebar = isDesktop || mobileView === 'explorer'
@@ -200,15 +215,23 @@ export default function App() {
           time: '',
           status: s.status as Session['status'],
           active: s.id === activeSessionId,
+          agentId: s.agentId,
+          modelId: s.modelId,
         }))}
         visible={showChat}
+        connected={backend.connected}
+        pendingPermissions={backend.pendingPermissions}
         activeSessionId={activeSessionId}
         onSendMessage={handleSendMessage}
         onCreateSession={handleCreateSession}
-        onPermissionResponse={(id, decision) =>
-          backend.respondPermission(id, decision)
+        onPermissionResponse={(requestId, decision) =>
+          backend.respondPermission(requestId, decision)
         }
         onSelectSession={handleSelectSession}
+        onCancel={(id) => backend.cancelSession(id)}
+        onRenameSession={(id, name) => backend.renameSession(id, name)}
+        onDeleteSession={(id) => backend.deleteSession(id)}
+        onRebindSession={(id, agentId, modelId) => backend.rebindSession(id, agentId, modelId)}
       />
 
       {/* Mobile Settings Panel (full-screen overlay) */}

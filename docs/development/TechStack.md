@@ -8,7 +8,7 @@ Chosen for battery efficiency, single-binary distribution, and dev velocity.
 - ~10-20MB RAM at idle, minimal CPU. Battery-friendly.
 - `go:embed` bundles the frontend into the binary.
 - `net/http` for the web server, `nhooyr.io/websocket` or `gorilla/websocket` for WebSocket.
-- `os/exec` for spawning agent processes (ACP stdio JSON-RPC).
+- `os/exec` for spawning agent processes (using `coder/acp-go-sdk`).
 
 ## Frontend — React + Vite + TailwindCSS
 
@@ -28,9 +28,9 @@ Chosen for battery efficiency, single-binary distribution, and dev velocity.
 - WAL mode for append-heavy event log with concurrent readers.
 - `modernc.org/sqlite` (pure Go, no CGO) or `mattn/go-sqlite3` (CGO, faster).
 
-## ACP Transport — stdio JSON-RPC
+## ACP Transport — coder/acp-go-sdk
 
-Agents communicate over stdin/stdout using JSON-RPC. The daemon spawns the agent via `os/exec`, pipes messages, and translates them into internal events. See https://agentclientprotocol.com/get-started/introduction.
+Agents communicate over stdin/stdout using the Agent Client Protocol via `github.com/coder/acp-go-sdk`. The daemon spawns the agent via `os/exec`, pipes messages, and translates them into internal events. See https://agentclientprotocol.com/get-started/introduction.
 
 ## Dev / Prod
 

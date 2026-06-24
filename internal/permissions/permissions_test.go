@@ -8,6 +8,45 @@ import (
 	"github.com/adama/local-agent/internal/interfaces"
 )
 
+// TestRequestInvokesCallback verifies that Request notifies the registered
+// callback so the server can broadcast a PermissionRequested event. This is the
+// path that previously left the UI without any permission prompt.
+func TestRequestInvokesCallback(t *testing.T) {
+	m := NewManager()
+
+	got := make(chan interfaces.PermissionRequest, 1)
+	m.SetCallback(func(req interfaces.PermissionRequest) {
+		got <- req
+	})
+
+	go func() {
+		_, _ = m.Request(context.Background(), interfaces.PermissionRequest{
+			SessionID: "sess-1",
+			Tool:      "execute",
+			Command:   "go test ./...",
+			Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowOnce, interfaces.PermissionDeny},
+		})
+	}()
+
+	select {
+	case req := <-got:
+		if req.ID == "" {
+			t.Error("expected callback request to have a generated ID")
+		}
+		if req.Tool != "execute" {
+			t.Errorf("expected tool 'execute', got %q", req.Tool)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("callback was not invoked")
+	}
+
+	// Resolve so the Request goroutine exits cleanly.
+	pending := m.GetPending()
+	if len(pending) == 1 {
+		_ = m.Respond(context.Background(), pending[0].ID, interfaces.PermissionAllowOnce)
+	}
+}
+
 // TestRequestAndRespond verifies the basic request-respond flow.
 func TestRequestAndRespond(t *testing.T) {
 	m := NewManager()

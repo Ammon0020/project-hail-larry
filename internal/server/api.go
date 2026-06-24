@@ -293,19 +293,57 @@ func (s *Server) handleAutodetectAgents(w http.ResponseWriter, _ *http.Request) 
 	writeJSON(w, http.StatusOK, detected)
 }
 
-// handleListSessions returns all active sessions.
+// handleListSessions returns all conversations with their metadata.
 func (s *Server) handleListSessions(w http.ResponseWriter, _ *http.Request) {
 	sessions := s.deps.ACPClient.ListSessions()
-	// Convert to interface type for JSON serialization.
-	result := make([]map[string]string, 0, len(sessions))
+	result := make([]map[string]interface{}, 0, len(sessions))
 	for _, sess := range sessions {
-		result = append(result, map[string]string{
-			"id":     sess.ID,
-			"name":   fmt.Sprintf("Session %s", sess.ID[:8]),
-			"status": sess.Status,
+		name := sess.Name
+		if name == "" {
+			name = fmt.Sprintf("Session %s", sess.ID[:8])
+		}
+		result = append(result, map[string]interface{}{
+			"id":        sess.ID,
+			"name":      name,
+			"status":    sess.Status,
+			"agentId":   sess.AgentID,
+			"modelId":   sess.ModelID,
+			"updatedAt": sess.UpdatedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// handlePatchSession renames a conversation and/or rebinds it to a different
+// agent/model. Body: { "name"?: string, "agentId"?: string, "modelId"?: string }.
+func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	var req struct {
+		Name    *string `json:"name"`
+		AgentID *string `json:"agentId"`
+		ModelID *string `json:"modelId"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Name != nil {
+		if err := s.deps.ACPClient.RenameSession(sessionID, *req.Name); err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+	}
+
+	// A rebind requires both agent and model to be specified.
+	if req.AgentID != nil && req.ModelID != nil {
+		if _, err := s.deps.ACPClient.RebindSession(r.Context(), sessionID, *req.AgentID, *req.ModelID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 // handleCreateSession creates a new agent session.
@@ -403,19 +441,46 @@ func (s *Server) handleRespondPermission(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Capture the request's session id and offered options before responding —
+	// the pending request is removed once Respond resolves it.
+	sessionID := ""
+	var offered []interfaces.PermissionOptionInfo
+	for _, p := range s.deps.PermissionMgr.GetPending() {
+		if p.ID == requestID {
+			sessionID = p.SessionID
+			offered = p.OptionDetails
+			break
+		}
+	}
+
 	decision := interfaces.PermissionDecision(req.Decision)
 	if err := s.deps.PermissionMgr.Respond(r.Context(), requestID, decision); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	// Classify the chosen option as grant or deny for the event log. ACP reject
+	// kinds (reject_once/reject_always) and our "deny" decision count as denials.
 	eventType := interfaces.EventPermissionGranted
-	if decision == interfaces.PermissionDeny {
+	if isDenyDecision(req.Decision, offered) {
 		eventType = interfaces.EventPermissionDenied
 	}
 	s.recordEvent(r.Context(), interfaces.Event{
-		Type: eventType,
+		Type:      eventType,
+		SessionID: sessionID,
+		RequestID: requestID,
 	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "responded"})
+}
+
+// isDenyDecision reports whether the chosen decision represents a denial, using
+// the offered option kinds when available and falling back to the decision text.
+func isDenyDecision(decision string, offered []interfaces.PermissionOptionInfo) bool {
+	for _, o := range offered {
+		if o.ID == decision {
+			return strings.HasPrefix(o.Kind, "reject") || o.Kind == string(interfaces.PermissionDeny)
+		}
+	}
+	return decision == string(interfaces.PermissionDeny) || strings.HasPrefix(decision, "reject")
 }

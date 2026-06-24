@@ -42,7 +42,7 @@ The following is the recommended split. Adjust if you see obvious coupling or co
 | pairing | Pairing sessions, QR generation, mnemonic passcode, device credentials, lock screen API | cli-daemon | Sec 19 (Authentication) |
 | workspace | Workspace registration, file tree, git info, workspace config | cli-daemon | Sec 13 (Workspace Management), Sec 14 (File System Access) |
 | events | Event types, SQLite schema, event append/query, state derivation | scaffold | Sec 11 (Event System) |
-| acp-client | ACP transport (stdio JSON-RPC), session lifecycle, prompt exchange, streaming, capability negotiation | workspace, events | Sec 6 (ACP Client Layer), Sec 7 (ACP Integration), Sec 9 (Agent Lifecycle), Sec 10 (Session Lifecycle) |
+| acp-client | ACP transport (using coder/acp-go-sdk), session lifecycle, prompt exchange, streaming, capability negotiation | workspace, events | Sec 6 (ACP Client Layer), Sec 7 (ACP Integration), Sec 9 (Agent Lifecycle), Sec 10 (Session Lifecycle) |
 | permissions | `session/request_permission` handling, prompt routing to all devices, allow/deny policies, audit log | events, acp-client | Sec 8 (Permission Manager) |
 | shell-exec | Workspace-scoped subprocess runner, output streaming as events | acp-client, permissions | Sec 15 (Shell Execution) |
 | ws-sync | WebSocket server, event broadcast, reconnection with missing-event sync, in-flight permission prompt re-presentation | events | Sec 12 (Multi-Client Synchronization) |

@@ -54,8 +54,30 @@ func New(deps *Deps) *Server {
 	if deps != nil && deps.ACPClient != nil {
 		deps.ACPClient.SetCallbacks(s)
 	}
+	if deps != nil && deps.PermissionMgr != nil {
+		deps.PermissionMgr.SetCallback(s.onPermissionRequested)
+	}
 	s.routes()
 	return s
+}
+
+// onPermissionRequested is invoked by the PermissionManager when an agent
+// requests permission. It persists and broadcasts a PermissionRequested event so
+// every connected device can prompt the user.
+func (s *Server) onPermissionRequested(req interfaces.PermissionRequest) {
+	options := make([]string, 0, len(req.Options))
+	for _, o := range req.Options {
+		options = append(options, string(o))
+	}
+	s.recordEvent(context.Background(), interfaces.Event{
+		Type:      interfaces.EventPermissionRequested,
+		SessionID: req.SessionID,
+		RequestID: req.ID,
+		Tool:      req.Tool,
+		Command:   req.Command,
+		Target:    req.Target,
+		Options:   options,
+	})
 }
 
 // routes sets up all HTTP routes.
@@ -101,6 +123,7 @@ func (s *Server) apiRoutes() {
 	s.mux.HandleFunc("POST /api/agents/autodetect", s.handleAutodetectAgents)
 	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
+	s.mux.HandleFunc("PATCH /api/sessions/{id}", s.handlePatchSession)
 	s.mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handleSendPrompt)
 	s.mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancelSession)
 	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleCloseSession)

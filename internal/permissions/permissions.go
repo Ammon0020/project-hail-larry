@@ -22,6 +22,7 @@ type Manager struct {
 	mu       sync.Mutex
 	pending  map[string]*pendingRequest
 	auditLog []AuditEntry
+	onReq    func(interfaces.PermissionRequest)
 }
 
 // AuditEntry records a permission decision for compliance and debugging.
@@ -46,6 +47,15 @@ func NewManager() *Manager {
 		pending:  make(map[string]*pendingRequest),
 		auditLog: make([]AuditEntry, 0),
 	}
+}
+
+// SetCallback registers a function invoked whenever a new permission request is
+// created. The server uses this to emit a PermissionRequested event and
+// broadcast it to connected devices. Must be called before Request.
+func (m *Manager) SetCallback(fn func(interfaces.PermissionRequest)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onReq = fn
 }
 
 // Request broadcasts a permission prompt and blocks until a decision is received
@@ -76,7 +86,13 @@ func (m *Manager) Request(ctx context.Context, req interfaces.PermissionRequest)
 		request:  req,
 		response: respCh,
 	}
+	cb := m.onReq
 	m.mu.Unlock()
+
+	// Notify listeners (server) so the UI is prompted. Done outside the lock.
+	if cb != nil {
+		cb(req)
+	}
 
 	// Clean up on exit.
 	defer func() {

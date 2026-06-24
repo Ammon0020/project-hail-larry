@@ -1,6 +1,6 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect, useRef, useState } from 'react'
-import { api, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential } from '@/lib/api'
+import { api, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential, type PendingPermission } from '@/lib/api'
 
 /**
  * useBackend — real backend hook that connects to the Go daemon.
@@ -18,6 +18,7 @@ export function useBackend() {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [events, setEvents] = useState<AppEvent[]>([])
   const [devices, setDevices] = useState<DeviceCredential[]>([])
+  const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([])
   const [connected, setConnected] = useState(false)
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -30,6 +31,7 @@ export function useBackend() {
     loadDevices()
     loadEvents()
     loadSessions()
+    loadPendingPermissions()
     connectWebSocket()
     return () => {
       wsRef.current?.close()
@@ -44,7 +46,14 @@ export function useBackend() {
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws
 
-    ws.onopen = () => setConnected(true)
+    ws.onopen = () => {
+      setConnected(true)
+      // Re-sync after (re)connect so no events or pending prompts are missed
+      // while the socket was down (Blueprint Sec 12 — reconnection).
+      loadEvents()
+      loadSessions()
+      loadPendingPermissions()
+    }
     ws.onclose = () => {
       setConnected(false)
       // Reconnect after 3 seconds (Blueprint Sec 12 — reconnection).
@@ -56,6 +65,14 @@ export function useBackend() {
         const event = JSON.parse(msg.data) as AppEvent
         eventsRef.current = [...eventsRef.current, event]
         setEvents(eventsRef.current)
+        // Permission lifecycle events change the pending set — refresh it.
+        if (
+          event.type === 'PermissionRequested' ||
+          event.type === 'PermissionGranted' ||
+          event.type === 'PermissionDenied'
+        ) {
+          loadPendingPermissions()
+        }
       } catch {
         // Ignore malformed messages.
       }
@@ -141,6 +158,32 @@ export function useBackend() {
     }
   }
 
+  async function loadPendingPermissions() {
+    try {
+      setPendingPermissions(await api.getPendingPermissions())
+    } catch {
+      // None pending.
+    }
+  }
+
+  /**
+   * Loads events for a specific session from the backend and merges them
+   * into the local event list so the chat panel can render them.
+   */
+  async function loadSessionEvents(sessionId: string) {
+    try {
+      const sessionEvts = await api.getSessionEvents(sessionId, 0, 200)
+      // Merge: keep events from other sessions, replace events for this session.
+      eventsRef.current = [
+        ...eventsRef.current.filter((e) => e.sessionId !== sessionId),
+        ...sessionEvts,
+      ]
+      setEvents(eventsRef.current)
+    } catch {
+      // Session may not have events yet.
+    }
+  }
+
   // ---- File actions ----
   async function readFile(path: string) {
     const wsId = activeWorkspace?.id || ''
@@ -166,6 +209,24 @@ export function useBackend() {
 
   async function cancelSession(sessionId: string) {
     await api.cancelSession(sessionId)
+  }
+
+  async function renameSession(sessionId: string, name: string) {
+    await api.patchSession(sessionId, { name })
+    await loadSessions()
+  }
+
+  async function rebindSession(sessionId: string, agentId: string, modelId: string) {
+    await api.patchSession(sessionId, { agentId, modelId })
+    await loadSessions()
+  }
+
+  async function deleteSession(sessionId: string) {
+    await api.closeSession(sessionId)
+    setSessions((prev) => prev.filter((s) => s.id !== sessionId))
+    // Drop the deleted conversation's events from the local cache.
+    eventsRef.current = eventsRef.current.filter((e) => e.sessionId !== sessionId)
+    setEvents(eventsRef.current)
   }
 
   // ---- Pairing actions ----
@@ -196,6 +257,7 @@ export function useBackend() {
     sessions,
     events,
     devices,
+    pendingPermissions,
     connected,
 
     // Actions
@@ -206,6 +268,9 @@ export function useBackend() {
     createSession,
     sendPrompt,
     cancelSession,
+    renameSession,
+    rebindSession,
+    deleteSession,
     verifyPasscode,
     revokeDevice,
     respondPermission,
@@ -216,5 +281,7 @@ export function useBackend() {
     autodetectAgents,
     loadDevices,
     loadSessions,
+    loadSessionEvents,
+    loadPendingPermissions,
   }
 }
