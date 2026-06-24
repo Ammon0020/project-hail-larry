@@ -141,7 +141,7 @@ export function ChatPanel({
   const mergedEvents: AppEvent[] = events.reduce((acc: AppEvent[], event: AppEvent) => {
     if (event.type === 'StreamUpdate') {
       const last = acc[acc.length - 1]
-      if (last && last.type === 'StreamUpdate' && last.role === event.role) {
+      if (last && last.type === 'StreamUpdate' && last.role === event.role && !!last.thought === !!event.thought) {
         // Append to the previous stream event
         acc[acc.length - 1] = {
           ...last,
