@@ -17,17 +17,40 @@ import (
 	"github.com/adama/local-agent/internal/interfaces"
 )
 
-// policyKey identifies a permission policy entry by session, tool, and target.
-// The toolKind field is keyed on the request's Tool title (the human-readable
-// tool name) rather than an ACP "tool kind" because PermissionRequest does not
-// currently carry a dedicated ToolKind field. This keeps the policy granular
-// enough to distinguish e.g. "edit_file" from "execute" while remaining stable
-// across requests. target is the first affected location path, or "" if the
-// request has no target.
+// policyKey identifies a permission policy entry by session, tool, and a
+// discriminator that scopes the cached decision. The toolKind field is keyed
+// on the request's Tool title (the human-readable tool name) rather than the
+// ACP "tool kind" to keep the policy granular enough to distinguish e.g.
+// "edit_file" from "execute" while remaining stable across requests.
+//
+// target is the first affected location path for file-oriented tools, or "" if
+// the request has no target. command is the raw command text and is only used
+// as the discriminator for shell/execute tools, which have no location
+// (target == ""). Without command in the key, a single allow_always for one
+// shell command would auto-approve every subsequent shell command in the
+// session regardless of content — a permission bypass. See
+// policyKeyFor for the exact selection logic.
 type policyKey struct {
 	sessionID string
 	toolKind  string
 	target    string
+	command   string
+}
+
+// policyKeyFor builds the cache key for a permission request.
+//
+// For file-oriented tools (target != "") the target path is the discriminator,
+// so allow_always/allow_session auto-approve repeated operations on the same
+// file. For shell/execute tools (target == "") the command text is the
+// discriminator, so an allow_always for "go test" does not auto-approve
+// "rm -rf /". This closes the shell-command permission bypass where every
+// shell command in a session shared the empty-target key.
+func policyKeyFor(req interfaces.PermissionRequest) policyKey {
+	key := policyKey{sessionID: req.SessionID, toolKind: req.Tool, target: req.Target}
+	if req.Target == "" {
+		key.command = req.Command
+	}
+	return key
 }
 
 // Manager implements interfaces.PermissionManager.
@@ -95,13 +118,16 @@ func (m *Manager) Request(ctx context.Context, req interfaces.PermissionRequest)
 	}
 
 	// Check the policy map before blocking. A prior allow_always or
-	// allow_session decision for this (session, tool, target) combination
-	// auto-resolves the request immediately — no callback, no blocking.
+	// allow_session decision for this (session, tool, discriminator)
+	// combination auto-resolves the request immediately — no callback, no
+	// blocking. The discriminator is the target path for file tools and the
+	// command text for shell tools (see policyKeyFor), so a cached shell
+	// decision only auto-approves the exact same command.
 	//
 	// Note: allow_once and bare deny are NOT auto-resolved. The codebase has
 	// no reject_always constant, so reject-always auto-deny is intentionally
 	// skipped (see docs/plans/execution-plan.md Work Stream 2).
-	key := policyKey{sessionID: req.SessionID, toolKind: req.Tool, target: req.Target}
+	key := policyKeyFor(req)
 	m.mu.Lock()
 	cached, ok := m.policy[key]
 	m.mu.Unlock()
@@ -137,7 +163,7 @@ func (m *Manager) Request(ctx context.Context, req interfaces.PermissionRequest)
 	case decision := <-respCh:
 		m.recordAudit(req, decision)
 		// Persist durable allow decisions so subsequent requests for the same
-		// (session, tool, target) auto-resolve without blocking the user.
+		// (session, tool, discriminator) auto-resolve without blocking the user.
 		if decision == interfaces.PermissionAllowAlways || decision == interfaces.PermissionAllowSession {
 			m.mu.Lock()
 			m.policy[key] = decision

@@ -40,11 +40,27 @@ type Config struct {
 	PairingTTLSeconds int    `json:"pairingTtlSeconds"`
 }
 
-// DefaultConfig returns the default daemon configuration.
+// DefaultConfig returns the default daemon configuration. It panics if the
+// user's home directory cannot be determined, since silently falling back to
+// the current working directory would write the SQLite database and TLS keys
+// to an unpredictable location. Callers that need to handle this case should
+// use DefaultConfigOrError.
 func DefaultConfig() *Config {
+	cfg, err := DefaultConfigOrError()
+	if err != nil {
+		panic(fmt.Sprintf("determine home directory for default config: %v", err))
+	}
+	return cfg
+}
+
+// DefaultConfigOrError returns the default daemon configuration or an error if
+// the user's home directory cannot be determined. This is the error-returning
+// variant of DefaultConfig for callers that want to handle the failure
+// gracefully instead of panicking.
+func DefaultConfigOrError() (*Config, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		homeDir = "."
+		return nil, fmt.Errorf("determine home directory: %w", err)
 	}
 	dataDir := filepath.Join(homeDir, ".local-agent")
 
@@ -55,7 +71,7 @@ func DefaultConfig() *Config {
 		DBPath:            filepath.Join(dataDir, "local-agent.db"),
 		TLSCertDir:        filepath.Join(dataDir, "tls"),
 		PairingTTLSeconds: 300,
-	}
+	}, nil
 }
 
 func mergeAutodetectedAgents(configured, detected []acp.AgentInfo) ([]acp.AgentInfo, bool) {
@@ -260,13 +276,26 @@ func (d *Daemon) Start(ctx context.Context) error {
 	}
 }
 
-// cleanup closes resources during shutdown. It gracefully closes all ACP
-// sessions (best-effort session/delete + process termination) before tearing
-// down the event store. The original shutdown context may already be cancelled
-// (SIGINT/SIGTERM), so a fresh background context with a short timeout is used.
+// cleanup closes resources during shutdown. It gracefully shuts down the HTTP
+// server first (so no new/in-flight handlers access the EventStore after it is
+// closed), then closes all ACP sessions (best-effort session/delete + process
+// termination), and finally tears down the event store. The original shutdown
+// context may already be cancelled (SIGINT/SIGTERM), so a fresh background
+// context with a short timeout is used.
 func (d *Daemon) cleanup() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// Shut down the HTTP server before closing the EventStore so in-flight
+	// handlers finish (or time out) before the store is closed. Without this,
+	// a handler could Append to a closed store (use-after-close).
+	if d.server != nil {
+		_ = d.server.Shutdown(ctx)
+	}
+	// Shut down the sync hub so all WebSocket pump goroutines exit before
+	// the event store closes (otherwise pumps could broadcast on a closed store).
+	if d.syncHub != nil {
+		d.syncHub.Shutdown()
+	}
 	if d.acpClient != nil {
 		_ = d.acpClient.CloseAllSessions(ctx)
 	}

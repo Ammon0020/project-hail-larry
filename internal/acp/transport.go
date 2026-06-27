@@ -155,11 +155,24 @@ func (c *acpClientImpl) RequestPermission(ctx context.Context, params acp.Reques
 		return acp.RequestPermissionResponse{}, fmt.Errorf("permission manager not configured")
 	}
 
+	// The agent's ToolCallUpdate.Title is optional (*string). Many agents omit
+	// it in permission requests, so falling back to the raw ToolCallId would
+	// surface an opaque random ID (e.g. "muNNhDHjd") as the prompt's primary
+	// label — the "Permission Required / muNNhDHjd" bug. Instead, prefer the
+	// agent-supplied title; when absent, synthesize a human-readable label from
+	// the tool kind so the UI always shows a meaningful action description.
 	title := ""
-	if params.ToolCall.Title != nil {
+	if params.ToolCall.Title != nil && *params.ToolCall.Title != "" {
 		title = *params.ToolCall.Title
 	} else {
-		title = string(params.ToolCall.ToolCallId)
+		title = permissionTitleFromKind(params.ToolCall.Kind)
+	}
+
+	// Extract the ACP tool kind (execute/edit/read/...) for the UI so it can
+	// pick icons and styling consistent with tool cards.
+	toolKind := ""
+	if params.ToolCall.Kind != nil {
+		toolKind = string(*params.ToolCall.Kind)
 	}
 
 	// Surface the command (raw input) and target (first affected location) so
@@ -189,6 +202,7 @@ func (c *acpClientImpl) RequestPermission(ctx context.Context, params acp.Reques
 	req := interfaces.PermissionRequest{
 		SessionID:     c.sessionID,
 		Tool:          title,
+		ToolKind:      toolKind,
 		Command:       command,
 		Target:        target,
 		Options:       opts,
@@ -218,6 +232,32 @@ func (c *acpClientImpl) RequestPermission(ctx context.Context, params acp.Reques
 			},
 		},
 	}, nil
+}
+
+// permissionTitleFromKind synthesizes a human-readable action label from an
+// ACP tool kind when the agent did not supply a Title in its permission
+// request. This prevents the raw ToolCallId (an opaque ID like "muNNhDHjd")
+// from being shown to the user as the permission prompt's primary label.
+func permissionTitleFromKind(kind *acp.ToolKind) string {
+	if kind == nil {
+		return "Tool call"
+	}
+	switch string(*kind) {
+	case "execute":
+		return "Run command"
+	case "edit":
+		return "Edit file"
+	case "read":
+		return "Read file"
+	case "search":
+		return "Search"
+	case "delete":
+		return "Delete file"
+	case "move":
+		return "Move file"
+	default:
+		return "Tool call"
+	}
 }
 
 // toRelativePath converts a path that may be absolute (within the workspace)

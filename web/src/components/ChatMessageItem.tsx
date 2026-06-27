@@ -41,6 +41,53 @@ function optionStyle(kind: string): string {
 }
 
 /**
+ * Returns true when a string looks like an opaque generated ID rather than a
+ * human-readable label — e.g. "muNNhDHjd" (no spaces, short, alphanumeric).
+ * Used to detect the bug where a raw ToolCallId leaked into the tool field.
+ */
+function looksLikeRawId(value: string): boolean {
+  if (!value) return true
+  // Real labels contain spaces or underscores or are known tool names.
+  if (/\s/.test(value) || value.includes('_') || value.includes('-')) return false
+  // Pure alphanumeric with no word boundaries and <= 24 chars is likely an ID.
+  return /^[a-zA-Z0-9]{1,24}$/.test(value)
+}
+
+/**
+ * Derives a human-readable action label for a permission prompt from the tool
+ * kind, used as a fallback when the backend tool field is missing or contains
+ * a raw opaque ID.
+ */
+function permissionLabelFromKind(kind?: string): string {
+  switch (kind) {
+    case 'execute':
+      return 'Run command'
+    case 'edit':
+      return 'Edit file'
+    case 'read':
+      return 'Read file'
+    case 'search':
+      return 'Search'
+    case 'delete':
+      return 'Delete file'
+    case 'move':
+      return 'Move file'
+    default:
+      return 'Tool call'
+  }
+}
+
+/**
+ * Resolves the display label for a permission request event. Prefers the
+ * backend-supplied tool title; falls back to a kind-derived label when the
+ * tool field is missing or contains a raw opaque ID (the "muNNhDHjd" bug).
+ */
+function permissionToolLabel(tool?: string, toolKind?: string): string {
+  if (tool && !looksLikeRawId(tool)) return tool
+  return permissionLabelFromKind(toolKind)
+}
+
+/**
  * Renders a single event from the event stream as a chat message,
  * tool timeline card, permission dialog, plan, or shell card (Blueprint Sec 11).
  *
@@ -186,6 +233,9 @@ export function ChatMessageItem({
 
     case 'PermissionRequested': {
       const requestId = event.requestId || ''
+      // Display label — prefers the backend tool title, falling back to a
+      // kind-derived label when the tool field is missing or is a raw ID.
+      const toolLabel = permissionToolLabel(event.tool, event.toolKind)
       // Resolved (answered here or on another device): show the outcome.
       if (resolution) {
         return (
@@ -194,7 +244,7 @@ export function ChatMessageItem({
               <ShieldAlert className="w-4 h-4" />
             </div>
             <p className="text-xs text-gray-500 pt-1.5">
-              Permission {resolution === 'denied' ? 'denied' : 'granted'} — {event.tool}
+              Permission {resolution === 'denied' ? 'denied' : 'granted'} — {toolLabel}
             </p>
           </div>
         )
@@ -204,7 +254,7 @@ export function ChatMessageItem({
       return (
         <div className="flex gap-3">
           <div className="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
-            <Bot className="w-4 h-4" />
+            <ShieldAlert className="w-4 h-4" />
           </div>
           <div className="flex-1 pt-0.5">
             <div className="mt-2 bg-blue-900/10 border border-blue-500/30 rounded-lg p-2.5">
@@ -212,7 +262,7 @@ export function ChatMessageItem({
                 <ShieldAlert className="w-3.5 h-3.5" /> Permission Required
               </div>
               <p className="text-xs text-gray-300 mb-2.5">
-                <span className="font-medium">{event.tool}</span>
+                <span className="font-medium">{toolLabel}</span>
                 {event.target && <span className="text-gray-400"> · {event.target}</span>}
               </p>
               {event.command && (

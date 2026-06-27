@@ -2,8 +2,10 @@ package workspace
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -205,4 +207,77 @@ func TestReadFileNotFound(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for nonexistent file")
 	}
+}
+
+// TestConcurrentMapAccess exercises the workspaces map from many goroutines
+// simultaneously (readers + writers) to verify the mutex prevents the
+// "concurrent map read and map write" runtime panic. Run with -race to catch
+// data races that don't necessarily panic.
+func TestConcurrentMapAccess(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := createTestDir(t)
+
+	ws, err := m.Register(ctx, dir)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Use a separate directory for the writer goroutines so their deterministic
+	// IDs do not collide with (and remove) the reader's workspace. Each writer
+	// goroutine gets its own subdirectory so register/remove cycles are
+	// independent and exercise genuine concurrent map writes with distinct keys.
+	writerBase := t.TempDir()
+
+	var wg sync.WaitGroup
+	const goroutines = 50
+
+	// Writers: repeatedly register and remove a workspace.
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			// Unique directory per goroutine → unique deterministic ID.
+			writerDir := filepath.Join(writerBase, fmt.Sprintf("w-%d", n))
+			if err := os.Mkdir(writerDir, 0755); err != nil && !os.IsExist(err) {
+				t.Errorf("mkdir: %v", err)
+				return
+			}
+			for j := 0; j < 100; j++ {
+				info, rerr := m.Register(ctx, writerDir)
+				if rerr != nil {
+					t.Errorf("register: %v", rerr)
+					return
+				}
+				if rerr := m.Remove(ctx, info.ID); rerr != nil {
+					t.Errorf("remove: %v", rerr)
+					return
+				}
+			}
+		}(i)
+	}
+
+	// Readers: repeatedly list, look up the file tree, and read a file.
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				if _, err := m.List(ctx); err != nil {
+					t.Errorf("list: %v", err)
+					return
+				}
+				if _, err := m.FileTree(ctx, ws.ID); err != nil {
+					t.Errorf("file tree: %v", err)
+					return
+				}
+				if _, _, err := m.ReadFile(ctx, ws.ID, "package.json"); err != nil {
+					t.Errorf("read file: %v", err)
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 }

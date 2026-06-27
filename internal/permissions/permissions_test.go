@@ -559,3 +559,85 @@ func TestAutoResolvedDecisionRecordedInAuditLog(t *testing.T) {
 		t.Errorf("expected last audit tool 'edit_file', got %s", entry.Tool)
 	}
 }
+
+// TestPolicyShellCommandBypass verifies that an allow_always decision for one
+// shell command does NOT auto-approve a different shell command in the same
+// session. Shell commands have no location (target == ""), so previously they
+// all shared the empty-target policy key and a single allow_always bypassed
+// every subsequent shell command. The fix incorporates the command text into
+// the key for shell tools.
+func TestPolicyShellCommandBypass(t *testing.T) {
+	m := NewManager()
+
+	// Seed an allow_always for "go test" in the session.
+	first := interfaces.PermissionRequest{
+		SessionID: "sess-shell-bypass",
+		Tool:      "execute",
+		Command:   "go test",
+		Target:    "",
+		Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowAlways, interfaces.PermissionDeny},
+	}
+	if d := resolveFirstRequest(t, m, first, interfaces.PermissionAllowAlways); d != interfaces.PermissionAllowAlways {
+		t.Fatalf("first request: expected allow_always, got %s", d)
+	}
+
+	// A different command in the same session must NOT auto-resolve — it has a
+	// different command text and therefore a different policy key.
+	second := interfaces.PermissionRequest{
+		SessionID: "sess-shell-bypass",
+		Tool:      "execute",
+		Command:   "rm -rf /",
+		Target:    "",
+		Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowAlways, interfaces.PermissionDeny},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := m.Request(ctx, second)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected different shell command to block (not auto-resolved), but it returned without error")
+	}
+	if elapsed < 80*time.Millisecond {
+		t.Errorf("expected different shell command to block ~100ms, returned after %v", elapsed)
+	}
+
+	// Clean up the pending request so the goroutine exits.
+	pending := m.GetPending()
+	if len(pending) == 1 {
+		_ = m.Respond(context.Background(), pending[0].ID, interfaces.PermissionDeny)
+	}
+}
+
+// TestPolicySameShellCommandAutoResolves verifies that the SAME shell command
+// still auto-resolves after an allow_always — the command-text keying does not
+// break the legitimate auto-approve path.
+func TestPolicySameShellCommandAutoResolves(t *testing.T) {
+	m := NewManager()
+
+	req := interfaces.PermissionRequest{
+		SessionID: "sess-shell-same",
+		Tool:      "execute",
+		Command:   "npm test",
+		Target:    "",
+		Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowSession, interfaces.PermissionDeny},
+	}
+	if d := resolveFirstRequest(t, m, req, interfaces.PermissionAllowSession); d != interfaces.PermissionAllowSession {
+		t.Fatalf("first request: expected allow_session, got %s", d)
+	}
+
+	done := make(chan interfaces.PermissionDecision, 1)
+	go func() {
+		d, _ := m.Request(context.Background(), req)
+		done <- d
+	}()
+	select {
+	case d := <-done:
+		if d != interfaces.PermissionAllowSession {
+			t.Errorf("expected same shell command to auto-resolve allow_session, got %s", d)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("same shell command did not auto-resolve (blocked)")
+	}
+}

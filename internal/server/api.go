@@ -23,7 +23,7 @@ func (s *Server) handlePairInitiate(w http.ResponseWriter, r *http.Request) {
 		Host string `json:"host"`
 		Port int    `json:"port"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		// Use defaults from query params or config.
 		req.Host = "localhost"
 		req.Port = 7337
@@ -44,7 +44,7 @@ func (s *Server) handlePairVerifyPasscode(w http.ResponseWriter, r *http.Request
 		Passcode   string `json:"passcode"`
 		DeviceName string `json:"deviceName"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -64,7 +64,7 @@ func (s *Server) handlePairVerifyToken(w http.ResponseWriter, r *http.Request) {
 		Token      string `json:"token"`
 		DeviceName string `json:"deviceName"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -113,7 +113,7 @@ func (s *Server) handleRegisterWorkspace(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Path string `json:"path"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -167,7 +167,10 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		Content          string `json:"content"`
 		ExpectedRevision int64  `json:"expectedRevision"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	// File writes may legitimately carry large bodies, so use a higher
+	// limit than the default 10 MB.
+	const fileWriteMaxBodyBytes int64 = 50 << 20
+	if err := decodeJSONLimit(w, r, &req, fileWriteMaxBodyBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -248,7 +251,7 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 // handleUpsertAgent adds or updates an agent.
 func (s *Server) handleUpsertAgent(w http.ResponseWriter, r *http.Request) {
 	var agent acp.AgentInfo
-	if err := decodeJSON(r, &agent); err != nil {
+	if err := decodeJSON(w, r, &agent); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -312,7 +315,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, _ *http.Request) {
 			UpdatedAt: sess.UpdatedAt,
 		}
 		if info.Name == "" {
-			info.Name = fmt.Sprintf("Session %s", sess.ID[:8])
+			info.Name = fmt.Sprintf("Session %s", shortSessionID(sess.ID))
 		}
 		result = append(result, info)
 	}
@@ -333,7 +336,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 
 	// Match handleListSessions: fall back to a derived name when unset.
 	if info.Name == "" {
-		info.Name = fmt.Sprintf("Session %s", info.ID[:8])
+		info.Name = fmt.Sprintf("Session %s", shortSessionID(info.ID))
 	}
 
 	writeJSON(w, http.StatusOK, info)
@@ -348,7 +351,7 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 		AgentID *string `json:"agentId"`
 		ModelID *string `json:"modelId"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -378,7 +381,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		ModelID     string `json:"modelId"`
 		WorkspaceID string `json:"workspaceId"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -397,7 +400,7 @@ func (s *Server) handleSendPrompt(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Content string `json:"content"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -461,7 +464,7 @@ func (s *Server) handleRespondPermission(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Decision string `json:"decision"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -508,4 +511,16 @@ func isDenyDecision(decision string, offered []interfaces.PermissionOptionInfo) 
 		}
 	}
 	return decision == string(interfaces.PermissionDeny) || strings.HasPrefix(decision, "reject")
+}
+
+// shortSessionID returns the first 8 characters of a session ID, or the full
+// ID if it is shorter than 8 characters. This guards against a slice-bounds
+// panic when deriving display names like "Session <shortID>" — the ACPClient
+// contract does not guarantee a minimum ID length, so an empty or short ID
+// (e.g. from a stub or future ID scheme) must not crash the handler.
+func shortSessionID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
 }

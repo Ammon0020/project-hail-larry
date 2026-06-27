@@ -3,7 +3,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -262,8 +265,18 @@ func runPair(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	body := fmt.Sprintf(`{"host":"%s","port":%d}`, pairingHost(cfg.Host), cfg.Port)
-	resp, err := http.Post(localAPIURL(cfg.Port, "/api/pair/initiate"), "application/json", strings.NewReader(body))
+	// Build the request body with encoding/json so a host containing quotes,
+	// backslashes, or control characters cannot produce invalid JSON or escape
+	// the JSON string context.
+	body, err := json.Marshal(struct {
+		Host string `json:"host"`
+		Port int    `json:"port"`
+	}{Host: pairingHost(cfg.Host), Port: cfg.Port})
+	if err != nil {
+		return fmt.Errorf("marshal pairing request: %w", err)
+	}
+
+	resp, err := localHTTPClient(cfg).Post(localAPIURL(cfg, "/api/pair/initiate"), "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("call pairing API: %w", err)
 	}
@@ -321,7 +334,7 @@ func runDevices(cmd *cobra.Command, _ []string) error {
 		return writeln(cmd.OutOrStdout(), "Daemon is not running. Start it with 'app start'.")
 	}
 
-	resp, err := http.Get(localAPIURL(cfg.Port, "/api/devices"))
+	resp, err := localHTTPClient(cfg).Get(localAPIURL(cfg, "/api/devices"))
 	if err != nil {
 		return fmt.Errorf("call devices API: %w", err)
 	}
@@ -355,12 +368,12 @@ func runRevoke(cmd *cobra.Command, args []string) error {
 	}
 
 	deviceID := args[0]
-	req, err := http.NewRequest(http.MethodDelete, localAPIURL(cfg.Port, "/api/devices/"+deviceID), nil)
+	req, err := http.NewRequest(http.MethodDelete, localAPIURL(cfg, "/api/devices/"+deviceID), nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := localHTTPClient(cfg).Do(req)
 	if err != nil {
 		return fmt.Errorf("call revoke API: %w", err)
 	}
@@ -376,11 +389,16 @@ func runRevoke(cmd *cobra.Command, args []string) error {
 func newLogsCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logs",
-		Short: "Tail daemon logs",
+		Short: "Print daemon logs (tail of the last 64KB)",
 		Args:  cobra.NoArgs,
 		RunE:  runLogs,
 	}
 }
+
+// logTailBytes is the maximum number of trailing bytes streamed from the
+// daemon log. Streaming only the tail avoids loading an unbounded multi-MB log
+// file into memory, while still showing the most recent activity.
+const logTailBytes = 64 * 1024
 
 func runLogs(cmd *cobra.Command, _ []string) error {
 	cfg, err := loadConfig()
@@ -389,18 +407,54 @@ func runLogs(cmd *cobra.Command, _ []string) error {
 	}
 
 	logFile := filepath.Join(cfg.DataDir, "daemon.log")
-	if _, statErr := os.Stat(logFile); statErr != nil {
-		if os.IsNotExist(statErr) {
+	info, err := os.Stat(logFile)
+	if err != nil {
+		if os.IsNotExist(err) {
 			return writeln(cmd.OutOrStdout(), "No log file found. Is the daemon running?")
 		}
-		return fmt.Errorf("stat log file: %w", statErr)
+		return fmt.Errorf("stat log file: %w", err)
 	}
 
-	data, err := os.ReadFile(logFile) //nolint:gosec // logFile is constructed from the app config data directory.
+	// Open the file and stream the tail directly to stdout instead of buffering
+	// the entire log into memory.
+	f, err := os.Open(logFile) //nolint:gosec // logFile is constructed from the app config data directory.
 	if err != nil {
-		return fmt.Errorf("read log file: %w", err)
+		return fmt.Errorf("open log file: %w", err)
 	}
-	return writeString(cmd.OutOrStdout(), string(data))
+	defer func() { _ = f.Close() }()
+
+	// Seek to the last logTailBytes so we only stream the recent tail. If the
+	// file is smaller than the tail window, read from the start.
+	size := info.Size()
+	offset := int64(0)
+	if size > logTailBytes {
+		offset = size - logTailBytes
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return fmt.Errorf("seek log file: %w", err)
+	}
+
+	// If we seeked into the middle of the file, skip the partial first line so
+	// output starts on a line boundary.
+	if offset > 0 {
+		buf := make([]byte, 1)
+		for {
+			if _, err := f.Read(buf); err != nil {
+				if err == io.EOF {
+					break
+				}
+				return fmt.Errorf("read log file: %w", err)
+			}
+			if buf[0] == '\n' {
+				break
+			}
+		}
+	}
+
+	if _, err := io.Copy(cmd.OutOrStdout(), f); err != nil {
+		return fmt.Errorf("stream log file: %w", err)
+	}
+	return nil
 }
 
 func loadConfig() (*config.Config, error) {
@@ -452,8 +506,46 @@ func pairingHost(host string) string {
 	return host
 }
 
-func localAPIURL(port int, path string) string {
-	return fmt.Sprintf("http://%s:%d%s", localAPIHost, port, path)
+// localAPIURL builds the URL for a local daemon API call, selecting https when
+// the daemon is configured to serve TLS so CLI commands work against a
+// TLS-enabled daemon (not just plain HTTP).
+func localAPIURL(cfg *config.Config, path string) string {
+	scheme := "http"
+	if cfg.TLSEnabled {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s:%d%s", scheme, localAPIHost, cfg.Port, path)
+}
+
+// localHTTPClient returns an http.Client appropriate for talking to the local
+// daemon. When TLS is enabled, it trusts the daemon's self-signed certificate
+// (loaded from cfg.TLSCertDir/cert.pem) so the CLI can validate the server. If
+// the cert cannot be loaded, it falls back to skipping verification — this is
+// only used for localhost CLI calls to the user's own daemon, so the risk of a
+// MITM on the loopback interface is acceptable.
+func localHTTPClient(cfg *config.Config) *http.Client {
+	if !cfg.TLSEnabled {
+		return http.DefaultClient
+	}
+
+	// Try to trust the daemon's self-signed cert explicitly.
+	if certPEM, err := os.ReadFile(filepath.Join(cfg.TLSCertDir, "cert.pem")); err == nil {
+		pool := x509.NewCertPool()
+		if pool.AppendCertsFromPEM(certPEM) {
+			return &http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{RootCAs: pool}, //nolint:gosec // explicit trust of the user's own daemon cert.
+				},
+			}
+		}
+	}
+
+	// Fallback: skip verification for localhost-only CLI usage.
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // localhost-only CLI client; no MITM risk on loopback.
+		},
+	}
 }
 
 func statusError(resp *http.Response, prefix string) error {

@@ -23,18 +23,46 @@ type Store struct {
 	db *sql.DB
 }
 
+// sqliteBusyTimeout is how long a contended SQLite write waits before failing
+// with SQLITE_BUSY. Set per-connection so concurrent pool connections all
+// honor it.
+const sqliteBusyTimeout = 5000 // milliseconds
+
 // New creates a new event Store, initializing the SQLite database at dbPath.
 // The database is opened with WAL mode for concurrent read/write access.
+//
+// SQLite serializes writes through a single file lock. The default
+// database/sql pool opens many connections, and without a busy_timeout a
+// contended write returns SQLITE_BUSY immediately ("database is locked"). To
+// handle concurrent appends we constrain the pool and set a busy_timeout so
+// contended writers wait briefly instead of failing. busy_timeout is
+// connection-scoped, so with MaxOpenConns(1) every statement runs on the same
+// connection and the PRAGMA persists for its lifetime.
 func New(dbPath string) (*Store, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
+	// Constrain the connection pool. A single connection serializes all DB
+	// access (simplest correct option for SQLite), eliminating lock contention
+	// between pooled connections.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+
 	// Enable WAL mode for append-heavy workloads with concurrent readers.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
+	}
+
+	// Set busy_timeout so a contended write waits up to sqliteBusyTimeout ms
+	// instead of failing immediately. With MaxOpenConns(1) this runs on the
+	// single pooled connection and persists for its lifetime.
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", sqliteBusyTimeout)); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set busy_timeout: %w", err)
 	}
 
 	// Create the events table if it doesn't exist.
@@ -174,12 +202,15 @@ func scanEvents(rows *sql.Rows) ([]interfaces.Event, error) {
 
 		e.Type = interfaces.EventType(eType)
 
-		// Parse timestamp — try common SQLite formats.
+		// Parse timestamp — try common SQLite formats. An unparseable
+		// timestamp means the row is corrupted; surface the error instead of
+		// silently substituting time.Now(), which would corrupt the event
+		// history's chronological ordering and replay correctness.
 		ts, err := time.Parse("2006-01-02 15:04:05", timestampStr)
 		if err != nil {
 			ts, err = time.Parse(time.RFC3339, timestampStr)
 			if err != nil {
-				ts = time.Now().UTC()
+				return nil, fmt.Errorf("parse timestamp %q: %w", timestampStr, err)
 			}
 		}
 		e.Timestamp = ts

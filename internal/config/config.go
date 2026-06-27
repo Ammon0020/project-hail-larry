@@ -31,10 +31,29 @@ type Config struct {
 }
 
 // Default returns the default configuration.
+//
+// It derives the data directory from the current user's home directory. If the
+// home directory cannot be determined, Default panics with a clear error
+// rather than silently falling back to "." (which would write the data
+// directory, SQLite database, TLS keys, and config.json into the current
+// working directory — a surprising and divergent location across launches).
+// Callers that prefer to handle the error should use DefaultOrError.
 func Default() *Config {
+	cfg, err := DefaultOrError()
+	if err != nil {
+		// Fail loudly: do not silently write app data to an arbitrary CWD.
+		panic(fmt.Errorf("config: cannot build default config: %w", err))
+	}
+	return cfg
+}
+
+// DefaultOrError returns the default configuration or an error if the user's
+// home directory cannot be determined. Use this instead of Default when the
+// caller can surface the error to the user.
+func DefaultOrError() (*Config, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		homeDir = "."
+		return nil, fmt.Errorf("determine user home directory: %w", err)
 	}
 	dataDir := filepath.Join(homeDir, ".local-agent")
 
@@ -47,7 +66,7 @@ func Default() *Config {
 		Agents:            []acp.AgentInfo{},
 		TLSCertDir:        filepath.Join(dataDir, "tls"),
 		PairingTTLSeconds: 300,
-	}
+	}, nil
 }
 
 // Load reads the config from ~/.local-agent/config.json.
@@ -62,7 +81,9 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(configPath) //nolint:gosec // configPath is constructed from the current user's home directory.
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Default(), nil
+			// No config file yet — return defaults. Home dir was already
+			// resolved successfully above, so this cannot fail.
+			return DefaultOrError()
 		}
 		return nil, err
 	}
@@ -73,7 +94,10 @@ func Load() (*Config, error) {
 	}
 
 	// Fill in any missing defaults.
-	def := Default()
+	def, err := DefaultOrError()
+	if err != nil {
+		return nil, err
+	}
 	if cfg.Port == 0 {
 		cfg.Port = def.Port
 	}

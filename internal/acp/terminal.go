@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -68,15 +70,56 @@ func (c *acpClientImpl) getTerminal(id string) *terminalEntry {
 	return c.terminals[id]
 }
 
+// resolveCwd validates an agent-supplied working directory against the workspace
+// root and returns a safe cwd. If candidate is empty or resolves outside the
+// workspace (via a filepath.Rel containment check), the workspace root is used
+// instead. This prevents an agent from escaping the workspace boundary by
+// requesting a terminal with Cwd set to e.g. ~/.ssh, /etc, or C:\Windows.
+//
+// The containment check mirrors the safeJoin-style logic used by the workspace
+// manager for file reads/writes: the relative path from the workspace root to
+// the cleaned candidate must not start with ".." and must not be absolute.
+func resolveCwd(workspacePath, candidate string) string {
+	if candidate == "" {
+		return workspacePath
+	}
+	cleaned := filepath.Clean(candidate)
+	// An absolute candidate is only accepted if it is inside the workspace.
+	rel, err := filepath.Rel(workspacePath, cleaned)
+	if err != nil {
+		return workspacePath
+	}
+	if rel == "." {
+		// Candidate is the workspace root itself.
+		return workspacePath
+	}
+	if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		// Resolves outside the workspace — fall back to the safe root.
+		return workspacePath
+	}
+	return cleaned
+}
+
 // CreateTerminal starts a command in the session workspace and returns a terminal
 // id immediately. Output is streamed via shell events and buffered for later
 // retrieval through TerminalOutput / WaitForTerminalExit.
+//
+// The agent may supply a Cwd, but it is validated against the workspace root
+// (see resolveCwd); any path that resolves outside the workspace is rejected
+// and the command runs in the workspace root instead. The resolved cwd is
+// surfaced in the EventShellCommandStarted event so the user can see where the
+// command will execute.
 func (c *acpClientImpl) CreateTerminal(ctx context.Context, params acp.CreateTerminalRequest) (acp.CreateTerminalResponse, error) {
 	cwd := c.workspacePath
 	if params.Cwd != nil && *params.Cwd != "" {
-		cwd = *params.Cwd
+		cwd = resolveCwd(c.workspacePath, *params.Cwd)
 	}
 
+	// Build a human-readable command string for events and the terminal entry.
+	// This is for display only; the actual execution uses the structured
+	// argument list (command + args) passed directly to exec.Command via
+	// RunAsyncArgs, so args containing spaces or shell metacharacters are not
+	// re-parsed by a shell.
 	cmdStr := params.Command
 	for _, a := range params.Args {
 		cmdStr += " " + a
@@ -109,6 +152,7 @@ func (c *acpClientImpl) CreateTerminal(ctx context.Context, params acp.CreateTer
 		Type:      interfaces.EventShellCommandStarted,
 		SessionID: c.sessionID,
 		Command:   cmdStr,
+		Cwd:       cwd,
 	})
 
 	executor := shell.NewExecutor(cwd)
@@ -121,7 +165,10 @@ func (c *acpClientImpl) CreateTerminal(ctx context.Context, params acp.CreateTer
 				Content:   s,
 			})
 		}
-		res, runErr := executor.RunAsync(runCtx, cmdStr, onOutput, onOutput)
+		// Pass the structured command + args directly to exec.Command (no
+		// shell wrapping) so arguments containing spaces or shell
+		// metacharacters are passed verbatim instead of being re-parsed.
+		res, runErr := executor.RunAsyncArgs(runCtx, params.Command, params.Args, onOutput, onOutput)
 		code := res.ExitCode
 		entry.mu.Lock()
 		entry.exit = &acp.TerminalExitStatus{ExitCode: &code}
@@ -204,6 +251,24 @@ func (c *acpClientImpl) ReleaseTerminal(_ context.Context, params acp.ReleaseTer
 	delete(c.terminals, params.TerminalId)
 	c.termMu.Unlock()
 	return acp.ReleaseTerminalResponse{}, nil
+}
+
+// releaseAllTerminals cancels every outstanding terminal's run context and
+// clears the terminal map. It is called on session close / daemon shutdown so
+// that terminal subprocesses are killed and their reader goroutines exit
+// instead of leaking. After this call every terminal's done channel will
+// eventually close (once the cancelled RunAsyncArgs returns) and its output
+// remains retrievable only if the caller held a reference to the entry; the map
+// itself is emptied so no new lookups succeed.
+func (c *acpClientImpl) releaseAllTerminals() {
+	c.termMu.Lock()
+	defer c.termMu.Unlock()
+	for _, entry := range c.terminals {
+		if entry.cancel != nil {
+			entry.cancel()
+		}
+	}
+	c.terminals = make(map[string]*terminalEntry)
 }
 
 // genTerminalID returns a unique terminal identifier.

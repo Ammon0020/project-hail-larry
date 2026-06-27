@@ -3,6 +3,8 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -259,5 +261,43 @@ func TestNewSessionRequestMcpServersIsEmptyList(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"mcpServers":[]`) {
 		t.Errorf("NewSessionRequest did not serialize mcpServers as []: %s", data)
+	}
+}
+
+// TestResolveCwd verifies that resolveCwd rejects agent-supplied working
+// directories that escape the workspace root and falls back to the workspace
+// path. This closes the terminal-cwd escape where an agent could request a
+// terminal with Cwd set to ~/.ssh, /etc, or C:\Windows.
+func TestResolveCwd(t *testing.T) {
+	root := "/home/user/project"
+	if runtime.GOOS == "windows" {
+		root = `C:\Users\user\project`
+	}
+
+	tests := []struct {
+		name      string
+		candidate string
+		want      string // expected resolved cwd (empty == want root)
+	}{
+		{name: "empty falls back to root", candidate: "", want: root},
+		{name: "workspace root itself", candidate: root, want: root},
+		{name: "subdirectory inside workspace", candidate: filepath.Join(root, "src"), want: filepath.Join(root, "src")},
+		{name: "nested subdirectory inside workspace", candidate: filepath.Join(root, "src", "cmd"), want: filepath.Join(root, "src", "cmd")},
+		{name: "parent directory escapes", candidate: filepath.Dir(root), want: root},
+		{name: "sibling directory escapes", candidate: filepath.Join(filepath.Dir(root), "other"), want: root},
+		{name: "traversal via dotdot escapes", candidate: filepath.Join(root, "..", ".."), want: root},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveCwd(root, tc.candidate)
+			want := tc.want
+			if want == "" {
+				want = root
+			}
+			if got != want {
+				t.Errorf("resolveCwd(%q, %q) = %q, want %q", root, tc.candidate, got, want)
+			}
+		})
 	}
 }

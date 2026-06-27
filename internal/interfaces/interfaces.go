@@ -53,6 +53,7 @@ type Event struct {
 	Target     string    `json:"target,omitempty"`     // file path or target
 	Summary    string    `json:"summary,omitempty"`    // tool result summary
 	Command    string    `json:"command,omitempty"`    // shell command
+	Cwd        string    `json:"cwd,omitempty"`        // resolved working directory for shell commands
 	Options    []string  `json:"options,omitempty"`    // permission options
 	RequestID  string    `json:"requestId,omitempty"`  // permission request ID (for respond)
 	ToolKind   string    `json:"toolKind,omitempty"`   // ACP tool kind (read/edit/execute/...)
@@ -205,6 +206,7 @@ type PermissionRequest struct {
 	ID            string                 `json:"id"`
 	SessionID     string                 `json:"sessionId"`
 	Tool          string                 `json:"tool"`
+	ToolKind      string                 `json:"toolKind,omitempty"`
 	Command       string                 `json:"command,omitempty"`
 	Target        string                 `json:"target,omitempty"`
 	Options       []PermissionDecision   `json:"options"`

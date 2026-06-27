@@ -64,6 +64,11 @@ type Session struct {
 	UpdatedAt    time.Time `json:"updatedAt"`
 	transport    transportLike
 	ACPSessionID string `json:"acpSessionId,omitempty"`
+	// impl holds the acpClientImpl passed to the transport for this session.
+	// It is retained so that CloseSession / closeTransportLocked can cancel
+	// outstanding terminal subprocesses and their goroutines before the
+	// transport is torn down, preventing leaks on session close and shutdown.
+	impl *acpClientImpl
 }
 
 // transportLike is the subset of *Transport methods the Client invokes after a
@@ -82,6 +87,16 @@ type transportLike interface {
 // defaultConversationName is the placeholder name used until the first prompt
 // (or an explicit rename) gives the conversation a real title.
 const defaultConversationName = "New chat"
+
+// promptTimeout is the generous but finite deadline applied to every prompt
+// sent to an agent. The prompt context is detached from the caller's context
+// (so it survives the HTTP request that initiated it) but must still be bounded
+// — otherwise a hung agent (stuck, deadlocked, or waiting on an unanswered
+// permission prompt) blocks the prompt goroutine forever and leaks it. When the
+// timeout fires, the SDK's Prompt returns a context-deadline error which the
+// existing failure-handling branch converts into an EventAgentExited event and
+// resets the transport.
+const promptTimeout = 10 * time.Minute
 
 // NewClient creates a new ACP client with no registered agents.
 func NewClient(workspaceMgr interfaces.WorkspaceManager, permMgr interfaces.PermissionManager) *Client {
@@ -278,6 +293,7 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 	}
 
 	session.transport = transport
+	session.impl = impl
 	session.ACPSessionID = acpSessionID
 	return nil
 }
@@ -359,8 +375,14 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) erro
 		})
 	}
 
-	promptCtx := context.WithoutCancel(ctx)
+	// Detach from the caller's context (the HTTP request ends when this
+	// method returns) but apply a finite timeout so a hung agent cannot block
+	// the prompt goroutine forever. Without this bound, an agent that stays
+	// alive but stops responding to the JSON-RPC session/prompt call would
+	// leak the goroutine and leave the session stuck in "running" forever.
+	promptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), promptTimeout)
 	go func() {
+		defer cancel() // release timer resources when the prompt completes
 		if callbacks != nil {
 			callbacks.OnEvent(interfaces.Event{
 				Type:      interfaces.EventResponseStarted,
@@ -467,6 +489,12 @@ func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
 	}
 
 	if session.transport != nil {
+		// Cancel every outstanding terminal's run context and kill its
+		// subprocess before tearing down the transport, so terminal goroutines
+		// and child processes do not outlive the session.
+		if session.impl != nil {
+			session.impl.releaseAllTerminals()
+		}
 		// Best-effort ACP session/delete before killing the process. Errors are
 		// ignored: the agent may not advertise session/delete (unstable) or the
 		// subprocess may already have exited.
@@ -505,6 +533,12 @@ func (c *Client) closeTransportLocked(ctx context.Context, sessionID string) err
 	}
 
 	if session.transport != nil {
+		// Cancel every outstanding terminal's run context and kill its
+		// subprocess before tearing down the transport, so terminal goroutines
+		// and child processes do not outlive a daemon shutdown.
+		if session.impl != nil {
+			session.impl.releaseAllTerminals()
+		}
 		// Best-effort ACP session/delete before killing the process. Errors are
 		// ignored: the agent may not advertise session/delete (unstable) or the
 		// subprocess may already have exited.
@@ -513,6 +547,7 @@ func (c *Client) closeTransportLocked(ctx context.Context, sessionID string) err
 		}
 		_ = session.transport.Close()
 		session.transport = nil
+		session.impl = nil
 	}
 
 	// Drop cached permission policies for this session so allow_always /
@@ -597,9 +632,14 @@ func (c *Client) RebindSession(_ context.Context, sessionID, agentID, modelID st
 	}
 
 	// Tear down the old transport; it restarts lazily on the next prompt.
+	// Release outstanding terminals first so their subprocesses are killed.
 	if session.transport != nil {
+		if session.impl != nil {
+			session.impl.releaseAllTerminals()
+		}
 		_ = session.transport.Close()
 		session.transport = nil
+		session.impl = nil
 		session.ACPSessionID = ""
 	}
 

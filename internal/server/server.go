@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"reflect"
 	"strings"
@@ -45,6 +46,10 @@ type Server struct {
 	tlsEnabled bool
 	certPath   string
 	keyPath    string
+	// httpServer holds the active *http.Server once ListenAndServe (or
+	// ListenAndServeTLS) has been called. It is stored so Shutdown can
+	// gracefully drain in-flight requests during daemon teardown.
+	httpServer *http.Server
 }
 
 // New creates a new Server with the given dependencies.
@@ -98,48 +103,134 @@ func (s *Server) routes() {
 }
 
 // apiRoutes registers all /api/* and /ws routes.
+//
+// Pairing endpoints (/api/pair/*) are registered without authentication so
+// unpaired devices can initiate pairing. Every other /api/ route is wrapped
+// in requireAuth, which validates the device credential presented in the
+// Authorization header or query params against the PairingManager. The
+// WebSocket hub receives an AuthChecker so HandleWS can gate handshakes the
+// same way.
 func (s *Server) apiRoutes() {
 	d := s.deps
 
-	// Pairing routes.
+	// Pairing routes — no auth (devices are not yet paired).
 	s.mux.HandleFunc("POST /api/pair/initiate", s.handlePairInitiate)
 	s.mux.HandleFunc("POST /api/pair/verify-passcode", s.handlePairVerifyPasscode)
 	s.mux.HandleFunc("POST /api/pair/verify-token", s.handlePairVerifyToken)
-	s.mux.HandleFunc("GET /api/devices", s.handleListDevices)
-	s.mux.HandleFunc("DELETE /api/devices/{id}", s.handleRevokeDevice)
 
-	// Workspace routes.
-	s.mux.HandleFunc("GET /api/workspaces", s.handleListWorkspaces)
-	s.mux.HandleFunc("POST /api/workspaces", s.handleRegisterWorkspace)
-	s.mux.HandleFunc("GET /api/workspaces/{id}/files", s.handleFileTree)
-	s.mux.HandleFunc("GET /api/workspaces/{id}/file", s.handleReadFile)
-	s.mux.HandleFunc("POST /api/workspaces/{id}/file", s.handleWriteFile)
+	// Device management routes — require auth.
+	s.mux.HandleFunc("GET /api/devices", s.requireAuth(s.handleListDevices))
+	s.mux.HandleFunc("DELETE /api/devices/{id}", s.requireAuth(s.handleRevokeDevice))
 
-	// Event routes.
-	s.mux.HandleFunc("GET /api/events", s.handleGetEvents)
-	s.mux.HandleFunc("GET /api/events/{sessionId}", s.handleGetSessionEvents)
+	// Workspace routes — require auth.
+	s.mux.HandleFunc("GET /api/workspaces", s.requireAuth(s.handleListWorkspaces))
+	s.mux.HandleFunc("POST /api/workspaces", s.requireAuth(s.handleRegisterWorkspace))
+	s.mux.HandleFunc("GET /api/workspaces/{id}/files", s.requireAuth(s.handleFileTree))
+	s.mux.HandleFunc("GET /api/workspaces/{id}/file", s.requireAuth(s.handleReadFile))
+	s.mux.HandleFunc("POST /api/workspaces/{id}/file", s.requireAuth(s.handleWriteFile))
 
-	// Session routes.
-	s.mux.HandleFunc("GET /api/agents", s.handleListAgents)
-	s.mux.HandleFunc("POST /api/agents", s.handleUpsertAgent)
-	s.mux.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
-	s.mux.HandleFunc("POST /api/agents/autodetect", s.handleAutodetectAgents)
-	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
-	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
-	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
-	s.mux.HandleFunc("PATCH /api/sessions/{id}", s.handlePatchSession)
-	s.mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handleSendPrompt)
-	s.mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancelSession)
-	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleCloseSession)
+	// Event routes — require auth.
+	s.mux.HandleFunc("GET /api/events", s.requireAuth(s.handleGetEvents))
+	s.mux.HandleFunc("GET /api/events/{sessionId}", s.requireAuth(s.handleGetSessionEvents))
 
-	// Permission routes.
-	s.mux.HandleFunc("GET /api/permissions/pending", s.handlePendingPermissions)
-	s.mux.HandleFunc("POST /api/permissions/{id}/respond", s.handleRespondPermission)
+	// Session routes — require auth.
+	s.mux.HandleFunc("GET /api/agents", s.requireAuth(s.handleListAgents))
+	s.mux.HandleFunc("POST /api/agents", s.requireAuth(s.handleUpsertAgent))
+	s.mux.HandleFunc("DELETE /api/agents/{id}", s.requireAuth(s.handleDeleteAgent))
+	s.mux.HandleFunc("POST /api/agents/autodetect", s.requireAuth(s.handleAutodetectAgents))
+	s.mux.HandleFunc("GET /api/sessions", s.requireAuth(s.handleListSessions))
+	s.mux.HandleFunc("GET /api/sessions/{id}", s.requireAuth(s.handleGetSession))
+	s.mux.HandleFunc("POST /api/sessions", s.requireAuth(s.handleCreateSession))
+	s.mux.HandleFunc("PATCH /api/sessions/{id}", s.requireAuth(s.handlePatchSession))
+	s.mux.HandleFunc("POST /api/sessions/{id}/prompt", s.requireAuth(s.handleSendPrompt))
+	s.mux.HandleFunc("POST /api/sessions/{id}/cancel", s.requireAuth(s.handleCancelSession))
+	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.requireAuth(s.handleCloseSession))
 
-	// WebSocket endpoint.
+	// Permission routes — require auth.
+	s.mux.HandleFunc("GET /api/permissions/pending", s.requireAuth(s.handlePendingPermissions))
+	s.mux.HandleFunc("POST /api/permissions/{id}/respond", s.requireAuth(s.handleRespondPermission))
+
+	// WebSocket endpoint — auth is enforced inside HandleWS via the hub's
+	// AuthChecker (browsers cannot set headers on the WS handshake, so the
+	// credential is passed as query params instead).
 	if d.SyncHub != nil {
+		if d.PairingMgr != nil {
+			d.SyncHub.SetAuthChecker(d.PairingMgr.ValidateCredential)
+		}
 		s.mux.HandleFunc("/ws", d.SyncHub.HandleWS)
 	}
+}
+
+// requireAuth wraps an http.HandlerFunc with device credential validation.
+// Requests must present a valid device credential via an Authorization:
+// "Bearer <deviceId>:<secret>" header or deviceId/secret query params. When
+// PairingMgr is nil (degraded/test setup with partial deps), auth is skipped
+// — in production the daemon always wires a PairingManager.
+//
+// Loopback connections (127.0.0.1, ::1, localhost) bypass auth. The daemon
+// runs on the host and the host's browser accesses it via localhost, so the
+// host machine always has full access without needing to present device
+// credentials. Remote (LAN) devices still must authenticate. This keeps the
+// frontend working before it is updated to send credentials, and preserves
+// security for non-loopback callers once it is.
+func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.deps == nil || s.deps.PairingMgr == nil {
+			next(w, r)
+			return
+		}
+		if isLoopback(r) {
+			next(w, r)
+			return
+		}
+		if !s.authenticate(r) {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// isLoopback reports whether the request originated from a loopback address
+// (127.0.0.1 or ::1). http.Request.RemoteAddr is of the form "host:port"
+// (or "[host]:port" for IPv6), so net.SplitHostPort is used to extract the
+// host. The host machine's browser connects via localhost, so such requests
+// are trusted.
+func isLoopback(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		// RemoteAddr had no port; treat the whole string as the host.
+		host = r.RemoteAddr
+	}
+	return host == "127.0.0.1" || host == "::1" || host == "localhost"
+}
+
+// authenticate extracts the device credential from the request and validates
+// it against the pairing manager. It checks the Authorization header first
+// (Bearer <deviceId>:<secret>), then falls back to deviceId/secret query
+// params (needed for WebSocket and other browser-initiated requests that
+// cannot set custom headers).
+func (s *Server) authenticate(r *http.Request) bool {
+	deviceID, secret := extractCredential(r)
+	if deviceID == "" || secret == "" {
+		return false
+	}
+	return s.deps.PairingMgr.ValidateCredential(deviceID, secret)
+}
+
+// extractCredential pulls the device ID and secret from either the
+// Authorization header ("Bearer <deviceId>:<secret>") or the deviceId/secret
+// query parameters. Returns empty strings when no credential is present.
+func extractCredential(r *http.Request) (deviceID, secret string) {
+	// Prefer the Authorization header.
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if idx := strings.IndexByte(token, ':'); idx > 0 {
+			return token[:idx], token[idx+1:]
+		}
+	}
+	// Fall back to query params (browser WebSocket/SSE cannot set headers).
+	return r.URL.Query().Get("deviceId"), r.URL.Query().Get("secret")
 }
 
 // handleHealth responds with a simple JSON health check.
@@ -181,34 +272,61 @@ func (s *Server) serveFrontend() {
 	})
 }
 
+// newHTTPServer constructs an *http.Server with sane timeout defaults that
+// mitigate slowloris-style resource exhaustion:
+//   - ReadHeaderTimeout: 5s  — drop connections that don't send headers fast.
+//   - ReadTimeout:       30s — cap the total time to read the request.
+//   - WriteTimeout:      60s — cap the total time to write the response.
+//   - IdleTimeout:       120s — close keep-alive connections that go idle.
+//
+// WriteTimeout does not affect the WebSocket endpoint (/ws) or any other
+// hijacked connection — once upgraded, the http.Server timeouts no longer
+// apply to that connection.
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+}
+
 // ListenAndServe starts the HTTP server on the given address.
 // If TLS is enabled (via SetTLS), it serves over HTTPS using the configured
-// certificate and key paths.
+// certificate and key paths. The underlying *http.Server is stored on s so
+// that Shutdown can gracefully drain in-flight requests.
 func (s *Server) ListenAndServe(addr string) error {
 	if s.tlsEnabled {
 		return s.ListenAndServeTLS(addr, s.certPath, s.keyPath)
 	}
 	log.Printf("Server listening on http://%s", addr)
 
-	httpServer := &http.Server{
-		Addr:              addr,
-		Handler:           s.mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-	return httpServer.ListenAndServe()
+	s.httpServer = newHTTPServer(addr, s.mux)
+	return s.httpServer.ListenAndServe()
 }
 
 // ListenAndServeTLS starts the HTTPS server on the given address using the
-// provided certificate and key paths.
+// provided certificate and key paths. The underlying *http.Server is stored
+// on s so that Shutdown can gracefully drain in-flight requests.
 func (s *Server) ListenAndServeTLS(addr, certPath, keyPath string) error {
 	log.Printf("Server listening on https://%s", addr)
 
-	httpServer := &http.Server{
-		Addr:              addr,
-		Handler:           s.mux,
-		ReadHeaderTimeout: 5 * time.Second,
+	s.httpServer = newHTTPServer(addr, s.mux)
+	return s.httpServer.ListenAndServeTLS(certPath, keyPath)
+}
+
+// Shutdown gracefully shuts down the HTTP server, waiting for in-flight
+// requests to complete or until the context is cancelled. It is safe to call
+// when the server was never started (it returns nil). The daemon calls this
+// during signal-handled teardown before closing the EventStore so that
+// in-flight handlers do not Append to a closed store.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpServer == nil {
+		return nil
 	}
-	return httpServer.ListenAndServeTLS(certPath, keyPath)
+	return s.httpServer.Shutdown(ctx)
 }
 
 // SetTLS enables TLS for the server. When enabled, ListenAndServe will serve
@@ -267,8 +385,25 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 
-// decodeJSON decodes a JSON request body into v.
-func decodeJSON(r *http.Request, v interface{}) error {
+// defaultMaxBodyBytes is the default request body size limit (10 MB) applied
+// by decodeJSON. It is large enough for typical JSON payloads while preventing
+// a single request from exhausting memory. Endpoints that legitimately accept
+// larger bodies (e.g. file writes) use decodeJSONLimit with a higher cap.
+const defaultMaxBodyBytes int64 = 10 << 20
+
+// decodeJSON decodes a JSON request body into v, enforcing the default body
+// size limit (10 MB) via http.MaxBytesReader. Callers that need a higher limit
+// (e.g. file-write endpoints) should use decodeJSONLimit instead.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	return decodeJSONLimit(w, r, v, defaultMaxBodyBytes)
+}
+
+// decodeJSONLimit decodes a JSON request body into v, enforcing the given
+// maxBytes limit via http.MaxBytesReader. The ResponseWriter is required so
+// MaxBytesReader can close the connection if the client exceeds the limit,
+// preventing it from continuing to stream data.
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, v interface{}, maxBytes int64) error {
 	defer func() { _ = r.Body.Close() }()
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	return json.NewDecoder(r.Body).Decode(v)
 }
