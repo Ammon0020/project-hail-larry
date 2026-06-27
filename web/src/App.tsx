@@ -101,6 +101,14 @@ export default function App() {
   // of setState-in-effect to avoid cascading renders. The empty-list case is
   // handled defensively by sendPrompt's 404 path in useBackend.
   const [prevSessions, setPrevSessions] = useState(backend.sessions)
+  // Tracks the session id whose events we've already loaded so we only trigger
+  // loadSessionEvents once per active session (not on every render). Reset to
+  // null when activeSessionId changes so a freshly-selected session reloads.
+  const [loadedEventsForSession, setLoadedEventsForSession] = useState<string | null>(null)
+  if (activeSessionId !== loadedEventsForSession && activeSessionId === null) {
+    // Switched to "new chat" — no session to load events for.
+    setLoadedEventsForSession(null)
+  }
   if (backend.sessions !== prevSessions) {
     setPrevSessions(backend.sessions)
     if (
@@ -109,6 +117,22 @@ export default function App() {
       !backend.sessions.some((s) => s.id === activeSessionId)
     ) {
       setActiveSessionId(null)
+      setLoadedEventsForSession(null)
+    } else if (
+      activeSessionId &&
+      backend.sessions.some((s) => s.id === activeSessionId) &&
+      loadedEventsForSession !== activeSessionId
+    ) {
+      // The session list loaded (or refreshed) and contains the active session,
+      // but we haven't fetched its events yet. This is the reload path: the
+      // persisted activeSessionId is restored from localStorage, but the global
+      // loadEvents() only fetches the first 200 events across ALL sessions, so
+      // the active conversation's history may be missing. Fetch it explicitly.
+      // Uses the "adjust state during render" pattern (React docs) instead of
+      // setState-in-effect to avoid cascading renders and the ESLint rule
+      // react-hooks/set-state-in-effect.
+      setLoadedEventsForSession(activeSessionId)
+      backend.loadSessionEvents(activeSessionId)
     }
   }
 
