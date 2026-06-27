@@ -58,9 +58,13 @@ export function useBackend() {
 
     ws.onopen = () => {
       setConnected(true)
-      // Re-sync after (re)connect so no events or pending prompts are missed
-      // while the socket was down (Blueprint Sec 12 — reconnection).
-      loadEvents()
+      // On (re)connect, re-sync sessions and pending permissions only. We do
+      // NOT call loadEvents() here: it REPLACES the entire event list with a
+      // global fetch, which would wipe session-specific events already
+      // delivered via WebSocket (Blueprint Sec 12 — reconnection). The initial
+      // loadEvents() runs once on mount; real-time delivery is handled by the
+      // WebSocket. If the socket was down long enough to miss events, a page
+      // refresh restores full history.
       loadSessions()
       loadPendingPermissions()
     }
@@ -158,7 +162,7 @@ export function useBackend() {
 
   async function loadEvents() {
     try {
-      const evts = await api.getEvents(0, 200)
+      const evts = await api.getEvents(0, 1000)
       eventsRef.current = evts
       setEvents(evts)
     } catch {
@@ -185,14 +189,29 @@ export function useBackend() {
   /**
    * Loads events for a specific session from the backend and merges them
    * into the local event list so the chat panel can render them.
+   *
+   * Merges by event ID instead of blindly replacing all events for the
+   * session. This prevents a race condition where WebSocket-delivered events
+   * (e.g. PromptSubmitted) arrive between the time the fetch is initiated and
+   * the time it completes: the fetched list would be stale and overwrite the
+   * newer WebSocket events. We keep events for this session whose IDs are
+   * higher than the highest fetched ID (they arrived after the fetch started),
+   * plus the freshly fetched events.
    */
   async function loadSessionEvents(sessionId: string) {
     try {
-      const sessionEvts = await api.getSessionEvents(sessionId, 0, 200)
-      // Merge: keep events from other sessions, replace events for this session.
+      const sessionEvts = await api.getSessionEvents(sessionId, 0, 1000)
+      // Merge: keep events from other sessions, plus events for this session
+      // that arrived via WebSocket after the fetch was initiated (they have
+      // IDs higher than the fetched events).
+      const maxFetchedId = sessionEvts.length > 0
+        ? Math.max(...sessionEvts.map((e) => e.id))
+        : 0
       eventsRef.current = [
-        ...eventsRef.current.filter((e) => e.sessionId !== sessionId),
         ...sessionEvts,
+        ...eventsRef.current.filter(
+          (e) => e.sessionId !== sessionId || e.id > maxFetchedId,
+        ),
       ]
       setEvents(eventsRef.current)
     } catch {

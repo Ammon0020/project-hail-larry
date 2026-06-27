@@ -266,7 +266,8 @@ func TestCloseSessionNoDeleteWithoutID(t *testing.T) {
 }
 
 // TestCloseAllSessions verifies that CloseAllSessions closes every active
-// session, invoking session/delete + Close on each.
+// session's transport, invoking session/delete + Close on each, while
+// preserving session metadata so conversations survive a daemon restart.
 func TestCloseAllSessions(t *testing.T) {
 	c := NewClient(nil, nil)
 	ctx := context.Background()
@@ -292,8 +293,9 @@ func TestCloseAllSessions(t *testing.T) {
 		t.Fatalf("CloseAllSessions: %v", err)
 	}
 
-	if len(c.ListSessions()) != 0 {
-		t.Errorf("expected 0 sessions remaining, got %d", len(c.ListSessions()))
+	// Metadata is preserved (not deleted) so conversations survive a restart.
+	if got := len(c.ListSessions()); got != 3 {
+		t.Errorf("expected 3 sessions preserved, got %d", got)
 	}
 	for i, mt := range transports {
 		if !mt.deleteSessionCalled {
@@ -301,6 +303,20 @@ func TestCloseAllSessions(t *testing.T) {
 		}
 		if !mt.closeCalled {
 			t.Errorf("session %d: expected Close to be called", i)
+		}
+	}
+	// Every session should now be idle with no live transport.
+	for _, id := range []string{"sess-a", "sess-b", "sess-c"} {
+		s, err := c.GetSession(id)
+		if err != nil {
+			t.Errorf("expected session %s preserved, got error: %v", id, err)
+			continue
+		}
+		if s.transport != nil {
+			t.Errorf("session %s: expected transport cleared, still set", id)
+		}
+		if s.Status != "idle" {
+			t.Errorf("session %s: expected status 'idle', got %q", id, s.Status)
 		}
 	}
 }

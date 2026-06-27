@@ -65,6 +65,7 @@ export interface SessionInfo {
 }
 
 export interface AppEvent {
+  id: number
   type: string
   sessionId: string
   role?: string

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /*
  * Theme tokens — ported from mockup13.html @theme block.
@@ -109,4 +110,21 @@
 .hide-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* Thin scrollbar for the editor tab bar — subtle so it doesn't crowd the
+   36px-tall bar but is visible enough to signal horizontal scroll. */
+.tab-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #4b5563 transparent;
+}
+.tab-scrollbar::-webkit-scrollbar {
+  height: 3px;
+}
+.tab-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tab-scrollbar::-webkit-scrollbar-thumb {
+  background: #4b5563;
+  border-radius: 2px;
 }

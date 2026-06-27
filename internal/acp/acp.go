@@ -488,27 +488,69 @@ func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// CloseAllSessions gracefully closes every active session, calling ACP
-// session/delete (best-effort) and terminating each agent process via
-// CloseSession. It is intended for daemon shutdown so SIGINT/SIGTERM triggers
-// graceful close instead of killing processes outright. A snapshot of session
-// IDs is taken under the lock; each CloseSession re-acquires the lock. The
-// last non-nil error is returned (individual session failures do not abort the
-// sweep).
+// closeTransportLocked closes the live ACP transport for a session without
+// removing the session metadata from c.sessions. It performs a best-effort ACP
+// session/delete (ignored on error — the agent may not support session/delete
+// or may already be dead), closes the transport, clears cached permission
+// policies, and marks the session idle with no live transport. The caller must
+// hold c.mu and is responsible for calling persistLocked once after sweeping
+// all sessions (so a shutdown writes a single file rather than one per
+// session). This is used by CloseAllSessions on daemon shutdown so conversation
+// metadata survives a restart; user-initiated deletion still uses CloseSession,
+// which removes the record.
+func (c *Client) closeTransportLocked(ctx context.Context, sessionID string) error {
+	session, ok := c.sessions[sessionID]
+	if !ok {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	if session.transport != nil {
+		// Best-effort ACP session/delete before killing the process. Errors are
+		// ignored: the agent may not advertise session/delete (unstable) or the
+		// subprocess may already have exited.
+		if session.ACPSessionID != "" {
+			_ = session.transport.DeleteSession(ctx, session.ACPSessionID)
+		}
+		_ = session.transport.Close()
+		session.transport = nil
+	}
+
+	// Drop cached permission policies for this session so allow_always /
+	// allow_session decisions do not leak into future sessions reusing the ID.
+	if c.permMgr != nil {
+		c.permMgr.ClearSession(session.ID)
+	}
+
+	// Mark idle so the UI does not show the session as "running" after restart.
+	// LoadConversations also resets status to "idle", but setting it here keeps
+	// the on-disk file consistent in case the daemon is inspected post-shutdown.
+	session.Status = "idle"
+	session.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// CloseAllSessions gracefully closes every active session's live transport,
+// calling ACP session/delete (best-effort) and terminating each agent process.
+// Unlike CloseSession, it preserves session metadata in c.sessions so
+// conversations survive a daemon restart — only the live transport and
+// permission policies are torn down. It is intended for daemon shutdown so
+// SIGINT/SIGTERM triggers graceful close instead of killing processes outright.
+// The session map is swept under a single lock and persisted once at the end.
+// The last non-nil error is returned (individual session failures do not abort
+// the sweep).
 func (c *Client) CloseAllSessions(ctx context.Context) error {
 	c.mu.Lock()
-	ids := make([]string, 0, len(c.sessions))
-	for id := range c.sessions {
-		ids = append(ids, id)
-	}
-	c.mu.Unlock()
+	defer c.mu.Unlock()
 
 	var lastErr error
-	for _, id := range ids {
-		if err := c.CloseSession(ctx, id); err != nil {
+	for id := range c.sessions {
+		if err := c.closeTransportLocked(ctx, id); err != nil {
 			lastErr = err
 		}
 	}
+	// Persist once after all transports are closed so the on-disk file reflects
+	// the surviving metadata (status idle, no live transport).
+	c.persistLocked()
 	return lastErr
 }
 

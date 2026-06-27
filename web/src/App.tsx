@@ -119,18 +119,27 @@ export default function App() {
       setActiveSessionId(null)
       setLoadedEventsForSession(null)
     } else if (
+      // Only load session events on the INITIAL sessions load — i.e. when the
+      // session list transitions from empty to populated (page reload). A newly
+      // created session is added to an already-populated list and has no
+      // persisted history to fetch; its events arrive in real time via
+      // WebSocket. Calling loadSessionEvents for a brand-new session races with
+      // the in-flight prompt POST: the fetch returns an empty list (the
+      // PromptSubmitted event hasn't been persisted yet) and overwrites the
+      // WebSocket-delivered event, making the user's message flash then vanish.
+      prevSessions.length === 0 &&
       activeSessionId &&
       backend.sessions.some((s) => s.id === activeSessionId) &&
       loadedEventsForSession !== activeSessionId
     ) {
-      // The session list loaded (or refreshed) and contains the active session,
-      // but we haven't fetched its events yet. This is the reload path: the
-      // persisted activeSessionId is restored from localStorage, but the global
-      // loadEvents() only fetches the first 200 events across ALL sessions, so
-      // the active conversation's history may be missing. Fetch it explicitly.
-      // Uses the "adjust state during render" pattern (React docs) instead of
-      // setState-in-effect to avoid cascading renders and the ESLint rule
-      // react-hooks/set-state-in-effect.
+      // The session list just loaded for the first time and contains the active
+      // session, but we haven't fetched its events yet. This is the reload
+      // path: the persisted activeSessionId is restored from localStorage, but
+      // the global loadEvents() only fetches the first 200 events across ALL
+      // sessions, so the active conversation's history may be missing. Fetch it
+      // explicitly. Uses the "adjust state during render" pattern (React docs)
+      // instead of setState-in-effect to avoid cascading renders and the ESLint
+      // rule react-hooks/set-state-in-effect.
       setLoadedEventsForSession(activeSessionId)
       backend.loadSessionEvents(activeSessionId)
     }

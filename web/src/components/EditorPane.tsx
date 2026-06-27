@@ -1,7 +1,8 @@
 import CodeMirror from '@uiw/react-codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { FileCode, Circle, X, GitCompare, Save, GitBranch, CircleAlert, TriangleAlert, FileText } from 'lucide-react'
+import { FileCode, Circle, X, GitCompare, Save, GitBranch, CircleAlert, TriangleAlert, FileText, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { Tab } from '@/types'
 
@@ -31,6 +32,34 @@ export function EditorPane({
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
 
+  // Scroll affordances for the tab bar: show left/right chevrons when the tab
+  // list overflows. State is updated from the onScroll handler (an event
+  // handler, so setState is allowed) and re-measured via requestAnimationFrame
+  // when the tab set changes — the rAF callback defers the DOM read until after
+  // layout and keeps setState out of the effect body (react-hooks/set-state-in-effect).
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [canScrollLeft, setCanScrollLeft] = useState(false)
+  const [canScrollRight, setCanScrollRight] = useState(false)
+
+  const measureScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    setCanScrollLeft(el.scrollLeft > 0)
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 1)
+  }
+
+  useEffect(() => {
+    const id = requestAnimationFrame(measureScroll)
+    return () => cancelAnimationFrame(id)
+    // Re-measure whenever the number of tabs changes (add/remove).
+  }, [tabs.length])
+
+  const scrollByTabs = (delta: number) => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollBy({ left: delta, behavior: 'smooth' })
+  }
+
   /** Pick CodeMirror language extension based on Tab.language. */
   const getExtensions = (lang: string) => {
     if (['javascript', 'js', 'jsx', 'ts', 'tsx'].includes(lang)) {
@@ -49,7 +78,21 @@ export function EditorPane({
     >
       {/* Tab Bar */}
       <div className="flex items-center bg-panel border-b border-background shrink-0 h-9">
-        <div className="flex overflow-x-auto hide-scrollbar">
+        {canScrollLeft && (
+          <button
+            type="button"
+            aria-label="Scroll tabs left"
+            onClick={() => scrollByTabs(-150)}
+            className="flex items-center justify-center w-5 h-9 shrink-0 text-gray-400 hover:text-gray-200 hover:bg-editor/50 transition"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+        )}
+        <div
+          ref={scrollRef}
+          onScroll={measureScroll}
+          className="flex overflow-x-auto tab-scrollbar"
+        >
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId
             return (
@@ -79,6 +122,16 @@ export function EditorPane({
             )
           })}
         </div>
+        {canScrollRight && (
+          <button
+            type="button"
+            aria-label="Scroll tabs right"
+            onClick={() => scrollByTabs(150)}
+            className="flex items-center justify-center w-5 h-9 shrink-0 text-gray-400 hover:text-gray-200 hover:bg-editor/50 transition"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        )}
         <div className="flex-1" />
         {/* Editor actions: Diff + Save (Blueprint Sec 14 — file sync) */}
         {activeTab && (

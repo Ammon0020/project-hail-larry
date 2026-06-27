@@ -10,6 +10,8 @@ import {
   FileSearch,
   Play,
 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { AppEvent } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 
@@ -259,13 +261,15 @@ export function ChatMessageItem({
           <div className="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
             <Bot className="w-4 h-4" />
           </div>
-          <div className="flex-1 pt-0.5">
-            <p className="whitespace-pre-wrap text-sm text-gray-300">
-              {event.content}
+          <div className="flex-1 pt-0.5 min-w-0">
+            <div className="prose prose-sm prose-invert max-w-none break-words text-gray-300 [&_pre]:bg-tool-call [&_pre]:rounded-md [&_pre]:border [&_pre]:border-gray-800/80 [&_pre]:p-2 [&_pre]:text-xs [&_pre]:overflow-x-auto [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_a]:text-blue-400 [&_a]:hover:underline">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {event.content || ''}
+              </ReactMarkdown>
               {event.streaming && (
                 <span className="inline-block w-1.5 h-4 ml-0.5 bg-blue-400 animate-pulse align-text-bottom" />
               )}
-            </p>
+            </div>
           </div>
         </div>
       )
