@@ -38,6 +38,25 @@ export default function App() {
   )
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
 
+  // Resizable panel widths — restored from localStorage so the layout
+  // survives a reload (Feature 2). Defaults: 260px left, 420px right.
+  const LEFT_MIN = 180
+  const LEFT_MAX = 480
+  const RIGHT_MIN = 300
+  const RIGHT_MAX = 700
+  const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
+    const stored = Number(localStorage.getItem('lai:leftPanelWidth'))
+    return Number.isFinite(stored) && stored >= LEFT_MIN && stored <= LEFT_MAX
+      ? stored
+      : 260
+  })
+  const [rightPanelWidth, setRightPanelWidth] = useState(() => {
+    const stored = Number(localStorage.getItem('lai:rightPanelWidth'))
+    return Number.isFinite(stored) && stored >= RIGHT_MIN && stored <= RIGHT_MAX
+      ? stored
+      : 420
+  })
+
   // Tab state — restored from localStorage so open files survive a reload.
   const [openTabs, setOpenTabs] = useState<Tab[]>(() => {
     try {
@@ -115,6 +134,15 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('lai:mobileView', mobileView)
   }, [mobileView])
+
+  // Persist panel widths so the resized layout survives a reload (Feature 2).
+  useEffect(() => {
+    localStorage.setItem('lai:leftPanelWidth', String(leftPanelWidth))
+  }, [leftPanelWidth])
+
+  useEffect(() => {
+    localStorage.setItem('lai:rightPanelWidth', String(rightPanelWidth))
+  }, [rightPanelWidth])
 
   // ---- Lock screen for unpaired devices ----
   if (!paired) {
@@ -248,6 +276,43 @@ export default function App() {
   const showChat = isDesktop || mobileView === 'chat'
   const showMobileSettings = !isDesktop && mobileView === 'settings'
 
+  /**
+   * Begins a panel-resize drag. Attaches window-level mousemove/mouseup
+   * listeners that update the width state and tear themselves down on
+   * release. The drag origin (startX/startWidth) is captured in the
+   * listener closures — no React state or refs are touched during the
+   * drag except the width setters (Feature 2).
+   */
+  const startPanelDrag = (side: 'left' | 'right') => (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = side === 'left' ? leftPanelWidth : rightPanelWidth
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX
+      if (side === 'left') {
+        // Dragging the right edge rightward widens the left panel.
+        const next = Math.min(LEFT_MAX, Math.max(LEFT_MIN, startWidth + delta))
+        setLeftPanelWidth(next)
+      } else {
+        // Dragging the left edge leftward widens the right panel.
+        const next = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, startWidth - delta))
+        setRightPanelWidth(next)
+      }
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    // Lock cursor + selection so dragging feels smooth across the whole window.
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
   return (
     <div className="h-screen w-screen overflow-hidden flex bg-background text-gray-200 font-sans selection:bg-blue-500/30">
       {/* Activity Bar (far left, icon-only — desktop only) */}
@@ -270,7 +335,17 @@ export default function App() {
         workspaces={backend.workspaces}
         activeWorkspace={backend.activeWorkspace}
         onWorkspaceSelect={backend.selectWorkspace}
+        style={isDesktop ? { width: leftPanelWidth } : undefined}
       />
+
+      {/* Resize handle between left sidebar and editor (desktop only) */}
+      {isDesktop && showLeftSidebar && (
+        <div
+          onMouseDown={startPanelDrag('left')}
+          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 transition-colors shrink-0"
+          title="Drag to resize"
+        />
+      )}
 
       {/* Center Editor — tabbed CodeMirror 6 with status bar */}
       <EditorPane
@@ -282,6 +357,15 @@ export default function App() {
         onSave={handleSave}
         onContentChange={handleContentChange}
       />
+
+      {/* Resize handle between editor and right chat panel (desktop only) */}
+      {isDesktop && showChat && (
+        <div
+          onMouseDown={startPanelDrag('right')}
+          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 transition-colors shrink-0"
+          title="Drag to resize"
+        />
+      )}
 
       {/* Right Sidebar — agent chat */}
       <ChatPanel
@@ -311,6 +395,7 @@ export default function App() {
         onDeleteSession={(id) => backend.deleteSession(id)}
         onRebindSession={(id, agentId, modelId) => backend.rebindSession(id, agentId, modelId)}
         onExportSession={handleExportSession}
+        style={isDesktop ? { width: rightPanelWidth } : undefined}
       />
 
       {/* Mobile Settings Panel (full-screen overlay) */}

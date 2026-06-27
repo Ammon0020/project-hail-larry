@@ -200,11 +200,7 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 	// Note: no event emitted here — session creation is not a prompt.
 	// The UI learns about the session via the ListSessions API.
 
-	return interfaces.SessionInfo{
-		ID:     sessionID,
-		Name:   session.Name,
-		Status: session.Status,
-	}, nil
+	return sessionToInfo(session), nil
 }
 
 // resolveWorkspacePath returns the on-disk path for a workspace ID by looking
@@ -580,7 +576,7 @@ func (c *Client) RebindSession(_ context.Context, sessionID, agentID, modelID st
 		})
 	}
 
-	return interfaces.SessionInfo{ID: sessionID, Name: session.Name, Status: session.Status}, nil
+	return sessionToInfo(session), nil
 }
 
 // GetSession returns session info by ID.
@@ -593,6 +589,33 @@ func (c *Client) GetSession(sessionID string) (*Session, error) {
 		return nil, fmt.Errorf("session not found: %s", sessionID)
 	}
 	return session, nil
+}
+
+// GetSessionInfo returns the interface-layer projection of a single session by
+// ID. It satisfies interfaces.ACPClient so the server package can fetch one
+// session without depending on the concrete acp.Session type.
+func (c *Client) GetSessionInfo(sessionID string) (interfaces.SessionInfo, error) {
+	session, err := c.GetSession(sessionID)
+	if err != nil {
+		return interfaces.SessionInfo{}, err
+	}
+	return sessionToInfo(session), nil
+}
+
+// sessionToInfo projects a concrete *Session into the interface-layer
+// SessionInfo struct. It is used by GetSessionInfo and the list/create/rebind
+// paths so every caller returns a consistent shape.
+func sessionToInfo(s *Session) interfaces.SessionInfo {
+	return interfaces.SessionInfo{
+		ID:        s.ID,
+		Name:      s.Name,
+		Status:    s.Status,
+		AgentID:   s.AgentID,
+		ModelID:   s.ModelID,
+		Workspace: s.Workspace,
+		CreatedAt: s.CreatedAt,
+		UpdatedAt: s.UpdatedAt,
+	}
 }
 
 // ListSessions returns all conversations, newest activity first.

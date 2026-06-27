@@ -1,5 +1,6 @@
 # Chat Panel Feature Spec
 
+> **Status update 2026-06-27:** EXISTS = shipped in current codebase; NEW = backlog. See `docs/plans/OpenItems.md` section 5 for UI feature requests.
 > Companion to `mockup-chat-panel.html`. Covers every ACP event/feature in `docs/acp/responsibilities.md`.
 > Implementation status: **EXISTS** = in `ChatPanel.tsx`/`ChatMessageItem.tsx` today; **NEW** = desired state from mockup.
 

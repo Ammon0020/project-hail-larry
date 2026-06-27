@@ -125,6 +125,7 @@ func (s *Server) apiRoutes() {
 	s.mux.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
 	s.mux.HandleFunc("POST /api/agents/autodetect", s.handleAutodetectAgents)
 	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
+	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	s.mux.HandleFunc("PATCH /api/sessions/{id}", s.handlePatchSession)
 	s.mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handleSendPrompt)

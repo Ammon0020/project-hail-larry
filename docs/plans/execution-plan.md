@@ -2,7 +2,7 @@
 
 > Single source of truth for the remaining work. Subagents work from their stream's section.
 > Reconciled against the actual codebase on 2026-06-27. Where this doc conflicts with older
-> planning docs (`docs/plans/agent-context.md`, `docs/plans/acp-stability.md`), this wins.
+> planning docs (`docs/archive/agent-context.md`, `docs/archive/acp-stability.md`), this wins.
 
 ## Verified Current State
 
@@ -88,7 +88,7 @@
 
 **Gap:** Agents get no workspace context on first prompt → excessive shell round-trips for file discovery.
 
-**Plan source:** `docs/plans/agent-context.md` (DRAFT). Reconciled against codebase:
+**Plan source:** `docs/archive/agent-context.md` (DRAFT). Reconciled against codebase:
 - `Transport.Prompt` (`transport.go:367`) sends `[]acp.ContentBlock{acp.TextBlock(content)}`. Context injection = prepend to `content` string (Option A in the draft). Simplest, universal.
 - `SendPrompt` (`acp.go:240`) is the injection point — before the goroutine calls `session.transport.Prompt`.
 - `WorkspaceManager.FileTree` (`interfaces.go:107`) returns `[]FileNode` (recursive). Use it directly.
@@ -120,7 +120,7 @@
 
 **Docs to update on completion:**
 - `docs/STATUS.md` — change the "📋 Draft" agent-context line to ✅ implemented.
-- `docs/plans/agent-context.md` — add a "Status: IMPLEMENTED 2026-06-27" note at the top; do not delete (keep as design reference).
+- `docs/archive/agent-context.md` — add a "Status: IMPLEMENTED 2026-06-27" note at the top; do not delete (keep as design reference).
 
 ---
 

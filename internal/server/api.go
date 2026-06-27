@@ -299,22 +299,44 @@ func (s *Server) handleAutodetectAgents(w http.ResponseWriter, _ *http.Request) 
 // handleListSessions returns all conversations with their metadata.
 func (s *Server) handleListSessions(w http.ResponseWriter, _ *http.Request) {
 	sessions := s.deps.ACPClient.ListSessions()
-	result := make([]map[string]interface{}, 0, len(sessions))
+	result := make([]interfaces.SessionInfo, 0, len(sessions))
 	for _, sess := range sessions {
-		name := sess.Name
-		if name == "" {
-			name = fmt.Sprintf("Session %s", sess.ID[:8])
+		info := interfaces.SessionInfo{
+			ID:        sess.ID,
+			Name:      sess.Name,
+			Status:    sess.Status,
+			AgentID:   sess.AgentID,
+			ModelID:   sess.ModelID,
+			Workspace: sess.Workspace,
+			CreatedAt: sess.CreatedAt,
+			UpdatedAt: sess.UpdatedAt,
 		}
-		result = append(result, map[string]interface{}{
-			"id":        sess.ID,
-			"name":      name,
-			"status":    sess.Status,
-			"agentId":   sess.AgentID,
-			"modelId":   sess.ModelID,
-			"updatedAt": sess.UpdatedAt,
-		})
+		if info.Name == "" {
+			info.Name = fmt.Sprintf("Session %s", sess.ID[:8])
+		}
+		result = append(result, info)
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// handleGetSession returns a single conversation by ID. It delegates to the
+// ACP client's GetSessionInfo so the server layer depends only on the
+// interfaces.SessionInfo projection, not the concrete acp.Session type.
+func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+
+	info, err := s.deps.ACPClient.GetSessionInfo(sessionID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	// Match handleListSessions: fall back to a derived name when unset.
+	if info.Name == "" {
+		info.Name = fmt.Sprintf("Session %s", info.ID[:8])
+	}
+
+	writeJSON(w, http.StatusOK, info)
 }
 
 // handlePatchSession renames a conversation and/or rebinds it to a different

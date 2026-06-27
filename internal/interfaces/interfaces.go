@@ -131,11 +131,18 @@ type AgentModel struct {
 	Name string `json:"name"`
 }
 
-// SessionInfo describes a chat session.
+// SessionInfo describes a chat session. It is the interface-layer projection of
+// the concrete acp.Session, carrying only the fields the server/UI need so the
+// server package never depends on the acp package's concrete types.
 type SessionInfo struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Status    string    `json:"status"`
+	AgentID   string    `json:"agentId"`
+	ModelID   string    `json:"modelId"`
+	Workspace string    `json:"workspace,omitempty"`
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
 }
 
 // ACPCallbacks allows the ACP client to notify the daemon of events.
@@ -152,6 +159,10 @@ type ACPClient interface {
 
 	// CreateSession starts a new agent session.
 	CreateSession(ctx context.Context, agentID, modelID, workspaceID string) (SessionInfo, error)
+
+	// GetSessionInfo returns metadata for a single session by ID. Returns an
+	// error (e.g. "session not found") when no session matches.
+	GetSessionInfo(sessionID string) (SessionInfo, error)
 
 	// SendPrompt sends a user prompt to the agent and streams responses.
 	// Responses arrive via ACPCallbacks.OnEvent.

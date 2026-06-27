@@ -1,8 +1,9 @@
-import { useState, useEffect, type KeyboardEvent } from 'react'
-import { Menu, Paperclip, ArrowUp, Square, Wifi, WifiOff } from 'lucide-react'
+import { useState, useEffect, useRef, type KeyboardEvent, type CSSProperties } from 'react'
+import { Menu, Paperclip, ArrowUp, Square, Wifi, WifiOff, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ChatMessageItem } from './ChatMessageItem'
 import { ChatHistory } from './ChatHistory'
+import { useAutoscroll } from '@/hooks/useAutoscroll'
 import type { AppEvent, Agent, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 
@@ -46,6 +47,7 @@ export function ChatPanel({
   onDeleteSession,
   onRebindSession,
   onExportSession,
+  style,
 }: {
   events: AppEvent[]
   agents: Agent[]
@@ -63,6 +65,8 @@ export function ChatPanel({
   onDeleteSession: (sessionId: string) => void
   onRebindSession: (sessionId: string, agentId: string, modelId: string) => void
   onExportSession: (sessionId: string) => void
+  /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
+  style?: CSSProperties
 }) {
   // Persisted agent/model selections — restored from localStorage on mount,
   // falling back to the first available agent/model if the stored value is
@@ -86,6 +90,9 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Scroll container ref for the smart-autoscroll hook (Feature 1).
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   // Persist agent and model selections whenever they change.
   useEffect(() => {
@@ -232,6 +239,15 @@ export function ChatPanel({
     return acc
   }, [])
 
+  // Smart autoscroll — follows new content only when the user is already
+  // near the bottom; otherwise stays put and shows a jump-to-bottom button.
+  // Depends on mergedEvents (the rendered stream) and the error banner so
+  // newly surfaced errors also trigger a scroll check.
+  const { isAtBottom, scrollToBottom } = useAutoscroll(
+    scrollContainerRef,
+    [mergedEvents, error],
+  )
+
   const handleNewChat = () => {
     // Frontend-only: reset to a new chat state. The actual session is
     // created on the backend when the user sends their first message.
@@ -248,6 +264,7 @@ export function ChatPanel({
         visible ? 'flex' : 'hidden',
         'absolute inset-0 z-30 lg:relative lg:inset-auto lg:z-auto',
       )}
+      style={style}
     >
       {/* Chat Header (relative container for popout) */}
       <div className="relative border-b border-gray-800 shrink-0 bg-panel">
@@ -340,33 +357,51 @@ export function ChatPanel({
       )}
 
       {/* Chat Messages — rendered from event stream (Blueprint Sec 11) */}
-      <div className="flex-1 overflow-y-auto p-3 lg:p-4 space-y-3 lg:space-y-4 pb-20 lg:pb-4">
-        {mergedEvents.length === 0 && (
-          <div className="rounded-lg border border-gray-800 bg-panel/50 p-3 text-xs text-gray-500">
-            Send a message to start a conversation.
-          </div>
-        )}
-        {mergedEvents.map((event, i) => (
-          <ChatMessageItem
-            key={i}
-            event={event}
-            pending={
-              event.type === 'PermissionRequested' && event.requestId
-                ? pendingPermissions.find((p) => p.id === event.requestId)
-                : undefined
-            }
-            resolution={
-              event.type === 'PermissionRequested' && event.requestId
-                ? permissionResolution.get(event.requestId)
-                : undefined
-            }
-            onPermissionResponse={onPermissionResponse}
-          />
-        ))}
-        {error && (
-          <div className="rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-300">
-            {error}
-          </div>
+      <div className="relative flex-1 min-h-0">
+        <div
+          ref={scrollContainerRef}
+          className="h-full overflow-y-auto p-3 lg:p-4 space-y-3 lg:space-y-4 pb-20 lg:pb-4"
+        >
+          {mergedEvents.length === 0 && (
+            <div className="rounded-lg border border-gray-800 bg-panel/50 p-3 text-xs text-gray-500">
+              Send a message to start a conversation.
+            </div>
+          )}
+          {mergedEvents.map((event, i) => (
+            <ChatMessageItem
+              key={i}
+              event={event}
+              pending={
+                event.type === 'PermissionRequested' && event.requestId
+                  ? pendingPermissions.find((p) => p.id === event.requestId)
+                  : undefined
+              }
+              resolution={
+                event.type === 'PermissionRequested' && event.requestId
+                  ? permissionResolution.get(event.requestId)
+                  : undefined
+              }
+              onPermissionResponse={onPermissionResponse}
+            />
+          ))}
+          {error && (
+            <div className="rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-300">
+              {error}
+            </div>
+          )}
+        </div>
+
+        {/* Jump-to-bottom button — shown only when the user has scrolled
+            away from the bottom (Feature 1). Clicking snaps to the bottom. */}
+        {!isAtBottom && (
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-4 right-4 rounded-full bg-background border border-gray-700 p-2 shadow-md hover:bg-accent text-muted-foreground hover:text-foreground transition"
+            title="Jump to bottom"
+            aria-label="Jump to bottom"
+          >
+            <ChevronDown className="w-4 h-4" />
+          </button>
         )}
       </div>
 

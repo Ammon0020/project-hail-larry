@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { CSSProperties } from 'react'
 import { FolderCode, ChevronsUpDown, Wifi, Files, Search, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileTree } from './FileTree'
@@ -18,6 +19,7 @@ export function LeftSidebar({
   workspaces,
   activeWorkspace,
   onWorkspaceSelect,
+  style,
 }: {
   activePanel: LeftPanel
   onSwitchPanel: (panel: LeftPanel) => void
@@ -27,6 +29,8 @@ export function LeftSidebar({
   workspaces: { id: string; name: string; path: string }[]
   activeWorkspace: { id: string; name: string; path: string } | null
   onWorkspaceSelect: (ws: { id: string; name: string; path: string }) => void
+  /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
+  style?: CSSProperties
 }) {
   const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false)
 
@@ -43,6 +47,7 @@ export function LeftSidebar({
         visible ? 'flex' : 'hidden',
         'absolute inset-0 z-30 lg:relative lg:inset-auto lg:z-auto',
       )}
+      style={style}
     >
       {/* Mini horizontal activity bar (mobile only) */}
       <div className="flex lg:hidden items-center gap-1 px-3 py-1.5 border-b border-gray-800/50 shrink-0 bg-activity-bar">

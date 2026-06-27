@@ -9,7 +9,6 @@ import {
   FilePen,
   FileSearch,
   Play,
-  RefreshCw,
 } from 'lucide-react'
 import type { AppEvent } from '@/types'
 import type { PendingPermission } from '@/lib/api'
@@ -73,14 +72,11 @@ export function ChatMessageItem({
       )
 
     case 'ResponseStarted':
+      // System-level indicator — compact, centered, muted metadata row
+      // rather than a full chat bubble (Feature 3).
       return (
-        <div className="flex gap-3">
-          <div className="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/30">
-            <Bot className="w-4 h-4" />
-          </div>
-          <div className="flex-1 pt-0.5">
-            <p className="text-sm text-gray-500 mb-2 animate-pulse">{event.content || 'Agent is thinking…'}</p>
-          </div>
+        <div className="text-xs text-muted-foreground text-center py-1">
+          · {event.content || 'Agent is thinking…'}
         </div>
       )
 
@@ -275,39 +271,37 @@ export function ChatMessageItem({
       )
 
     case 'AgentExited':
+      // System-level failure — compact centered row, but slightly more
+      // prominent via text-destructive so failures are noticeable (Feature 3).
       return (
-        <div className="flex gap-3">
-          <div className="w-7 h-7 rounded-lg bg-red-600/20 text-red-400 flex items-center justify-center shrink-0 border border-red-500/30">
-            <Bot className="w-4 h-4" />
-          </div>
-          <div className="flex-1 pt-0.5">
-            <p className="text-sm text-red-300">Agent exited: {event.summary || event.content || 'unknown error'}</p>
-          </div>
+        <div className="text-xs text-destructive text-center py-1">
+          · Agent exited: {event.summary || event.content || 'unknown error'}
         </div>
       )
 
     case 'ConnectionRestarted':
     case 'SessionResumed':
+      // System-level metadata — compact centered muted row (Feature 3).
       return (
-        <div className="flex justify-center">
-          <span className="text-[11px] text-gray-500 bg-gray-800/60 rounded-full px-3 py-1 inline-flex items-center gap-1.5">
-            <RefreshCw className="w-3 h-3" /> {event.content || 'Session restarted'}
-          </span>
+        <div className="text-xs text-muted-foreground text-center py-1">
+          · {event.content || 'Session restarted'}
         </div>
       )
 
     case 'SessionCancelled':
     case 'SessionInterrupted':
+      // System-level metadata — compact centered muted row (Feature 3).
       return (
-        <div className="flex justify-center">
-          <span className="text-[11px] text-gray-500 bg-gray-800/60 rounded-full px-3 py-1">Stopped</span>
+        <div className="text-xs text-muted-foreground text-center py-1">
+          · Stopped
         </div>
       )
 
     case 'FileRevisionUpdated':
+      // System-level metadata — compact centered muted row (Feature 3).
       return (
-        <div className="flex justify-center">
-          <span className="text-[11px] text-gray-500">edited {event.content}</span>
+        <div className="text-xs text-muted-foreground text-center py-1">
+          · edited {event.content}
         </div>
       )
 

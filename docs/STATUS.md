@@ -1,13 +1,16 @@
 # Project Status — Local Agent Interface
 
 > Last updated: 2026-06-27. Source of truth for task-level status.
-> See `docs/plan.md` for full task definitions and `docs/pass-off.md` for prior session context.
-> ACP stability + chat UX work: see `docs/specs/ui-spec.md`, `docs/specs/backend-spec.md`, `docs/plans/acp-stability.md`.
+> See `docs/archive/plan.md` for Phase 1 task definitions and `docs/archive/pass-off.md` for prior session context.
+> ACP stability + chat UX work: see `docs/specs/ui-spec.md`, `docs/specs/backend-spec.md`, `docs/archive/acp-stability.md`.
 > Finish-the-codebase work streams: see `docs/plans/execution-plan.md` (all 6 streams complete).
 
 ## Bug Fixes (2026-06-27)
 
 - ✅ **Stale activeSessionId recovery** — `App.tsx` now validates the persisted `activeSessionId` against the loaded session list and clears it when missing (render-time adjustment pattern). `useBackend.sendPrompt` catches 404/"session not found", clears `localStorage`, and throws a friendly "This conversation is no longer available" error (with `cause` preserved). `ChatPanel` resets to the new-chat state on that error instead of showing the raw "session not found: sess-…" string.
+- ✅ **Smart autoscroll in chat** — New `web/src/hooks/useAutoscroll.ts` tracks whether the user is near the bottom (80px threshold) and only auto-scrolls on new content when they are. `ChatPanel` shows a floating "jump to bottom" button (`ChevronDown`) when scrolled up. No `setState`-in-effect (scroll listener updates state from an event handler; the autoscroll effect reads a ref).
+- ✅ **Adjustable panel widths** — Left sidebar and right chat panel are resizable via drag handles (desktop only). Widths persist to `localStorage` (`lai:leftPanelWidth`, `lai:rightPanelWidth`) with min/max bounds (left 180–480px, right 300–700px). Drag tracking uses closure-captured state (no refs) to satisfy `react-hooks/refs`; width updates via React state on `mousemove`. Mobile bottom-nav layout unaffected.
+- ✅ **System message cleanup** — `ResponseStarted`, `ConnectionRestarted`/`SessionResumed`, `SessionCancelled`/`SessionInterrupted`, `FileRevisionUpdated`, and `AgentExited` now render as compact centered muted rows (`text-xs text-muted-foreground text-center py-1` with `·` prefix) instead of full chat bubbles. `AgentExited` uses `text-destructive` so failures stay noticeable. User/agent messages unchanged.
 - ✅ **Events endpoint default limit raised 100 → 1000** — `internal/server/api.go` `parseEventParams` and `internal/events/events.go` `Query`/`QueryAll` fallbacks now default to 1000 so long streaming responses (250+ events) are not truncated. `?limit` still constrains; no upper cap added. Regression test added in `internal/server/server_test.go` (`TestGetSessionEventsDefaultLimit`).
 
 ## ACP Stability & Chat UX Pass (2026-06-23)
@@ -22,7 +25,7 @@ Backend (all green: `go test ./...`, `go vet`, `npm run build`, `npm run lint`, 
 - ✅ Thought block fix: `mergedEvents` reducer in ChatPanel now checks `thought` flag to prevent thoughts and messages from merging.
 - ✅ Conversation export: download button in ChatHistory, client-side JSON export.
 - ✅ Graceful session lifecycle on shutdown: `CloseAllSessions` calls best-effort `session/delete` then terminates each agent process (replaces raw kill); `session/load` (`LoadSession`) resumes persisted sessions on restart with `NewSession` fallback. Mock-agent terminal/permission regression coverage still deferred (WI-15).
-- ✅ **Agent context provider** — injects workspace file tree + git status + AGENTS.md into the first prompt of each session via a prompt middleware pipeline. See `docs/plans/agent-context.md`.
+- ✅ **Agent context provider** — injects workspace file tree + git status + AGENTS.md into the first prompt of each session via a prompt middleware pipeline. See `docs/archive/agent-context.md`.
 
 Frontend: connection indicator + reconnect re-sync, Stop/cancel, render of thoughts/plans/shell/file/system events, conversation rename/delete UI, active conversation persisted to localStorage.
 
@@ -41,7 +44,7 @@ Frontend: connection indicator + reconnect re-sync, Stop/cancel, render of thoug
 
 ## Phase 1 — Core Infrastructure: 100% COMPLETE
 
-14 tasks in `docs/plan.md` all marked `[x]`. All previously overstated rows resolved by Work Streams 1-5 (2026-06-27).
+14 tasks in `docs/archive/plan.md` all marked `[x]`. All previously overstated rows resolved by Work Streams 1-5 (2026-06-27).
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|

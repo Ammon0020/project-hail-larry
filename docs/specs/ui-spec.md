@@ -1,5 +1,7 @@
 # UI Specification — Agent Chat & Conversation Management
 
+> **Status update 2026-06-27:** Features marked ✅ are shipped; ⏳ are backlog. See `docs/STATUS.md` for details.
+
 **Status:** Draft v1 (2026-06-23)
 **Scope:** The web interface that talks to the Go daemon, focused on the agent chat
 experience: failure handling, user input, tool approval, and conversation/model
@@ -29,7 +31,7 @@ what is actually implemented (see [Implementation Gap Analysis](#implementation-
 
 ---
 
-## 2. Layout
+## 2. Layout ✅
 
 - **Desktop (≥1024px):** activity bar | left sidebar (files/search) | editor | right chat panel (always visible, ~384px).
 - **Mobile (<1024px):** one panel at a time via bottom nav (explorer / editor / chat / settings).
@@ -43,7 +45,7 @@ Chat panel regions (top → bottom):
 
 ---
 
-## 3. Connection & Failure States (the system must handle *every* failure)
+## 3. Connection & Failure States (the system must handle *every* failure) ✅
 
 The UI MUST surface every failure and never fail silently. Required states:
 
@@ -69,7 +71,7 @@ JSON body and presents a human-readable message.
 
 ---
 
-## 4. User Input (Composer)
+## 4. User Input (Composer) ✅
 
 - Multiline `textarea`, `Enter` sends, `Shift+Enter` newline.
 - Send disabled when: empty/whitespace, sending in progress, no agent, no model, disconnected.
@@ -82,7 +84,7 @@ JSON body and presents a human-readable message.
 
 ---
 
-## 5. Tool Approval (accept/deny)
+## 5. Tool Approval (accept/deny) ✅
 
 Permission prompts arrive as `PermissionRequested` events carrying:
 `requestId`, `sessionId`, `tool`, optional `command`/`target`, and `options`
@@ -104,7 +106,7 @@ Requirements:
 
 ---
 
-## 6. Conversation Management
+## 6. Conversation Management ✅
 
 ### 6.1 Switching conversations
 - Conversation list popout shows all conversations (id, title, status dot, last-activity time).
@@ -132,7 +134,7 @@ Requirements:
 
 ---
 
-## 7. Model / Agent Switching on the Same Conversation
+## 7. Model / Agent Switching on the Same Conversation ✅
 
 - Header shows two selectors: **agent (harness)** and **model**.
 - Changing the agent repopulates the model list and selects the agent's first model.
@@ -147,7 +149,7 @@ Requirements:
 
 ---
 
-## 8. Message Rendering (event → view)
+## 8. Message Rendering (event → view) ✅
 
 The chat view renders these event types (no event type may silently disappear):
 
@@ -172,7 +174,7 @@ Tool cards use the ACP `ToolKind` to choose an icon (read/edit/execute/search/�
 
 ---
 
-## 9. Accessibility & UX details
+## 9. Accessibility & UX details ⏳
 - All interactive controls keyboard-reachable; focus rings visible.
 - Status colours paired with text/icon (not colour-only).
 - Long output scrolls within its card; never breaks layout.
@@ -181,6 +183,8 @@ Tool cards use the ACP `ToolKind` to choose an icon (read/edit/execute/search/�
 ---
 
 ## Implementation Gap Analysis
+
+> **Status update 2026-06-27:** The "Broken / missing" items below were resolved by Work Streams 1-5 (see `docs/STATUS.md`). The list is retained for history.
 
 Comparison of this spec against the current code (`web/src/...`, `internal/...`).
 

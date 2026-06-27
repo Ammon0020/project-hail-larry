@@ -1,5 +1,7 @@
 # Backend Specification — ACP Communication & Conversation Service
 
+> **Status update 2026-06-27:** Features marked ✅ are shipped; ⏳ are backlog. See `docs/STATUS.md` for details.
+
 **Status:** Draft v1 (2026-06-23)
 **Goal:** A stable backend that communicates with Codex, Mistral Vibe, and Claude
 Code over ACP (`coder/acp-go-sdk` v0.13.5) and drives the web UI defined in
@@ -21,7 +23,7 @@ client-side concepts where the protocol has gaps.
 
 ---
 
-## 2. ACP Capabilities (fixes Issue #1)
+## 2. ACP Capabilities (fixes Issue #1) ✅
 
 During `initialize`, advertise what we actually support:
 
@@ -37,7 +39,7 @@ Apply to both the real transport and the autodetect probe (probe may keep
 
 ---
 
-## 3. Session Update Handling (fixes Issue #3 & #4)
+## 3. Session Update Handling (fixes Issue #3 & #4) ✅
 
 `acpClientImpl.SessionUpdate` must translate every relevant ACP update into an
 `interfaces.Event` (no silent drops):
@@ -57,7 +59,7 @@ New optional fields on `interfaces.Event`: `ToolKind`, `ToolCallID`, `Thought`,
 
 ---
 
-## 4. Terminal Methods (fixes Issue #2)
+## 4. Terminal Methods (fixes Issue #2) ✅
 
 Implement the five ACP terminal methods on `acpClientImpl`, backed by
 `internal/shell`. Maintain `map[string]*terminalEntry` keyed by a generated
@@ -82,7 +84,7 @@ Only after this works, set `Terminal: true` in client capabilities.
 
 ---
 
-## 5. Permissions (fixes the broken UI path — highest priority)
+## 5. Permissions (fixes the broken UI path — highest priority) ✅
 
 Current bug: `PermissionManager.Request()` blocks on a channel but the request is
 never broadcast, so the UI never prompts.
@@ -112,7 +114,7 @@ per-request `map[PermissionDecision]optionId` so `Respond` can resolve it.
 
 ---
 
-## 6. Conversations (remember / rename / delete / model-switch)
+## 6. Conversations (remember / rename / delete / model-switch) ✅
 
 ACP sessions are transient. Introduce a persisted **conversation** record so the
 UI can remember, rename, delete, and re-bind model/agent.
@@ -167,16 +169,22 @@ History (events) is preserved because it is keyed by the unchanged conversation 
 
 ---
 
-## 7. Session close/resume (Issue #6, partial)
+## 7. Session close/resume (Issue #6, partial) ✅
 
 - `Transport.Close()` should attempt `conn.CloseSession()` (best-effort) before
-  killing the process, so agents can clean up.
+  killing the process, so agents can clean up. ✅ Shipped — `CloseSession` calls
+  best-effort `session/delete` (`UnstableDeleteSession`) before killing the
+  process; `CloseAllSessions` wired into `daemon.cleanup()` for graceful shutdown.
 - `LoadSession`/`ResumeSession` are available in the SDK but deferred unless the
-  agent advertises support; not required for v1.
+  agent advertises support; not required for v1. ✅ **Now implemented (Stream 1):**
+  `LoadSession` is attempted on restart when the agent advertises `loadSession`
+  and a persisted `acpSessionId` exists — falls back to `NewSession` on any
+  failure (capability unsupported or session gone). `ACPSessionID` is persisted in
+  `conversations.json` so resume works across restarts.
 
 ---
 
-## 8. Agent stderr (Issue #7)
+## 8. Agent stderr (Issue #7) ✅
 
 Replace `cmd.Stderr = os.Stderr` with a per-session capped ring buffer. On agent
 failure, include the tail of stderr in the `AgentExited` event summary so the UI
@@ -184,7 +192,7 @@ can show *why* it died. Keeps daemon logs clean.
 
 ---
 
-## 9. Model discovery / providers (Issue #9)
+## 9. Model discovery / providers (Issue #9) ✅
 
 Keep autodetect at startup (PATH probe → `UnstableListProviders` → config file →
 fallback). Optionally refresh on `POST /api/agents/autodetect` (already exists).
@@ -192,7 +200,7 @@ No per-session providers call required for v1.
 
 ---
 
-## 10. REST / WS Surface (target)
+## 10. REST / WS Surface (target) ✅
 
 | Method | Path | Purpose | Change |
 |---|---|---|---|
@@ -215,7 +223,7 @@ All handlers return `{ "error": "…" }` with an appropriate status on failure.
 
 ---
 
-## 11. Event Schema Additions
+## 11. Event Schema Additions ✅
 
 `interfaces.Event` new optional fields (all `omitempty`, JSON-tagged):
 `RequestID string`, `ToolKind string`, `ToolCallID string`, `Thought bool`,
@@ -226,7 +234,7 @@ stored as JSON).
 
 ---
 
-## 12. Testing Requirements
+## 12. Testing Requirements ⏳
 
 - Extend `cmd/mockagent` to exercise: capabilities echo, a tool call with
   kind+locations, a permission request, a terminal create+output+wait, and a
