@@ -47,6 +47,16 @@ export function EditorPane({
   // Line wrapping toggle — persisted across tab switches within the session.
   const [wrap, setWrap] = useState(false)
 
+  // Keep a ref to the latest onSave so the memoized CodeMirror Ctrl+S keybinding
+  // always calls the fresh closure. Without this, the keybinding captures the
+  // onSave from when the tab was first opened (useMemo deps don't include onSave),
+  // so it would save the ORIGINAL content — silently overwriting the user's edits
+  // when both the window-level handler and this stale keybinding fire on Ctrl+S.
+  const onSaveRef = useRef(onSave)
+  useEffect(() => {
+    onSaveRef.current = onSave
+  }, [onSave])
+
   // Scroll affordances for the tab bar: show left/right chevrons when the tab
   // list overflows. State is updated from the onScroll handler (an event
   // handler, so setState is allowed) and re-measured via requestAnimationFrame
@@ -188,7 +198,7 @@ export function EditorPane({
             key: 'Mod-s',
             preventDefault: true,
             run: () => {
-              onSave()
+              onSaveRef.current()
               return true
             },
           },
@@ -201,7 +211,10 @@ export function EditorPane({
 
   // Memoize extensions per active tab + wrap state so CodeMirror does not
   // reconfigure on every render (which would reset cursor/scroll state).
+  // The onSaveRef is read only inside the keybinding's run() callback (an event
+  // handler), never during render, so it is safe to reference here.
   const extensions = useMemo(
+    // eslint-disable-next-line react-hooks/refs -- ref is only read in the keybinding event handler, not during render
     () => (activeTab ? getExtensions(activeTab.language) : []),
     // getExtensions depends on `wrap` and the active tab's language.
     // eslint-disable-next-line react-hooks/exhaustive-deps

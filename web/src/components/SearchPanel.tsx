@@ -33,6 +33,14 @@ export function SearchPanel({
   // started.
   const reqTokenRef = useRef(0)
 
+  // Focus the search input on mount so Ctrl+Shift+F lands the cursor in the
+  // field. SearchPanel is conditionally rendered (mounted/unmounted when the
+  // left panel switches), so this effect runs each time the panel opens.
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
   const trimmed = query.trim()
 
   // Clear stale results immediately when the input is emptied or the workspace
@@ -120,6 +128,7 @@ export function SearchPanel({
         <div className="relative">
           <Search className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
           <input
+            ref={inputRef}
             id="search-panel-input"
             type="text"
             value={query}

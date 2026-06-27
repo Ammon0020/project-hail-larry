@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { X } from 'lucide-react'
 import { LockScreen } from '@/components/LockScreen'
 import { ActivityBar } from '@/components/ActivityBar'
 import { LeftSidebar } from '@/components/LeftSidebar'
@@ -97,6 +98,10 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(
     () => localStorage.getItem('lai:activeTabId') || null,
   )
+
+  // Save error — shown as a transient banner so save failures aren't silent
+  // (previously only console.error'd, making debugging impossible).
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   // Session state — restored from localStorage so the active conversation
   // survives a page reload (UI Spec §6.2).
@@ -287,8 +292,10 @@ export default function App() {
           t.id === activeTabId ? { ...t, revision: result.revision, unsaved: false } : t,
         ),
       )
+      setSaveError(null)
     } catch (err) {
       console.error('Save failed:', err)
+      setSaveError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -455,6 +462,21 @@ export default function App() {
         <div className="flex items-center gap-2 px-3 py-1.5 text-xs bg-muted text-muted-foreground border-b border-border shrink-0">
           <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/70 animate-pulse" />
           Reconnecting…
+        </div>
+      )}
+      {/* Save error banner — transient, dismissible. Shown when a save fails
+          so the error isn't silent (previously only console.error'd). */}
+      {saveError && (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs bg-destructive/10 text-destructive border-b border-destructive/20 shrink-0">
+          <span className="truncate">Save failed: {saveError}</span>
+          <button
+            type="button"
+            onClick={() => setSaveError(null)}
+            className="shrink-0 text-destructive/70 hover:text-destructive transition"
+            aria-label="Dismiss save error"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
       {/* Main app shell — activity bar + sidebar + editor + chat (horizontal) */}
