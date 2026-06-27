@@ -114,12 +114,20 @@ func (m *Manager) Remove(_ context.Context, id string) error {
 }
 
 // ReadFile returns the content of a file and its current revision.
-// The revision is a content hash (the leading 64 bits of the SHA-256 of the
+// The revision is a content hash (the leading 48 bits of the SHA-256 of the
 // file content), used for optimistic locking. Unlike filesystem ModTime, a
 // content hash is deterministic with respect to content (not clock-dependent
 // or resolution-limited), so two writes within the same mtime tick produce
 // distinct revisions whenever the content differs and the optimistic-lock
 // check reliably detects concurrent edits.
+//
+// Only 48 bits are used (rather than the full 64) so the revision fits within
+// JavaScript's Number.MAX_SAFE_INTEGER (2^53-1). The frontend parses the
+// revision via JSON.parse, which represents all numbers as IEEE-754 doubles
+// and loses precision beyond 2^53; a full 64-bit hash would be rounded,
+// causing the optimistic-lock check to fail on every save. 48 bits (2^48
+// possible values) keeps the collision probability negligible (~2^-48 per
+// comparison) while remaining exactly representable as a JS number.
 func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (string, int64, error) {
 	// Copy the workspace path out under the read lock, then perform all disk
 	// I/O without holding the mutex.
@@ -148,15 +156,26 @@ func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (stri
 }
 
 // contentRevision computes a deterministic revision from file content by taking
-// the leading 64 bits of the SHA-256 digest as a signed int64. It changes
+// the leading 48 bits of the SHA-256 digest as a positive int64. It changes
 // whenever the content changes and is stable across reads of identical
 // content, making it suitable for optimistic-lock comparisons.
+//
+// The width is capped at 48 bits (rather than 64) so the value fits within
+// JavaScript's Number.MAX_SAFE_INTEGER (2^53-1): the frontend round-trips the
+// revision through JSON.parse/JSON.stringify, which use IEEE-754 doubles and
+// silently round integers beyond 2^53. A full 64-bit revision would be
+// altered by that round trip and never match the backend's recomputed hash,
+// breaking every save. 48 bits is well within the safe range and gives a
+// collision probability of ~2^-48 per comparison — negligible for
+// file-level optimistic locking.
 func contentRevision(content []byte) int64 {
 	h := sha256.Sum256(content)
-	// Convert the first 8 bytes to a signed int64. A hash is never all-zero for
-	// realistic content, so this is effectively always non-zero.
-	return int64(uint64(h[0])<<56 | uint64(h[1])<<48 | uint64(h[2])<<40 | uint64(h[3])<<32 |
-		uint64(h[4])<<24 | uint64(h[5])<<16 | uint64(h[6])<<8 | uint64(h[7]))
+	// Take the first 6 bytes (48 bits) and combine into a positive int64.
+	// The result is always in [0, 2^48), so it is non-zero for any realistic
+	// content (a SHA-256 whose first 6 bytes are all zero is astronomically
+	// unlikely) and fits exactly in a JavaScript number.
+	return int64(uint64(h[0])<<40 | uint64(h[1])<<32 | uint64(h[2])<<24 |
+		uint64(h[3])<<16 | uint64(h[4])<<8 | uint64(h[5]))
 }
 
 // maxFileTreeDepth caps how deep buildFileTree recurses. This prevents stack

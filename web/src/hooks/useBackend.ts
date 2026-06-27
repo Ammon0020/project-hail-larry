@@ -99,7 +99,7 @@ export function useBackend() {
         // reload. Only refresh when the event's workspace matches the active
         // workspace (the agent only writes within its session's workspace).
         if (event.type === 'FileWritten') {
-          const evtWs = (event as AppEvent & { workspaceId?: string }).workspaceId
+          const evtWs = event.workspaceId
           const active = activeWorkspaceRef.current
           if (!evtWs || !active || evtWs === active.id) {
             refreshFileTree()

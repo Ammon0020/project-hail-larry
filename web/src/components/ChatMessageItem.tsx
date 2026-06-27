@@ -359,6 +359,11 @@ export function ChatMessageItem({
         </div>
       )
 
+    case 'FileWritten':
+      // File-write notifications are handled by the file-tree refresh logic
+      // in useBackend; they don't render in the chat panel.
+      return null
+
     case 'PermissionGranted':
     case 'PermissionDenied':
       return null

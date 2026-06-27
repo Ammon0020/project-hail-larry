@@ -90,6 +90,7 @@ export type EventType =
   | 'ShellOutputStreamed'
   | 'ShellCommandCompleted'
   | 'FileRevisionUpdated'
+  | 'FileWritten'
   | 'SessionInterrupted'
   | 'SessionCancelled'
   | 'AgentExited'
@@ -113,6 +114,7 @@ export interface AppEvent {
   toolCallId?: string
   thought?: boolean
   exitCode?: number
+  workspaceId?: string
 }
 
 /** Left panel view options (Blueprint Sec 17 — activity bar). */

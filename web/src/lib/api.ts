@@ -81,6 +81,7 @@ export interface AppEvent {
   toolCallId?: string
   thought?: boolean
   exitCode?: number
+  workspaceId?: string
 }
 
 export interface PermissionOptionInfo {
