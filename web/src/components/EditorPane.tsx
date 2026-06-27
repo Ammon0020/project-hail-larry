@@ -6,9 +6,9 @@ import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { search } from '@codemirror/search'
 import { autocompletion } from '@codemirror/autocomplete'
-import { bracketMatching, foldGutter, indentOnInput } from '@codemirror/language'
-import { highlightActiveLine } from '@codemirror/view'
-import { EditorView, keymap } from '@codemirror/view'
+import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemirror/language'
+import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
+import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Prec } from '@codemirror/state'
 import { FileCode, Circle, X, GitCompare, Save, GitBranch, CircleAlert, TriangleAlert, FileText, ChevronLeft, ChevronRight, WrapText } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -109,27 +109,60 @@ export function EditorPane({
    *
    * Layers, in order:
    *  1. Language support (auto-detected from the tab's language/extension).
-   *  2. Search panel (Ctrl+F) — @codemirror/search.
-   *  3. Autocompletion — @codemirror/autocomplete.
-   *  4. Language-level features: bracket matching + fold gutter + indent-on-input.
-   *  5. View-level features: active line highlighting.
-   *  6. Line wrapping (conditional on the `wrap` toggle).
-   *  7. Ctrl+S keybinding at the highest precedence so it overrides the
+   *  2. Full-height theme — makes .cm-editor and .cm-scroller fill the
+   *     container so the user can click below the last line of content
+   *     (without this, CodeMirror only occupies the height of its content).
+   *  3. Search panel (Ctrl+F) — @codemirror/search.
+   *  4. Autocompletion — @codemirror/autocomplete.
+   *  5. Language-level: bracket matching, fold gutter, indent-on-input,
+   *     2-space indent unit.
+   *  6. View-level: active line + gutter highlight, draw selection,
+   *     highlight special chars, rectangular selection, crosshair cursor.
+   *  7. Standard keybindings: defaultKeymap + historyKeymap + indentWithTab.
+   *  8. Line wrapping (conditional on the `wrap` toggle).
+   *  9. Ctrl+S keybinding at the highest precedence so it overrides the
    *     browser's default "Save Page" behavior and routes to `onSave`.
    *
-   * The basicSetup on the <CodeMirror> component still provides line numbers,
+   * The basicSetup on the <CodeMirror> component provides line numbers,
    * closeBrackets, and other conveniences; the extensions below supplement it
-   * with the features that were installed but previously unused.
+   * with the features that make it feel like a real editor.
    */
   const getExtensions = (lang: string): Extension[] => {
     const exts: Extension[] = [
       ...getLanguageExtension(lang),
+
+      // Full-height theme: make the editor fill its container so clicking
+      // below the last line works (places the cursor at the end). Without
+      // this, .cm-editor only takes the height of its content.
+      EditorView.theme({
+        '&': { height: '100%' },
+        '.cm-scroller': { overflow: 'auto' },
+        '.cm-content': { minHeight: '100%' },
+        '.cm-gutters': { minHeight: '100%' },
+      }),
+
+      // Search (Ctrl+F)
       search(),
+
+      // Autocompletion
       autocompletion(),
+
+      // Language-level features
       bracketMatching(),
       foldGutter(),
       indentOnInput(),
+      indentUnit.of('  '),
+
+      // View-level features
       highlightActiveLine(),
+      highlightActiveLineGutter(),
+      drawSelection(),
+      highlightSpecialChars(),
+      rectangularSelection(),
+      crosshairCursor(),
+
+      // Standard keybindings: default + history + tab-to-indent
+      keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
     ]
 
     if (wrap) {
