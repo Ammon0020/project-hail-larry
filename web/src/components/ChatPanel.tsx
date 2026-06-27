@@ -30,6 +30,7 @@ export function ChatPanel({
   onRenameSession,
   onDeleteSession,
   onRebindSession,
+  onExportSession,
 }: {
   events: AppEvent[]
   agents: Agent[]
@@ -46,6 +47,7 @@ export function ChatPanel({
   onRenameSession: (sessionId: string, name: string) => void
   onDeleteSession: (sessionId: string) => void
   onRebindSession: (sessionId: string, agentId: string, modelId: string) => void
+  onExportSession: (sessionId: string) => void
 }) {
   const [selectedAgent, setSelectedAgent] = useState(agents[0]?.id ?? '')
   const [selectedModel, setSelectedModel] = useState(agents[0]?.models[0]?.id ?? '')
@@ -247,6 +249,7 @@ export function ChatPanel({
             setChatHistoryOpen(false)
           }}
           onRenameSession={onRenameSession}
+          onExportSession={onExportSession}
           onDeleteSession={(id) => {
             if (id === activeSessionId) onSelectSession('')
             onDeleteSession(id)

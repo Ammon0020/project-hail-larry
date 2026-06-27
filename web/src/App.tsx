@@ -159,6 +159,28 @@ export default function App() {
     await backend.sendPrompt(sessionId, content)
   }
 
+  /** Export a conversation's events as a downloadable JSON file. */
+  const handleExportSession = (sessionId: string) => {
+    const session = backend.sessions.find((s) => s.id === sessionId)
+    const events = (backend.events as AppEvent[]).filter((e) => e.sessionId === sessionId)
+    const payload = {
+      sessionId,
+      name: session?.name ?? sessionId,
+      agentId: session?.agentId,
+      modelId: session?.modelId,
+      exportedAt: new Date().toISOString(),
+      events,
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const safeName = (session?.name ?? sessionId).replace(/[^a-z0-9_-]/gi, '_')
+    a.download = `${safeName}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   // ---- Computed values ----
   const sessionEvents = activeSessionId
     ? (backend.events as AppEvent[]).filter((e) => e.sessionId === activeSessionId)
@@ -232,6 +254,7 @@ export default function App() {
         onRenameSession={(id, name) => backend.renameSession(id, name)}
         onDeleteSession={(id) => backend.deleteSession(id)}
         onRebindSession={(id, agentId, modelId) => backend.rebindSession(id, agentId, modelId)}
+        onExportSession={handleExportSession}
       />
 
       {/* Mobile Settings Panel (full-screen overlay) */}

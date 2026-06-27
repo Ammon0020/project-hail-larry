@@ -220,6 +220,22 @@ func (c *acpClientImpl) RequestPermission(ctx context.Context, params acp.Reques
 	}, nil
 }
 
+// toRelativePath converts a path that may be absolute (within the workspace)
+// or already relative into a workspace-relative path. Agents often send
+// absolute paths (e.g. "C:\Users\...\readme.md") but our workspace manager
+// requires relative paths and rejects absolutes in safeJoin.
+func toRelativePath(workspacePath, p string) string {
+	cleaned := filepath.Clean(p)
+	if !filepath.IsAbs(cleaned) {
+		return cleaned
+	}
+	rel, err := filepath.Rel(workspacePath, cleaned)
+	if err != nil {
+		return cleaned
+	}
+	return rel
+}
+
 // rawInputString renders an ACP tool call's raw input as a human-readable
 // string for display in permission prompts and tool cards. JSON objects are
 // compacted; plain strings pass through.
@@ -241,8 +257,8 @@ func (c *acpClientImpl) ReadTextFile(ctx context.Context, params acp.ReadTextFil
 	if c.workspaceMgr == nil {
 		return acp.ReadTextFileResponse{}, fmt.Errorf("workspace manager not configured")
 	}
-	// Rel path assumes we are in the workspace root
-	content, _, err := c.workspaceMgr.ReadFile(ctx, c.workspaceID, filepath.Clean(params.Path))
+	relPath := toRelativePath(c.workspacePath, params.Path)
+	content, _, err := c.workspaceMgr.ReadFile(ctx, c.workspaceID, relPath)
 	if err != nil {
 		return acp.ReadTextFileResponse{}, err
 	}
@@ -263,7 +279,7 @@ func (c *acpClientImpl) WriteTextFile(ctx context.Context, params acp.WriteTextF
 	if !ok {
 		return acp.WriteTextFileResponse{}, fmt.Errorf("workspace manager does not support writing")
 	}
-	if _, err := fw.WriteFile(ctx, c.workspaceID, filepath.Clean(params.Path), params.Content, 0); err != nil {
+	if _, err := fw.WriteFile(ctx, c.workspaceID, toRelativePath(c.workspacePath, params.Path), params.Content, 0); err != nil {
 		return acp.WriteTextFileResponse{}, err
 	}
 	return acp.WriteTextFileResponse{}, nil

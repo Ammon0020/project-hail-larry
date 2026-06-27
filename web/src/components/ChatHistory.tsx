@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent } from 'react'
-import { Plus, X, Pencil, Trash2, Check } from 'lucide-react'
+import { Plus, X, Pencil, Trash2, Check, Download } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Session, SessionStatus } from '@/types'
 
@@ -28,6 +28,7 @@ export function ChatHistory({
   onSelectSession,
   onRenameSession,
   onDeleteSession,
+  onExportSession,
 }: {
   sessions: Session[]
   open: boolean
@@ -36,6 +37,7 @@ export function ChatHistory({
   onSelectSession: (sessionId: string) => void
   onRenameSession: (sessionId: string, name: string) => void
   onDeleteSession: (sessionId: string) => void
+  onExportSession: (sessionId: string) => void
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -139,6 +141,9 @@ export function ChatHistory({
                   {s.modelId && <span className="text-[10px] text-gray-600 mr-1">{s.modelId}</span>}
                   <button onClick={() => startRename(s)} className="text-gray-500 hover:text-white" title="Rename">
                     <Pencil className="w-3 h-3" />
+                  </button>
+                  <button onClick={() => onExportSession(s.id)} className="text-gray-500 hover:text-white" title="Export">
+                    <Download className="w-3 h-3" />
                   </button>
                   <button onClick={() => setConfirmId(s.id)} className="text-gray-500 hover:text-red-400" title="Delete">
                     <Trash2 className="w-3 h-3" />

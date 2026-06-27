@@ -12,7 +12,11 @@ Backend (all green: `go test ./...`, `go vet`, `npm run build`, `npm run lint`, 
 - ✅ Conversations persist across restarts (`~/.local-agent/conversations.json`); rename/delete/rebind via `PATCH/DELETE /api/sessions/{id}`.
 - ✅ Mid-conversation model/agent switch (client-side rebind; ACP has no model API in v0.13.5).
 - ✅ Enriched SessionUpdate: thoughts, plans, tool kind/target/diff; agent stderr captured into failure events.
+- ✅ ReadTextFile/WriteTextFile now convert absolute paths to workspace-relative (fix: agent `read` tool was failing on absolute paths).
+- ✅ Thought block fix: `mergedEvents` reducer in ChatPanel now checks `thought` flag to prevent thoughts and messages from merging.
+- ✅ Conversation export: download button in ChatHistory, client-side JSON export.
 - ⚠️ Deferred: graceful `session/close` on shutdown (kill used); `session/load`/`resume`; mock-agent terminal/permission regression coverage (WI-15).
+- 📋 **Draft (needs review):** Agent context provider — inject workspace file tree + git status into first prompt. See `docs/plans/agent-context.md`.
 
 Frontend: connection indicator + reconnect re-sync, Stop/cancel, render of thoughts/plans/shell/file/system events, conversation rename/delete UI, active conversation persisted to localStorage.
 
@@ -31,7 +35,7 @@ Frontend: connection indicator + reconnect re-sync, Stop/cancel, render of thoug
 
 ## Phase 1 — Core Infrastructure: ~100% COMPLETE
 
-14 tasks in `docs/plan.md` all marked `[x]`, but 3 are overstated. See gaps below.
+14 tasks in `docs/plan.md` all marked `[x]`, but 5 are overstated. See gaps below.
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
@@ -40,8 +44,8 @@ Frontend: connection indicator + reconnect re-sync, Stop/cancel, render of thoug
 | 3 | events | ✅ Done | SQLite event store, WAL mode, append/query, all event types |
 | 4 | pairing | ✅ Done | QR + mnemonic passcode, device credentials, revocation |
 | 5 | workspace | ⚠️ Partial | File tree + file read + file write work. Workspaces now load from config on daemon startup. No `remove-folder` or `list-folders` CLI commands. |
-| 6 | acp-client | ✅ Done | Session lifecycle uses `coder/acp-go-sdk` for Agent Client Protocol communication. `transport.go` bridges ACP events to system managers. |
-| 7 | permissions | ✅ Done | Request/response, allow-once/session/always, deny, audit |
+| 6 | acp-client | ⚠️ Partial | Session lifecycle uses `coder/acp-go-sdk`. `transport.go` bridges ACP events. ⚠️ `session/load` (ACP `LoadSession`) and `session/delete` (ACP `DeleteSession`) not called — sessions recreated fresh on restart, `CloseSession` kills process without ACP delete. |
+| 7 | permissions | ⚠️ Partial | Request/response flow works (callback → UI → respond). Audit log records decisions. ⚠️ No policy enforcement: `allow_always`/`reject_always` don't auto-resolve future requests. |
 | 8 | ws-sync | ✅ Done | WebSocket hub, broadcast, reconnection sync |
 | 9 | file-sync | ✅ Done | Revision tracking, FileRevisionUpdated events, three-way merge |
 | 10 | shell-exec | ✅ Done | Workspace-scoped subprocess, output streaming as events |

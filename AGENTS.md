@@ -79,6 +79,7 @@ Note: Cap lint output — fix a few errors per pass, not the whole dump.
 
 - `docs/Blueprint.md` — full architecture and design (source of truth)
 - `docs/development/TechStack.md` — technology choices and library list
+- `docs/acp/responsibilities.md` — ACP division of responsibilities (agent vs. client), file write use case, and Context7 lookup instructions
 - `docs/plans/Blueprint.md` — phased implementation plan
 - `docs/plans/OpenItems.md` — tracked gaps and deferred decisions; do not implement deferred items
 - `docs/STATUS.md` — task-level status tracking; keep updated as work progresses
