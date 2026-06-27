@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/adama/local-agent/internal/acp"
 )
@@ -19,6 +20,10 @@ const (
 
 // Config is the persistent application configuration.
 type Config struct {
+	// mu guards mutable fields (Workspaces, Agents) and serializes Save so
+	// concurrent HTTP handlers cannot race on slice mutation or interleave
+	// on-disk writes. It is unexported and not persisted.
+	mu                sync.Mutex      `json:"-"`
 	Port              int             `json:"port"`
 	Host              string          `json:"host"`
 	DataDir           string          `json:"dataDir"`
@@ -128,6 +133,13 @@ func Load() (*Config, error) {
 
 // Save writes the config to ~/.local-agent/config.json.
 func (c *Config) Save() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.saveLocked()
+}
+
+// saveLocked writes the config to disk. The caller must hold c.mu.
+func (c *Config) saveLocked() error {
 	dir := filepath.Dir(filepath.Join(c.DataDir, "config.json"))
 	if err := os.MkdirAll(dir, appDataDirPerm); err != nil {
 		return err
@@ -142,11 +154,47 @@ func (c *Config) Save() error {
 	return os.WriteFile(configPath, data, configFilePerm)
 }
 
+// UpsertAgent adds or updates an agent in the persisted config. It atomically
+// (under the config mutex) replaces an existing agent with the same ID or
+// appends a new one, then saves. Concurrent calls are safe.
+func (c *Config) UpsertAgent(agent acp.AgentInfo) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	found := false
+	for i, a := range c.Agents {
+		if a.ID == agent.ID {
+			c.Agents[i] = agent
+			found = true
+			break
+		}
+	}
+	if !found {
+		c.Agents = append(c.Agents, agent)
+	}
+	return c.saveLocked()
+}
+
+// DeleteAgent removes an agent from the persisted config by ID. It atomically
+// (under the config mutex) re-slices and saves. Concurrent calls are safe.
+func (c *Config) DeleteAgent(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i, a := range c.Agents {
+		if a.ID == id {
+			c.Agents = append(c.Agents[:i], c.Agents[i+1:]...)
+			break
+		}
+	}
+	return c.saveLocked()
+}
+
 // RemoveWorkspacePath drops the given absolute path from the Workspaces list
 // and persists the updated config. It returns an error if the path was not
 // registered. The caller is responsible for unregistering the workspace from
 // the in-memory workspace manager before calling this.
 func (c *Config) RemoveWorkspacePath(absPath string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	found := false
 	updated := make([]string, 0, len(c.Workspaces))
 	for _, ws := range c.Workspaces {
@@ -160,5 +208,5 @@ func (c *Config) RemoveWorkspacePath(absPath string) error {
 		return fmt.Errorf("workspace not registered: %s", absPath)
 	}
 	c.Workspaces = updated
-	return c.Save()
+	return c.saveLocked()
 }

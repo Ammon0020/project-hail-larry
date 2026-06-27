@@ -63,16 +63,18 @@ export function useAutoscroll<T extends HTMLElement>(
     // Sync initial state in case the container starts scrolled up.
     handleScroll()
     return () => el.removeEventListener('scroll', handleScroll)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- effect reads only containerRef + refs; computeAtBottom/scrollToBottom close over the stable ref
   }, [containerRef])
 
   // On new content (deps change), autoscroll only if the user was near the
   // bottom. Reading wasNearBottomRef (a ref) avoids setState-in-effect.
+  // `deps` is caller-controlled; the effect body reads refs only (no
+  // props/state), so a stale closure cannot drop a needed re-run.
   useEffect(() => {
     if (wasNearBottomRef.current) {
       scrollToBottom()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps is caller-controlled; effect reads refs only
   }, deps)
 
   return { isAtBottom, scrollToBottom }

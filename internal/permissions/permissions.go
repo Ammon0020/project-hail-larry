@@ -229,10 +229,12 @@ func (m *Manager) GetAuditLog() []AuditEntry {
 	return log
 }
 
-// ClearSession drops all cached permission policies for the given session.
-// It should be called when a session closes so that allow_always/allow_session
-// decisions do not leak across session lifetimes. Pending requests for the
-// session are left untouched (they time out or are resolved independently).
+// ClearSession drops all cached permission policies for the given session and
+// denies any pending permission requests for it. It should be called when a
+// session closes so that allow_always/allow_session decisions do not leak
+// across session lifetimes and in-flight Request calls return promptly instead
+// of hanging until their context deadline. The blocked Request receives a deny
+// decision; its defer cleanup tolerates the pending entry already being deleted.
 func (m *Manager) ClearSession(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -241,7 +243,25 @@ func (m *Manager) ClearSession(sessionID string) {
 			delete(m.policy, k)
 		}
 	}
+	// Deny pending requests for this session so the agent's RequestPermission
+	// RPC does not hang with no response. The send is non-blocking (the
+	// response channel is buffered with capacity 1); a full channel means the
+	// request was already resolved independently.
+	for id, p := range m.pending {
+		if p.request.SessionID == sessionID {
+			select {
+			case p.response <- interfaces.PermissionDeny:
+			default:
+			}
+			delete(m.pending, id)
+		}
+	}
 }
+
+// maxAuditEntries bounds the in-memory audit log so a long-running daemon
+// does not grow it without limit. Only the most recent entries are retained;
+// older entries are evicted once the cap is exceeded.
+const maxAuditEntries = 10000
 
 // recordAudit adds a decision to the audit log.
 func (m *Manager) recordAudit(req interfaces.PermissionRequest, decision interfaces.PermissionDecision) {
@@ -256,6 +276,10 @@ func (m *Manager) recordAudit(req interfaces.PermissionRequest, decision interfa
 		Decision:  string(decision),
 		Timestamp: time.Now().UTC(),
 	})
+	// Bound the in-memory audit log to the last maxAuditEntries entries.
+	if len(m.auditLog) > maxAuditEntries {
+		m.auditLog = m.auditLog[len(m.auditLog)-maxAuditEntries:]
+	}
 }
 
 // generateID generates a cryptographically random hex string.

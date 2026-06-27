@@ -26,16 +26,14 @@
 
 ### Medium Priority
 
-- [ ] **File search** — Search panel (`web/src/components/SearchPanel.tsx`) is static/non-functional. No backend search endpoint exists.
+- [ ] **File search** — Search panel (`web/src/components/SearchPanel.tsx`) is a stub: the input is wired to state but no backend search endpoint exists (panel shows a "coming soon" empty state instead of fake results).
 - [ ] **Device credential expiry** — Permanent until revoked. Need to decide: time-limited or permanent?
 - [ ] **Reconnection behavior** — Phone drops Wi-Fi mid-session; in-flight permission prompts need handling.
 - [ ] **Live agent change detection in editor** — When the agent modifies a file being edited, the editor should show an indicator without forcing a reload. Conflict resolution triggers only on save (Blueprint Sec 14). External file changes (e.g. edited in Notepad) should also trigger a UI update if the user has no unsaved changes.
 - [ ] **Remaining review findings** (in `review/2026-06-27/`, not in `implemented/`):
-  - `go-core-config-data-race.md` — `handleUpsertAgent`/`handleDeleteAgent` mutate `Config.Agents` with no mutex
-  - `go-core-pair-initiate-swallows-decode-error.md` — `handlePairInitiate` swallows decode errors, uses hardcoded `localhost:7337`
-  - `go-permissions-audit-log-unbounded.md` — audit log grows without bound
-  - `go-permissions-clearsession-no-cancel.md` — `ClearSession` leaves pending requests blocked
-  - 25 `web-*` frontend findings (inline CSS, raw colors, dead UI, accessibility, type safety, etc.)
+  - 8 `web-*` frontend findings remain (deferred — need larger refactor or design decision; see `docs/known-issues.md`). 17 of 25 were fixed and moved to `implemented/`.
+
+  Done (moved to `implemented/`): `go-core-config-data-race`, `go-core-pair-initiate-swallows-decode-error`, `go-permissions-audit-log-unbounded`, `go-permissions-clearsession-no-cancel`.
 
 ### Lower Priority / Future
 

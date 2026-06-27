@@ -28,6 +28,8 @@ export function ActivityBar({
           key={id}
           onClick={() => onSwitchPanel(id)}
           title={label}
+          aria-label={label}
+          aria-pressed={activePanel === id}
           className={cn(
             'w-full flex items-center justify-center py-2.5 transition relative',
             activePanel === id
@@ -45,13 +47,14 @@ export function ActivityBar({
       <div className="flex-1" />
 
       {/* WebSocket connection status */}
-      <div className="flex items-center justify-center py-2" title="Connected to local daemon">
+      <div className="flex items-center justify-center py-2" title="Connected to local daemon" role="status" aria-label="Connected to local daemon">
         <div className="w-2 h-2 rounded-full bg-green-400" />
       </div>
 
       <button
         onClick={onOpenSettings}
         title="Settings"
+        aria-label="Settings"
         className="w-full flex items-center justify-center py-2.5 text-gray-500 hover:text-gray-300 transition"
       >
         <Settings className="w-5 h-5" />

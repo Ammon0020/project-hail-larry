@@ -36,12 +36,18 @@ export function useBackend() {
   // Mirror activeWorkspace in a ref so the WebSocket onmessage closure (created
   // once at mount) can read the current value instead of a stale snapshot.
   const activeWorkspaceRef = useRef<WorkspaceInfo | null>(null)
+  // Tracks whether the hook is still mounted so the onclose reconnect path
+  // does not schedule a new WebSocket against an unmounted hook (memory leak).
+  const mountedRef = useRef(true)
+  // Holds the pending reconnect timer so it can be cleared on unmount.
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => {
     activeWorkspaceRef.current = activeWorkspace
   }, [activeWorkspace])
 
   // ---- Load initial data on mount ----
   useEffect(() => {
+    mountedRef.current = true
     loadWorkspaces()
     loadAgents()
     loadDevices()
@@ -50,12 +56,17 @@ export function useBackend() {
     loadPendingPermissions()
     connectWebSocket()
     return () => {
+      // Mark unmounted first so ws.onclose (fired by close()) short-circuits
+      // instead of scheduling a reconnect against a torn-down hook.
+      mountedRef.current = false
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       wsRef.current?.close()
     }
   }, [])
 
   // ---- WebSocket connection for real-time events ----
   function connectWebSocket() {
+    if (!mountedRef.current) return
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${protocol}//${window.location.host}/ws`
 
@@ -76,9 +87,12 @@ export function useBackend() {
       loadEvents()
     }
     ws.onclose = () => {
+      if (!mountedRef.current) return
       setConnected(false)
-      // Reconnect after 3 seconds (Blueprint Sec 12 — reconnection).
-      setTimeout(() => connectWebSocket(), 3000)
+      // Reconnect after 3 seconds (Blueprint Sec 12 — reconnection). Clear any
+      // prior timer so overlapping disconnects don't stack multiple sockets.
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = setTimeout(() => connectWebSocket(), 3000)
     }
     ws.onerror = () => ws.close()
     ws.onmessage = (msg) => {
@@ -306,7 +320,7 @@ export function useBackend() {
       // friendly message instead of the raw error string.
       const msg = err instanceof Error ? err.message : String(err)
       if (isSessionNotFound(msg)) {
-        localStorage.removeItem('activeSessionId')
+        localStorage.removeItem('lai:activeSessionId')
         throw new Error('This conversation is no longer available. Start a new chat.', {
           cause: err,
         })
@@ -341,7 +355,8 @@ export function useBackend() {
   async function verifyPasscode(passcode: string, deviceName: string) {
     const cred = await api.verifyPasscode(passcode, deviceName)
     // Store credential in localStorage (Blueprint Sec 19 — browser-stored).
-    localStorage.setItem('deviceCredential', JSON.stringify(cred))
+    // Uses the lai: prefix for consistency with other persisted keys.
+    localStorage.setItem('lai:deviceCredential', JSON.stringify(cred))
     await loadDevices()
     return cred
   }

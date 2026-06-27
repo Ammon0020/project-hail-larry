@@ -99,6 +99,9 @@ export type EventType =
 
 /** A single event in the immutable event log (Blueprint Sec 11). */
 export interface AppEvent {
+  /** Monotonic event id assigned by the backend SQLite store. Optional
+   *  because mock data and merged stream events may not carry an id. */
+  id?: number
   type: EventType
   sessionId: string
   role?: 'user' | 'agent'

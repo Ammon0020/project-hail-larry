@@ -264,6 +264,8 @@ export function EditorPane({
                     e.stopPropagation()
                     onTabClose(tab.id)
                   }}
+                  aria-label={`Close ${tab.name}`}
+                  role="button"
                 />
               </div>
             )

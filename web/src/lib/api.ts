@@ -20,6 +20,8 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   }
   const data = await res.json()
   // Go's json.Encoder serializes nil slices as null — coerce to [] for array types.
+  // Only safe to coerce when the caller expects an array (T extends unknown[]);
+  // the double cast is intentional because `null` is not assignable to T.
   if (data === null) {
     return [] as unknown as T
   }
@@ -121,8 +123,8 @@ export interface PairingSession {
 // ---- API methods ----
 
 export const api = {
-  // Health
-  health: () => apiFetch<{ status: string }>('/health'.replace('/api', '')),
+  // Health — apiFetch prefixes /api, so this hits /api/health.
+  health: () => apiFetch<{ status: string }>('/health'),
 
   // Workspaces
   listWorkspaces: () => apiFetch<WorkspaceInfo[]>('/workspaces'),

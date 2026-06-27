@@ -275,13 +275,9 @@ export function ChatPanel({
             value={effectiveAgentId}
             onChange={(e) => handleAgentChange(e.target.value)}
             disabled={sending}
-            className="appearance-none bg-background border border-gray-700 text-gray-200 text-xs font-semibold rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-500 cursor-pointer shadow-sm hover:border-gray-500 disabled:opacity-60 disabled:cursor-not-allowed transition shrink-0"
-            style={{
-              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
-              backgroundRepeat: 'no-repeat',
-              backgroundPosition: 'right 0.5rem center',
-            }}
+            className="select-chevron appearance-none bg-background border border-gray-700 text-gray-200 text-xs font-semibold rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-500 cursor-pointer shadow-sm hover:border-gray-500 disabled:opacity-60 disabled:cursor-not-allowed transition shrink-0"
             title="Agent Harness"
+            aria-label="Agent harness"
           >
             {agents.map((a) => (
               <option key={a.id} value={a.id}>{a.name}</option>
@@ -293,13 +289,9 @@ export function ChatPanel({
             value={effectiveModelId}
             onChange={(e) => handleModelChange(e.target.value)}
             disabled={sending || !currentAgent}
-            className="appearance-none bg-background border border-blue-500/50 text-blue-400 text-xs font-medium rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-400 cursor-pointer shadow-sm hover:border-blue-400 disabled:opacity-60 disabled:cursor-not-allowed transition shrink-0"
-            style={{
-              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
-              backgroundRepeat: 'no-repeat',
-              backgroundPosition: 'right 0.5rem center',
-            }}
+            className="select-chevron-primary appearance-none bg-background border border-blue-500/50 text-blue-400 text-xs font-medium rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-400 cursor-pointer shadow-sm hover:border-blue-400 disabled:opacity-60 disabled:cursor-not-allowed transition shrink-0"
             title="Model"
+            aria-label="Model"
           >
             {currentAgent?.models.map((m) => (
               <option key={m.id} value={m.id}>{m.name}</option>
@@ -325,6 +317,8 @@ export function ChatPanel({
             onClick={() => setChatHistoryOpen(!chatHistoryOpen)}
             className="p-1.5 text-gray-400 hover:text-white bg-gray-800 rounded-md transition relative"
             title="Chat History"
+            aria-label="Chat history"
+            aria-expanded={chatHistoryOpen}
           >
             <Menu className="w-4 h-4" />
           </button>
@@ -369,7 +363,7 @@ export function ChatPanel({
           )}
           {mergedEvents.map((event, i) => (
             <ChatMessageItem
-              key={i}
+              key={event.id ?? `${event.type}-${i}`}
               event={event}
               pending={
                 event.type === 'PermissionRequested' && event.requestId
@@ -411,6 +405,7 @@ export function ChatPanel({
           <button
             className="p-2.5 bg-panel border border-gray-700 rounded-xl hover:bg-gray-800 hover:border-gray-500 transition text-gray-400 shrink-0"
             title="Upload Artifact"
+            aria-label="Upload artifact"
           >
             <Paperclip className="w-4 h-4" />
           </button>
@@ -428,6 +423,7 @@ export function ChatPanel({
                 onClick={handleStop}
                 className="absolute right-2 bottom-2 p-1.5 bg-red-600 rounded-lg hover:bg-red-500 transition"
                 title="Stop"
+                aria-label="Stop"
               >
                 <Square className="w-3.5 h-3.5 text-white" />
               </button>
@@ -436,6 +432,7 @@ export function ChatPanel({
                 onClick={handleSend}
                 disabled={!canSend}
                 className="absolute right-2 bottom-2 p-1.5 bg-blue-600 rounded-lg hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed transition"
+                aria-label="Send message"
               >
                 <ArrowUp className="w-3.5 h-3.5 text-white" />
               </button>

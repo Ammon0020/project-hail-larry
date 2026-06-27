@@ -1,48 +1,48 @@
-import { Search, FileCode } from 'lucide-react'
+import { useState } from 'react'
+import { Search } from 'lucide-react'
 
 /**
  * Search panel — workspace-wide search (Blueprint Sec 17 — left sidebar).
- * Shows search input and results grouped by file.
+ *
+ * STATUS: stub. The input is wired to local state so the control is
+ * interactive, but no backend search endpoint exists yet — see
+ * docs/STATUS.md "File search". Until the backend lands, the panel shows a
+ * "coming soon" empty state instead of fake hardcoded results (AGENTS.md —
+ * mark gaps honestly).
  */
 export function SearchPanel() {
+  const [query, setQuery] = useState('')
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider shrink-0">
         Search
       </div>
       <div className="px-3 pb-2 shrink-0">
+        <label htmlFor="search-panel-input" className="sr-only">Search files</label>
         <div className="relative">
           <Search className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
           <input
+            id="search-panel-input"
             type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="Search files..."
             className="w-full bg-background border border-gray-700 rounded-md pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:border-blue-500 transition"
+            aria-label="Search files"
           />
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto px-3 pb-2 text-xs space-y-3">
-        <div>
-          <div className="text-gray-500 font-mono mb-1">3 results in 2 files</div>
-          <div className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-gray-800/50 text-gray-300">
-            <FileCode className="w-3.5 h-3.5 text-yellow-400 shrink-0" /> server.js
+      <div className="flex-1 overflow-y-auto px-3 pb-2 text-xs">
+        {query.trim() ? (
+          <div className="text-gray-500 text-center py-6">
+            File search is not yet available.
           </div>
-          <div className="ml-4 font-mono text-[11px] text-gray-400 space-y-0.5">
-            <div className="hover:bg-gray-800/50 rounded px-1 cursor-pointer">
-              <span className="text-gray-600">12:</span> app.<span className="text-blue-400">listen</span>(port, () =&gt; {'{'}
-            </div>
-            <div className="hover:bg-gray-800/50 rounded px-1 cursor-pointer">
-              <span className="text-gray-600">28:</span> console.<span className="text-blue-400">log</span>(`Server on ${'{port}'}`);
-            </div>
+        ) : (
+          <div className="text-gray-500 text-center py-6">
+            Type to search across the workspace.
           </div>
-          <div className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-gray-800/50 text-gray-300 mt-1">
-            <FileCode className="w-3.5 h-3.5 text-yellow-400 shrink-0" /> routes/index.js
-          </div>
-          <div className="ml-4 font-mono text-[11px] text-gray-400 space-y-0.5">
-            <div className="hover:bg-gray-800/50 rounded px-1 cursor-pointer">
-              <span className="text-gray-600">7:</span> router.<span className="text-blue-400">get</span>('/', (req, res) =&gt; {'{'}
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )

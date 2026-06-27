@@ -146,6 +146,21 @@ export function FileTree({
 }) {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => getInitialExpanded(nodes))
 
+  // Recompute the expanded set when the tree changes (e.g. workspace switch
+  // rebuilds `nodes` from backend.fileTree). Without this, paths from the
+  // previous workspace linger and root folders that should default to
+  // expanded stay collapsed. Uses the "adjust state during render" pattern
+  // (React docs) instead of setState-in-effect to avoid cascading renders and
+  // the react-hooks/set-state-in-effect rule. A JSON signature guards against
+  // unstable referential identity while still re-running when the tree content
+  // changes.
+  const [prevSignature, setPrevSignature] = useState(() => JSON.stringify(nodes))
+  const currentSignature = JSON.stringify(nodes)
+  if (currentSignature !== prevSignature) {
+    setPrevSignature(currentSignature)
+    setExpandedPaths(getInitialExpanded(nodes))
+  }
+
   const handleToggleExpand = (path: string) => {
     setExpandedPaths((prev) => {
       const next = new Set(prev)

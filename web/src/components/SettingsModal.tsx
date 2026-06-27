@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { X, Search, Plus, Trash2, AlertTriangle, Monitor } from 'lucide-react'
 import type { AgentInfo } from '@/lib/api'
 
@@ -24,6 +24,21 @@ export function SettingsModal({
   const [showAddForm, setShowAddForm] = useState(false)
   const [newAgent, setNewAgent] = useState<Partial<AgentInfo>>({ models: [] })
   const [newModel, setNewModel] = useState({ id: '', name: '' })
+
+  // Close on Escape and prevent body scroll while the modal is open.
+  // A full focus trap is deferred (see docs/known-issues.md); Escape +
+  // click-outside + aria-modal cover the primary keyboard path.
+  useEffect(() => {
+    if (!isOpen) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isOpen, onClose])
 
   if (!isOpen) return null
 
@@ -63,13 +78,21 @@ export function SettingsModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-panel border border-gray-700 rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Settings"
+    >
+      <div
+        className="bg-panel border border-gray-700 rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
           <h2 className="text-lg font-bold text-gray-200">Settings</h2>
-          <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-300 rounded-md transition">
+          <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-300 rounded-md transition" aria-label="Close settings">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -121,8 +144,9 @@ export function SettingsModal({
                   <div className="p-4 bg-panel border border-blue-500/30 rounded-lg space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-xs text-gray-400 mb-1">ID (e.g., custom-agent)</label>
+                        <label htmlFor="agent-id-input" className="block text-xs text-gray-400 mb-1">ID (e.g., custom-agent)</label>
                         <input
+                          id="agent-id-input"
                           type="text"
                           value={newAgent.id || ''}
                           onChange={e => setNewAgent({...newAgent, id: e.target.value})}
@@ -130,8 +154,9 @@ export function SettingsModal({
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-400 mb-1">Name (e.g., Custom CLI)</label>
+                        <label htmlFor="agent-name-input" className="block text-xs text-gray-400 mb-1">Name (e.g., Custom CLI)</label>
                         <input
+                          id="agent-name-input"
                           type="text"
                           value={newAgent.name || ''}
                           onChange={e => setNewAgent({...newAgent, name: e.target.value})}
@@ -139,8 +164,9 @@ export function SettingsModal({
                         />
                       </div>
                       <div className="col-span-2">
-                        <label className="block text-xs text-gray-400 mb-1">Command executable</label>
+                        <label htmlFor="agent-command-input" className="block text-xs text-gray-400 mb-1">Command executable</label>
                         <input
+                          id="agent-command-input"
                           type="text"
                           value={newAgent.command || ''}
                           onChange={e => setNewAgent({...newAgent, command: e.target.value})}
@@ -151,7 +177,7 @@ export function SettingsModal({
                     </div>
 
                     <div className="border-t border-gray-800 pt-3">
-                      <label className="block text-xs text-gray-400 mb-2">Models</label>
+                      <label htmlFor="model-id-input" className="block text-xs text-gray-400 mb-2">Models</label>
                       <div className="space-y-2 mb-2">
                         {newAgent.models?.map((m, i) => (
                           <div key={i} className="flex items-center gap-2 text-xs bg-background p-2 rounded border border-gray-800">
@@ -163,13 +189,16 @@ export function SettingsModal({
                       </div>
                       <div className="flex gap-2">
                         <input
+                          id="model-id-input"
                           type="text"
                           placeholder="Model ID"
                           value={newModel.id}
                           onChange={e => setNewModel({...newModel, id: e.target.value})}
                           className="flex-1 bg-background border border-gray-700 rounded-md px-3 py-1.5 text-sm"
                         />
+                        <label htmlFor="model-name-input" className="sr-only">Model name</label>
                         <input
+                          id="model-name-input"
                           type="text"
                           placeholder="Model Name"
                           value={newModel.name}
@@ -206,6 +235,7 @@ export function SettingsModal({
                           onClick={() => onDeleteAgent(agent.id)}
                           className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-md transition opacity-0 group-hover:opacity-100"
                           title="Delete Agent"
+                          aria-label={`Delete agent ${agent.name}`}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>

@@ -31,8 +31,9 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
     try {
       const deviceName = navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Browser'
       const cred = await api.verifyPasscode(passcode.trim(), deviceName)
-      // Store credential in localStorage (Blueprint Sec 19).
-      localStorage.setItem('deviceCredential', JSON.stringify(cred))
+      // Store credential in localStorage (Blueprint Sec 19). Uses the lai: prefix
+      // for consistency with other persisted keys (AGENTS.md — consistent keys).
+      localStorage.setItem('lai:deviceCredential', JSON.stringify(cred))
       onPaired()
     } catch (err) {
       setError(true)
@@ -63,7 +64,9 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
 
         {/* Passcode input */}
         <div className="space-y-3">
+          <label htmlFor="passcode-input" className="sr-only">Passcode</label>
           <input
+            id="passcode-input"
             type="text"
             value={passcode}
             onChange={(e) => {
@@ -88,19 +91,29 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
           )}
         </div>
 
-        {/* Manual connection fallback (Blueprint Sec 20 — network discovery) */}
+        {/* Manual connection fallback (Blueprint Sec 20 — network discovery).
+            STATUS: stub — the inputs are not yet wired. Shown as a disabled
+            "coming soon" affordance so users are not misled into expecting a
+            working connect action (AGENTS.md — mark gaps honestly). */}
         <div className="pt-4 border-t border-gray-800">
           <div className="text-xs text-gray-500 mb-2">Or connect manually:</div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 opacity-50" aria-disabled="true">
             <input
               type="text"
               placeholder="192.168.1.100:7337"
               className="flex-1 bg-panel border border-gray-700 rounded-lg px-3 py-2 text-xs font-mono text-gray-300 focus:outline-none focus:border-blue-500 transition"
+              disabled
+              aria-label="Manual host and port (coming soon)"
             />
-            <button className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition">
+            <button
+              className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg cursor-not-allowed"
+              disabled
+              aria-label="Connect manually (coming soon)"
+            >
               Connect
             </button>
           </div>
+          <p className="text-[10px] text-gray-600 mt-1.5">Coming soon.</p>
         </div>
       </div>
     </div>

@@ -8,7 +8,33 @@ import { MobileNav } from '@/components/MobileNav'
 import { MobileSettings } from '@/components/MobileSettings'
 import { SettingsModal } from '@/components/SettingsModal'
 import { useBackend } from '@/hooks/useBackend'
-import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Session, Tab } from '@/types'
+import type { LeftPanel, MobileView, FileTreeNode, AppEvent, SessionStatus, Tab } from '@/types'
+
+/**
+ * Runtime guard that narrows an arbitrary backend status string to the
+ * SessionStatus union. Falls back to 'created' for unknown values so a
+ * malformed status never yields an undefined className lookup in
+ * ChatHistory's statusDotClass map (AGENTS.md — type safety).
+ */
+const VALID_SESSION_STATUSES: readonly SessionStatus[] = [
+  'created', 'starting', 'running', 'waiting_permission',
+  'interrupted', 'completed', 'failed', 'archived',
+]
+function narrowStatus(raw: string): SessionStatus {
+  return (VALID_SESSION_STATUSES as readonly string[]).includes(raw)
+    ? (raw as SessionStatus)
+    : 'created'
+}
+
+/**
+ * Reads a localStorage key and validates it against a list of allowed values.
+ * Returns the validated value or the fallback. Avoids unsafe `as` casts on
+ * arbitrary stored strings (AGENTS.md — type safety).
+ */
+function readValidString<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  const v = localStorage.getItem(key)
+  return v && (allowed as readonly string[]).includes(v) ? (v as T) : fallback
+}
 
 /**
  * App shell — the Local Agent Interface (Blueprint Sec 17).
@@ -23,15 +49,17 @@ import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Session, Tab } from
 export default function App() {
   // Pairing state — check localStorage for existing credential (Blueprint Sec 19).
   const [paired, setPaired] = useState(() => {
-    return !!localStorage.getItem('deviceCredential')
+    return !!localStorage.getItem('lai:deviceCredential')
   })
 
   // Panel state — restored from localStorage so the layout survives a reload.
+  // Validated against the allowed union values so a corrupted/old entry cannot
+  // produce an invalid panel id (AGENTS.md — type safety).
   const [leftPanel, setLeftPanel] = useState<LeftPanel>(
-    () => (localStorage.getItem('lai:leftPanel') as LeftPanel) || 'files',
+    () => readValidString('lai:leftPanel', ['files', 'search'] as const, 'files'),
   )
   const [mobileView, setMobileView] = useState<MobileView>(
-    () => (localStorage.getItem('lai:mobileView') as MobileView) || 'editor',
+    () => readValidString('lai:mobileView', ['explorer', 'editor', 'chat', 'settings'] as const, 'editor'),
   )
   const [isDesktop, setIsDesktop] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true,
@@ -73,7 +101,7 @@ export default function App() {
   // Session state — restored from localStorage so the active conversation
   // survives a page reload (UI Spec §6.2).
   const [activeSessionId, setActiveSessionId] = useState<string | null>(
-    () => localStorage.getItem('activeSessionId') || null,
+    () => localStorage.getItem('lai:activeSessionId') || null,
   )
 
   // Real backend connection
@@ -88,8 +116,8 @@ export default function App() {
 
   /** Persist the active conversation so it is restored on reload. */
   useEffect(() => {
-    if (activeSessionId) localStorage.setItem('activeSessionId', activeSessionId)
-    else localStorage.removeItem('activeSessionId')
+    if (activeSessionId) localStorage.setItem('lai:activeSessionId', activeSessionId)
+    else localStorage.removeItem('lai:activeSessionId')
   }, [activeSessionId])
 
   // Validate the persisted activeSessionId against the backend's session list.
@@ -182,10 +210,12 @@ export default function App() {
     return <LockScreen onPaired={() => setPaired(true)} />
   }
 
-  // Convert backend file tree to the component's expected format, preserving path.
+  // Convert backend file tree to the component's expected format, preserving
+  // path. Validates `type` at runtime so a malformed backend node cannot
+  // silently become a typed union (AGENTS.md — type safety).
   const convertNode = (n: { name: string; type: string; path?: string; children?: { name: string; type: string; path?: string; children?: unknown[] }[] }): FileTreeNode => ({
     name: n.name,
-    type: n.type as 'folder' | 'file',
+    type: n.type === 'folder' ? 'folder' : 'file',
     path: n.path,
     children: n.children?.map((c) => convertNode(c as typeof n)),
   })
@@ -299,8 +329,8 @@ export default function App() {
       }
     }
 
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [activeTabId, openTabs])
 
   // ---- Session operations ----
@@ -470,7 +500,7 @@ export default function App() {
           id: s.id,
           name: s.name,
           time: '',
-          status: s.status as Session['status'],
+          status: narrowStatus(s.status),
           active: s.id === activeSessionId,
           agentId: s.agentId,
           modelId: s.modelId,

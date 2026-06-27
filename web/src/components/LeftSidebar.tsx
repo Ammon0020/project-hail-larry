@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { CSSProperties } from 'react'
 import { FolderCode, ChevronsUpDown, Wifi, Files, Search, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -33,6 +33,19 @@ export function LeftSidebar({
   style?: CSSProperties
 }) {
   const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false)
+
+  // Close the workspace dropdown on Escape (keyboard accessibility).
+  useEffect(() => {
+    if (!showWorkspaceDropdown) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setShowWorkspaceDropdown(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showWorkspaceDropdown])
 
   /** Mini horizontal activity bar for mobile (files/search toggle). */
   const miniTabs: { id: LeftPanel; icon: typeof Files; label: string }[] = [
@@ -79,9 +92,12 @@ export function LeftSidebar({
               </div>
             </div>
             <div className="relative">
-              <button 
+              <button
                 onClick={() => setShowWorkspaceDropdown(!showWorkspaceDropdown)}
                 className="w-full bg-background border border-gray-700 rounded-lg p-2 flex items-center justify-between hover:border-gray-500 transition shadow-sm"
+                aria-label="Switch workspace"
+                aria-expanded={showWorkspaceDropdown}
+                aria-haspopup="listbox"
               >
                 <div className="flex items-center gap-2 overflow-hidden">
                   <FolderCode className="w-4 h-4 text-blue-400 shrink-0" />
@@ -93,8 +109,8 @@ export function LeftSidebar({
               {/* Dropdown Menu */}
               {showWorkspaceDropdown && (
                 <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowWorkspaceDropdown(false)} />
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-panel border border-gray-700 rounded-lg shadow-xl z-50 py-1 max-h-60 overflow-y-auto">
+                  <div className="fixed inset-0 z-40" onClick={() => setShowWorkspaceDropdown(false)} aria-hidden="true" />
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-panel border border-gray-700 rounded-lg shadow-xl z-50 py-1 max-h-60 overflow-y-auto" role="listbox" aria-label="Workspaces">
                     {workspaces.map((ws) => (
                       <button
                         key={ws.id}

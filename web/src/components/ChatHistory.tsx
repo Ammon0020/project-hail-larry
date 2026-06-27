@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState, useEffect, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Plus, X, Pencil, Trash2, Check, Download } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Session, SessionStatus } from '@/types'
@@ -43,6 +43,19 @@ export function ChatHistory({
   const [editValue, setEditValue] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
+  // Close the popout on Escape (keyboard accessibility — AGENTS.md a11y focus).
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
+
   const startRename = (s: Session) => {
     setEditingId(s.id)
     setEditValue(s.name)
@@ -55,7 +68,7 @@ export function ChatHistory({
     setEditingId(null)
   }
 
-  const handleRenameKey = (e: KeyboardEvent<HTMLInputElement>) => {
+  const handleRenameKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
       commitRename()
@@ -70,14 +83,13 @@ export function ChatHistory({
         'absolute top-full left-0 right-0 z-50 bg-panel border-b border-gray-700 shadow-lg max-h-[60vh] overflow-y-auto',
         open ? 'block' : 'hidden',
       )}
+      role="dialog"
+      aria-label="Chat history"
     >
-      {/* Resize handle */}
-      <div className="h-1 bg-gray-700 cursor-ns-resize shrink-0 hover:bg-blue-500" />
-
       <div className="p-2 space-y-1">
         <div className="flex items-center justify-between px-1 pb-1">
           <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Chat History</div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition">
+          <button onClick={onClose} className="text-gray-500 hover:text-white transition" aria-label="Close chat history">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -105,7 +117,7 @@ export function ChatHistory({
                   onBlur={commitRename}
                   className="flex-1 bg-black/30 text-xs text-gray-200 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
-                <button onMouseDown={(e) => e.preventDefault()} onClick={commitRename} className="text-gray-400 hover:text-green-400" title="Save">
+                <button onMouseDown={(e) => e.preventDefault()} onClick={commitRename} className="text-gray-400 hover:text-green-400" title="Save" aria-label="Save rename">
                   <Check className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -139,13 +151,13 @@ export function ChatHistory({
                 </button>
                 <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition">
                   {s.modelId && <span className="text-[10px] text-gray-600 mr-1">{s.modelId}</span>}
-                  <button onClick={() => startRename(s)} className="text-gray-500 hover:text-white" title="Rename">
+                  <button onClick={() => startRename(s)} className="text-gray-500 hover:text-white" title="Rename" aria-label={`Rename ${s.name}`}>
                     <Pencil className="w-3 h-3" />
                   </button>
-                  <button onClick={() => onExportSession(s.id)} className="text-gray-500 hover:text-white" title="Export">
+                  <button onClick={() => onExportSession(s.id)} className="text-gray-500 hover:text-white" title="Export" aria-label={`Export ${s.name}`}>
                     <Download className="w-3 h-3" />
                   </button>
-                  <button onClick={() => setConfirmId(s.id)} className="text-gray-500 hover:text-red-400" title="Delete">
+                  <button onClick={() => setConfirmId(s.id)} className="text-gray-500 hover:text-red-400" title="Delete" aria-label={`Delete ${s.name}`}>
                     <Trash2 className="w-3 h-3" />
                   </button>
                 </div>

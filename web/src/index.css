@@ -90,7 +90,26 @@
   }
 }
 
-/* Custom scrollbar — matches mockup */
+/*
+ * Native <select> chevron utilities.
+ * Replaces inline data-URI background-image styles in JSX (AGENTS.md — no
+ * inline CSS). The stroke color uses the muted-foreground token so the
+ * chevron adapts to theme changes. A second variant tints the chevron with
+ * the primary token for the highlighted (model) selector.
+ */
+.select-chevron {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+}
+.select-chevron-primary {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+}
+
+/* Custom scrollbar — matches mockup. Uses the muted-foreground semantic
+   token so the thumb adapts if the palette changes. */
 ::-webkit-scrollbar {
   width: 4px;
   height: 4px;
@@ -99,7 +118,7 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #4b5563;
+  background: var(--muted-foreground);
   border-radius: 2px;
 }
 
@@ -116,7 +135,7 @@
    36px-tall bar but is visible enough to signal horizontal scroll. */
 .tab-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: #4b5563 transparent;
+  scrollbar-color: var(--muted-foreground) transparent;
 }
 .tab-scrollbar::-webkit-scrollbar {
   height: 3px;
@@ -125,6 +144,6 @@
   background: transparent;
 }
 .tab-scrollbar::-webkit-scrollbar-thumb {
-  background: #4b5563;
+  background: var(--muted-foreground);
   border-radius: 2px;
 }

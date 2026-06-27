@@ -4,7 +4,9 @@
 package server
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,9 +26,32 @@ func (s *Server) handlePairInitiate(w http.ResponseWriter, r *http.Request) {
 		Port int    `json:"port"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
-		// Use defaults from query params or config.
+		// An empty body is valid: fall back to the daemon's configured
+		// host/port below. A malformed body is a client error and must be
+		// rejected rather than silently swallowed (fail loudly), matching the
+		// other pair handlers.
+		if !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+
+	// Populate defaults from the daemon config when the caller omitted them.
+	// The daemon binds to 0.0.0.0 by default, which is not a connectable
+	// address for another device, so map the wildcard to localhost using the
+	// same convention the CLI uses (cmd/app pairingHost).
+	if req.Host == "" {
 		req.Host = "localhost"
-		req.Port = 7337
+		if s.deps.Config != nil && s.deps.Config.Host != "" && s.deps.Config.Host != "0.0.0.0" {
+			req.Host = s.deps.Config.Host
+		}
+	}
+	if req.Port == 0 {
+		if s.deps.Config != nil && s.deps.Config.Port != 0 {
+			req.Port = s.deps.Config.Port
+		} else {
+			req.Port = 7337
+		}
 	}
 
 	session, err := s.deps.PairingMgr.CreateSession(req.Host, req.Port)
@@ -257,18 +282,7 @@ func (s *Server) handleUpsertAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.deps.Config != nil {
-		found := false
-		for i, a := range s.deps.Config.Agents {
-			if a.ID == agent.ID {
-				s.deps.Config.Agents[i] = agent
-				found = true
-				break
-			}
-		}
-		if !found {
-			s.deps.Config.Agents = append(s.deps.Config.Agents, agent)
-		}
-		_ = s.deps.Config.Save()
+		_ = s.deps.Config.UpsertAgent(agent)
 	}
 
 	s.deps.ACPClient.RegisterAgent(agent)
@@ -280,13 +294,7 @@ func (s *Server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	if s.deps.Config != nil {
-		for i, a := range s.deps.Config.Agents {
-			if a.ID == id {
-				s.deps.Config.Agents = append(s.deps.Config.Agents[:i], s.deps.Config.Agents[i+1:]...)
-				break
-			}
-		}
-		_ = s.deps.Config.Save()
+		_ = s.deps.Config.DeleteAgent(id)
 	}
 
 	s.deps.ACPClient.RemoveAgent(id)
