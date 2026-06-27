@@ -22,21 +22,26 @@ const iconMap: Record<string, typeof Folder> = {
 /**
  * Recursive file tree node (Blueprint Sec 17 — file explorer).
  * Supports expand/collapse, unsaved-change indicators, and active file highlight.
+ *
+ * Indentation is produced by nesting each expanded folder's children inside a
+ * `pl-4` wrapper rather than computing a per-node margin. Each level of
+ * recursion adds one `pl-4` (16px), so depth accumulates naturally and works
+ * for arbitrarily deep trees. This avoids dynamically-constructed Tailwind
+ * classes (e.g. `ml-${depth * 4}`), which the JIT compiler cannot detect and
+ * therefore never generates — that was the root cause of nested children
+ * rendering at the wrong indent level.
  */
 function TreeNode({
   node,
-  depth,
   expandedPaths,
   onToggleExpand,
   onFileSelect,
 }: {
   node: FileTreeNode
-  depth: number
   expandedPaths: Set<string>
   onToggleExpand: (path: string) => void
   onFileSelect: (path: string) => void
 }) {
-  const indent = depth > 0 ? `ml-${depth * 4}` : ''
   const nodePath = node.path || node.name
 
   if (node.type === 'folder') {
@@ -46,7 +51,7 @@ function TreeNode({
     return (
       <>
         <div
-          className={cn('flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-gray-800/50 text-gray-300', indent)}
+          className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-gray-800/50 text-gray-300"
           onClick={() => onToggleExpand(nodePath)}
         >
           <ChevronIcon className="w-3.5 h-3.5 text-gray-500 shrink-0" />
@@ -54,16 +59,17 @@ function TreeNode({
           {node.name}
         </div>
         {isExpanded && node.children && (
-          <>{node.children.map((child) => (
-            <TreeNode
-              key={child.path || child.name}
-              node={child}
-              depth={depth + 1}
-              expandedPaths={expandedPaths}
-              onToggleExpand={onToggleExpand}
-              onFileSelect={onFileSelect}
-            />
-          ))}</>
+          <div className="pl-4">
+            {node.children.map((child) => (
+              <TreeNode
+                key={child.path || child.name}
+                node={child}
+                expandedPaths={expandedPaths}
+                onToggleExpand={onToggleExpand}
+                onFileSelect={onFileSelect}
+              />
+            ))}
+          </div>
         )}
       </>
     )
@@ -75,7 +81,7 @@ function TreeNode({
   if (node.active) {
     return (
       <div
-        className={cn('flex items-center justify-between p-1 rounded cursor-pointer bg-blue-600/10 text-blue-300 border-l-2 border-blue-500', indent)}
+        className="flex items-center justify-between p-1 rounded cursor-pointer bg-blue-600/10 text-blue-300 border-l-2 border-blue-500"
         onClick={() => onFileSelect(nodePath)}
       >
         <div className="flex items-center gap-1.5">
@@ -93,7 +99,7 @@ function TreeNode({
 
   return (
     <div
-      className={cn('flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-gray-800/50 text-gray-400', indent)}
+      className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-gray-800/50 text-gray-400"
       onClick={() => onFileSelect(nodePath)}
     >
       <Icon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-gray-400')} />
@@ -158,7 +164,6 @@ export function FileTree({
         <TreeNode
           key={node.path || node.name}
           node={node}
-          depth={0}
           expandedPaths={expandedPaths}
           onToggleExpand={handleToggleExpand}
           onFileSelect={onFileSelect}

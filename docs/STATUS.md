@@ -100,7 +100,7 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
 - Implemented **dynamic model autodetection** in `internal/acp/autodetect.go` which modularly attempts an ACP `providers/list` handshake, and gracefully falls back to reading `models_cache.json` and `config.toml` for `codex` and `vibe`.
 
 ### Editor + File Explorer — ✅ RESOLVED
-- **File tree:** Fully interactive. Folders expand/collapse, clicking files opens them in editor tabs.
+- **File tree:** Fully interactive. Folders expand/collapse, clicking files opens them in editor tabs. Nested-folder indentation fixed 2026-06-27: replaced dynamically-constructed Tailwind class `ml-${depth*4}` (which JIT never generated for depth ≥ 2) with a nested `pl-4` wrapper so indentation accumulates per recursion level.
 - **Editor content:** Dynamically loads from backend (`api.readFile`), tracking language and unsaved state.
 - **Editor tabs:** Fully manageable (select, close, track unsaved status).
 - **Save button:** Wired to `api.saveFile` using optimistic locking (`expectedRevision`).
