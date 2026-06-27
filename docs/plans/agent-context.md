@@ -3,6 +3,13 @@
 > **Status: DRAFT — Needs team review.**
 > This plan has not been approved or implemented. Open questions at the bottom must be resolved before implementation begins.
 
+> **Status: IMPLEMENTED 2026-06-27** — Work Stream 3 of the execution plan is
+> complete. A `PromptPipeline` with a `FirstPromptContextMiddleware` now injects
+> workspace path, OS, a flat file tree (≤200 files, depth ≤3), git status, and
+> AGENTS.md into the first prompt of each session. See
+> `internal/acp/context.go` and `internal/acp/context_test.go`. This file is
+> retained as the design reference.
+
 ## Problem
 
 When an agent (e.g. mistral-vibe) receives a prompt like "Summarize readme.md", it has no idea what files exist in the workspace. ACP provides no directory-listing capability — only `fs/read_text_file` and `fs/write_text_file`. The agent must fall back to terminal commands (`dir`, `ls`, `find`) to discover files, which:

@@ -5,6 +5,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -18,12 +19,15 @@ const (
 
 // Config is the persistent application configuration.
 type Config struct {
-	Port       int             `json:"port"`
-	Host       string          `json:"host"`
-	DataDir    string          `json:"dataDir"`
-	DBPath     string          `json:"dbPath"`
-	Workspaces []string        `json:"workspaces"`
-	Agents     []acp.AgentInfo `json:"agents"`
+	Port              int             `json:"port"`
+	Host              string          `json:"host"`
+	DataDir           string          `json:"dataDir"`
+	DBPath            string          `json:"dbPath"`
+	Workspaces        []string        `json:"workspaces"`
+	Agents            []acp.AgentInfo `json:"agents"`
+	TLSEnabled        bool            `json:"tlsEnabled"`
+	TLSCertDir        string          `json:"tlsCertDir,omitempty"`
+	PairingTTLSeconds int             `json:"pairingTtlSeconds,omitempty"`
 }
 
 // Default returns the default configuration.
@@ -35,12 +39,14 @@ func Default() *Config {
 	dataDir := filepath.Join(homeDir, ".local-agent")
 
 	return &Config{
-		Port:       7337,
-		Host:       "0.0.0.0",
-		DataDir:    dataDir,
-		DBPath:     filepath.Join(dataDir, "local-agent.db"),
-		Workspaces: []string{},
-		Agents:     []acp.AgentInfo{},
+		Port:              7337,
+		Host:              "0.0.0.0",
+		DataDir:           dataDir,
+		DBPath:            filepath.Join(dataDir, "local-agent.db"),
+		Workspaces:        []string{},
+		Agents:            []acp.AgentInfo{},
+		TLSCertDir:        filepath.Join(dataDir, "tls"),
+		PairingTTLSeconds: 300,
 	}
 }
 
@@ -86,6 +92,12 @@ func Load() (*Config, error) {
 	if cfg.Agents == nil {
 		cfg.Agents = []acp.AgentInfo{}
 	}
+	if cfg.TLSCertDir == "" {
+		cfg.TLSCertDir = def.TLSCertDir
+	}
+	if cfg.PairingTTLSeconds == 0 {
+		cfg.PairingTTLSeconds = def.PairingTTLSeconds
+	}
 
 	return &cfg, nil
 }
@@ -104,4 +116,25 @@ func (c *Config) Save() error {
 
 	configPath := filepath.Join(c.DataDir, "config.json")
 	return os.WriteFile(configPath, data, configFilePerm)
+}
+
+// RemoveWorkspacePath drops the given absolute path from the Workspaces list
+// and persists the updated config. It returns an error if the path was not
+// registered. The caller is responsible for unregistering the workspace from
+// the in-memory workspace manager before calling this.
+func (c *Config) RemoveWorkspacePath(absPath string) error {
+	found := false
+	updated := make([]string, 0, len(c.Workspaces))
+	for _, ws := range c.Workspaces {
+		if ws == absPath {
+			found = true
+			continue
+		}
+		updated = append(updated, ws)
+	}
+	if !found {
+		return fmt.Errorf("workspace not registered: %s", absPath)
+	}
+	c.Workspaces = updated
+	return c.Save()
 }

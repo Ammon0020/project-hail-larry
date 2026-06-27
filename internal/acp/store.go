@@ -49,7 +49,9 @@ func (c *Client) LoadConversations() error {
 		r := records[i]
 		r.Status = "idle"
 		r.transport = nil
-		r.acpSessionID = ""
+		// Preserve ACPSessionID so startTransportLocked can attempt session/load
+		// to resume the agent's prior session on the next prompt. The live
+		// transport is nil; it is (re)started lazily.
 		c.sessions[r.ID] = &r
 	}
 	return nil

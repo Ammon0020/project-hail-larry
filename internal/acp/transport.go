@@ -292,6 +292,7 @@ type Transport struct {
 	cmd    *exec.Cmd
 	conn   *acp.ClientSideConnection
 	stderr *ringBuffer
+	cwd    string // workspace cwd captured at Start, reused for LoadSession
 }
 
 func NewTransport() *Transport {
@@ -310,6 +311,9 @@ func (t *Transport) StderrTail() string {
 func (t *Transport) Start(ctx context.Context, command string, args []string, workdir string, impl *acpClientImpl) error {
 	t.cmd = exec.CommandContext(ctx, command, args...)
 	t.cmd.Dir = workdir
+	// Remember the workspace cwd so LoadSession can re-supply it without the
+	// caller having to pass it back in (the ACP LoadSessionRequest requires it).
+	t.cwd = workdir
 	// Capture agent stderr into a bounded ring buffer instead of inheriting the
 	// daemon's stderr. This keeps daemon logs clean and lets us surface the tail
 	// of agent diagnostics when a session fails.
@@ -362,6 +366,38 @@ func (t *Transport) NewSession(ctx context.Context, cwd string) (string, error) 
 		return "", err
 	}
 	return string(result.SessionId), nil
+}
+
+// LoadSession asks the agent to resume a previously-created ACP session by ID.
+// This only succeeds when the agent advertised the loadSession capability in its
+// InitializeResponse; otherwise the agent returns an error and the caller should
+// fall back to NewSession. The workspace cwd captured at Start is re-supplied
+// (the ACP LoadSessionRequest requires it). Returns the loaded ACP session ID
+// (the same value passed in as acpSessionID) on success.
+func (t *Transport) LoadSession(ctx context.Context, acpSessionID string) (string, error) {
+	_, err := t.conn.LoadSession(ctx, acp.LoadSessionRequest{
+		SessionId:  acp.SessionId(acpSessionID),
+		Cwd:        t.cwd,
+		McpServers: []acp.McpServer{},
+	})
+	if err != nil {
+		return "", err
+	}
+	// LoadSession reuses the supplied session ID; echo it back so callers can
+	// treat NewSession and LoadSession uniformly.
+	return acpSessionID, nil
+}
+
+// DeleteSession asks the agent to delete a previously-created ACP session by ID
+// (the unstable ACP session/delete method). This is a best-effort call: agents
+// that do not support session/delete return a MethodNotFound error, which
+// callers should ignore. The process is not affected — call Close to terminate
+// the agent subprocess.
+func (t *Transport) DeleteSession(ctx context.Context, acpSessionID string) error {
+	_, err := t.conn.UnstableDeleteSession(ctx, acp.UnstableDeleteSessionRequest{
+		SessionId: acp.SessionId(acpSessionID),
+	})
+	return err
 }
 
 func (t *Transport) Prompt(ctx context.Context, sessionID, content string) error {

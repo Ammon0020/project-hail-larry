@@ -232,3 +232,330 @@ func TestInvalidDecision(t *testing.T) {
 		t.Error("expected error for invalid decision")
 	}
 }
+
+// resolveFirstRequest starts a Request in a goroutine, waits for it to register
+// as pending, and responds with the given decision. It returns the decision the
+// Request call returns (or fails the test on timeout). This is the shared helper
+// for seeding the policy map via the blocking path.
+func resolveFirstRequest(t *testing.T, m *Manager, req interfaces.PermissionRequest, decision interfaces.PermissionDecision) interfaces.PermissionDecision {
+	t.Helper()
+
+	resultCh := make(chan interfaces.PermissionDecision, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		d, err := m.Request(context.Background(), req)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- d
+	}()
+
+	// Wait for the request to register as pending.
+	pending := waitForPending(t, m, 1)
+	if err := m.Respond(context.Background(), pending[0].ID, decision); err != nil {
+		t.Fatalf("respond: %v", err)
+	}
+
+	select {
+	case d := <-resultCh:
+		return d
+	case err := <-errCh:
+		t.Fatalf("request error: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for decision")
+	}
+	return ""
+}
+
+// waitForPending polls GetPending until it observes the expected number of
+// pending requests (or times out). The policy auto-resolve path never creates a
+// pending entry, so this is how tests assert that a request actually blocked.
+func waitForPending(t *testing.T, m *Manager, want int) []interfaces.PermissionRequest {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		pending := m.GetPending()
+		if len(pending) == want {
+			return pending
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %d pending request(s), got %d", want, len(pending))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestPolicyAllowAlwaysAutoResolves verifies that an allow_always decision for a
+// (session, tool, target) combination auto-resolves a subsequent identical
+// request without blocking or invoking the callback.
+func TestPolicyAllowAlwaysAutoResolves(t *testing.T) {
+	m := NewManager()
+
+	// Track callback invocations — the second request must NOT trigger it.
+	callbackCount := 0
+	m.SetCallback(func(_ interfaces.PermissionRequest) {
+		callbackCount++
+	})
+
+	req := interfaces.PermissionRequest{
+		SessionID: "sess-policy-always",
+		Tool:      "edit_file",
+		Target:    "main.go",
+		Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowAlways, interfaces.PermissionDeny},
+	}
+
+	// First request blocks and is resolved with allow_always.
+	if d := resolveFirstRequest(t, m, req, interfaces.PermissionAllowAlways); d != interfaces.PermissionAllowAlways {
+		t.Fatalf("first request: expected allow_always, got %s", d)
+	}
+	if callbackCount != 1 {
+		t.Fatalf("expected callback invoked once after first request, got %d", callbackCount)
+	}
+
+	// Second identical request must auto-resolve immediately (no blocking).
+	done := make(chan interfaces.PermissionDecision, 1)
+	go func() {
+		d, err := m.Request(context.Background(), req)
+		if err != nil {
+			t.Errorf("second request error: %v", err)
+			done <- ""
+			return
+		}
+		done <- d
+	}()
+
+	select {
+	case d := <-done:
+		if d != interfaces.PermissionAllowAlways {
+			t.Errorf("expected auto-resolved allow_always, got %s", d)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second request did not auto-resolve (blocked)")
+	}
+
+	if callbackCount != 1 {
+		t.Errorf("expected callback still invoked once (not for auto-resolve), got %d", callbackCount)
+	}
+}
+
+// TestPolicyAllowSessionAutoResolves verifies that an allow_session decision
+// auto-resolves subsequent same-session requests.
+func TestPolicyAllowSessionAutoResolves(t *testing.T) {
+	m := NewManager()
+
+	req := interfaces.PermissionRequest{
+		SessionID: "sess-policy-session",
+		Tool:      "execute",
+		Command:   "go test",
+		Target:    "",
+		Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowSession, interfaces.PermissionDeny},
+	}
+
+	if d := resolveFirstRequest(t, m, req, interfaces.PermissionAllowSession); d != interfaces.PermissionAllowSession {
+		t.Fatalf("first request: expected allow_session, got %s", d)
+	}
+
+	// Second request auto-resolves.
+	done := make(chan interfaces.PermissionDecision, 1)
+	go func() {
+		d, _ := m.Request(context.Background(), req)
+		done <- d
+	}()
+
+	select {
+	case d := <-done:
+		if d != interfaces.PermissionAllowSession {
+			t.Errorf("expected auto-resolved allow_session, got %s", d)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second request did not auto-resolve (blocked)")
+	}
+}
+
+// TestPolicyAllowOnceDoesNotAutoResolve verifies that an allow_once decision does
+// NOT seed the policy map — a second identical request still blocks for user
+// input.
+func TestPolicyAllowOnceDoesNotAutoResolve(t *testing.T) {
+	m := NewManager()
+
+	req := interfaces.PermissionRequest{
+		SessionID: "sess-policy-once",
+		Tool:      "shell",
+		Command:   "ls",
+		Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowOnce, interfaces.PermissionDeny},
+	}
+
+	if d := resolveFirstRequest(t, m, req, interfaces.PermissionAllowOnce); d != interfaces.PermissionAllowOnce {
+		t.Fatalf("first request: expected allow_once, got %s", d)
+	}
+
+	// Second request must block (no auto-resolve). Use a short-timeout context
+	// to verify it does not return immediately.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := m.Request(ctx, req)
+	elapsed := time.Since(start)
+
+	// It should have blocked until the context expired, not returned instantly.
+	if err == nil {
+		t.Fatal("expected second allow_once request to block and time out, but it returned without error")
+	}
+	if elapsed < 80*time.Millisecond {
+		t.Errorf("expected request to block ~100ms before timeout, returned after %v", elapsed)
+	}
+
+	// Clean up the pending request so the goroutine exits.
+	pending := m.GetPending()
+	if len(pending) == 1 {
+		_ = m.Respond(context.Background(), pending[0].ID, interfaces.PermissionDeny)
+	}
+}
+
+// TestPolicySessionScoped verifies that a policy decision in session A does not
+// affect session B. Table-driven over the two durable decision kinds.
+func TestPolicySessionScoped(t *testing.T) {
+	tests := []struct {
+		name     string
+		decision interfaces.PermissionDecision
+	}{
+		{"allow_always", interfaces.PermissionAllowAlways},
+		{"allow_session", interfaces.PermissionAllowSession},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewManager()
+
+			reqA := interfaces.PermissionRequest{
+				SessionID: "sess-A",
+				Tool:      "edit_file",
+				Target:    "a.go",
+				Options:   []interfaces.PermissionDecision{tc.decision, interfaces.PermissionDeny},
+			}
+			reqB := interfaces.PermissionRequest{
+				SessionID: "sess-B",
+				Tool:      "edit_file",
+				Target:    "a.go",
+				Options:   []interfaces.PermissionDecision{tc.decision, interfaces.PermissionDeny},
+			}
+
+			// Seed the policy in session A.
+			resolveFirstRequest(t, m, reqA, tc.decision)
+
+			// Session B's request must still block — it is a different session.
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			start := time.Now()
+			_, err := m.Request(ctx, reqB)
+			elapsed := time.Since(start)
+
+			if err == nil {
+				t.Fatal("expected session B request to block (policy is session-scoped), but it auto-resolved")
+			}
+			if elapsed < 80*time.Millisecond {
+				t.Errorf("expected session B to block ~100ms, returned after %v", elapsed)
+			}
+
+			// Clean up.
+			pending := m.GetPending()
+			if len(pending) == 1 {
+				_ = m.Respond(context.Background(), pending[0].ID, interfaces.PermissionDeny)
+			}
+		})
+	}
+}
+
+// TestClearSessionRemovesPolicies verifies that ClearSession drops the cached
+// policies for a session so subsequent requests block again.
+func TestClearSessionRemovesPolicies(t *testing.T) {
+	m := NewManager()
+
+	req := interfaces.PermissionRequest{
+		SessionID: "sess-clear",
+		Tool:      "edit_file",
+		Target:    "main.go",
+		Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowAlways, interfaces.PermissionDeny},
+	}
+
+	// Seed the policy.
+	resolveFirstRequest(t, m, req, interfaces.PermissionAllowAlways)
+
+	// Confirm it auto-resolves.
+	done := make(chan interfaces.PermissionDecision, 1)
+	go func() {
+		d, _ := m.Request(context.Background(), req)
+		done <- d
+	}()
+	select {
+	case d := <-done:
+		if d != interfaces.PermissionAllowAlways {
+			t.Fatalf("expected auto-resolve before clear, got %s", d)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected auto-resolve before clear")
+	}
+
+	// Clear the session's policies.
+	m.ClearSession("sess-clear")
+
+	// Now the request must block again.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := m.Request(ctx, req)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected request to block after ClearSession, but it auto-resolved")
+	}
+	if elapsed < 80*time.Millisecond {
+		t.Errorf("expected request to block ~100ms after clear, returned after %v", elapsed)
+	}
+
+	// Clean up.
+	pending := m.GetPending()
+	if len(pending) == 1 {
+		_ = m.Respond(context.Background(), pending[0].ID, interfaces.PermissionDeny)
+	}
+}
+
+// TestAutoResolvedDecisionRecordedInAuditLog verifies that auto-resolved
+// decisions (served from the policy map) still appear in the audit log.
+func TestAutoResolvedDecisionRecordedInAuditLog(t *testing.T) {
+	m := NewManager()
+
+	req := interfaces.PermissionRequest{
+		SessionID: "sess-audit",
+		Tool:      "edit_file",
+		Target:    "config.json",
+		Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowAlways, interfaces.PermissionDeny},
+	}
+
+	// Seed via the blocking path (records one audit entry).
+	resolveFirstRequest(t, m, req, interfaces.PermissionAllowAlways)
+
+	before := len(m.GetAuditLog())
+
+	// Auto-resolve a second time — this must also record an audit entry.
+	if _, err := m.Request(context.Background(), req); err != nil {
+		t.Fatalf("auto-resolved request error: %v", err)
+	}
+
+	log := m.GetAuditLog()
+	if len(log) != before+1 {
+		t.Fatalf("expected audit log to grow by 1 for auto-resolved decision, got %d entries (was %d)", len(log), before)
+	}
+
+	entry := log[len(log)-1]
+	if entry.Decision != string(interfaces.PermissionAllowAlways) {
+		t.Errorf("expected last audit decision allow_always, got %s", entry.Decision)
+	}
+	if entry.SessionID != "sess-audit" {
+		t.Errorf("expected last audit sessionID 'sess-audit', got %s", entry.SessionID)
+	}
+	if entry.Tool != "edit_file" {
+		t.Errorf("expected last audit tool 'edit_file', got %s", entry.Tool)
+	}
+}

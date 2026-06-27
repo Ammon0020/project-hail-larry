@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/config"
@@ -30,10 +31,13 @@ const (
 
 // Config holds daemon configuration loaded from ~/.local-agent/.
 type Config struct {
-	Port    int    `json:"port"`
-	Host    string `json:"host"`
-	DataDir string `json:"dataDir"`
-	DBPath  string `json:"dbPath"`
+	Port              int    `json:"port"`
+	Host              string `json:"host"`
+	DataDir           string `json:"dataDir"`
+	DBPath            string `json:"dbPath"`
+	TLSEnabled        bool   `json:"tlsEnabled"`
+	TLSCertDir        string `json:"tlsCertDir"`
+	PairingTTLSeconds int    `json:"pairingTtlSeconds"`
 }
 
 // DefaultConfig returns the default daemon configuration.
@@ -45,10 +49,12 @@ func DefaultConfig() *Config {
 	dataDir := filepath.Join(homeDir, ".local-agent")
 
 	return &Config{
-		Port:    7337,
-		Host:    "0.0.0.0",
-		DataDir: dataDir,
-		DBPath:  filepath.Join(dataDir, "local-agent.db"),
+		Port:              7337,
+		Host:              "0.0.0.0",
+		DataDir:           dataDir,
+		DBPath:            filepath.Join(dataDir, "local-agent.db"),
+		TLSCertDir:        filepath.Join(dataDir, "tls"),
+		PairingTTLSeconds: 300,
 	}
 }
 
@@ -119,6 +125,9 @@ func New(cfg *Config) (*Daemon, error) {
 
 	// Initialize all managers.
 	pairingMgr := pairing.NewManager(cfg.DataDir)
+	if cfg.PairingTTLSeconds > 0 {
+		pairingMgr.SetTTL(time.Duration(cfg.PairingTTLSeconds) * time.Second)
+	}
 	workspaceMgr := workspace.NewManager()
 
 	// Load persisted workspaces from config.
@@ -135,6 +144,9 @@ func New(cfg *Config) (*Daemon, error) {
 
 	permissionMgr := permissions.NewManager()
 	acpClient := acp.NewClient(workspaceMgr, permissionMgr)
+	// Inject workspace context (file tree, git status, AGENTS.md) into the
+	// first prompt of each session so agents don't shell out to discover files.
+	acpClient.SetPipeline(acp.NewPromptPipeline(acp.NewFirstPromptContextMiddleware(workspaceMgr)))
 	// Persist conversation metadata so chats are remembered across restarts.
 	acpClient.SetStorePath(filepath.Join(cfg.DataDir, "conversations.json"))
 	if err := acpClient.LoadConversations(); err != nil {
@@ -212,13 +224,29 @@ func (d *Daemon) Start(ctx context.Context) error {
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// If TLS is enabled, generate (or reuse) a self-signed certificate and
+	// tell the server to serve over HTTPS.
+	scheme := "http"
+	if d.config.TLSEnabled {
+		certDir := d.config.TLSCertDir
+		if certDir == "" {
+			certDir = filepath.Join(d.config.DataDir, "tls")
+		}
+		certPath, keyPath, err := server.EnsureSelfSignedCert(certDir, d.config.Host)
+		if err != nil {
+			return fmt.Errorf("ensure tls cert: %w", err)
+		}
+		d.server.SetTLS(certPath, keyPath)
+		scheme = "https"
+	}
+
 	// Start HTTP server in a goroutine.
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- d.server.ListenAndServe(addr)
 	}()
 
-	log.Printf("Local Agent Interface daemon started on http://%s", addr)
+	log.Printf("Local Agent Interface daemon started on %s://%s", scheme, addr)
 	log.Printf("Data directory: %s", d.config.DataDir)
 
 	select {
@@ -232,8 +260,16 @@ func (d *Daemon) Start(ctx context.Context) error {
 	}
 }
 
-// cleanup closes resources during shutdown.
+// cleanup closes resources during shutdown. It gracefully closes all ACP
+// sessions (best-effort session/delete + process termination) before tearing
+// down the event store. The original shutdown context may already be cancelled
+// (SIGINT/SIGTERM), so a fresh background context with a short timeout is used.
 func (d *Daemon) cleanup() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if d.acpClient != nil {
+		_ = d.acpClient.CloseAllSessions(ctx)
+	}
 	if d.eventStore != nil {
 		_ = d.eventStore.Close()
 	}

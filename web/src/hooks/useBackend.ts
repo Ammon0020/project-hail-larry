@@ -3,6 +3,16 @@ import { useEffect, useRef, useState } from 'react'
 import { api, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential, type PendingPermission } from '@/lib/api'
 
 /**
+ * Returns true when an error message indicates the targeted session no longer
+ * exists in the backend (404 "session not found: sess-…"). Used to recover
+ * from a stale activeSessionId persisted in localStorage.
+ */
+function isSessionNotFound(message: string): boolean {
+  const lower = message.toLowerCase()
+  return lower.includes('session not found') || lower.includes('not found')
+}
+
+/**
  * useBackend — real backend hook that connects to the Go daemon.
  *
  * Manages:
@@ -82,6 +92,8 @@ export function useBackend() {
   // ---- Workspace actions ----
   async function selectWorkspace(ws: WorkspaceInfo) {
     setActiveWorkspace(ws)
+    // Persist the active workspace by id so it survives a reload.
+    localStorage.setItem('lai:activeWorkspace', ws.id)
     try {
       setFileTree(await api.getFileTree(ws.id))
     } catch {
@@ -102,7 +114,11 @@ export function useBackend() {
       const ws = await api.listWorkspaces()
       setWorkspaces(ws)
       if (ws.length > 0 && !activeWorkspace) {
-        selectWorkspace(ws[0])
+        // Restore the previously active workspace from localStorage if it
+        // still exists in the loaded list; otherwise fall back to the first.
+        const storedId = localStorage.getItem('lai:activeWorkspace')
+        const match = storedId ? ws.find((w) => w.id === storedId) : undefined
+        selectWorkspace(match ?? ws[0])
       }
     } catch {
       // Backend not ready yet.
@@ -204,7 +220,23 @@ export function useBackend() {
   }
 
   async function sendPrompt(sessionId: string, content: string) {
-    await api.sendPrompt(sessionId, content)
+    try {
+      await api.sendPrompt(sessionId, content)
+    } catch (err) {
+      // A stale activeSessionId (e.g. after a daemon restart that wiped
+      // conversations.json, or a deleted session) makes the backend return
+      // 404 "session not found: sess-…". Recover gracefully: clear the
+      // persisted id so the UI resets to the new-chat state, and surface a
+      // friendly message instead of the raw error string.
+      const msg = err instanceof Error ? err.message : String(err)
+      if (isSessionNotFound(msg)) {
+        localStorage.removeItem('activeSessionId')
+        throw new Error('This conversation is no longer available. Start a new chat.', {
+          cause: err,
+        })
+      }
+      throw err
+    }
   }
 
   async function cancelSession(sessionId: string) {

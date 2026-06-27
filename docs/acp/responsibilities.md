@@ -20,14 +20,14 @@ Verified against the official ACP spec via [agentclientprotocol.com](https://age
 
 - **Agent subprocess lifecycle** — spawns the agent via stdio, manages the process
 - **Initialize handshake** — advertises `ClientCapabilities` (`fs.readTextFile`, `fs.writeTextFile`, `terminal: true`)
-- **Session management** — `session/new`, `session/cancel`, `session/list` (our layer); ⚠️ _Planned:_ `session/load` (ACP `LoadSession`), `session/delete` (ACP `DeleteSession`) — currently sessions are recreated fresh on restart and `CloseSession` kills the process without calling ACP delete
+- **Session management** — `session/new`, `session/cancel`, `session/list` (our layer); ✅ `session/load` (ACP `LoadSession`) attempted on restart when the agent advertises `loadSession` and a persisted `acpSessionId` exists — falls back to `session/new` on any failure (capability unsupported, session gone); ✅ `session/delete` (ACP `UnstableDeleteSession`, best-effort) called in `CloseSession` before killing the process and via `CloseAllSessions` on daemon shutdown. `ACPSessionID` is persisted in `conversations.json` so resume works across restarts.
 - **Prompt dispatch** — sends `session/prompt` when the user submits a message
 - **Update forwarding** — handles all `session/update` notifications, forwards to web UI via WebSocket
 - **File reads** — implements `ReadTextFile` against the workspace filesystem
 - **File writes** — implements `WriteTextFile` against the workspace filesystem
 - **Terminal execution** — implements `CreateTerminal`, `TerminalOutput`, `WaitForTerminalExit`, `KillTerminal`, `ReleaseTerminal` via `internal/shell`
 - **Permission UI** — implements `RequestPermission` by emitting a prompt event to the web UI, waiting for user decision from any paired device, responding to the agent
-- **Permission policy** — ⚠️ _Planned:_ track `allow_always` / `reject_always` to auto-resolve future requests; currently every permission request blocks for user input (audit log records decisions but no policy enforcement)
+- **Permission policy** — ✅ Implemented: `allow_always` / `allow_session` decisions are cached in a session-scoped policy map keyed by `(sessionID, tool, target)` and auto-resolve subsequent identical requests without re-prompting the user; `allow_once` still prompts every time. Policies are dropped via `ClearSession` when a session closes. Reject-always auto-deny is not implemented (the codebase has no `reject_always` constant; documented in `docs/plans/execution-plan.md` Work Stream 2).
 
 ## Use Case: User Requests a File Write
 

@@ -40,8 +40,11 @@ type Deps struct {
 
 // Server is the main HTTP server for the Local Agent Interface.
 type Server struct {
-	mux  *http.ServeMux
-	deps *Deps
+	mux        *http.ServeMux
+	deps       *Deps
+	tlsEnabled bool
+	certPath   string
+	keyPath    string
 }
 
 // New creates a new Server with the given dependencies.
@@ -178,8 +181,13 @@ func (s *Server) serveFrontend() {
 }
 
 // ListenAndServe starts the HTTP server on the given address.
+// If TLS is enabled (via SetTLS), it serves over HTTPS using the configured
+// certificate and key paths.
 func (s *Server) ListenAndServe(addr string) error {
-	log.Printf("Server listening on %s", addr)
+	if s.tlsEnabled {
+		return s.ListenAndServeTLS(addr, s.certPath, s.keyPath)
+	}
+	log.Printf("Server listening on http://%s", addr)
 
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -187,6 +195,28 @@ func (s *Server) ListenAndServe(addr string) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return httpServer.ListenAndServe()
+}
+
+// ListenAndServeTLS starts the HTTPS server on the given address using the
+// provided certificate and key paths.
+func (s *Server) ListenAndServeTLS(addr, certPath, keyPath string) error {
+	log.Printf("Server listening on https://%s", addr)
+
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           s.mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	return httpServer.ListenAndServeTLS(certPath, keyPath)
+}
+
+// SetTLS enables TLS for the server. When enabled, ListenAndServe will serve
+// over HTTPS using the provided certificate and key paths. The certificate
+// and key paths should be set before calling ListenAndServe.
+func (s *Server) SetTLS(certPath, keyPath string) {
+	s.tlsEnabled = true
+	s.certPath = certPath
+	s.keyPath = keyPath
 }
 
 // Handler returns the http.Handler for testing.

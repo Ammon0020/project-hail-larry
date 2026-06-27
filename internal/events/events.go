@@ -108,7 +108,7 @@ func (s *Store) Append(ctx context.Context, e interfaces.Event) (interfaces.Even
 // (last event ID seen by the client) for reconnection sync.
 func (s *Store) Query(ctx context.Context, sessionID string, afterID int64, limit int) ([]interfaces.Event, error) {
 	if limit <= 0 {
-		limit = 100
+		limit = 1000
 	}
 
 	rows, err := s.db.QueryContext(ctx,
@@ -126,7 +126,7 @@ func (s *Store) Query(ctx context.Context, sessionID string, afterID int64, limi
 // QueryAll retrieves events across all sessions, for initial load.
 func (s *Store) QueryAll(ctx context.Context, afterID int64, limit int) ([]interfaces.Event, error) {
 	if limit <= 0 {
-		limit = 100
+		limit = 1000
 	}
 
 	rows, err := s.db.QueryContext(ctx,

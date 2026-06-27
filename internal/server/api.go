@@ -218,12 +218,15 @@ func (s *Server) handleGetSessionEvents(w http.ResponseWriter, r *http.Request) 
 }
 
 // parseEventParams extracts the after cursor and limit from query params,
-// applying a default limit of 100 when unset or zero.
+// applying a default limit of 1000 when unset or zero. The higher default
+// avoids truncating long streaming responses (250+ events are common with
+// mistral-vibe). Callers may still request fewer events via ?limit=N, and
+// there is no upper cap so arbitrarily large responses can be fetched.
 func parseEventParams(r *http.Request) (afterID int64, limit int) {
 	afterID, _ = strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit == 0 {
-		limit = 100
+		limit = 1000
 	}
 	return afterID, limit
 }

@@ -26,17 +26,30 @@ export default function App() {
     return !!localStorage.getItem('deviceCredential')
   })
 
-  // Panel state
-  const [leftPanel, setLeftPanel] = useState<LeftPanel>('files')
-  const [mobileView, setMobileView] = useState<MobileView>('editor')
+  // Panel state — restored from localStorage so the layout survives a reload.
+  const [leftPanel, setLeftPanel] = useState<LeftPanel>(
+    () => (localStorage.getItem('lai:leftPanel') as LeftPanel) || 'files',
+  )
+  const [mobileView, setMobileView] = useState<MobileView>(
+    () => (localStorage.getItem('lai:mobileView') as MobileView) || 'editor',
+  )
   const [isDesktop, setIsDesktop] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true,
   )
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
 
-  // Tab state
-  const [openTabs, setOpenTabs] = useState<Tab[]>([])
-  const [activeTabId, setActiveTabId] = useState<string | null>(null)
+  // Tab state — restored from localStorage so open files survive a reload.
+  const [openTabs, setOpenTabs] = useState<Tab[]>(() => {
+    try {
+      const stored = localStorage.getItem('lai:openTabs')
+      return stored ? (JSON.parse(stored) as Tab[]) : []
+    } catch {
+      return []
+    }
+  })
+  const [activeTabId, setActiveTabId] = useState<string | null>(
+    () => localStorage.getItem('lai:activeTabId') || null,
+  )
 
   // Session state — restored from localStorage so the active conversation
   // survives a page reload (UI Spec §6.2).
@@ -59,6 +72,49 @@ export default function App() {
     if (activeSessionId) localStorage.setItem('activeSessionId', activeSessionId)
     else localStorage.removeItem('activeSessionId')
   }, [activeSessionId])
+
+  // Validate the persisted activeSessionId against the backend's session list.
+  // After a daemon restart the session may no longer exist (e.g.
+  // conversations.json was wiped or the session was deleted). If the loaded
+  // list is non-empty and does not contain the active id, clear it so the UI
+  // shows the new-chat state instead of sending prompts to a dead session.
+  // Uses the "adjust state during render" pattern from the React docs instead
+  // of setState-in-effect to avoid cascading renders. The empty-list case is
+  // handled defensively by sendPrompt's 404 path in useBackend.
+  const [prevSessions, setPrevSessions] = useState(backend.sessions)
+  if (backend.sessions !== prevSessions) {
+    setPrevSessions(backend.sessions)
+    if (
+      activeSessionId &&
+      backend.sessions.length > 0 &&
+      !backend.sessions.some((s) => s.id === activeSessionId)
+    ) {
+      setActiveSessionId(null)
+    }
+  }
+
+  /** Persist open tabs, active tab, panel, and mobile view so the layout
+   *  survives a page reload (UI Spec §6.2 — UI Persistence). */
+  useEffect(() => {
+    try {
+      localStorage.setItem('lai:openTabs', JSON.stringify(openTabs))
+    } catch {
+      // Ignore serialization errors (e.g. quota exceeded).
+    }
+  }, [openTabs])
+
+  useEffect(() => {
+    if (activeTabId) localStorage.setItem('lai:activeTabId', activeTabId)
+    else localStorage.removeItem('lai:activeTabId')
+  }, [activeTabId])
+
+  useEffect(() => {
+    localStorage.setItem('lai:leftPanel', leftPanel)
+  }, [leftPanel])
+
+  useEffect(() => {
+    localStorage.setItem('lai:mobileView', mobileView)
+  }, [mobileView])
 
   // ---- Lock screen for unpaired devices ----
   if (!paired) {

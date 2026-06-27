@@ -65,19 +65,31 @@ type Manager struct {
 	sessions map[string]*PairingSession
 	devices  map[string]*DeviceCredential
 	dataDir  string
+	ttl      time.Duration
 }
 
 // NewManager creates a new pairing Manager with the given data directory.
+// The default pairing session TTL is 5 minutes; override it with SetTTL.
 func NewManager(dataDir string) *Manager {
 	return &Manager{
 		sessions: make(map[string]*PairingSession),
 		devices:  make(map[string]*DeviceCredential),
 		dataDir:  dataDir,
+		ttl:      5 * time.Minute,
 	}
 }
 
+// SetTTL sets the pairing session time-to-live. This should be called before
+// any sessions are created.
+func (m *Manager) SetTTL(ttl time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ttl = ttl
+}
+
 // CreateSession generates a new pairing session with a QR code and mnemonic.
-// The session expires after 5 minutes and can only be used once.
+// The session expires after the configured TTL (default 5 minutes) and can
+// only be used once.
 func (m *Manager) CreateSession(host string, port int) (*PairingSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -105,6 +117,10 @@ func (m *Manager) CreateSession(host string, port int) (*PairingSession, error) 
 		return nil, fmt.Errorf("generate qr code: %w", err)
 	}
 
+	ttl := m.ttl
+	if ttl == 0 {
+		ttl = 5 * time.Minute
+	}
 	session := &PairingSession{
 		ID:        sessionID,
 		Token:     token,
@@ -112,7 +128,7 @@ func (m *Manager) CreateSession(host string, port int) (*PairingSession, error) 
 		URL:       url,
 		QRPath:    qrPath,
 		CreatedAt: time.Now().UTC(),
-		ExpiresAt: time.Now().UTC().Add(5 * time.Minute),
+		ExpiresAt: time.Now().UTC().Add(ttl),
 		Used:      false,
 	}
 

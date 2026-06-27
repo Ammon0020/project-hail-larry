@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/adama/local-agent/internal/interfaces"
+	"github.com/coder/acp-go-sdk"
 )
 
 // Client implements interfaces.ACPClient.
@@ -31,6 +32,7 @@ type Client struct {
 	workspaceMgr interfaces.WorkspaceManager
 	permMgr      interfaces.PermissionManager
 	storePath    string // file path for persisted conversation metadata
+	pipeline     *PromptPipeline
 }
 
 // AgentInfo describes a registered agent harness.
@@ -60,8 +62,21 @@ type Session struct {
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
-	transport    *Transport
-	acpSessionID string
+	transport    transportLike
+	ACPSessionID string `json:"acpSessionId,omitempty"`
+}
+
+// transportLike is the subset of *Transport methods the Client invokes after a
+// transport has been started. Defining it as an interface lets tests inject a
+// mock transport without spawning a real agent process. *Transport satisfies it.
+type transportLike interface {
+	NewSession(ctx context.Context, cwd string) (string, error)
+	LoadSession(ctx context.Context, acpSessionID string) (string, error)
+	DeleteSession(ctx context.Context, acpSessionID string) error
+	Prompt(ctx context.Context, sessionID, content string) error
+	Cancel(ctx context.Context, sessionID string) error
+	Close() error
+	StderrTail() string
 }
 
 // defaultConversationName is the placeholder name used until the first prompt
@@ -83,6 +98,16 @@ func (c *Client) SetCallbacks(cb interfaces.ACPCallbacks) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.callbacks = cb
+}
+
+// SetPipeline installs a prompt middleware pipeline. When set, SendPrompt runs
+// the pipeline before each prompt and prepends any injected context to the
+// prompt content sent to the agent (and to the PromptSubmitted event). When
+// nil, SendPrompt behaves as before (backward compatible).
+func (c *Client) SetPipeline(p *PromptPipeline) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pipeline = p
 }
 
 // RegisterAgent adds an agent to the registry.
@@ -182,6 +207,26 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 	}, nil
 }
 
+// resolveWorkspacePath returns the on-disk path for a workspace ID by looking
+// it up via the workspace manager. It returns the workspaceID unchanged when
+// the manager is nil or the workspace is not found (matching the fallback
+// behavior of startTransportLocked).
+func (c *Client) resolveWorkspacePath(ctx context.Context, workspaceID string) string {
+	if c.workspaceMgr == nil {
+		return workspaceID
+	}
+	wlist, err := c.workspaceMgr.List(ctx)
+	if err != nil {
+		return workspaceID
+	}
+	for _, w := range wlist {
+		if w.ID == workspaceID {
+			return w.Path
+		}
+	}
+	return workspaceID
+}
+
 // startTransportLocked spawns the agent process for a session and performs the
 // ACP handshake (Initialize + NewSession). The caller must hold c.mu. It is used
 // both on initial creation and to lazily (re)start a session loaded from disk or
@@ -219,19 +264,44 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 	if err := transport.Start(context.Background(), agent.Command, agent.Args, workspacePath, impl); err != nil {
 		return fmt.Errorf("start transport: %w", err)
 	}
-	if _, err := transport.Initialize(ctx); err != nil {
+	initResp, err := transport.Initialize(ctx)
+	if err != nil {
 		_ = transport.Close()
 		return fmt.Errorf("initialize transport: %w", err)
 	}
-	acpSessionID, err := transport.NewSession(ctx, workspacePath)
+
+	// Decide whether to resume a persisted ACP session via session/load or
+	// create a fresh one. LoadSession is only attempted when the agent
+	// advertised the loadSession capability AND we have a persisted ACP session
+	// ID. On any failure (session gone, capability unsupported, transport error)
+	// we fall back to NewSession and overwrite the persisted ID.
+	acpSessionID, err := c.resolveACPSession(ctx, transport, initResp, session, workspacePath)
 	if err != nil {
 		_ = transport.Close()
 		return fmt.Errorf("new acp session: %w", err)
 	}
 
 	session.transport = transport
-	session.acpSessionID = acpSessionID
+	session.ACPSessionID = acpSessionID
 	return nil
+}
+
+// resolveACPSession decides whether to resume a persisted ACP session via
+// session/load or create a fresh one with session/new. It returns the ACP
+// session ID to use (and mutates nothing — the caller assigns it). When
+// session.ACPSessionID is non-empty and the agent advertised loadSession, it
+// tries LoadSession first; on success the prior session is reused. On any
+// failure it falls back to NewSession. The caller must hold c.mu (it reads
+// session fields); the transport methods are called under the lock to keep the
+// load/new decision atomic with the assignment in startTransportLocked.
+func (c *Client) resolveACPSession(ctx context.Context, tr transportLike, initResp acp.InitializeResponse, session *Session, workspacePath string) (string, error) {
+	if session.ACPSessionID != "" && initResp.AgentCapabilities.LoadSession {
+		if loadedID, loadErr := tr.LoadSession(ctx, session.ACPSessionID); loadErr == nil {
+			return loadedID, nil
+		}
+		// Fall through to NewSession on any load error.
+	}
+	return tr.NewSession(ctx, workspacePath)
 }
 
 // SendPrompt sends a user prompt to the agent and streams responses.
@@ -262,7 +332,26 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) erro
 	}
 	c.persistLocked()
 	callbacks := c.callbacks
+	pipeline := c.pipeline
 	c.mu.Unlock()
+
+	// Run the pre-prompt middleware pipeline. If it injects context, prepend it
+	// to the content used for both the PromptSubmitted event and the transport
+	// call so the UI and the agent see the same prompt. The pipeline tracks the
+	// per-session prompt counter internally (bumped on every RunBeforePrompt).
+	finalContent := content
+	if pipeline != nil {
+		workspacePath := c.resolveWorkspacePath(ctx, session.Workspace)
+		pc := &PromptContext{
+			SessionID:     sessionID,
+			WorkspaceID:   session.Workspace,
+			WorkspacePath: workspacePath,
+			UserPrompt:    content,
+		}
+		if action, injected := pipeline.RunBeforePrompt(ctx, pc); action == ActionInject && injected != "" {
+			finalContent = injected + "\n\n---\n\n" + content
+		}
+	}
 
 	if callbacks != nil {
 		callbacks.OnEvent(interfaces.Event{
@@ -270,7 +359,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) erro
 			SessionID: sessionID,
 			Timestamp: time.Now().UTC(),
 			Role:      "user",
-			Content:   content,
+			Content:   finalContent,
 		})
 	}
 
@@ -285,7 +374,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) erro
 			})
 		}
 
-		if err := session.transport.Prompt(promptCtx, session.acpSessionID, content); err != nil {
+		if err := session.transport.Prompt(promptCtx, session.ACPSessionID, finalContent); err != nil {
 			c.mu.Lock()
 			session.Status = "failed"
 			// The transport is likely dead; drop it so the next prompt restarts.
@@ -294,7 +383,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) erro
 				tail = session.transport.StderrTail()
 			}
 			session.transport = nil
-			session.acpSessionID = ""
+			session.ACPSessionID = ""
 			c.mu.Unlock()
 
 			summary := err.Error()
@@ -352,7 +441,7 @@ func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
 	// Send an ACP cancel notification to stop the current turn but keep the
 	// agent process alive so the conversation can continue.
 	if session.transport != nil {
-		_ = session.transport.Cancel(ctx, session.acpSessionID)
+		_ = session.transport.Cancel(ctx, session.ACPSessionID)
 	}
 	c.persistLocked()
 
@@ -369,8 +458,10 @@ func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
 }
 
 // CloseSession terminates the live agent process for a session and removes the
-// conversation record. Event history is retained in the event store.
-func (c *Client) CloseSession(_ context.Context, sessionID string) error {
+// conversation record. Event history is retained in the event store. Before
+// killing the process it makes a best-effort ACP session/delete call (ignored
+// on error — the agent may not support session/delete or may already be dead).
+func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -380,13 +471,49 @@ func (c *Client) CloseSession(_ context.Context, sessionID string) error {
 	}
 
 	if session.transport != nil {
+		// Best-effort ACP session/delete before killing the process. Errors are
+		// ignored: the agent may not advertise session/delete (unstable) or the
+		// subprocess may already have exited.
+		if session.ACPSessionID != "" {
+			_ = session.transport.DeleteSession(ctx, session.ACPSessionID)
+		}
 		_ = session.transport.Close()
+	}
+
+	// Drop cached permission policies for this session so allow_always /
+	// allow_session decisions do not leak into future sessions reusing the ID.
+	if c.permMgr != nil {
+		c.permMgr.ClearSession(session.ID)
 	}
 
 	delete(c.sessions, sessionID)
 	c.persistLocked()
 
 	return nil
+}
+
+// CloseAllSessions gracefully closes every active session, calling ACP
+// session/delete (best-effort) and terminating each agent process via
+// CloseSession. It is intended for daemon shutdown so SIGINT/SIGTERM triggers
+// graceful close instead of killing processes outright. A snapshot of session
+// IDs is taken under the lock; each CloseSession re-acquires the lock. The
+// last non-nil error is returned (individual session failures do not abort the
+// sweep).
+func (c *Client) CloseAllSessions(ctx context.Context) error {
+	c.mu.Lock()
+	ids := make([]string, 0, len(c.sessions))
+	for id := range c.sessions {
+		ids = append(ids, id)
+	}
+	c.mu.Unlock()
+
+	var lastErr error
+	for _, id := range ids {
+		if err := c.CloseSession(ctx, id); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
 }
 
 // RenameSession changes a conversation's display name.
@@ -435,7 +562,7 @@ func (c *Client) RebindSession(_ context.Context, sessionID, agentID, modelID st
 	if session.transport != nil {
 		_ = session.transport.Close()
 		session.transport = nil
-		session.acpSessionID = ""
+		session.ACPSessionID = ""
 	}
 
 	session.AgentID = agentID

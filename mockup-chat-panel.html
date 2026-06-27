@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat Panel Mockup — ACP States</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  /* Theme tokens — match mockup12.html exactly */
+  :root {
+    --color-background: #0f111a;
+    --color-panel: #161925;
+    --color-activity-bar: #0d0e16;
+    --color-editor: #1e1e1e;
+    --color-status-bar: #007acc;
+    --color-tool-call: #12141d;
+  }
+  body {
+    background: var(--color-background);
+    color: #e5e7eb;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  /* Chat panel frame — mirrors ChatPanel.tsx aside (lg:w-96, border-l) */
+  .chat-panel {
+    width: 24rem;
+    background: var(--color-background);
+    border-left: 1px solid #1f2937;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    flex-shrink: 0;
+  }
+  @media (max-width: 1023px) {
+    .chat-panel { width: 100%; }
+  }
+  /* Header */
+  .chat-header { border-bottom: 1px solid #1f2937; background: var(--color-panel); flex-shrink: 0; }
+  /* Selectors — match ChatPanel.tsx appearance-none dropdowns */
+  .sel {
+    appearance: none;
+    background-color: var(--color-background);
+    border: 1px solid #374151;
+    color: #e5e7eb;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 6px 28px 6px 10px;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+  }
+  .sel-model {
+    border-color: rgba(59,130,246,0.5);
+    color: #60a5fa;
+    font-weight: 500;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  }
+  .sel:disabled { opacity: 0.6; cursor: not-allowed; }
+  /* Conversation name input */
+  .conv-name {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #e5e7eb;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    outline: none;
+    flex: 1;
+    min-width: 0;
+  }
+  .conv-name:hover { border-color: #374151; }
+  .conv-name:focus { border-color: #3b82f6; background: var(--color-background); }
+  /* Badge */
+  .badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+  .badge-agent { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+  .badge-rebind { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+  /* Icon button */
+  .icon-btn {
+    padding: 6px;
+    border-radius: 6px;
+    color: #9ca3af;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .icon-btn:hover { background: #1f2937; color: #fff; }
+  .icon-btn-danger:hover { background: rgba(239,68,68,0.15); color: #f87171; }
+  /* Lock toggle */
+  .lock-btn {
+    padding: 4px;
+    border-radius: 6px;
+    border: 1px solid #374151;
+    background: var(--color-background);
+    cursor: pointer;
+    color: #9ca3af;
+    display: inline-flex;
+    align-items: center;
+  }
+  .lock-btn.locked { border-color: rgba(59,130,246,0.5); color: #60a5fa; background: rgba(59,130,246,0.1); }
+  /* Messages area */
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  @media (min-width: 1024px) { .messages { padding: 16px; gap: 16px; } }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 2px; }
+  /* Avatar */
+  .av {
+    width: 28px; height: 28px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .av-user { background: #1f2937; border: 1px solid #374151; font-size: 11px; font-weight: 500; }
+  .av-agent { background: rgba(37,99,235,0.2); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+  .av-error { background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+  .av-perm { background: rgba(59,130,246,0.2); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+  .msg-row { display: flex; gap: 12px; }
+  .msg-body { flex: 1; padding-top: 2px; }
+  /* User message — right-aligned distinct bubble */
+  .msg-user {
+    display: flex; gap: 12px; flex-direction: row-reverse;
+  }
+  .msg-user .msg-body { text-align: right; }
+  .msg-user .bubble {
+    display: inline-block;
+    background: rgba(59,130,246,0.12);
+    border: 1px solid rgba(59,130,246,0.25);
+    border-radius: 12px 12px 2px 12px;
+    padding: 8px 12px;
+    text-align: left;
+    max-width: 85%;
+  }
+  /* Streaming cursor */
+  .cursor {
+    display: inline-block;
+    width: 6px; height: 16px;
+    margin-left: 2px;
+    background: #60a5fa;
+    animation: blink 1s steps(2) infinite;
+    vertical-align: text-bottom;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  /* Thought — collapsed details */
+  details > summary { list-style: none; cursor: pointer; }
+  details > summary::-webkit-details-marker { display: none; }
+  .thought-summary { font-size: 12px; color: #6b7280; font-style: italic; }
+  .thought-body {
+    font-size: 12px; color: #6b7280; margin-top: 4px; padding-left: 4px;
+    border-left: 1px solid #1f2937; white-space: pre-wrap;
+  }
+  /* Tool card */
+  .tool-card {
+    border-left: 2px solid #1f2937;
+    padding-left: 12px;
+    margin-top: 8px;
+  }
+  .tool-card.open { border-left-color: rgba(59,130,246,0.5); }
+  .tool-summary {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-family: ui-monospace, monospace; color: #9ca3af;
+    width: max-content; max-width: 100%; user-select: none;
+  }
+  .tool-summary:hover { color: #d1d5db; }
+  .chev { transition: transform 0.15s; }
+  details[open] .chev { transform: rotate(90deg); }
+  .tool-pre {
+    margin-top: 8px; background: var(--color-tool-call); border: 1px solid rgba(31,41,55,0.8);
+    border-radius: 6px; padding: 8px; font-size: 12px; white-space: pre-wrap;
+    color: #9ca3af; font-family: ui-monospace, monospace; overflow-x: auto;
+  }
+  .status-running { color: #6b7280; }
+  .status-done { color: #6b7280; }
+  .status-failed { color: #f87171; }
+  /* Diff block */
+  .diff { margin-top: 8px; background: var(--color-tool-call); border: 1px solid rgba(31,41,55,0.8); border-radius: 6px; overflow: hidden; font-family: ui-monospace, monospace; font-size: 12px; }
+  .diff-hdr { padding: 6px 10px; background: rgba(17,24,39,0.8); color: #9ca3af; font-size: 11px; border-bottom: 1px solid #1f2937; }
+  .diff-line { padding: 1px 10px; white-space: pre; }
+  .diff-add { background: rgba(34,197,94,0.12); color: #4ade80; }
+  .diff-del { background: rgba(239,68,68,0.12); color: #f87171; }
+  .diff-ctx { color: #9ca3af; }
+  /* Plan checklist */
+  .plan-card {
+    background: var(--color-tool-call); border: 1px solid #1f2937; border-radius: 8px;
+    padding: 10px; font-size: 12px;
+  }
+  .plan-hdr { color: #9ca3af; font-weight: 600; display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .plan-item { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; }
+  .plan-check {
+    width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #4b5563;
+    flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center;
+  }
+  .plan-check.done { background: #22c55e; border-color: #22c55e; }
+  .plan-check.active { border-color: #3b82f6; background: rgba(59,130,246,0.2); }
+  .plan-check.active::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #60a5fa; animation: blink 1s infinite; }
+  .plan-text { color: #d1d5db; }
+  .plan-text.done { color: #6b7280; text-decoration: line-through; }
+  .plan-text.active { color: #60a5fa; }
+  /* Shell card */
+  .shell-card {
+    background: rgba(0,0,0,0.6); border: 1px solid #1f2937; border-radius: 8px;
+    overflow: hidden; font-family: ui-monospace, monospace; font-size: 12px;
+  }
+  .shell-hdr { padding: 6px 10px; background: rgba(17,24,39,0.8); color: #9ca3af; display: flex; justify-content: space-between; align-items: center; }
+  .shell-out { padding: 10px; color: #d1d5db; white-space: pre-wrap; }
+  .exit-0 { color: #4ade80; }
+  .exit-err { color: #f87171; }
+  /* Permission card */
+  .perm-card {
+    background: rgba(30,58,138,0.1); border: 1px solid rgba(59,130,246,0.3);
+    border-radius: 8px; padding: 10px;
+  }
+  .perm-hdr { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #60a5fa; font-weight: 600; margin-bottom: 8px; }
+  .perm-desc { font-size: 12px; color: #d1d5db; margin-bottom: 10px; }
+  .perm-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .perm-btn {
+    color: #fff; font-size: 12px; font-weight: 500; padding: 6px 0;
+    border-radius: 6px; border: none; cursor: pointer; transition: all 0.15s;
+  }
+  .perm-allow { background: #2563eb; }
+  .perm-allow:hover { background: #3b82f6; }
+  .perm-reject { background: #374151; }
+  .perm-reject:hover { background: #4b5563; }
+  .perm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .perm-resolved { font-size: 12px; color: #6b7280; padding-top: 6px; }
+  /* Center pill (session events) */
+  .pill {
+    align-self: center; font-size: 11px; color: #6b7280;
+    background: rgba(31,41,55,0.6); border-radius: 9999px; padding: 4px 12px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  /* Connection banner */
+  .banner {
+    flex-shrink: 0; padding: 8px 12px; font-size: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .banner-connected { background: rgba(34,197,94,0.1); border-bottom: 1px solid rgba(34,197,94,0.3); color: #4ade80; }
+  .banner-reconnect { background: rgba(245,158,11,0.1); border-bottom: 1px solid rgba(245,158,11,0.3); color: #fbbf24; }
+  .banner-disconnected { background: rgba(239,68,68,0.1); border-bottom: 1px solid rgba(239,68,68,0.3); color: #f87171; }
+  /* Composer */
+  .composer {
+    padding: 10px; background: linear-gradient(to top, var(--color-background), transparent);
+    flex-shrink: 0; border-top: 1px solid rgba(31,41,55,0.5);
+  }
+  @media (min-width: 1024px) { .composer { padding: 12px; } }
+  .composer-row { display: flex; align-items: flex-end; gap: 8px; position: relative; }
+  .input-wrap { flex: 1; position: relative; }
+  .input {
+    width: 100%; background: var(--color-panel); border: 1px solid #374151;
+    border-radius: 12px; padding: 12px 40px 12px 12px; font-size: 14px;
+    color: #e5e7eb; outline: none; resize: none; height: 48px;
+    transition: all 0.15s;
+  }
+  .input:focus { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6; }
+  .input:disabled { opacity: 0.6; cursor: not-allowed; }
+  .send-btn {
+    position: absolute; right: 8px; bottom: 8px; padding: 6px;
+    border-radius: 8px; border: none; cursor: pointer; transition: all 0.15s;
+  }
+  .send-go { background: #2563eb; }
+  .send-go:hover { background: #3b82f6; }
+  .send-go:disabled { background: #374151; cursor: not-allowed; }
+  .send-stop { background: #dc2626; }
+  .send-stop:hover { background: #ef4444; }
+  /* Section label */
+  .section-label {
+    font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase;
+    letter-spacing: 0.05em; padding: 16px 12px 6px; background: var(--color-panel);
+    border-top: 1px solid #1f2937; border-bottom: 1px solid #1f2937;
+  }
+  /* State badge for section */
+  .state-tag {
+    display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 8px;
+    border-radius: 4px; margin-left: 8px; vertical-align: middle;
+  }
+  .state-idle { background: #374151; color: #9ca3af; }
+  .state-running { background: rgba(59,130,246,0.2); color: #60a5fa; }
+  .state-perm { background: rgba(245,158,11,0.2); color: #fbbf24; }
+  .state-cancelled { background: #374151; color: #9ca3af; }
+  .state-error { background: rgba(239,68,68,0.2); color: #f87171; }
+  .state-disc { background: rgba(239,68,68,0.2); color: #f87171; }
+  /* Page container */
+  .page { display: flex; flex-direction: column; gap: 0; min-height: 100vh; }
+  .page-hdr {
+    background: var(--color-activity-bar); padding: 16px 24px; border-bottom: 1px solid #1f2937;
+  }
+  .page-hdr h1 { font-size: 18px; font-weight: 700; color: #e5e7eb; }
+  .page-hdr p { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+  .panels-grid { display: flex; flex-direction: column; align-items: center; gap: 0; padding: 24px; }
+  .panel-frame {
+    height: 640px; border: 1px solid #1f2937; border-radius: 8px; overflow: hidden;
+    margin-bottom: 32px; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    display: flex;
+  }
+  .panel-frame .chat-panel { border-left: none; }
+  .legend {
+    font-size: 11px; color: #6b7280; padding: 8px 12px; background: var(--color-panel);
+    border: 1px dashed #374151; border-radius: 6px; margin: 0 12px 12px;
+  }
+  .legend b { color: #d1d5db; }
+  .new-tag {
+    display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px;
+    border-radius: 3px; background: rgba(34,197,94,0.2); color: #4ade80;
+    margin-left: 4px; vertical-align: middle;
+  }
+  .exist-tag {
+    display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px;
+    border-radius: 3px; background: rgba(59,130,246,0.2); color: #60a5fa;
+    margin-left: 4px; vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <!-- Page header -->
+  <div class="page-hdr">
+    <h1>Chat Panel Mockup — Full ACP State Coverage</h1>
+    <p>Work Stream 5 · Matches <code>mockup12.html</code> visual language · <span class="exist-tag">EXISTS</span> = already in ChatPanel.tsx/ChatMessageItem.tsx · <span class="new-tag">NEW</span> = desired state not yet built</p>
+  </div>
+
+  <div class="legend">
+    <b>Legend:</b> Each panel below shows the chat panel in a distinct ACP state. All event types from
+    <code>docs/acp/responsibilities.md</code> are rendered: user message, agent message/thought streaming,
+    tool calls (read/edit/execute/search), plan updates, shell commands, permission prompts, file revisions,
+    agent exit/error, and connection states. The composer, conversation header, and harness lock are shown
+    in their full desired state.
+  </div>
+
+  <div class="panels-grid">
+
+    <!-- ================================================================ -->
+    <!-- STATE 1: IDLE — empty conversation, composer ready -->
+    <!-- ================================================================ -->
+    <div class="section-label" style="width:24rem;">State: Idle <span class="state-tag state-idle">IDLE</span></div>
+    <div class="panel-frame">
+      <div class="chat-panel">
+        <!-- Conversation header (full desired state) -->
+        <div class="chat-header">
+          <!-- Row 1: harness + model + lock + connection + history -->
+          <div style="display:flex;align-items:center;gap:8px;padding:12px;">
+            <!-- Harness selector — EXISTS in ChatPanel.tsx -->
+            <select class="sel" title="Agent Harness">
+              <option>Claude Code</option>
+              <option>Codex</option>
+              <option>Gemini CLI</option>
+              <option>Custom…</option>
+            </select>
+            <!-- Harness lock toggle — NEW: pins chat to current harness -->
+            <button class="lock-btn" title="Lock harness (pin chat to current agent)">
+              <i data-lucide="unlock" style="width:14px;height:14px;"></i>
+            </button>
+            <!-- Model selector — EXISTS -->
+            <select class="sel sel-model" title="Model">
+              <option>claude-sonnet-4</option>
+              <option>claude-opus-4</option>
+              <option>claude-haiku-4</option>
+            </select>
+            <div style="flex:1"></div>
+            <!-- Connection indicator — EXISTS -->
+            <span style="display:flex;align-items:center;gap:4px;font-size:11px;" title="Connected to daemon">
+              <i data-lucide="wifi" style="width:14px;height:14px;color:#22c55e;"></i>
+            </span>
+            <!-- History menu — EXISTS -->
+            <button class="icon-btn" title="Chat History">
+              <i data-lucide="menu" style="width:16px;height:16px;"></i>
+            </button>
+          </div>
+          <!-- Row 2: conversation name + badges + actions — NEW (name inline-editable, badges, export/delete, rebind) -->
+          <div style="display:flex;align-items:center;gap:8px;padding:0 12px 10px;">
+            <input class="conv-name" value="New Conversation" title="Click to rename">
+            <span class="badge badge-agent"><i data-lucide="bot" style="width:10px;height:10px;"></i> Claude Code · sonnet-4</span>
+            <div style="flex:1"></div>
+            <button class="icon-btn" title="Export conversation"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+            <button class="icon-btn icon-btn-danger" title="Delete conversation"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+          </div>
+        </div>
+        <!-- Messages: empty placeholder — EXISTS -->
+        <div class="messages">
+          <div style="border:1px solid #1f2937;background:rgba(22,25,37,0.5);border-radius:8px;padding:12px;font-size:12px;color:#6b7280;">
+            Send a message to start a conversation.
+          </div>
+        </div>
+        <!-- Composer — EXISTS (input + send). Stop button NEW-conditional. -->
+        <div class="composer">
+          <div class="composer-row">
+            <div class="input-wrap">
+              <textarea class="input" placeholder="Message agent..." disabled></textarea>
+              <button class="send-btn send-go" disabled title="Send"><i data-lucide="arrow-up" style="width:14px;height:14px;color:#fff;"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- STATE 2: RUNNING — streaming text, thoughts, tool calls, plan, shell -->
+    <!-- ================================================================ -->
+    <div class="section-label" style="width:24rem;">State: Running <span class="state-tag state-running">RUNNING</span></div>
+    <div class="panel-frame">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px;">
+            <select class="sel" disabled title="Agent Harness (disabled while running)">
+              <option>Claude Code</option>
+            </select>
+            <button class="lock-btn" title="Lock harness"><i data-lucide="unlock" style="width:14px;height:14px;"></i></button>
+            <select class="sel sel-model" disabled title="Model (disabled while running)">
+              <option>claude-sonnet-4</option>
+            </select>
+            <div style="flex:1"></div>
+            <span style="display:flex;align-items:center;gap:4px;font-size:11px;"><i data-lucide="wifi" style="width:14px;height:14px;color:#22c55e;"></i></span>
+            <button class="icon-btn" title="Chat History"><i data-lucide="menu" style="width:16px;height:16px;"></i></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:0 12px 10px;">
+            <input class="conv-name" value="Server Setup" title="Click to rename">
+            <span class="badge badge-agent"><i data-lucide="bot" style="width:10px;height:10px;"></i> Claude Code · sonnet-4</span>
+            <div style="flex:1"></div>
+            <button class="icon-btn" title="Export"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+            <button class="icon-btn icon-btn-danger" title="Delete"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+          </div>
+        </div>
+        <div class="messages">
+          <!-- User message — EXISTS (PromptSubmitted) -->
+          <div class="msg-user">
+            <div class="av av-user">U</div>
+            <div class="msg-body"><div class="bubble" style="font-size:13px;color:#e5e7eb;">Create a config.json with debug mode enabled</div></div>
+          </div>
+
+          <!-- Agent thought (collapsed details) — EXISTS (StreamUpdate thought=true) -->
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="brain" style="width:16px;height:16px;"></i></div>
+            <details class="msg-body">
+              <summary class="thought-summary">Thinking…</summary>
+              <p class="thought-body">The user wants a config.json. I'll create it with debug:true and sensible defaults for the project.</p>
+            </details>
+          </div>
+
+          <!-- Plan checklist — NEW (current PlanUpdated renders plain text; desired = status-coded checklist) -->
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="list-checks" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <div class="plan-card">
+                <div class="plan-hdr"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> Plan</div>
+                <div class="plan-item"><div class="plan-check done"><i data-lucide="check" style="width:10px;height:10px;color:#fff;"></i></div><div class="plan-text done">Read existing config structure</div></div>
+                <div class="plan-item"><div class="plan-check active"></div><div class="plan-text active">Write config.json with debug mode</div></div>
+                <div class="plan-item"><div class="plan-check"></div><div class="plan-text">Verify JSON is valid</div></div>
+                <div class="plan-item"><div class="plan-check"></div><div class="plan-text">Summarize changes to user</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tool call: read (completed) — EXISTS (ToolStarted/ToolCompleted) -->
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="bot" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <details class="tool-card">
+                <summary class="tool-summary">
+                  <i data-lucide="chevron-right" class="chev" style="width:14px;height:14px;"></i>
+                  <i data-lucide="file-search" style="width:14px;height:14px;color:#60a5fa;"></i>
+                  <span>read</span><span style="color:#d1d5db;">config.json</span>
+                  <span class="status-done">[completed]</span>
+                </summary>
+                <pre class="tool-pre">{"version": "1.0", "debug": false}</pre>
+              </details>
+            </div>
+          </div>
+
+          <!-- Tool call: edit (with diff, completed) — EXISTS (ToolCompleted shows content; diff rendering NEW) -->
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="bot" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <details class="tool-card open" open>
+                <summary class="tool-summary">
+                  <i data-lucide="chevron-right" class="chev" style="width:14px;height:14px;"></i>
+                  <i data-lucide="file-pen" style="width:14px;height:14px;color:#fbbf24;"></i>
+                  <span>edit</span><span style="color:#d1d5db;">config.json</span>
+                  <span class="status-done">[completed]</span>
+                </summary>
+                <div class="diff">
+                  <div class="diff-hdr">config.json · 2 changes</div>
+                  <div class="diff-line diff-del">-  "debug": false,</div>
+                  <div class="diff-line diff-add">+  "debug": true,</div>
+                  <div class="diff-line diff-add">+  "logLevel": "verbose"</div>
+                  <div class="diff-line diff-ctx">  "version": "1.0"</div>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <!-- Agent streaming text with typing cursor — EXISTS (StreamUpdate streaming=true) -->
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="bot" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <p style="font-size:13px;color:#d1d5db;white-space:pre-wrap;">I've updated config.json with debug mode enabled and added verbose logging. The file is now<span class="cursor"></span></p>
+            </div>
+          </div>
+        </div>
+        <!-- Composer: Stop button visible while running — EXISTS (toggled) -->
+        <div class="composer">
+          <div class="composer-row">
+            <div class="input-wrap">
+              <textarea class="input" placeholder="Message agent..." disabled></textarea>
+              <button class="send-btn send-stop" title="Stop"><i data-lucide="square" style="width:14px;height:14px;color:#fff;"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- STATE 3: PERMISSION-PENDING — shell command awaiting approval -->
+    <!-- ================================================================ -->
+    <div class="section-label" style="width:24rem;">State: Permission-Pending <span class="state-tag state-perm">PERMISSION</span></div>
+    <div class="panel-frame">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px;">
+            <select class="sel" disabled><option>Claude Code</option></select>
+            <button class="lock-btn" title="Lock harness"><i data-lucide="unlock" style="width:14px;height:14px;"></i></button>
+            <select class="sel sel-model" disabled><option>claude-sonnet-4</option></select>
+            <div style="flex:1"></div>
+            <span style="display:flex;align-items:center;gap:4px;font-size:11px;"><i data-lucide="wifi" style="width:14px;height:14px;color:#22c55e;"></i></span>
+            <button class="icon-btn" title="Chat History"><i data-lucide="menu" style="width:16px;height:16px;"></i></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:0 12px 10px;">
+            <input class="conv-name" value="Server Setup">
+            <span class="badge badge-agent"><i data-lucide="bot" style="width:10px;height:10px;"></i> Claude Code · sonnet-4</span>
+            <div style="flex:1"></div>
+            <button class="icon-btn" title="Export"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+            <button class="icon-btn icon-btn-danger" title="Delete"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+          </div>
+        </div>
+        <div class="messages">
+          <div class="msg-user">
+            <div class="av av-user">U</div>
+            <div class="msg-body"><div class="bubble" style="font-size:13px;color:#e5e7eb;">Run the test suite and fix any failures</div></div>
+          </div>
+
+          <!-- Tool call: execute (shell) pending — EXISTS (ToolStarted status=running) -->
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="bot" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <details class="tool-card open" open>
+                <summary class="tool-summary">
+                  <i data-lucide="chevron-right" class="chev" style="width:14px;height:14px;"></i>
+                  <i data-lucide="play" style="width:14px;height:14px;color:#4ade80;"></i>
+                  <span>execute</span><span style="color:#d1d5db;">npm test</span>
+                  <span class="status-running">[running]</span>
+                </summary>
+                <pre class="tool-pre">npm test -- --coverage</pre>
+              </details>
+            </div>
+          </div>
+
+          <!-- Permission prompt card — EXISTS (PermissionRequested). 4 options from ACP spec. -->
+          <div class="msg-row">
+            <div class="av av-perm"><i data-lucide="shield-alert" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <div class="perm-card">
+                <div class="perm-hdr"><i data-lucide="shield-alert" style="width:14px;height:14px;"></i> Permission Required</div>
+                <p class="perm-desc"><b>execute</b> · <span style="color:#9ca3af;">npm test -- --coverage</span></p>
+                <div class="perm-opts">
+                  <button class="perm-btn perm-allow">Allow once</button>
+                  <button class="perm-btn perm-allow">Allow always</button>
+                  <button class="perm-btn perm-reject">Reject once</button>
+                  <button class="perm-btn perm-reject">Reject always</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="composer">
+          <div class="composer-row">
+            <div class="input-wrap">
+              <textarea class="input" placeholder="Message agent..." disabled></textarea>
+              <button class="send-btn send-stop" title="Stop"><i data-lucide="square" style="width:14px;height:14px;color:#fff;"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- STATE 4: CANCELLED — user stopped the turn -->
+    <!-- ================================================================ -->
+    <div class="section-label" style="width:24rem;">State: Cancelled <span class="state-tag state-cancelled">CANCELLED</span></div>
+    <div class="panel-frame">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px;">
+            <select class="sel"><option>Claude Code</option></select>
+            <button class="lock-btn" title="Lock harness"><i data-lucide="unlock" style="width:14px;height:14px;"></i></button>
+            <select class="sel sel-model"><option>claude-sonnet-4</option></select>
+            <div style="flex:1"></div>
+            <span style="display:flex;align-items:center;gap:4px;font-size:11px;"><i data-lucide="wifi" style="width:14px;height:14px;color:#22c55e;"></i></span>
+            <button class="icon-btn" title="Chat History"><i data-lucide="menu" style="width:16px;height:16px;"></i></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:0 12px 10px;">
+            <input class="conv-name" value="Server Setup">
+            <span class="badge badge-agent"><i data-lucide="bot" style="width:10px;height:10px;"></i> Claude Code · sonnet-4</span>
+            <div style="flex:1"></div>
+            <button class="icon-btn" title="Export"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+            <button class="icon-btn icon-btn-danger" title="Delete"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+          </div>
+        </div>
+        <div class="messages">
+          <div class="msg-user">
+            <div class="av av-user">U</div>
+            <div class="msg-body"><div class="bubble" style="font-size:13px;color:#e5e7eb;">Run the test suite and fix any failures</div></div>
+          </div>
+          <!-- Tool call: search (completed) — EXISTS -->
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="bot" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <details class="tool-card">
+                <summary class="tool-summary">
+                  <i data-lucide="chevron-right" class="chev" style="width:14px;height:14px;"></i>
+                  <i data-lucide="file-search" style="width:14px;height:14px;color:#60a5fa;"></i>
+                  <span>search</span><span style="color:#d1d5db;">"test pattern"</span>
+                  <span class="status-done">[completed]</span>
+                </summary>
+                <pre class="tool-pre">Found 12 matches in 4 files</pre>
+              </details>
+            </div>
+          </div>
+          <!-- Cancelled pill — EXISTS (SessionCancelled/SessionInterrupted) -->
+          <div class="pill"><i data-lucide="square" style="width:12px;height:12px;"></i> Stopped</div>
+        </div>
+        <div class="composer">
+          <div class="composer-row">
+            <div class="input-wrap">
+              <textarea class="input" placeholder="Message agent..."></textarea>
+              <button class="send-btn send-go" disabled title="Send"><i data-lucide="arrow-up" style="width:14px;height:14px;color:#fff;"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- STATE 5: ERROR — agent exited, shell failure, resolved permission -->
+    <!-- ================================================================ -->
+    <div class="section-label" style="width:24rem;">State: Error / Exited <span class="state-tag state-error">ERROR</span></div>
+    <div class="panel-frame">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px;">
+            <select class="sel"><option>Claude Code</option></select>
+            <button class="lock-btn" title="Lock harness"><i data-lucide="unlock" style="width:14px;height:14px;"></i></button>
+            <select class="sel sel-model"><option>claude-sonnet-4</option></select>
+            <div style="flex:1"></div>
+            <span style="display:flex;align-items:center;gap:4px;font-size:11px;"><i data-lucide="wifi" style="width:14px;height:14px;color:#22c55e;"></i></span>
+            <button class="icon-btn" title="Chat History"><i data-lucide="menu" style="width:16px;height:16px;"></i></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:0 12px 10px;">
+            <input class="conv-name" value="Server Setup">
+            <span class="badge badge-agent"><i data-lucide="bot" style="width:10px;height:10px;"></i> Claude Code · sonnet-4</span>
+            <div style="flex:1"></div>
+            <button class="icon-btn" title="Export"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+            <button class="icon-btn icon-btn-danger" title="Delete"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+          </div>
+        </div>
+        <div class="messages">
+          <div class="msg-user">
+            <div class="av av-user">U</div>
+            <div class="msg-body"><div class="bubble" style="font-size:13px;color:#e5e7eb;">Deploy to staging</div></div>
+          </div>
+
+          <!-- Shell command card with output block — EXISTS (ShellCommandCompleted) -->
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="terminal" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <div class="shell-card">
+                <div class="shell-hdr">
+                  <span>$ npm run deploy</span>
+                  <span class="exit-err">exit 1</span>
+                </div>
+                <pre class="shell-out">Error: ENETUNREACH - cannot reach staging.example.com
+    at DeploymentClient.push (deploy.js:42:9)
+    at async deploy (index.js:18:3)</pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tool call: edit failed — EXISTS (ToolCompleted summary=failed) -->
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="bot" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <details class="tool-card">
+                <summary class="tool-summary">
+                  <i data-lucide="chevron-right" class="chev" style="width:14px;height:14px;"></i>
+                  <i data-lucide="file-pen" style="width:14px;height:14px;color:#fbbf24;"></i>
+                  <span>edit</span><span style="color:#d1d5db;">deploy.config.js</span>
+                  <span class="status-failed">[failed]</span>
+                </summary>
+                <pre class="tool-pre">Permission denied: file is read-only</pre>
+              </details>
+            </div>
+          </div>
+
+          <!-- Resolved permission (denied) — EXISTS (PermissionRequested + resolution) -->
+          <div class="msg-row">
+            <div class="av av-perm"><i data-lucide="shield-alert" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <div class="perm-card" style="background:rgba(31,41,55,0.4);border-color:#374151;">
+                <div class="perm-hdr" style="color:#9ca3af;"><i data-lucide="shield-alert" style="width:14px;height:14px;"></i> Permission Required</div>
+                <p class="perm-desc" style="text-decoration:line-through;opacity:0.6;"><b>execute</b> · <span style="color:#9ca3af;">rm -rf node_modules</span></p>
+                <p class="perm-resolved">Permission denied — execute</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- File revision note — EXISTS (FileRevisionUpdated) -->
+          <div class="pill"><i data-lucide="file-pen" style="width:12px;height:12px;"></i> edited config.json — revision 3</div>
+
+          <!-- Agent exited/error state — EXISTS (AgentExited) -->
+          <div class="msg-row">
+            <div class="av av-error"><i data-lucide="bot" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <p style="font-size:13px;color:#fca5a5;">Agent exited: process terminated unexpectedly (exit code 137)</p>
+            </div>
+          </div>
+        </div>
+        <div class="composer">
+          <div class="composer-row">
+            <div class="input-wrap">
+              <textarea class="input" placeholder="Message agent..."></textarea>
+              <button class="send-btn send-go" disabled title="Send"><i data-lucide="arrow-up" style="width:14px;height:14px;color:#fff;"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- STATE 6: DISCONNECTED — connection banner, reconnecting -->
+    <!-- ================================================================ -->
+    <div class="section-label" style="width:24rem;">State: Disconnected / Reconnecting <span class="state-tag state-disc">DISCONNECTED</span></div>
+    <div class="panel-frame">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px;">
+            <select class="sel" disabled><option>Claude Code</option></select>
+            <button class="lock-btn" title="Lock harness"><i data-lucide="unlock" style="width:14px;height:14px;"></i></button>
+            <select class="sel sel-model" disabled><option>claude-sonnet-4</option></select>
+            <div style="flex:1"></div>
+            <span style="display:flex;align-items:center;gap:4px;font-size:11px;"><i data-lucide="wifi-off" style="width:14px;height:14px;color:#ef4444;"></i></span>
+            <button class="icon-btn" title="Chat History"><i data-lucide="menu" style="width:16px;height:16px;"></i></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:0 12px 10px;">
+            <input class="conv-name" value="Server Setup" disabled>
+            <span class="badge badge-agent" style="opacity:0.5;"><i data-lucide="bot" style="width:10px;height:10px;"></i> Claude Code · sonnet-4</span>
+            <div style="flex:1"></div>
+            <button class="icon-btn" title="Export"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+            <button class="icon-btn icon-btn-danger" title="Delete"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+          </div>
+        </div>
+        <!-- Reconnecting banner — EXISTS (disconnected banner in ChatPanel.tsx) -->
+        <div class="banner banner-reconnect">
+          <i data-lucide="wifi-off" style="width:14px;height:14px;"></i> Reconnecting to daemon…
+        </div>
+        <div class="messages">
+          <div class="msg-user">
+            <div class="av av-user">U</div>
+            <div class="msg-body"><div class="bubble" style="font-size:13px;color:#e5e7eb;">Refactor the auth module</div></div>
+          </div>
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="bot" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <p style="font-size:13px;color:#d1d5db;white-space:pre-wrap;">I'll start by reading the current auth module to understand its structure<span class="cursor"></span></p>
+            </div>
+          </div>
+          <!-- In-flight prompt notice — NEW: surfaces that a prompt was mid-flight when connection dropped -->
+          <div class="pill" style="background:rgba(245,158,11,0.1);color:#fbbf24;border:1px solid rgba(245,158,11,0.3);">
+            <i data-lucide="alert-triangle" style="width:12px;height:12px;"></i> Prompt in flight — will resume on reconnect
+          </div>
+        </div>
+        <div class="composer">
+          <div class="composer-row">
+            <div class="input-wrap">
+              <textarea class="input" placeholder="Reconnecting…" disabled></textarea>
+              <button class="send-btn send-go" disabled title="Send"><i data-lucide="arrow-up" style="width:14px;height:14px;color:#fff;"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- STATE 7: HARNESS LOCKED + REBOUND — lock engaged, rebind indicator -->
+    <!-- ================================================================ -->
+    <div class="section-label" style="width:24rem;">State: Harness Locked + Rebound <span class="state-tag state-running">LOCKED</span></div>
+    <div class="panel-frame">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px;">
+            <!-- Harness selector DISABLED, lock engaged — NEW -->
+            <select class="sel" disabled title="Harness locked"><option>Claude Code</option></select>
+            <button class="lock-btn locked" title="Unlock harness"><i data-lucide="lock" style="width:14px;height:14px;"></i></button>
+            <select class="sel sel-model" disabled><option>claude-sonnet-4</option></select>
+            <div style="flex:1"></div>
+            <span style="display:flex;align-items:center;gap:4px;font-size:11px;"><i data-lucide="wifi" style="width:14px;height:14px;color:#22c55e;"></i></span>
+            <button class="icon-btn" title="Chat History"><i data-lucide="menu" style="width:16px;height:16px;"></i></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:0 12px 10px;">
+            <input class="conv-name" value="Auth Refactor">
+            <span class="badge badge-agent"><i data-lucide="bot" style="width:10px;height:10px;"></i> Claude Code · sonnet-4</span>
+            <!-- Rebind indicator — NEW: shown when conversation rebound to different agent -->
+            <span class="badge badge-rebind"><i data-lucide="refresh-cw" style="width:10px;height:10px;"></i> Rebound from Codex</span>
+            <div style="flex:1"></div>
+            <button class="icon-btn" title="Export"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+            <button class="icon-btn icon-btn-danger" title="Delete"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+          </div>
+        </div>
+        <!-- Connected banner — NEW: explicit connected confirmation (optional, subtle) -->
+        <div class="banner banner-connected">
+          <i data-lucide="wifi" style="width:14px;height:14px;"></i> Connected to daemon
+        </div>
+        <div class="messages">
+          <div class="msg-user">
+            <div class="av av-user">U</div>
+            <div class="msg-body"><div class="bubble" style="font-size:13px;color:#e5e7eb;">Continue refactoring the auth module</div></div>
+          </div>
+          <!-- Session resumed pill — EXISTS (SessionResumed/ConnectionRestarted) -->
+          <div class="pill"><i data-lucide="refresh-cw" style="width:12px;height:12px;"></i> Session resumed — context preserved</div>
+          <div class="msg-row">
+            <div class="av av-agent"><i data-lucide="bot" style="width:16px;height:16px;"></i></div>
+            <div class="msg-body">
+              <p style="font-size:13px;color:#d1d5db;white-space:pre-wrap;">Picking up where we left off. The auth module now uses JWT tokens with refresh rotation<span class="cursor"></span></p>
+            </div>
+          </div>
+        </div>
+        <div class="composer">
+          <div class="composer-row">
+            <div class="input-wrap">
+              <textarea class="input" placeholder="Message agent..." disabled></textarea>
+              <button class="send-btn send-stop" title="Stop"><i data-lucide="square" style="width:14px;height:14px;color:#fff;"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // Inject Tailwind @theme block (same approach as mockup12.html)
+  (function() {
+    const themeStyle = document.createElement('style');
+    themeStyle.type = 'text/tailwindcss';
+    themeStyle.textContent = `@theme {
+      --color-background: #0f111a;
+      --color-panel: #161925;
+      --color-activity-bar: #0d0e16;
+      --color-editor: #1e1e1e;
+      --color-status-bar: #007acc;
+      --color-tool-call: #12141d;
+    }`;
+    document.head.appendChild(themeStyle);
+  })();
+  lucide.createIcons();
+</script>
+</body>
+</html>

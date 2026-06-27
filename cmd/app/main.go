@@ -14,6 +14,7 @@ import (
 
 	"github.com/adama/local-agent/internal/config"
 	"github.com/adama/local-agent/internal/daemon"
+	"github.com/adama/local-agent/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -56,6 +57,8 @@ func newRootCommand() *cobra.Command {
 		newStopCommand(),
 		newStatusCommand(),
 		newAddFolderCommand(),
+		newRemoveFolderCommand(),
+		newListFoldersCommand(),
 		newPairCommand(),
 		newDevicesCommand(),
 		newRevokeCommand(),
@@ -144,6 +147,104 @@ func runAddFolder(cmd *cobra.Command, args []string) error {
 	}
 
 	return writef(cmd.OutOrStdout(), "Workspace registered: %s\n", absPath)
+}
+
+func newRemoveFolderCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove-folder <id>",
+		Short: "Unregister a workspace directory by ID",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runRemoveFolder,
+	}
+}
+
+func runRemoveFolder(cmd *cobra.Command, args []string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+
+	workspaceID := args[0]
+
+	// Build a workspace manager from the persisted config so we can resolve
+	// the ID to a path and call Remove. This mirrors how the daemon loads
+	// workspaces on startup.
+	wsMgr := workspace.NewManager()
+	for _, wsPath := range cfg.Workspaces {
+		if _, regErr := wsMgr.Register(context.Background(), wsPath); regErr != nil {
+			// Skip paths that no longer exist on disk.
+			continue
+		}
+	}
+
+	// Find the workspace to get its path before removing.
+	workspaces, err := wsMgr.List(context.Background())
+	if err != nil {
+		return fmt.Errorf("list workspaces: %w", err)
+	}
+	var wsPath string
+	for _, ws := range workspaces {
+		if ws.ID == workspaceID {
+			wsPath = ws.Path
+			break
+		}
+	}
+	if wsPath == "" {
+		return fmt.Errorf("workspace not found: %s", workspaceID)
+	}
+
+	// Remove from the in-memory manager.
+	if err := wsMgr.Remove(context.Background(), workspaceID); err != nil {
+		return fmt.Errorf("remove workspace: %w", err)
+	}
+
+	// Drop the path from persisted config and save.
+	if err := cfg.RemoveWorkspacePath(wsPath); err != nil {
+		return fmt.Errorf("update config: %w", err)
+	}
+
+	return writef(cmd.OutOrStdout(), "Workspace removed: %s (%s)\n", workspaceID, wsPath)
+}
+
+func newListFoldersCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list-folders",
+		Short: "List registered workspace directories",
+		Args:  cobra.NoArgs,
+		RunE:  runListFolders,
+	}
+}
+
+func runListFolders(cmd *cobra.Command, _ []string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+
+	// Build a workspace manager from the persisted config so IDs are
+	// resolved consistently (deterministic hash of the path).
+	wsMgr := workspace.NewManager()
+	for _, wsPath := range cfg.Workspaces {
+		if _, regErr := wsMgr.Register(context.Background(), wsPath); regErr != nil {
+			continue
+		}
+	}
+
+	workspaces, err := wsMgr.List(context.Background())
+	if err != nil {
+		return fmt.Errorf("list workspaces: %w", err)
+	}
+
+	if len(workspaces) == 0 {
+		return writeln(cmd.OutOrStdout(), "No workspaces registered. Use 'app add-folder <path>' to add one.")
+	}
+
+	for _, ws := range workspaces {
+		if err := writef(cmd.OutOrStdout(), "%s\t%s\t%s\n", ws.ID, ws.Name, ws.Path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newPairCommand() *cobra.Command {
@@ -334,10 +435,13 @@ func requireDaemonRunning(dataDir string) error {
 
 func toDaemonConfig(cfg *config.Config) *daemon.Config {
 	return &daemon.Config{
-		Port:    cfg.Port,
-		Host:    cfg.Host,
-		DataDir: cfg.DataDir,
-		DBPath:  cfg.DBPath,
+		Port:              cfg.Port,
+		Host:              cfg.Host,
+		DataDir:           cfg.DataDir,
+		DBPath:            cfg.DBPath,
+		TLSEnabled:        cfg.TLSEnabled,
+		TLSCertDir:        cfg.TLSCertDir,
+		PairingTTLSeconds: cfg.PairingTTLSeconds,
 	}
 }
 

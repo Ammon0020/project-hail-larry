@@ -80,6 +80,17 @@ func (m *Manager) List(_ context.Context) ([]interfaces.WorkspaceInfo, error) {
 	return workspaces, nil
 }
 
+// Remove deletes a workspace from the in-memory registry by ID.
+// It returns an error if no workspace with the given ID is registered.
+// This does not delete any files on disk — only the registration.
+func (m *Manager) Remove(_ context.Context, id string) error {
+	if _, ok := m.workspaces[id]; !ok {
+		return fmt.Errorf("workspace not found: %s", id)
+	}
+	delete(m.workspaces, id)
+	return nil
+}
+
 // FileTree returns the file tree for a workspace.
 // Directories are listed first, then files, both alphabetically.
 // Hidden files/directories (starting with .) are excluded.

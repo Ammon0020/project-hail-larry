@@ -1,10 +1,25 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState, useEffect, type KeyboardEvent } from 'react'
 import { Menu, Paperclip, ArrowUp, Square, Wifi, WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ChatMessageItem } from './ChatMessageItem'
 import { ChatHistory } from './ChatHistory'
 import type { AppEvent, Agent, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
+
+/**
+ * Returns true when an error message indicates the active conversation no
+ * longer exists in the backend (e.g. "session not found" or the friendly
+ * "no longer available" message thrown by useBackend.sendPrompt). Used to
+ * reset the UI to the new-chat state instead of showing a raw error.
+ */
+function isSessionGone(message: string): boolean {
+  const lower = message.toLowerCase()
+  return (
+    lower.includes('session not found') ||
+    lower.includes('no longer available') ||
+    lower.includes('not found')
+  )
+}
 
 /**
  * Right sidebar — agent chat (Blueprint Sec 17 — right sidebar).
@@ -49,12 +64,64 @@ export function ChatPanel({
   onRebindSession: (sessionId: string, agentId: string, modelId: string) => void
   onExportSession: (sessionId: string) => void
 }) {
-  const [selectedAgent, setSelectedAgent] = useState(agents[0]?.id ?? '')
-  const [selectedModel, setSelectedModel] = useState(agents[0]?.models[0]?.id ?? '')
+  // Persisted agent/model selections — restored from localStorage on mount,
+  // falling back to the first available agent/model if the stored value is
+  // missing or no longer valid (UI Spec §6.2 — UI Persistence).
+  const [selectedAgent, setSelectedAgent] = useState(() => {
+    const stored = localStorage.getItem('lai:selectedAgent')
+    if (stored && agents.some((a) => a.id === stored)) return stored
+    return agents[0]?.id ?? ''
+  })
+  const [selectedModel, setSelectedModel] = useState(() => {
+    const stored = localStorage.getItem('lai:selectedModel')
+    if (stored) {
+      // Validate the model belongs to the selected agent (or any agent).
+      const agent = agents.find((a) => a.id === selectedAgent)
+      if (agent?.models.some((m) => m.id === stored)) return stored
+      if (agents.some((a) => a.models.some((m) => m.id === stored))) return stored
+    }
+    return agents[0]?.models[0]?.id ?? ''
+  })
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Persist agent and model selections whenever they change.
+  useEffect(() => {
+    if (selectedAgent) localStorage.setItem('lai:selectedAgent', selectedAgent)
+  }, [selectedAgent])
+
+  useEffect(() => {
+    if (selectedModel) localStorage.setItem('lai:selectedModel', selectedModel)
+  }, [selectedModel])
+
+  // When the agents list loads asynchronously (empty on first mount), restore
+  // persisted selections. Uses the "adjust state during render" pattern from
+  // the React docs instead of setState-in-effect to avoid cascading renders.
+  const [prevAgents, setPrevAgents] = useState(agents)
+  if (agents !== prevAgents) {
+    setPrevAgents(agents)
+    if (agents.length > 0) {
+      if (!selectedAgent || !agents.some((a) => a.id === selectedAgent)) {
+        const storedAgent = localStorage.getItem('lai:selectedAgent')
+        const validAgent =
+          storedAgent && agents.some((a) => a.id === storedAgent)
+            ? storedAgent
+            : agents[0]?.id ?? ''
+        if (validAgent) setSelectedAgent(validAgent)
+      }
+      const agent = agents.find((a) => a.id === selectedAgent)
+      if (!selectedModel || !agent?.models.some((m) => m.id === selectedModel)) {
+        const storedModel = localStorage.getItem('lai:selectedModel')
+        const validModel =
+          storedModel && agent?.models.some((m) => m.id === storedModel)
+            ? storedModel
+            : agent?.models[0]?.id ?? ''
+        if (validModel) setSelectedModel(validModel)
+      }
+    }
+  }
 
   // The active conversation owns its agent/model — derive the selectors from it
   // so switching reflects that conversation. For a new chat (no active session)
@@ -106,8 +173,16 @@ export function ChatPanel({
       await onSendMessage(sessionId, content)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to send message'
-      setError(message)
-      setInput(content) // preserve the user's text so they can retry
+      // A stale/deleted session surfaces a friendly message and resets to the
+      // new-chat state so the user can start a fresh conversation instead of
+      // retrying against a dead session id.
+      if (isSessionGone(message)) {
+        setError('This conversation is no longer available. Start a new chat.')
+        onSelectSession('') // empty string = no active session = "new chat"
+      } else {
+        setError(message)
+        setInput(content) // preserve the user's text so they can retry
+      }
     } finally {
       setSending(false)
     }

@@ -17,10 +17,24 @@ import (
 	"github.com/adama/local-agent/internal/interfaces"
 )
 
+// policyKey identifies a permission policy entry by session, tool, and target.
+// The toolKind field is keyed on the request's Tool title (the human-readable
+// tool name) rather than an ACP "tool kind" because PermissionRequest does not
+// currently carry a dedicated ToolKind field. This keeps the policy granular
+// enough to distinguish e.g. "edit_file" from "execute" while remaining stable
+// across requests. target is the first affected location path, or "" if the
+// request has no target.
+type policyKey struct {
+	sessionID string
+	toolKind  string
+	target    string
+}
+
 // Manager implements interfaces.PermissionManager.
 type Manager struct {
 	mu       sync.Mutex
 	pending  map[string]*pendingRequest
+	policy   map[policyKey]interfaces.PermissionDecision
 	auditLog []AuditEntry
 	onReq    func(interfaces.PermissionRequest)
 }
@@ -45,6 +59,7 @@ type pendingRequest struct {
 func NewManager() *Manager {
 	return &Manager{
 		pending:  make(map[string]*pendingRequest),
+		policy:   make(map[policyKey]interfaces.PermissionDecision),
 		auditLog: make([]AuditEntry, 0),
 	}
 }
@@ -79,6 +94,22 @@ func (m *Manager) Request(ctx context.Context, req interfaces.PermissionRequest)
 		}
 	}
 
+	// Check the policy map before blocking. A prior allow_always or
+	// allow_session decision for this (session, tool, target) combination
+	// auto-resolves the request immediately — no callback, no blocking.
+	//
+	// Note: allow_once and bare deny are NOT auto-resolved. The codebase has
+	// no reject_always constant, so reject-always auto-deny is intentionally
+	// skipped (see docs/plans/execution-plan.md Work Stream 2).
+	key := policyKey{sessionID: req.SessionID, toolKind: req.Tool, target: req.Target}
+	m.mu.Lock()
+	cached, ok := m.policy[key]
+	m.mu.Unlock()
+	if ok && (cached == interfaces.PermissionAllowAlways || cached == interfaces.PermissionAllowSession) {
+		m.recordAudit(req, cached)
+		return cached, nil
+	}
+
 	respCh := make(chan interfaces.PermissionDecision, 1)
 
 	m.mu.Lock()
@@ -105,6 +136,13 @@ func (m *Manager) Request(ctx context.Context, req interfaces.PermissionRequest)
 	select {
 	case decision := <-respCh:
 		m.recordAudit(req, decision)
+		// Persist durable allow decisions so subsequent requests for the same
+		// (session, tool, target) auto-resolve without blocking the user.
+		if decision == interfaces.PermissionAllowAlways || decision == interfaces.PermissionAllowSession {
+			m.mu.Lock()
+			m.policy[key] = decision
+			m.mu.Unlock()
+		}
 		return decision, nil
 	case <-ctx.Done():
 		return interfaces.PermissionDeny, fmt.Errorf("permission request timed out: %w", ctx.Err())
@@ -163,6 +201,20 @@ func (m *Manager) GetAuditLog() []AuditEntry {
 	log := make([]AuditEntry, len(m.auditLog))
 	copy(log, m.auditLog)
 	return log
+}
+
+// ClearSession drops all cached permission policies for the given session.
+// It should be called when a session closes so that allow_always/allow_session
+// decisions do not leak across session lifetimes. Pending requests for the
+// session are left untouched (they time out or are resolved independently).
+func (m *Manager) ClearSession(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k := range m.policy {
+		if k.sessionID == sessionID {
+			delete(m.policy, k)
+		}
+	}
 }
 
 // recordAudit adds a decision to the audit log.

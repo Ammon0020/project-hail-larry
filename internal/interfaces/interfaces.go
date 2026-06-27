@@ -103,6 +103,9 @@ type WorkspaceManager interface {
 	// List returns all registered workspaces.
 	List(ctx context.Context) ([]WorkspaceInfo, error)
 
+	// Remove deletes a workspace from the in-memory registry by ID.
+	Remove(ctx context.Context, id string) error
+
 	// FileTree returns the file tree for a workspace.
 	FileTree(ctx context.Context, workspaceID string) ([]FileNode, error)
 
@@ -206,6 +209,11 @@ type PermissionManager interface {
 
 	// Respond records a decision from a device. First response wins.
 	Respond(ctx context.Context, requestID string, decision PermissionDecision) error
+
+	// ClearSession drops all cached permission policies for the given session.
+	// Called when a session closes so allow_always/allow_session decisions do
+	// not leak across session lifetimes.
+	ClearSession(sessionID string)
 }
 
 // ----------------------------------------------------------------------------
