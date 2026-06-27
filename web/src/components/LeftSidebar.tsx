@@ -19,6 +19,7 @@ export function LeftSidebar({
   workspaces,
   activeWorkspace,
   onWorkspaceSelect,
+  onSearchResultSelect,
   style,
 }: {
   activePanel: LeftPanel
@@ -29,6 +30,8 @@ export function LeftSidebar({
   workspaces: { id: string; name: string; path: string }[]
   activeWorkspace: { id: string; name: string; path: string } | null
   onWorkspaceSelect: (ws: { id: string; name: string; path: string }) => void
+  /** Called when a search result is clicked — opens the file in the editor. */
+  onSearchResultSelect?: (path: string, lineNumber: number) => void
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
   style?: CSSProperties
 }) {
@@ -144,7 +147,12 @@ export function LeftSidebar({
       )}
 
       {/* Search panel */}
-      {activePanel === 'search' && <SearchPanel />}
+      {activePanel === 'search' && (
+        <SearchPanel
+          workspaceId={activeWorkspace?.id ?? null}
+          onSelectResult={onSearchResultSelect}
+        />
+      )}
     </aside>
   )
 }

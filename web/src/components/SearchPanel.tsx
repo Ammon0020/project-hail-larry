@@ -1,17 +1,114 @@
-import { useState } from 'react'
-import { Search } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { Search, Loader2, CaseSensitive } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { api, type SearchResult } from '@/lib/api'
 
 /**
- * Search panel — workspace-wide search (Blueprint Sec 17 — left sidebar).
+ * Search panel — workspace-wide content search (Blueprint Sec 17 — left sidebar).
  *
- * STATUS: stub. The input is wired to local state so the control is
- * interactive, but no backend search endpoint exists yet — see
- * docs/STATUS.md "File search". Until the backend lands, the panel shows a
- * "coming soon" empty state instead of fake hardcoded results (AGENTS.md —
- * mark gaps honestly).
+ * Calls the backend GET /api/workspaces/{id}/search endpoint with a 300ms
+ * debounce so rapid typing does not flood the server. Stale in-flight requests
+ * are cancelled via an incrementing token so only the latest query's results
+ * are rendered. Results are grouped by file path and the matched substring is
+ * highlighted with a <mark>.
  */
-export function SearchPanel() {
+export function SearchPanel({
+  workspaceId,
+  onSelectResult,
+}: {
+  /** Active workspace id, or null when no workspace is selected. */
+  workspaceId: string | null
+  /** Callback invoked when a result is clicked — opens the file in the editor. */
+  onSelectResult?: (path: string, lineNumber: number) => void
+}) {
   const [query, setQuery] = useState('')
+  const [ignoreCase, setIgnoreCase] = useState(true)
+  const [results, setResults] = useState<SearchResult[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Incrementing token used to ignore stale fetch responses. Each effect run
+  // increments the ref; when a fetch resolves it checks its captured token
+  // against the current value and discards the result if a newer query has
+  // started.
+  const reqTokenRef = useRef(0)
+
+  const trimmed = query.trim()
+
+  // Clear stale results immediately when the input is emptied or the workspace
+  // changes, so the user never sees results from a previous query. This is done
+  // in the change handler (not in an effect) to avoid synchronous setState
+  // inside an effect body (react-hooks/set-state-in-effect).
+  const handleQueryChange = (value: string) => {
+    setQuery(value)
+    if (!value.trim()) {
+      setResults([])
+      setError(null)
+      setLoading(false)
+    }
+  }
+
+  // Clear results when switching workspaces (the old results belong to a
+  // different root). Runs in the cleanup of the fetch effect below so it is not
+  // a synchronous setState in the effect body.
+
+  useEffect(() => {
+    // No workspace or empty query — do not fetch. The render layer shows the
+    // appropriate empty state; results from a prior query are cleared by the
+    // change handler / cleanup below.
+    if (!workspaceId || !trimmed) {
+      return
+    }
+
+    // Debounce 300ms so typing a multi-character query does not fire one
+    // request per keystroke.
+    const timer = setTimeout(() => {
+      const token = ++reqTokenRef.current
+      setLoading(true)
+      setError(null)
+      api
+        .searchWorkspace(workspaceId, {
+          pattern: trimmed,
+          ignoreCase,
+          maxResults: 200,
+        })
+        .then((res) => {
+          // Ignore the response if a newer query has started since this fetch.
+          if (token !== reqTokenRef.current) return
+          setResults(res)
+          setLoading(false)
+        })
+        .catch((err: unknown) => {
+          if (token !== reqTokenRef.current) return
+          setError(err instanceof Error ? err.message : String(err))
+          setResults([])
+          setLoading(false)
+        })
+    }, 300)
+
+    return () => {
+      clearTimeout(timer)
+      // When the workspace changes, drop results from the previous root so they
+      // do not flash before the new search completes.
+      setResults([])
+      setError(null)
+      setLoading(false)
+    }
+  }, [trimmed, workspaceId, ignoreCase])
+
+  // Group results by file path for display. A Map preserves insertion order
+  // (which is the backend's traversal order) and dedupes paths.
+  const grouped = useMemo(() => {
+    const map = new Map<string, SearchResult[]>()
+    for (const r of results) {
+      const list = map.get(r.path)
+      if (list) list.push(r)
+      else map.set(r.path, [r])
+    }
+    return Array.from(map.entries())
+  }, [results])
+
+  const showEmpty = !loading && !error && trimmed && results.length === 0
 
   return (
     <div className="flex flex-col h-full">
@@ -26,24 +123,105 @@ export function SearchPanel() {
             id="search-panel-input"
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => handleQueryChange(e.target.value)}
             placeholder="Search files..."
-            className="w-full bg-background border border-gray-700 rounded-md pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:border-blue-500 transition"
+            className="w-full bg-background border border-gray-700 rounded-md pl-8 pr-8 py-1.5 text-xs focus:outline-none focus:border-blue-500 transition"
             aria-label="Search files"
+            disabled={!workspaceId}
           />
+          <button
+            type="button"
+            onClick={() => setIgnoreCase((v) => !v)}
+            className={cn(
+              'absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded transition',
+              ignoreCase
+                ? 'text-gray-500 hover:text-gray-300'
+                : 'text-blue-400 bg-blue-600/10',
+            )}
+            aria-label="Toggle case sensitivity"
+            aria-pressed={!ignoreCase}
+            title={ignoreCase ? 'Case insensitive (click for exact case)' : 'Case sensitive (click for insensitive)'}
+          >
+            <CaseSensitive className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-3 pb-2 text-xs">
-        {query.trim() ? (
+        {!workspaceId ? (
           <div className="text-gray-500 text-center py-6">
-            File search is not yet available.
+            Select a workspace to search.
           </div>
-        ) : (
+        ) : loading ? (
+          <div className="flex items-center justify-center gap-2 text-gray-500 py-6">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Searching...
+          </div>
+        ) : error ? (
+          <div className="text-red-400 text-center py-6 px-2 break-words">
+            {error}
+          </div>
+        ) : showEmpty ? (
+          <div className="text-gray-500 text-center py-6">
+            No results found.
+          </div>
+        ) : !trimmed ? (
           <div className="text-gray-500 text-center py-6">
             Type to search across the workspace.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {grouped.map(([path, matches]) => (
+              <div key={path}>
+                <div className="text-gray-400 font-medium truncate mb-1" title={path}>
+                  {path}
+                </div>
+                <ul className="space-y-0.5">
+                  {matches.map((r, i) => (
+                    <li key={`${r.path}:${r.lineNumber}:${i}`}>
+                      <button
+                        type="button"
+                        onClick={() => onSelectResult?.(r.path, r.lineNumber)}
+                        className="w-full text-left flex gap-2 px-1.5 py-1 rounded hover:bg-blue-500/10 transition group"
+                      >
+                        <span className="text-gray-600 tabular-nums shrink-0 group-hover:text-blue-400">
+                          {r.lineNumber}
+                        </span>
+                        <span className="text-gray-300 truncate font-mono text-[11px]">
+                          {renderLine(r)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Renders a result line with the matched substring wrapped in a <mark>.
+ * Uses byte offsets from the backend (matchStart/matchEnd) which correspond to
+ * rune positions in the line content; since JS strings are UTF-16, we slice on
+ * the string directly which is correct for BMP text. For astral characters the
+ * offsets may be off, but this matches the common case and avoids expensive
+ * rune conversion per line.
+ */
+function renderLine(r: SearchResult): React.ReactNode {
+  const { lineContent, matchStart, matchEnd } = r
+  if (matchStart < 0 || matchEnd > lineContent.length || matchStart >= matchEnd) {
+    return lineContent
+  }
+  return (
+    <>
+      {lineContent.slice(0, matchStart)}
+      <mark className="bg-yellow-500/30 text-foreground rounded px-0.5">
+        {lineContent.slice(matchStart, matchEnd)}
+      </mark>
+      {lineContent.slice(matchEnd)}
+    </>
   )
 }

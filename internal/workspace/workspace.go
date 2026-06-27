@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/adama/local-agent/internal/interfaces"
+	"github.com/adama/local-agent/internal/search"
 )
 
 // Manager implements interfaces.WorkspaceManager.
@@ -202,6 +203,25 @@ func (m *Manager) FileTree(_ context.Context, workspaceID string) ([]interfaces.
 	}
 
 	return buildFileTree(path, "", 0, new(int))
+}
+
+// Search runs a workspace-wide content search (Blueprint Sec 17 — file search).
+// It looks up the workspace path under the read lock and delegates to
+// internal/search.Search, which uses ripgrep when available and falls back to
+// a Go-native walker otherwise. All returned paths are relative to the
+// workspace root.
+func (m *Manager) Search(ctx context.Context, workspaceID string, pattern string, opts search.SearchOptions) ([]search.SearchResult, error) {
+	// Copy the workspace path out under the read lock, then release it before
+	// the (potentially slow) search walk.
+	m.mu.RLock()
+	wsPath, ok := m.workspaces[workspaceID]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("workspace not found: %s", workspaceID)
+	}
+
+	opts.Pattern = pattern
+	return search.Search(ctx, wsPath, opts)
 }
 
 // buildFileTree recursively builds a FileNode tree from the directory at root.

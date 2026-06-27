@@ -251,6 +251,13 @@ export default function App() {
     }
   }
 
+  // Opens a file from a search result. Reuses handleFileSelect to load/add a
+  // tab; line-jump to the specific line is deferred (see docs/known-issues.md).
+  const handleSearchResultSelect = (path: string, _lineNumber: number): void => {
+    void _lineNumber // line-jump deferred — see docs/known-issues.md
+    handleFileSelect(path)
+  }
+
   // ---- Tab operations ----
   const handleTabSelect = (id: string) => setActiveTabId(id)
 
@@ -439,7 +446,19 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex bg-background text-gray-200 font-sans selection:bg-blue-500/30">
+    <div className="h-screen w-screen overflow-hidden flex flex-col bg-background text-gray-200 font-sans selection:bg-blue-500/30">
+      {/* Reconnecting banner — shown only after a prior successful connection
+          drops (mid-session Wi-Fi loss). A cold-load failure does not set
+          reconnecting, so the banner stays hidden on first load. The pulsing
+          dot uses the animate-pulse utility; semantic tokens only. */}
+      {backend.reconnecting && (
+        <div className="flex items-center gap-2 px-3 py-1.5 text-xs bg-muted text-muted-foreground border-b border-border shrink-0">
+          <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/70 animate-pulse" />
+          Reconnecting…
+        </div>
+      )}
+      {/* Main app shell — activity bar + sidebar + editor + chat (horizontal) */}
+      <div className="flex-1 min-h-0 flex">
       {/* Activity Bar (far left, icon-only — desktop only) */}
       <ActivityBar
         activePanel={leftPanel}
@@ -460,6 +479,7 @@ export default function App() {
         workspaces={backend.workspaces}
         activeWorkspace={backend.activeWorkspace}
         onWorkspaceSelect={backend.selectWorkspace}
+        onSearchResultSelect={handleSearchResultSelect}
         style={isDesktop ? { width: leftPanelWidth } : undefined}
       />
 
@@ -504,7 +524,9 @@ export default function App() {
           active: s.id === activeSessionId,
           agentId: s.agentId,
           modelId: s.modelId,
+          workspace: s.workspace,
         }))}
+        workspaces={backend.workspaces}
         visible={showChat}
         connected={backend.connected}
         pendingPermissions={backend.pendingPermissions}
@@ -546,6 +568,8 @@ export default function App() {
           }
         }}
       />
+
+      </div>
 
       {/* Mobile Bottom Nav (hidden on desktop) */}
       <MobileNav activeView={mobileView} onSwitchView={setMobileView} />

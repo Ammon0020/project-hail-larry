@@ -128,6 +128,7 @@ func (s *Server) apiRoutes() {
 	s.mux.HandleFunc("GET /api/workspaces/{id}/files", s.requireAuth(s.handleFileTree))
 	s.mux.HandleFunc("GET /api/workspaces/{id}/file", s.requireAuth(s.handleReadFile))
 	s.mux.HandleFunc("POST /api/workspaces/{id}/file", s.requireAuth(s.handleWriteFile))
+	s.mux.HandleFunc("GET /api/workspaces/{id}/search", s.requireAuth(s.handleSearch))
 
 	// Event routes — require auth.
 	s.mux.HandleFunc("GET /api/events", s.requireAuth(s.handleGetEvents))

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/adama/local-agent/internal/interfaces"
+	"github.com/adama/local-agent/internal/search"
 )
 
 // fakeWorkspaceManager is a stub interfaces.WorkspaceManager for tests. It
@@ -39,6 +40,10 @@ func (m *fakeWorkspaceManager) FileTree(_ context.Context, _ string) ([]interfac
 
 func (m *fakeWorkspaceManager) ReadFile(_ context.Context, _, _ string) (string, int64, error) {
 	return "", 0, nil
+}
+
+func (m *fakeWorkspaceManager) Search(_ context.Context, _, _ string, _ search.SearchOptions) ([]search.SearchResult, error) {
+	return nil, nil
 }
 
 func (m *fakeWorkspaceManager) Remove(_ context.Context, id string) error {

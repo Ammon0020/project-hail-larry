@@ -9,6 +9,8 @@ package interfaces
 import (
 	"context"
 	"time"
+
+	"github.com/adama/local-agent/internal/search"
 )
 
 // ----------------------------------------------------------------------------
@@ -120,6 +122,9 @@ type WorkspaceManager interface {
 
 	// ReadFile returns the content of a file and its current revision.
 	ReadFile(ctx context.Context, workspaceID, relPath string) (content string, revision int64, err error)
+
+	// Search runs a workspace-wide content search and returns matching lines.
+	Search(ctx context.Context, workspaceID, pattern string, opts search.SearchOptions) ([]search.SearchResult, error)
 }
 
 // ----------------------------------------------------------------------------

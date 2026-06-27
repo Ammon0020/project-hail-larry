@@ -62,6 +62,7 @@ export interface Session {
   active?: boolean
   agentId?: string
   modelId?: string
+  workspace?: string
 }
 
 /** A paired device (Blueprint Sec 19 — device pairing). */
@@ -125,3 +126,31 @@ export type LeftPanel = 'files' | 'search'
 
 /** Mobile bottom-nav views (Blueprint Sec 17 — mobile layout). */
 export type MobileView = 'explorer' | 'editor' | 'chat' | 'settings'
+
+/** Options for a workspace content search (mirrors Go search.SearchOptions). */
+export interface SearchOptions {
+  /** Regex pattern to search for (required). */
+  pattern: string
+  /** Case-insensitive matching when true. */
+  ignoreCase?: boolean
+  /** Cap on the number of results (default 200 on the backend). */
+  maxResults?: number
+  /** Optional glob restricting file names (e.g. "*.go"). */
+  filePattern?: string
+  /** Context lines around each match (rg only). */
+  contextLines?: number
+}
+
+/** A single search match within a file (mirrors Go search.SearchResult). */
+export interface SearchResult {
+  /** File path relative to the workspace root. */
+  path: string
+  /** 1-based line number of the match. */
+  lineNumber: number
+  /** Full text of the matched line. */
+  lineContent: string
+  /** 0-based byte offset within lineContent where the match begins. */
+  matchStart: number
+  /** 0-based byte offset within lineContent where the match ends (exclusive). */
+  matchEnd: number
+}

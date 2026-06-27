@@ -64,6 +64,7 @@ export interface SessionInfo {
   agentId?: string
   modelId?: string
   updatedAt?: string
+  workspace?: string
 }
 
 export interface AppEvent {
@@ -109,6 +110,24 @@ export interface DeviceCredential {
   pairedAt: string
 }
 
+/** Options for a workspace content search (mirrors Go search.SearchOptions). */
+export interface SearchOptions {
+  pattern: string
+  ignoreCase?: boolean
+  maxResults?: number
+  filePattern?: string
+  contextLines?: number
+}
+
+/** A single search match within a file (mirrors Go search.SearchResult). */
+export interface SearchResult {
+  path: string
+  lineNumber: number
+  lineContent: string
+  matchStart: number
+  matchEnd: number
+}
+
 export interface PairingSession {
   id: string
   token: string
@@ -144,6 +163,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path, content, expectedRevision }),
     }),
+  searchWorkspace: (workspaceId: string, opts: SearchOptions) => {
+    const params = new URLSearchParams()
+    params.set('pattern', opts.pattern)
+    if (opts.ignoreCase) params.set('ignoreCase', '1')
+    if (opts.maxResults != null) params.set('maxResults', String(opts.maxResults))
+    if (opts.filePattern) params.set('filePattern', opts.filePattern)
+    if (opts.contextLines != null) params.set('contextLines', String(opts.contextLines))
+    return apiFetch<SearchResult[]>(`/workspaces/${workspaceId}/search?${params.toString()}`)
+  },
 
   // Events
   getEvents: (afterId = 0, limit = 100) =>

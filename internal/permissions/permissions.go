@@ -74,9 +74,17 @@ type AuditEntry struct {
 
 // pendingRequest tracks an outstanding permission prompt.
 type pendingRequest struct {
-	request  interfaces.PermissionRequest
-	response chan interfaces.PermissionDecision
+	request   interfaces.PermissionRequest
+	response  chan interfaces.PermissionDecision
+	CreatedAt time.Time
 }
+
+// pendingRequestTimeout is how long a permission prompt may remain unanswered
+// before it is considered stale. A device that drops Wi-Fi mid-session may
+// never respond; without a bound the agent goroutine blocked in Request would
+// hang until the agent's own context deadline (or forever). CleanupStale prunes
+// prompts older than this and denies them so the blocked Request unblocks.
+const pendingRequestTimeout = 5 * time.Minute
 
 // NewManager creates a new permission Manager.
 func NewManager() *Manager {
@@ -140,8 +148,9 @@ func (m *Manager) Request(ctx context.Context, req interfaces.PermissionRequest)
 
 	m.mu.Lock()
 	m.pending[req.ID] = &pendingRequest{
-		request:  req,
-		response: respCh,
+		request:   req,
+		response:  respCh,
+		CreatedAt: time.Now(),
 	}
 	cb := m.onReq
 	m.mu.Unlock()
@@ -207,10 +216,45 @@ func (m *Manager) Respond(_ context.Context, requestID string, decision interfac
 	}
 }
 
+// CleanupStale denies and removes pending permission requests that have been
+// waiting longer than pendingRequestTimeout. This handles the reconnection gap
+// where a device drops Wi-Fi mid-session: a prompt whose context was cancelled
+// while disconnected would otherwise stay in `pending` forever, blocking the
+// agent goroutine until the agent's own context dies. The deny is sent
+// non-blocking (the response channel is buffered with capacity 1); a full
+// channel means the request was already resolved independently. The blocked
+// Request's defer cleanup tolerates the pending entry already being deleted.
+func (m *Manager) CleanupStale() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cleanupStaleLocked()
+}
+
+// cleanupStaleLocked is the lock-holding core of CleanupStale. Callers must
+// hold m.mu. Split out so GetPending can prune stale prompts under its own
+// single lock acquisition without a reentrant lock (sync.Mutex is not
+// reentrant).
+func (m *Manager) cleanupStaleLocked() {
+	now := time.Now()
+	for id, p := range m.pending {
+		if now.Sub(p.CreatedAt) < pendingRequestTimeout {
+			continue
+		}
+		select {
+		case p.response <- interfaces.PermissionDeny:
+		default:
+		}
+		delete(m.pending, id)
+	}
+}
+
 // GetPending returns all pending permission requests (for re-presentation on reconnect).
 func (m *Manager) GetPending() []interfaces.PermissionRequest {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Prune stale prompts first so a reconnecting client never receives a list
+	// containing prompts whose context already died while it was disconnected.
+	m.cleanupStaleLocked()
 
 	requests := make([]interfaces.PermissionRequest, 0, len(m.pending))
 	for _, p := range m.pending {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/interfaces"
+	"github.com/adama/local-agent/internal/search"
 )
 
 // ----------------------------------------------------------------------------
@@ -214,6 +215,68 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"revision": newRevision, "path": req.Path})
+}
+
+// handleSearch runs a workspace-wide content search (Blueprint Sec 17 — file
+// search). Query params:
+//
+//	pattern      (required) regex to search for
+//	ignoreCase   (optional) "1"/"true" for case-insensitive (default false)
+//	maxResults   (optional) cap on results (default 200)
+//	filePattern  (optional) glob restricting file names (e.g. "*.go")
+//	contextLines (optional) context lines around each match (rg only)
+//
+// Returns 400 on an empty or invalid pattern, 404 on an unknown workspace,
+// and 500 on other backend errors.
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.PathValue("id")
+	pattern := r.URL.Query().Get("pattern")
+	if strings.TrimSpace(pattern) == "" {
+		writeError(w, http.StatusBadRequest, "missing 'pattern' query parameter")
+		return
+	}
+
+	opts := search.SearchOptions{
+		Pattern:      pattern,
+		IgnoreCase:   r.URL.Query().Get("ignoreCase") == "1" || r.URL.Query().Get("ignoreCase") == "true",
+		FilePattern:  r.URL.Query().Get("filePattern"),
+		ContextLines: queryIntDefault(r, "contextLines", 0),
+		MaxResults:   queryIntDefault(r, "maxResults", 0), // 0 => search.Search applies its default.
+	}
+
+	results, err := s.deps.WorkspaceMgr.Search(r.Context(), workspaceID, pattern, opts)
+	if err != nil {
+		// A bad regex surfaces from search.Search as a wrapped "invalid pattern"
+		// error — map it to a 400 so the frontend can show a helpful message.
+		msg := err.Error()
+		if strings.Contains(msg, "invalid pattern") || strings.Contains(msg, "error parsing regexp") {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		// "workspace not found" comes from the manager lookup.
+		if strings.Contains(msg, "workspace not found") {
+			writeError(w, http.StatusNotFound, msg)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, msg)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, results)
+}
+
+// queryIntDefault parses an integer query parameter, returning the fallback
+// when the parameter is absent or not a valid integer.
+func queryIntDefault(r *http.Request, key string, fallback int) int {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 // ----------------------------------------------------------------------------

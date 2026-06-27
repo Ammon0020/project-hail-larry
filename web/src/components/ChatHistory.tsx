@@ -22,6 +22,7 @@ const statusDotClass: Record<SessionStatus, string> = {
  */
 export function ChatHistory({
   sessions,
+  workspaces,
   open,
   onClose,
   onCreateSession,
@@ -31,6 +32,7 @@ export function ChatHistory({
   onExportSession,
 }: {
   sessions: Session[]
+  workspaces: { id: string; name: string }[]
   open: boolean
   onClose: () => void
   onCreateSession: () => void
@@ -42,6 +44,31 @@ export function ChatHistory({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // Workspace filter for the session list. "all" shows sessions from every
+  // workspace (the show-all model — sessions keep running when switching
+  // workspaces). Reset to "all" each time the popout opens so the choice does
+  // not silently persist across opens. Uses the "adjust state during render"
+  // pattern (React docs) instead of setState-in-effect to avoid cascading
+  // renders and the ESLint rule react-hooks/set-state-in-effect.
+  const [workspaceFilter, setWorkspaceFilter] = useState('all')
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
+    if (open) setWorkspaceFilter('all')
+  }
+
+  // Look up a workspace display name by id; falls back to the raw id when the
+  // workspace is unknown (e.g. a session whose workspace was unregistered).
+  const workspaceName = (id: string): string =>
+    workspaces.find((w) => w.id === id)?.name ?? id
+
+  // Filter the session list by the selected workspace. Sessions with no
+  // workspace field (legacy) are only shown under "all" — they don't match a
+  // specific workspace filter.
+  const filteredSessions =
+    workspaceFilter === 'all'
+      ? sessions
+      : sessions.filter((s) => s.workspace === workspaceFilter)
 
   // Close the popout on Escape (keyboard accessibility — AGENTS.md a11y focus).
   useEffect(() => {
@@ -94,8 +121,22 @@ export function ChatHistory({
           </button>
         </div>
 
+        {/* Workspace filter — show-all model: sessions from every workspace
+            are listed, with an optional filter to narrow to one. */}
+        <select
+          value={workspaceFilter}
+          onChange={(e) => setWorkspaceFilter(e.target.value)}
+          className="select-chevron appearance-none w-full bg-background border border-gray-700 text-muted-foreground text-xs rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-500 cursor-pointer mb-1"
+          aria-label="Filter sessions by workspace"
+        >
+          <option value="all">All Workspaces</option>
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>{w.name}</option>
+          ))}
+        </select>
+
         {/* Session rows */}
-        {sessions.map((s) => (
+        {filteredSessions.map((s) => (
           <div
             key={s.id}
             className={cn(
@@ -148,6 +189,11 @@ export function ChatHistory({
                   )}>
                     {s.name}
                   </span>
+                  {s.workspace && (
+                    <span className="shrink-0 text-muted-foreground bg-muted px-1.5 py-0.5 rounded text-[10px]">
+                      {workspaceName(s.workspace)}
+                    </span>
+                  )}
                 </button>
                 <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition">
                   {s.modelId && <span className="text-[10px] text-gray-600 mr-1">{s.modelId}</span>}

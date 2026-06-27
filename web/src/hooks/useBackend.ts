@@ -30,6 +30,13 @@ export function useBackend() {
   const [devices, setDevices] = useState<DeviceCredential[]>([])
   const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([])
   const [connected, setConnected] = useState(false)
+  // reconnecting is true only while the WebSocket is closed AND retrying after a
+  // prior successful connection. It stays false on the initial connect attempt
+  // (before the first onopen) so the UI does not flash a "Reconnecting…" banner
+  // on a cold load. lastConnectedAt records the timestamp of the last successful
+  // ws.onopen and gates the reconnecting flag.
+  const [reconnecting, setReconnecting] = useState(false)
+  const lastConnectedAtRef = useRef<number | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const eventsRef = useRef<AppEvent[]>([])
@@ -75,6 +82,10 @@ export function useBackend() {
 
     ws.onopen = () => {
       setConnected(true)
+      // Clear the reconnecting banner once the socket is back up, and record
+      // the connection time so a subsequent drop can re-arm the banner.
+      setReconnecting(false)
+      lastConnectedAtRef.current = Date.now()
       // On (re)connect, re-sync sessions, pending permissions, and catch up
       // on any events missed while the socket was down. loadEvents() is now
       // safe to call here because it MERGES (cursor-based append with ID
@@ -89,6 +100,12 @@ export function useBackend() {
     ws.onclose = () => {
       if (!mountedRef.current) return
       setConnected(false)
+      // Only show the reconnecting banner after the socket has connected at
+      // least once — a cold-load failure (backend not up yet) should not flash
+      // a "Reconnecting…" banner, but a mid-session Wi-Fi drop should.
+      if (lastConnectedAtRef.current !== null) {
+        setReconnecting(true)
+      }
       // Reconnect after 3 seconds (Blueprint Sec 12 — reconnection). Clear any
       // prior timer so overlapping disconnects don't stack multiple sockets.
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
@@ -382,6 +399,7 @@ export function useBackend() {
     devices,
     pendingPermissions,
     connected,
+    reconnecting,
 
     // Actions
     selectWorkspace,

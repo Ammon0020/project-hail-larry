@@ -641,3 +641,90 @@ func TestPolicySameShellCommandAutoResolves(t *testing.T) {
 		t.Fatal("same shell command did not auto-resolve (blocked)")
 	}
 }
+
+// TestCleanupStaleDeniesExpiredRequest verifies that CleanupStale denies and
+// removes a pending request whose CreatedAt is older than
+// pendingRequestTimeout, unblocking the agent goroutine waiting in Request with
+// a PermissionDeny. This models the reconnection scenario: a device drops
+// Wi-Fi mid-session, the prompt's context is cancelled while disconnected, and
+// the prompt would otherwise linger in `pending` forever. The waiting
+// goroutine must unblock (with a 2s test timeout so the test can never hang).
+func TestCleanupStaleDeniesExpiredRequest(t *testing.T) {
+	m := NewManager()
+
+	resultCh := make(chan interfaces.PermissionDecision, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		// Use a long-lived context so the only thing that unblocks Request is
+		// CleanupStale sending the deny (not context cancellation).
+		d, err := m.Request(context.Background(), interfaces.PermissionRequest{
+			SessionID: "sess-stale",
+			Tool:      "execute",
+			Command:   "rm -rf /tmp/x",
+			Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowOnce, interfaces.PermissionDeny},
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- d
+	}()
+
+	// Wait for the request to register as pending.
+	pending := waitForPending(t, m, 1)
+
+	// Backdate the pending entry so it appears stale to CleanupStale, without
+	// actually waiting pendingRequestTimeout (5 minutes) in the test.
+	m.mu.Lock()
+	if p, ok := m.pending[pending[0].ID]; ok {
+		p.CreatedAt = time.Now().Add(-pendingRequestTimeout - time.Second)
+	}
+	m.mu.Unlock()
+
+	// CleanupStale should deny and remove the stale prompt.
+	m.CleanupStale()
+
+	// The pending map should now be empty.
+	if got := m.GetPending(); len(got) != 0 {
+		t.Fatalf("expected 0 pending after CleanupStale, got %d", len(got))
+	}
+
+	// The blocked Request goroutine must unblock with PermissionDeny.
+	select {
+	case d := <-resultCh:
+		if d != interfaces.PermissionDeny {
+			t.Errorf("expected PermissionDeny from stale cleanup, got %s", d)
+		}
+	case err := <-errCh:
+		t.Fatalf("request returned unexpected error: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("stale request was not unblocked by CleanupStale (timed out)")
+	}
+}
+
+// TestCleanupStaleKeepsFreshRequest verifies that CleanupStale does NOT touch a
+// pending request that is younger than pendingRequestTimeout — only stale
+// prompts are pruned.
+func TestCleanupStaleKeepsFreshRequest(t *testing.T) {
+	m := NewManager()
+
+	go func() {
+		_, _ = m.Request(context.Background(), interfaces.PermissionRequest{
+			SessionID: "sess-fresh",
+			Tool:      "execute",
+			Command:   "echo hi",
+			Options:   []interfaces.PermissionDecision{interfaces.PermissionAllowOnce, interfaces.PermissionDeny},
+		})
+	}()
+
+	pending := waitForPending(t, m, 1)
+
+	// CleanupStale on a fresh request should leave it intact.
+	m.CleanupStale()
+	if got := m.GetPending(); len(got) != 1 {
+		t.Fatalf("expected 1 pending after CleanupStale on fresh request, got %d", len(got))
+	}
+
+	// Resolve so the Request goroutine exits cleanly.
+	_ = m.Respond(context.Background(), pending[0].ID, interfaces.PermissionDeny)
+}

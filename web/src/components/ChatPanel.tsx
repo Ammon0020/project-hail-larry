@@ -34,6 +34,7 @@ export function ChatPanel({
   events,
   agents,
   sessions,
+  workspaces,
   visible,
   connected,
   pendingPermissions,
@@ -52,6 +53,7 @@ export function ChatPanel({
   events: AppEvent[]
   agents: Agent[]
   sessions: Session[]
+  workspaces: { id: string; name: string }[]
   visible: boolean
   connected: boolean
   pendingPermissions: PendingPermission[]
@@ -327,6 +329,7 @@ export function ChatPanel({
         {/* Chat list popout (floats over chat messages) */}
         <ChatHistory
           sessions={sessions}
+          workspaces={workspaces}
           open={chatHistoryOpen}
           onClose={() => setChatHistoryOpen(false)}
           onCreateSession={handleNewChat}
