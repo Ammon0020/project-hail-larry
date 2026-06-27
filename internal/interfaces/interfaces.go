@@ -33,11 +33,16 @@ const (
 	EventShellOutputStreamed   EventType = "ShellOutputStreamed"
 	EventShellCommandCompleted EventType = "ShellCommandCompleted"
 	EventFileRevisionUpdated   EventType = "FileRevisionUpdated"
-	EventSessionInterrupted    EventType = "SessionInterrupted"
-	EventSessionCancelled      EventType = "SessionCancelled"
-	EventAgentExited           EventType = "AgentExited"
-	EventConnectionRestarted   EventType = "ConnectionRestarted"
-	EventSessionResumed        EventType = "SessionResumed"
+	// EventFileWritten is broadcast when an agent writes/creates a file via the
+	// ACP WriteTextFile callback. It carries the workspace ID (WorkspaceID) and
+	// the affected file path (Target) so the frontend can refresh its file tree
+	// without a manual reload.
+	EventFileWritten         EventType = "FileWritten"
+	EventSessionInterrupted  EventType = "SessionInterrupted"
+	EventSessionCancelled    EventType = "SessionCancelled"
+	EventAgentExited         EventType = "AgentExited"
+	EventConnectionRestarted EventType = "ConnectionRestarted"
+	EventSessionResumed      EventType = "SessionResumed"
 )
 
 // Event is a single entry in the append-only event log.
@@ -60,6 +65,9 @@ type Event struct {
 	ToolCallID string    `json:"toolCallId,omitempty"` // ACP tool call ID (for correlation)
 	Thought    bool      `json:"thought,omitempty"`    // true if this is an agent thought chunk
 	ExitCode   *int      `json:"exitCode,omitempty"`   // shell/terminal exit code when finished
+	// WorkspaceID identifies the workspace a file-change event applies to (e.g.
+	// EventFileWritten), so the frontend can refresh the correct file tree.
+	WorkspaceID string `json:"workspaceId,omitempty"`
 }
 
 // EventStore is the contract for the event persistence layer.

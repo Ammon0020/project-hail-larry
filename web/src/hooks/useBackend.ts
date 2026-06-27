@@ -33,6 +33,12 @@ export function useBackend() {
 
   const wsRef = useRef<WebSocket | null>(null)
   const eventsRef = useRef<AppEvent[]>([])
+  // Mirror activeWorkspace in a ref so the WebSocket onmessage closure (created
+  // once at mount) can read the current value instead of a stale snapshot.
+  const activeWorkspaceRef = useRef<WorkspaceInfo | null>(null)
+  useEffect(() => {
+    activeWorkspaceRef.current = activeWorkspace
+  }, [activeWorkspace])
 
   // ---- Load initial data on mount ----
   useEffect(() => {
@@ -87,6 +93,17 @@ export function useBackend() {
           event.type === 'PermissionDenied'
         ) {
           loadPendingPermissions()
+        }
+        // File-written events (agent created/modified a file via ACP) trigger a
+        // file-tree refresh so the explorer shows the new file without a manual
+        // reload. Only refresh when the event's workspace matches the active
+        // workspace (the agent only writes within its session's workspace).
+        if (event.type === 'FileWritten') {
+          const evtWs = (event as AppEvent & { workspaceId?: string }).workspaceId
+          const active = activeWorkspaceRef.current
+          if (!evtWs || !active || evtWs === active.id) {
+            refreshFileTree()
+          }
         }
       } catch {
         // Ignore malformed messages.
@@ -245,6 +262,21 @@ export function useBackend() {
   }
 
   // ---- File actions ----
+  /**
+   * Reloads the file tree for the active workspace from the backend. Called
+   * after a FileWritten event so the explorer reflects agent-created files
+   * without a manual refresh.
+   */
+  async function refreshFileTree() {
+    const ws = activeWorkspaceRef.current
+    if (!ws) return
+    try {
+      setFileTree(await api.getFileTree(ws.id))
+    } catch {
+      // Workspace may have been removed; leave the tree as-is.
+    }
+  }
+
   async function readFile(path: string) {
     const wsId = activeWorkspace?.id || ''
     return await api.readFile(wsId, path)

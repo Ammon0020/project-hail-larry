@@ -319,8 +319,20 @@ func (c *acpClientImpl) WriteTextFile(ctx context.Context, params acp.WriteTextF
 	if !ok {
 		return acp.WriteTextFileResponse{}, fmt.Errorf("workspace manager does not support writing")
 	}
-	if _, err := fw.WriteFile(ctx, c.workspaceID, toRelativePath(c.workspacePath, params.Path), params.Content, 0); err != nil {
+	relPath := toRelativePath(c.workspacePath, params.Path)
+	if _, err := fw.WriteFile(ctx, c.workspaceID, relPath, params.Content, 0); err != nil {
 		return acp.WriteTextFileResponse{}, err
+	}
+	// Broadcast a file-written event so the frontend can refresh its file tree
+	// and show the newly created/modified file without a manual reload. The
+	// workspace ID lets the UI refresh only the affected workspace's tree.
+	if c.callbacks != nil {
+		c.callbacks.OnEvent(interfaces.Event{
+			Type:        interfaces.EventFileWritten,
+			SessionID:   c.sessionID,
+			WorkspaceID: c.workspaceID,
+			Target:      relPath,
+		})
 	}
 	return acp.WriteTextFileResponse{}, nil
 }
