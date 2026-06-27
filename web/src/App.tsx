@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { X } from 'lucide-react'
 import { LockScreen } from '@/components/LockScreen'
 import { ActivityBar } from '@/components/ActivityBar'
@@ -102,6 +102,12 @@ export default function App() {
   // Save error — shown as a transient banner so save failures aren't silent
   // (previously only console.error'd, making debugging impossible).
   const [saveError, setSaveError] = useState<string | null>(null)
+
+  // Line to scroll to when a search result is clicked. Set by
+  // handleSearchResultSelect and consumed by EditorPane's scrollToLine prop.
+  // Cleared after the editor processes the jump so the same line number can
+  // re-trigger (e.g. clicking a result in a different file at the same line).
+  const [searchResultLine, setSearchResultLine] = useState<number | null>(null)
 
   // Session state — restored from localStorage so the active conversation
   // survives a page reload (UI Spec §6.2).
@@ -210,71 +216,34 @@ export default function App() {
     localStorage.setItem('lai:rightPanelWidth', String(rightPanelWidth))
   }, [rightPanelWidth])
 
-  // ---- Lock screen for unpaired devices ----
-  if (!paired) {
-    return <LockScreen onPaired={() => setPaired(true)} />
-  }
-
-  // Convert backend file tree to the component's expected format, preserving
-  // path. Validates `type` at runtime so a malformed backend node cannot
-  // silently become a typed union (AGENTS.md — type safety).
-  const convertNode = (n: { name: string; type: string; path?: string; children?: { name: string; type: string; path?: string; children?: unknown[] }[] }): FileTreeNode => ({
-    name: n.name,
-    type: n.type === 'folder' ? 'folder' : 'file',
-    path: n.path,
-    children: n.children?.map((c) => convertNode(c as typeof n)),
-  })
-  const fileTree: FileTreeNode[] = backend.fileTree.map((n) => convertNode(n))
-
-  // ---- File operations ----
-  const handleFileSelect = async (path: string) => {
-    // Check if tab already open
-    const existing = openTabs.find((t) => t.path === path)
-    if (existing) {
-      setActiveTabId(existing.id)
-      return
-    }
-    // Load file from backend
-    try {
-      const file = await backend.readFile(path)
-      const name = path.split(/[\\/]/).pop() || path
-      const ext = name.split('.').pop() || ''
-      const lang = ['js', 'jsx', 'ts', 'tsx'].includes(ext) ? 'javascript' : ext
-      const tab: Tab = {
-        id: path,
-        name,
-        path,
-        content: file.content,
-        revision: file.revision,
-        unsaved: false,
-        language: lang,
-      }
-      setOpenTabs((prev) => [...prev, tab])
-      setActiveTabId(path)
-    } catch (err) {
-      console.error('Failed to open file:', err)
-    }
-  }
-
-  // Opens a file from a search result. Reuses handleFileSelect to load/add a
-  // tab; line-jump to the specific line is deferred (see docs/known-issues.md).
-  const handleSearchResultSelect = (path: string, _lineNumber: number): void => {
-    void _lineNumber // line-jump deferred — see docs/known-issues.md
-    handleFileSelect(path)
-  }
+  // Clear the search-result line target after the editor has had a chance to
+  // dispatch the jump. Using setTimeout(0) defers the clear to the next
+  // macrotask, which runs after the EditorPane effect that performs the
+  // scroll. This ensures a subsequent click on the same line number (e.g. in
+  // a different file) re-triggers the scrollToLine effect.
+  useEffect(() => {
+    if (searchResultLine == null) return
+    const timer = setTimeout(() => setSearchResultLine(null), 0)
+    return () => clearTimeout(timer)
+  }, [searchResultLine])
 
   // ---- Tab operations ----
+  // Defined before the unpaired early return so the keyboard-shortcut
+  // useEffect below them is not called conditionally (react-hooks/rules-of-hooks).
   const handleTabSelect = (id: string) => setActiveTabId(id)
 
-  const handleTabClose = (id: string) => {
-    setOpenTabs((prev) => {
-      const next = prev.filter((t) => t.id !== id)
-      if (activeTabId === id) {
-        setActiveTabId(next.length > 0 ? next[next.length - 1].id : null)
-      }
-      return next
-    })
-  }
+  const handleTabClose = useCallback(
+    (id: string) => {
+      setOpenTabs((prev) => {
+        const next = prev.filter((t) => t.id !== id)
+        if (activeTabId === id) {
+          setActiveTabId(next.length > 0 ? next[next.length - 1].id : null)
+        }
+        return next
+      })
+    },
+    [activeTabId],
+  )
 
   const handleContentChange = (content: string) => {
     setOpenTabs((prev) =>
@@ -282,7 +251,7 @@ export default function App() {
     )
   }
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     const tab = openTabs.find((t) => t.id === activeTabId)
     if (!tab) return
     try {
@@ -297,7 +266,7 @@ export default function App() {
       console.error('Save failed:', err)
       setSaveError(err instanceof Error ? err.message : String(err))
     }
-  }
+  }, [backend, openTabs, activeTabId])
 
   // ---- Global keyboard shortcuts ----
   // Registered on window so they work even when the CodeMirror editor isn't
@@ -345,7 +314,69 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [activeTabId, openTabs])
+    // handleSave and handleTabClose close over current openTabs/activeTabId,
+    // so they are intentionally refreshed on every tab/active change.
+  }, [activeTabId, openTabs, handleSave, handleTabClose])
+
+  // ---- Lock screen for unpaired devices ----
+  if (!paired) {
+    return <LockScreen onPaired={() => setPaired(true)} />
+  }
+
+  // Convert backend file tree to the component's expected format, preserving
+  // path. Validates `type` at runtime so a malformed backend node cannot
+  // silently become a typed union (AGENTS.md — type safety).
+  const convertNode = (n: { name: string; type: string; path?: string; children?: { name: string; type: string; path?: string; children?: unknown[] }[] }): FileTreeNode => ({
+    name: n.name,
+    type: n.type === 'folder' ? 'folder' : 'file',
+    path: n.path,
+    children: n.children?.map((c) => convertNode(c as typeof n)),
+  })
+  const fileTree: FileTreeNode[] = backend.fileTree.map((n) => convertNode(n))
+
+  // ---- File operations ----
+  const handleFileSelect = async (path: string) => {
+    // Check if tab already open
+    const existing = openTabs.find((t) => t.path === path)
+    if (existing) {
+      setActiveTabId(existing.id)
+      return
+    }
+    // Load file from backend
+    try {
+      const file = await backend.readFile(path)
+      const name = path.split(/[\\/]/).pop() || path
+      const ext = name.split('.').pop() || ''
+      const lang = ['js', 'jsx', 'ts', 'tsx'].includes(ext) ? 'javascript' : ext
+      const tab: Tab = {
+        id: path,
+        name,
+        path,
+        content: file.content,
+        revision: file.revision,
+        unsaved: false,
+        language: lang,
+      }
+      setOpenTabs((prev) => [...prev, tab])
+      setActiveTabId(path)
+    } catch (err) {
+      console.error('Failed to open file:', err)
+    }
+  }
+
+  // Opens a file from a search result and jumps the editor cursor to the
+  // matched line. If the file is already open in a tab, just activates it and
+  // sets the line; otherwise loads the file first, then sets the line after
+  // the content is available so the editor can resolve the line position.
+  const handleSearchResultSelect = async (path: string, lineNumber: number): Promise<void> => {
+    const existing = openTabs.find((t) => t.path === path)
+    if (existing) {
+      setActiveTabId(existing.id)
+    } else {
+      await handleFileSelect(path)
+    }
+    setSearchResultLine(lineNumber)
+  }
 
   // ---- Session operations ----
   const handleCreateSession = async (agentId: string, modelId: string): Promise<string> => {
@@ -523,6 +554,7 @@ export default function App() {
         onTabClose={handleTabClose}
         onSave={handleSave}
         onContentChange={handleContentChange}
+        scrollToLine={searchResultLine}
       />
 
       {/* Resize handle between editor and right chat panel (desktop only) */}

@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -172,6 +174,44 @@ func TestSearch_EmptyPattern(t *testing.T) {
 	_, err := Search(context.Background(), root, SearchOptions{Pattern: ""})
 	if err == nil {
 		t.Fatal("expected error for empty pattern, got nil")
+	}
+}
+
+// TestParseRgJSON_LineContentNotPath guards against a regression where the
+// rg JSON parser put the file path into LineContent instead of the matched
+// line text. rg's --json output nests line content under "data"."lines"."text"
+// and the file path under "data"."path"."text"; a previous version looked up
+// the wrong key ("line" instead of "lines") and fell back to "data"."text",
+// which matched "data"."path"."text" (the file path) first.
+func TestParseRgJSON_LineContentNotPath(t *testing.T) {
+	root := t.TempDir()
+	fullPath := filepath.Join(root, "b.txt")
+	// JSON-escape backslashes in the path (Windows paths use \).
+	escapedPath := strings.ReplaceAll(fullPath, `\`, `\\`)
+	re := regexp.MustCompile(`TODO`)
+	input := `{"type":"match","data":{"path":{"text":"` + escapedPath +
+		`"},"lines":{"text":"TODO: fix this"},"line_number":1,` +
+		`"absolute_offset":0,"submatches":[{"match":{"text":"TODO"},"start":0,"end":4}]}}` + "\n"
+
+	results, err := parseRgJSON([]byte(input), root, re, 50)
+	if err != nil {
+		t.Fatalf("parseRgJSON: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d: %+v", len(results), results)
+	}
+	r := results[0]
+	if r.LineContent != "TODO: fix this" {
+		t.Errorf("LineContent = %q, want %q", r.LineContent, "TODO: fix this")
+	}
+	if r.Path != "b.txt" {
+		t.Errorf("Path = %q, want b.txt", r.Path)
+	}
+	if r.LineNumber != 1 {
+		t.Errorf("LineNumber = %d, want 1", r.LineNumber)
+	}
+	if r.MatchStart != 0 || r.MatchEnd != 4 {
+		t.Errorf("offsets = [%d,%d), want [0,4)", r.MatchStart, r.MatchEnd)
 	}
 }
 

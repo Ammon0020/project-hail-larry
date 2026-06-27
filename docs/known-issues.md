@@ -47,14 +47,3 @@ in `review/2026-06-27/` (not moved to `implemented/`).
   return before hooks) and an `exhaustive-deps` warning on the keyboard
   shortcut effect. Both predate this pass and are tracked under the
   `web-app-side-effect-during-render` finding above.
-
-## File search — deferred
-
-- **Search result line-jump** — Clicking a search result opens the file in the
-  editor but does not jump to the matched line number. `SearchPanel` passes
-  `lineNumber` via `onSelectResult`, and `App.tsx`'s `handleSearchResultSelect`
-  receives it but currently only calls `handleFileSelect(path)`. Wiring the
-  line number into the CodeMirror editor (e.g. via a `scrollToLine` effect or
-  dispatching a `CodeMirror.search` API selection) is a follow-up. The
-  `lineNumber` is intentionally accepted in the callback signature so the
-  editor wiring is a localized change.

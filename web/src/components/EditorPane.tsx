@@ -11,7 +11,7 @@ import { autocompletion } from '@codemirror/autocomplete'
 import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemirror/language'
 import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { Prec } from '@codemirror/state'
+import { Prec, EditorSelection } from '@codemirror/state'
 import { FileCode, Circle, X, GitCompare, Save, GitBranch, CircleAlert, TriangleAlert, FileText, ChevronLeft, ChevronRight, WrapText } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
@@ -33,6 +33,7 @@ export function EditorPane({
   onTabClose,
   onSave,
   onContentChange,
+  scrollToLine,
 }: {
   tabs: Tab[]
   activeTabId: string | null
@@ -41,6 +42,10 @@ export function EditorPane({
   onTabClose: (id: string) => void
   onSave: () => void
   onContentChange: (content: string) => void
+  /** When set, scrolls the editor cursor to this 1-based line and scrolls it
+   *  into view. Cleared by the parent after the jump is dispatched so a
+   *  subsequent click on the same line re-triggers. */
+  scrollToLine?: number | null
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
 
@@ -56,6 +61,28 @@ export function EditorPane({
   useEffect(() => {
     onSaveRef.current = onSave
   }, [onSave])
+
+  // Hold the CodeMirror EditorView instance so we can imperatively dispatch
+  // selection/scroll transactions (e.g. jump-to-line from search results).
+  // Populated via the onCreateEditor callback from @uiw/react-codemirror.
+  const editorViewRef = useRef<EditorView | null>(null)
+
+  // When scrollToLine changes (and is non-null), move the cursor to that line
+  // and scroll it into view. The parent clears the value after the jump so a
+  // subsequent click on the same line number re-triggers the effect.
+  useEffect(() => {
+    if (scrollToLine == null) return
+    const view = editorViewRef.current
+    if (!view) return
+    // doc.line takes a 1-based line number and returns a line descriptor whose
+    // .from is the start position. Guard against out-of-range line numbers.
+    if (scrollToLine < 1 || scrollToLine > view.state.doc.lines) return
+    const linePos = view.state.doc.line(scrollToLine).from
+    view.dispatch({
+      selection: EditorSelection.cursor(linePos),
+      scrollIntoView: true,
+    })
+  }, [scrollToLine])
 
   // Scroll affordances for the tab bar: show left/right chevrons when the tab
   // list overflows. State is updated from the onScroll handler (an event
@@ -336,6 +363,9 @@ export function EditorPane({
             theme={oneDark}
             height="100%"
             className="text-[13px] h-full"
+            onCreateEditor={(view) => {
+              editorViewRef.current = view
+            }}
             basicSetup={{
               lineNumbers: true,
               foldGutter: true,

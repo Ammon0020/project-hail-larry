@@ -206,10 +206,10 @@ func parseRgJSON(data []byte, root string, re *regexp.Regexp, max int) ([]Search
 		relPath = filepath.ToSlash(relPath)
 
 		lineNum := jsonIntValue(line, "line_number")
-		lineText := jsonStringValue(line, "line", "text")
+		lineText := jsonStringValue(line, "lines", "text")
 		if lineText == "" {
-			// Some rg versions nest the line under "data"."text".
-			lineText = jsonNestedStringValue(line, "data", "text")
+			// Some rg versions nest the line under "data"."lines"."text".
+			lineText = jsonNestedStringValue(line, "data", "lines", "text")
 		}
 
 		// Compute match offsets from the first submatch on the line text. rg

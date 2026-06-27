@@ -96,6 +96,12 @@ export function useBackend() {
       loadSessions()
       loadPendingPermissions()
       loadEvents()
+      // Restore the active workspace if it was never loaded — e.g. the page
+      // loaded while the network was down so loadWorkspaces() failed and left
+      // activeWorkspace null, then the socket came back up. Without this,
+      // saveFile sends an empty workspace id and the backend returns 404
+      // "Not found" (the save-after-reconnection bug).
+      restoreActiveWorkspace()
     }
     ws.onclose = () => {
       if (!mountedRef.current) return
@@ -175,6 +181,35 @@ export function useBackend() {
       }
     } catch {
       // Backend not ready yet.
+    }
+  }
+
+  /**
+   * Restores the active workspace after a WebSocket reconnect when it was
+   * never loaded — e.g. the page loaded while the network was down so
+   * loadWorkspaces() failed and left activeWorkspace null, then the socket
+   * came back up. Without this, saveFile sends an empty workspace id and the
+   * backend returns 404 "Not found" (the save-after-reconnection bug).
+   *
+   * Uses activeWorkspaceRef instead of the activeWorkspace state so the check
+   * always sees the current value regardless of which render's closure the
+   * onopen handler captured (the onopen closure is created once per
+   * connectWebSocket call and can be stale by the time it fires). If the
+   * persisted id no longer exists in the fresh list (e.g. the daemon
+   * restarted with different workspace registrations), falls back to the
+   * first available workspace so saving still works.
+   */
+  async function restoreActiveWorkspace() {
+    if (activeWorkspaceRef.current) return
+    try {
+      const ws = await api.listWorkspaces()
+      setWorkspaces(ws)
+      if (ws.length === 0) return
+      const storedId = localStorage.getItem('lai:activeWorkspace')
+      const match = storedId ? ws.find((w) => w.id === storedId) : undefined
+      selectWorkspace(match ?? ws[0])
+    } catch {
+      // Backend still not ready; the next reconnect will retry.
     }
   }
 
