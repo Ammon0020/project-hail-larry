@@ -3,6 +3,8 @@ import { javascript } from '@codemirror/lang-javascript'
 import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
 import { python } from '@codemirror/lang-python'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { languages as mdLanguages } from '@codemirror/language-data'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { search } from '@codemirror/search'
 import { autocompletion } from '@codemirror/autocomplete'
@@ -100,6 +102,12 @@ export function EditorPane({
     if (['python', 'py', 'pyw'].includes(normalized)) {
       return [python()]
     }
+    if (['markdown', 'md', 'mdx', 'mdown', 'markdown'].includes(normalized)) {
+      // markdown() provides syntax highlighting for markdown structure.
+      // markdownLanguage + mdLanguages enables nested code block highlighting
+      // (e.g. ```js, ```python) via lazy language loading.
+      return [markdown({ base: markdownLanguage, codeLanguages: mdLanguages })]
+    }
     // Default to JavaScript for unknown/no extension so the editor is never bare.
     return [javascript({ jsx: false, typescript: false })]
   }
@@ -132,12 +140,15 @@ export function EditorPane({
       ...getLanguageExtension(lang),
 
       // Full-height theme: make the editor fill its container so clicking
-      // below the last line works (places the cursor at the end). Without
-      // this, .cm-editor only takes the height of its content.
+      // below the last line works (places the cursor at the end). The height
+      // chain must be: parent (fixed flex height) → wrapper (100%) →
+      // .cm-editor (100%) → .cm-scroller (100%, overflow:auto) →
+      // .cm-content (minHeight:100%). Without every link, the editor only
+      // takes the height of its content and the area below is dead space.
       EditorView.theme({
-        '&': { height: '100%' },
+        '&': { height: '100%', backgroundColor: 'transparent' },
         '.cm-scroller': { overflow: 'auto' },
-        '.cm-content': { minHeight: '100%' },
+        '.cm-content': { minHeight: '100%', paddingBottom: '50vh' },
         '.cm-gutters': { minHeight: '100%' },
       }),
 
@@ -219,6 +230,14 @@ export function EditorPane({
         <div
           ref={scrollRef}
           onScroll={measureScroll}
+          onWheel={(e) => {
+            // Translate vertical scrollwheel into horizontal tab scrolling.
+            // The container only scrolls on x, so without this the wheel
+            // does nothing when hovering the tab bar.
+            if (e.deltaY !== 0) {
+              scrollRef.current?.scrollBy({ left: e.deltaY, behavior: 'smooth' })
+            }
+          }}
           className="flex overflow-x-auto tab-scrollbar"
         >
           {tabs.map((tab) => {
@@ -293,7 +312,7 @@ export function EditorPane({
       </div>
 
       {/* CodeMirror 6 Editor or Empty State (Blueprint Sec 17 — CodeMirror 6) */}
-      <div className="flex-1 overflow-auto bg-editor">
+      <div className="flex-1 overflow-hidden bg-editor">
         {activeTab ? (
           <CodeMirror
             value={activeTab.content}
@@ -301,7 +320,7 @@ export function EditorPane({
             extensions={extensions}
             theme={oneDark}
             height="100%"
-            className="text-[13px]"
+            className="text-[13px] h-full"
             basicSetup={{
               lineNumbers: true,
               foldGutter: true,

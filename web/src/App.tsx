@@ -255,6 +255,54 @@ export default function App() {
     }
   }
 
+  // ---- Global keyboard shortcuts ----
+  // Registered on window so they work even when the CodeMirror editor isn't
+  // focused. Ctrl+S is also handled inside CodeMirror (Prec.highest) for when
+  // the editor IS focused — this is the fallback for when it isn't.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey
+
+      // Ctrl+W — close active editor tab (prevent browser close).
+      if (mod && !e.shiftKey && e.key === 'w') {
+        e.preventDefault()
+        if (activeTabId) handleTabClose(activeTabId)
+        return
+      }
+
+      // Ctrl+S — save active file.
+      if (mod && !e.shiftKey && e.key === 's') {
+        e.preventDefault()
+        handleSave()
+        return
+      }
+
+      // Ctrl+Shift+F — switch to search panel.
+      if (mod && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault()
+        setLeftPanel('search')
+        return
+      }
+
+      // Ctrl+Shift+E — switch to explorer/files panel.
+      if (mod && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
+        e.preventDefault()
+        setLeftPanel('files')
+        return
+      }
+
+      // Ctrl+B — toggle left sidebar visibility on desktop.
+      if (mod && !e.shiftKey && e.key === 'b') {
+        e.preventDefault()
+        setLeftPanelWidth((prev) => (prev > 0 ? 0 : 260))
+        return
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [activeTabId, openTabs])
+
   // ---- Session operations ----
   const handleCreateSession = async (agentId: string, modelId: string): Promise<string> => {
     const session = await backend.createSession(agentId, modelId)
@@ -316,7 +364,9 @@ export default function App() {
     : []
 
   // ---- Determine panel visibility based on viewport and state ----
-  const showLeftSidebar = isDesktop || mobileView === 'explorer'
+  // On desktop, the sidebar can be hidden via Ctrl+B (width set to 0).
+  const sidebarHidden = isDesktop && leftPanelWidth === 0
+  const showLeftSidebar = (isDesktop && !sidebarHidden) || mobileView === 'explorer'
   const showEditor = isDesktop || mobileView === 'editor'
   const showChat = isDesktop || mobileView === 'chat'
   const showMobileSettings = !isDesktop && mobileView === 'settings'
