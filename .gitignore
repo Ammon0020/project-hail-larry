@@ -5,3 +5,6 @@ eslint-report.json
 
 # Node
 node_modules
+
+# reviews
+review/

@@ -268,8 +268,22 @@ export default function App() {
       setActiveSessionId(null)
       return
     }
+    // Switching conversations is a pure filter change over the master event
+    // list: ws.onmessage appends ALL events for ALL sessions to eventsRef
+    // regardless of which conversation is active, so events that arrived for
+    // session A while the user was viewing session B are already present and
+    // surface immediately when we filter back to A.
+    //
+    // We deliberately do NOT call backend.loadSessionEvents() here. That fetch
+    // raced with WebSocket delivery: it replaced/merged eventsRef for the
+    // session against a SQLite snapshot, and any StreamUpdate events not yet
+    // persisted at fetch time (or delivered between fetch-initiation and
+    // completion) were dropped — freezing the streamed response at the point
+    // the user switched away. History for a session is loaded once on initial
+    // page load (loadedEventsForSession below) and caught up on WebSocket
+    // reconnect (loadEvents merges by cursor); a page refresh restores full
+    // history if the socket was down long enough to miss events.
     setActiveSessionId(sessionId)
-    backend.loadSessionEvents(sessionId)
   }
 
   const handleSendMessage = async (sessionId: string, content: string) => {

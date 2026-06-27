@@ -58,15 +58,16 @@ export function useBackend() {
 
     ws.onopen = () => {
       setConnected(true)
-      // On (re)connect, re-sync sessions and pending permissions only. We do
-      // NOT call loadEvents() here: it REPLACES the entire event list with a
-      // global fetch, which would wipe session-specific events already
-      // delivered via WebSocket (Blueprint Sec 12 — reconnection). The initial
-      // loadEvents() runs once on mount; real-time delivery is handled by the
-      // WebSocket. If the socket was down long enough to miss events, a page
-      // refresh restores full history.
+      // On (re)connect, re-sync sessions, pending permissions, and catch up
+      // on any events missed while the socket was down. loadEvents() is now
+      // safe to call here because it MERGES (cursor-based append with ID
+      // dedup) instead of replacing the event list — so it never wipes
+      // session-specific events already delivered via WebSocket. It fetches
+      // events after the highest ID we hold, filling the gap left by a
+      // disconnect (Blueprint Sec 12 — reconnection).
       loadSessions()
       loadPendingPermissions()
+      loadEvents()
     }
     ws.onclose = () => {
       setConnected(false)
@@ -162,9 +163,33 @@ export function useBackend() {
 
   async function loadEvents() {
     try {
-      const evts = await api.getEvents(0, 1000)
-      eventsRef.current = evts
-      setEvents(evts)
+      // Cursor-based fetch: retrieve events AFTER the highest ID we already
+      // hold. On the initial mount eventsRef is empty (afterId=0 → first
+      // 1000 events), matching the previous behavior. On WebSocket reconnect
+      // this catches any events missed while the socket was down — without
+      // wiping session-specific events already delivered in real time.
+      //
+      // Merging (appending) instead of replacing is what makes this safe to
+      // call on reconnect: a global fetch that replaced the list would discard
+      // StreamUpdate events delivered via WebSocket for non-active sessions
+      // while the user was viewing another conversation (the "frozen stream"
+      // bug). Appending preserves them.
+      const afterId =
+        eventsRef.current.length > 0
+          ? Math.max(...eventsRef.current.map((e) => e.id))
+          : 0
+      const evts = await api.getEvents(afterId, 1000)
+      if (evts.length === 0) return
+      // Dedupe by ID: a WebSocket event may have arrived between computing
+      // the cursor and the fetch returning, and the fetch would also include
+      // it (recordEvent persists before broadcasting). Keep only fetched
+      // events whose IDs we don't already have to avoid duplicates.
+      const existingIds = new Set(eventsRef.current.map((e) => e.id))
+      const fresh = evts.filter((e) => !existingIds.has(e.id))
+      if (fresh.length > 0) {
+        eventsRef.current = [...eventsRef.current, ...fresh]
+        setEvents(eventsRef.current)
+      }
     } catch {
       // Event store may be empty.
     }
