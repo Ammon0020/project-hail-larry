@@ -414,13 +414,14 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePatchSession renames a conversation and/or rebinds it to a different
-// agent/model. Body: { "name"?: string, "agentId"?: string, "modelId"?: string }.
+// agent/model. Body: { "name"?: string, "agentId"?: string, "modelId"?: string, "maxTransferBytes"?: int }.
 func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
 	var req struct {
-		Name    *string `json:"name"`
-		AgentID *string `json:"agentId"`
-		ModelID *string `json:"modelId"`
+		Name             *string `json:"name"`
+		AgentID          *string `json:"agentId"`
+		ModelID          *string `json:"modelId"`
+		MaxTransferBytes *int    `json:"maxTransferBytes"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -436,7 +437,11 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 
 	// A rebind requires both agent and model to be specified.
 	if req.AgentID != nil && req.ModelID != nil {
-		if _, err := s.deps.ACPClient.RebindSession(r.Context(), sessionID, *req.AgentID, *req.ModelID); err != nil {
+		maxTransfer := 0
+		if req.MaxTransferBytes != nil {
+			maxTransfer = *req.MaxTransferBytes
+		}
+		if _, err := s.deps.ACPClient.RebindSession(r.Context(), sessionID, *req.AgentID, *req.ModelID, maxTransfer); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -517,6 +522,37 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "closed"})
+}
+
+// handleSessionContext accepts frontend-reported editor state (currently open
+// files and recently edited files) for a session and updates the
+// OpenFilesTracker so the prompt middleware pipeline can inject it. The
+// session ID is accepted for future per-session tracking but the current
+// tracker is process-global. Body:
+//
+//	{ "openFiles": ["path1", ...], "recentEdits": ["path3", ...] }
+//
+// Both fields are optional; omitted fields leave the tracker unchanged.
+func (s *Server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
+	if s.deps == nil || s.deps.OpenFilesTracker == nil {
+		writeError(w, http.StatusServiceUnavailable, "open-files tracking not configured")
+		return
+	}
+	var req struct {
+		OpenFiles   []string `json:"openFiles"`
+		RecentEdits []string `json:"recentEdits"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.OpenFiles != nil {
+		s.deps.OpenFilesTracker.SetOpenFiles(req.OpenFiles)
+	}
+	if req.RecentEdits != nil {
+		s.deps.OpenFilesTracker.SetRecentEdits(req.RecentEdits)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 // ----------------------------------------------------------------------------

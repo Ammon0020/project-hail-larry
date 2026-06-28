@@ -65,7 +65,7 @@ export function ChatPanel({
   onCancel: (sessionId: string) => void
   onRenameSession: (sessionId: string, name: string) => void
   onDeleteSession: (sessionId: string) => void
-  onRebindSession: (sessionId: string, agentId: string, modelId: string) => void
+  onRebindSession: (sessionId: string, agentId: string, modelId: string, maxTransferBytes?: number) => void
   onExportSession: (sessionId: string) => void
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
   style?: CSSProperties
@@ -92,6 +92,14 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Switch-agent confirmation dialog state. When the user changes the agent
+  // dropdown mid-conversation, we show a dialog instead of rebinding
+  // immediately so they can pick a transfer-history truncate length.
+  // `pendingAgentId` holds the new agent id while the dialog is open; null
+  // means the dialog is closed.
+  const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
+  const [truncateLength, setTruncateLength] = useState<number>(8000)
 
   // Scroll container ref for the smart-autoscroll hook (Feature 1).
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -153,11 +161,46 @@ export function ChatPanel({
 
   /** Updates models when the harness changes; rebinds an active conversation. */
   const handleAgentChange = (agentId: string) => {
+    const previousAgentId = effectiveAgentId
+    // If there's no active conversation, or the session has no prompts yet,
+    // switch immediately without a confirmation dialog (same as before).
+    const hasConversation =
+      !!activeSessionId && events.some((e) => e.type === 'PromptSubmitted')
+    if (!hasConversation) {
+      setSelectedAgent(agentId)
+      const agent = agents.find((a) => a.id === agentId)
+      const modelId = agent?.models[0]?.id ?? ''
+      if (agent) setSelectedModel(modelId)
+      if (activeSessionId && modelId) onRebindSession(activeSessionId, agentId, modelId)
+      return
+    }
+    // Mid-conversation switch — open the confirmation dialog instead of
+    // rebinding immediately. The dropdown value is driven by
+    // `effectiveAgentId` (derived from the active session), so it stays on
+    // the current agent until the user confirms the switch.
+    if (agentId === previousAgentId) return
+    setPendingAgentId(agentId)
+  }
+
+  /** Confirms the pending agent switch and rebinds with the chosen truncate length. */
+  const confirmSwitchAgent = () => {
+    if (!pendingAgentId || !activeSessionId) {
+      setPendingAgentId(null)
+      return
+    }
+    const agentId = pendingAgentId
     setSelectedAgent(agentId)
     const agent = agents.find((a) => a.id === agentId)
     const modelId = agent?.models[0]?.id ?? ''
     if (agent) setSelectedModel(modelId)
-    if (activeSessionId && modelId) onRebindSession(activeSessionId, agentId, modelId)
+    const maxBytes = truncateLength > 0 ? truncateLength : undefined
+    onRebindSession(activeSessionId, agentId, modelId, maxBytes)
+    setPendingAgentId(null)
+  }
+
+  /** Cancels the pending agent switch — reverts the dropdown to the current agent. */
+  const cancelSwitchAgent = () => {
+    setPendingAgentId(null)
   }
 
   /** Switches model; rebinds an active conversation in place. */
@@ -443,6 +486,89 @@ export function ChatPanel({
           </div>
         </div>
       </div>
+
+      {/* Switch-agent confirmation dialog — shown when the user changes the
+          harness mid-conversation. Lets them pick how much of the prior
+          conversation history to transfer as context for the new agent. */}
+      {pendingAgentId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={cancelSwitchAgent}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Switch Agent"
+        >
+          <div
+            className="bg-panel border border-gray-700 rounded-xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+              <h2 className="text-lg font-bold text-gray-200">Switch Agent</h2>
+            </div>
+
+            {/* Body */}
+            <div className="px-5 py-4 space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Switching from{' '}
+                <span className="font-semibold text-foreground">
+                  {currentAgent?.name ?? effectiveAgentId}
+                </span>{' '}
+                to{' '}
+                <span className="font-semibold text-foreground">
+                  {agents.find((a) => a.id === pendingAgentId)?.name ?? pendingAgentId}
+                </span>{' '}
+                will start a fresh conversation. The previous conversation history will be
+                transferred as context (truncated to{' '}
+                <span className="font-semibold text-foreground">
+                  {truncateLength > 0
+                    ? `${truncateLength.toLocaleString()} chars`
+                    : 'no limit'}
+                </span>
+                ).
+              </p>
+
+              {/* Truncate length control */}
+              <div className="space-y-2">
+                <label
+                  htmlFor="truncate-length"
+                  className="block text-xs font-medium text-gray-400"
+                >
+                  Transfer history length
+                </label>
+                <select
+                  id="truncate-length"
+                  value={truncateLength}
+                  onChange={(e) => setTruncateLength(Number(e.target.value))}
+                  className="w-full bg-background border border-gray-700 text-gray-200 text-sm rounded-md py-1.5 px-2.5 focus:outline-none focus:border-blue-500 cursor-pointer"
+                >
+                  <option value={4000}>4,000 chars</option>
+                  <option value={8000}>8,000 chars</option>
+                  <option value={16000}>16,000 chars</option>
+                  <option value={32000}>32,000 chars</option>
+                  <option value={0}>Full (no limit)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Footer — Cancel / Switch Agent */}
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-800">
+              <button
+                onClick={cancelSwitchAgent}
+                className="px-3 py-1.5 text-sm font-medium text-gray-300 bg-gray-800 hover:bg-gray-700 rounded-md border border-gray-700 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmSwitchAgent}
+                className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-md transition"
+              >
+                Switch Agent
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   )
 }

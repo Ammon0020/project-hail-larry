@@ -114,8 +114,12 @@ export function ChatMessageItem({
           <div className="w-7 h-7 rounded-lg bg-gray-800 flex items-center justify-center shrink-0 border border-gray-700 text-xs font-medium">
             U
           </div>
-          <div className="flex-1 pt-0.5">
-            <p className="text-sm text-gray-200">{event.content}</p>
+          <div className="flex-1 pt-0.5 min-w-0">
+            <div className="prose prose-sm prose-invert max-w-none break-words text-gray-200 [&_pre]:bg-tool-call [&_pre]:rounded-md [&_pre]:border [&_pre]:border-gray-800/80 [&_pre]:p-2 [&_pre]:text-xs [&_pre]:overflow-x-auto [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_a]:text-blue-400 [&_a]:hover:underline">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {event.content || ''}
+              </ReactMarkdown>
+            </div>
           </div>
         </div>
       )

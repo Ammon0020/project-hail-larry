@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,9 @@ type agentSpec struct {
 	id       string
 	name     string
 	commands []string // tried in order (e.g. "vibe-acp" before "vibe")
+	// args are extra arguments passed to the command when launching the agent
+	// (e.g. ["acp"] for Cursor CLI's ACP subcommand).
+	args []string
 	// fallbackModels returned if both ACP and file-based detection fail.
 	fallbackModels []AgentModel
 	// fileModels reads agent-specific config files for model lists.
@@ -42,6 +46,23 @@ var knownAgents = []agentSpec{
 		commands:       []string{"codex"},
 		fallbackModels: []AgentModel{{ID: "gpt-4o", Name: "GPT-4o"}, {ID: "gpt-4-turbo", Name: "GPT-4 Turbo"}},
 		fileModels:     getCodexModelsFromFile,
+	},
+	{
+		id:       "cursor",
+		name:     "Cursor Agent",
+		commands: []string{"agent", "cursor-agent"},
+		args:     []string{"acp"},
+		fallbackModels: []AgentModel{
+			{ID: "auto", Name: "Auto"},
+			{ID: "composer-2.5-fast", Name: "Composer 2.5 Fast (default)"},
+			{ID: "composer-2.5", Name: "Composer 2.5"},
+			{ID: "gpt-5.2", Name: "GPT-5.2"},
+			{ID: "claude-opus-4-8-high", Name: "Opus 4.8 1M"},
+			{ID: "claude-4.6-sonnet-medium", Name: "Sonnet 4.6 1M"},
+			{ID: "gemini-3.1-pro", Name: "Gemini 3.1 Pro"},
+			{ID: "grok-4.3", Name: "Grok 4.3 1M"},
+		},
+		fileModels: getCursorModelsFromCLI,
 	},
 	{
 		id:             "mistral-vibe",
@@ -93,7 +114,7 @@ func detectAgent(spec agentSpec) (AgentInfo, bool) {
 		return AgentInfo{}, false
 	}
 
-	models, acpWarning := tryACPProvidersList(path)
+	models, acpWarning := tryACPProvidersList(path, spec.args)
 	var warning string
 	if len(models) == 0 && spec.fileModels != nil {
 		models = spec.fileModels()
@@ -113,6 +134,7 @@ func detectAgent(spec agentSpec) (AgentInfo, bool) {
 		ID:      spec.id,
 		Name:    spec.name,
 		Command: path,
+		Args:    spec.args,
 		Models:  models,
 		Warning: warning,
 	}, true
@@ -132,11 +154,11 @@ func findFirstCommand(commands []string) string {
 // tryACPProvidersList spawns the agent, performs an ACP Initialize handshake,
 // and queries available models via the unstable providers/list method.
 // Returns nil plus a warning if any step fails.
-func tryACPProvidersList(command string) ([]AgentModel, string) {
+func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, command)
+	cmd := exec.CommandContext(ctx, command, args...)
 	// Discard stderr — autodetect is a probe, not a real session.
 	// Agent stderr (e.g. "stdin is not a terminal") should not pollute daemon output.
 	cmd.Stderr = io.Discard
@@ -291,4 +313,54 @@ func readConfigFile(relPath string) ([]byte, error) {
 		return nil, fmt.Errorf("get home dir: %w", err)
 	}
 	return os.ReadFile(filepath.Join(home, relPath)) //nolint:gosec // path is constructed from home dir + known relative path
+}
+
+// getCursorModelsFromCLI runs `agent --list-models` (or `cursor-agent
+// --list-models`) and parses the output. The Cursor CLI prints lines like:
+//
+//	auto - Auto
+//	composer-2.5-fast - Composer 2.5 Fast (default)
+//	gpt-5.2 - GPT-5.2
+//
+// We parse "id - display name" pairs. Lines that don't match (blank, headers,
+// tips) are skipped. Falls back to nil (triggering fallbackModels) if the
+// command is not found or fails.
+func getCursorModelsFromCLI() []AgentModel {
+	// Try "agent" first (Cursor CLI's primary name), then "cursor-agent".
+	cmdPath, err := exec.LookPath("agent")
+	if err != nil {
+		cmdPath, err = exec.LookPath("cursor-agent")
+		if err != nil {
+			return nil
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, cmdPath, "--list-models").Output()
+	if err != nil {
+		log.Printf("autodetect: cursor --list-models failed: %v", err)
+		return nil
+	}
+
+	var models []AgentModel
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Available models") || strings.HasPrefix(line, "Tip:") {
+			continue
+		}
+		// Format: "id - Display Name"
+		idx := strings.Index(line, " - ")
+		if idx < 0 {
+			continue
+		}
+		id := strings.TrimSpace(line[:idx])
+		name := strings.TrimSpace(line[idx+3:])
+		if id == "" {
+			continue
+		}
+		models = append(models, AgentModel{ID: id, Name: name})
+	}
+	return models
 }

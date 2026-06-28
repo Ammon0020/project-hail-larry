@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -125,17 +126,6 @@ func (p *PromptPipeline) Reset(sessionID string) {
 	delete(p.counts, sessionID)
 }
 
-// maxContextFiles caps the number of file paths included in the injected
-// context to keep the bundle small.
-const maxContextFiles = 200
-
-// maxContextBytes caps the total injected context at roughly 8KB.
-const maxContextBytes = 8 * 1024
-
-// maxFileTreeDepth limits how deep into the workspace tree we walk when
-// flattening the file list. Depth is measured from the workspace root.
-const maxFileTreeDepth = 3
-
 // gitCommandTimeout is the per-git-command timeout. Git operations must
 // degrade gracefully and never block the prompt flow.
 const gitCommandTimeout = 2 * time.Second
@@ -144,14 +134,33 @@ const gitCommandTimeout = 2 * time.Second
 // first prompt of a session (PromptCount == 0). The bundle contains the
 // workspace root path, OS/platform, a flat file-path list, git status, and the
 // AGENTS.md content when present.
+//
+// The header strings and numeric limits (file count, tree depth, byte cap) are
+// sourced from the SystemMessages templates so they can be customized via the
+// configs/system-messages.json file without editing source. When messages is
+// nil, DefaultSystemMessages is used so the middleware always has a usable
+// template set.
 type FirstPromptContextMiddleware struct {
 	WorkspaceManager interfaces.WorkspaceManager
+	Messages         *SystemMessages
 }
 
 // NewFirstPromptContextMiddleware constructs a FirstPromptContextMiddleware
-// backed by the given workspace manager.
-func NewFirstPromptContextMiddleware(wm interfaces.WorkspaceManager) *FirstPromptContextMiddleware {
-	return &FirstPromptContextMiddleware{WorkspaceManager: wm}
+// backed by the given workspace manager and system-message templates. If
+// messages is nil, DefaultSystemMessages is used.
+func NewFirstPromptContextMiddleware(wm interfaces.WorkspaceManager, messages *SystemMessages) *FirstPromptContextMiddleware {
+	if messages == nil {
+		messages = DefaultSystemMessages()
+	}
+	return &FirstPromptContextMiddleware{WorkspaceManager: wm, Messages: messages}
+}
+
+// messages returns the configured SystemMessages, falling back to defaults.
+func (m *FirstPromptContextMiddleware) messages() *SystemMessages {
+	if m.Messages == nil {
+		return DefaultSystemMessages()
+	}
+	return m.Messages
 }
 
 // BeforePrompt implements PromptMiddleware. It injects only when
@@ -161,34 +170,35 @@ func (m *FirstPromptContextMiddleware) BeforePrompt(ctx context.Context, pc *Pro
 		return ActionContinue, ""
 	}
 
+	sm := m.messages()
 	var b strings.Builder
-	m.writeHeader(&b, pc)
-	m.writeFileTree(ctx, &b, pc)
-	m.writeGitStatus(&b, pc)
-	m.writeAgentsMD(&b, pc)
+	m.writeHeader(&b, pc, sm)
+	m.writeFileTree(ctx, &b, pc, sm)
+	m.writeGitStatus(&b, pc, sm)
+	m.writeAgentsMD(&b, pc, sm)
 
 	out := strings.TrimSpace(b.String())
 	if out == "" {
 		return ActionContinue, ""
 	}
 	// Enforce the global size cap as a final safety net.
-	if len(out) > maxContextBytes {
-		out = out[:maxContextBytes]
+	if len(out) > sm.MaxContextBytes {
+		out = out[:sm.MaxContextBytes]
 	}
 	return ActionInject, out
 }
 
 // writeHeader emits the workspace root path and OS/platform string.
-func (m *FirstPromptContextMiddleware) writeHeader(b *strings.Builder, pc *PromptContext) {
-	fmt.Fprintf(b, "## Workspace Context\n\n")
+func (m *FirstPromptContextMiddleware) writeHeader(b *strings.Builder, pc *PromptContext, sm *SystemMessages) {
+	fmt.Fprintf(b, "%s\n\n", sm.WorkspaceContextHeader)
 	fmt.Fprintf(b, "- Workspace root: %s\n", pc.WorkspacePath)
 	fmt.Fprintf(b, "- Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 }
 
 // writeFileTree appends a flat file-path list grouped by top-level directory.
 // It walks the recursive []FileNode returned by FileTree, capping at
-// maxContextFiles entries and maxFileTreeDepth levels.
-func (m *FirstPromptContextMiddleware) writeFileTree(ctx context.Context, b *strings.Builder, pc *PromptContext) {
+// MaxContextFiles entries and MaxFileTreeDepth levels.
+func (m *FirstPromptContextMiddleware) writeFileTree(ctx context.Context, b *strings.Builder, pc *PromptContext, sm *SystemMessages) {
 	if m.WorkspaceManager == nil || pc.WorkspaceID == "" {
 		return
 	}
@@ -197,15 +207,19 @@ func (m *FirstPromptContextMiddleware) writeFileTree(ctx context.Context, b *str
 		return
 	}
 
-	paths := flattenFileNodes(nodes, 0, maxFileTreeDepth)
-	if len(paths) > maxContextFiles {
-		paths = paths[:maxContextFiles]
+	paths := flattenFileNodes(nodes, 0, sm.MaxFileTreeDepth)
+	if len(paths) > sm.MaxContextFiles {
+		paths = paths[:sm.MaxContextFiles]
 	}
 	if len(paths) == 0 {
 		return
 	}
 
-	fmt.Fprintf(b, "\n## Files (first %d, depth ≤ %d)\n\n", len(paths), maxFileTreeDepth)
+	header := sm.Render(sm.FilesHeader, map[string]string{
+		"count": strconv.Itoa(len(paths)),
+		"depth": strconv.Itoa(sm.MaxFileTreeDepth),
+	})
+	fmt.Fprintf(b, "\n%s\n\n", header)
 	// Group by top-level directory for readability.
 	groups := groupByTopLevel(paths)
 	for _, g := range groups {
@@ -218,7 +232,7 @@ func (m *FirstPromptContextMiddleware) writeFileTree(ctx context.Context, b *str
 // writeGitStatus appends branch, clean/dirty summary, and the last 5 commits.
 // It degrades gracefully (omits the section) if the workspace is not a git
 // repo or git is unavailable.
-func (m *FirstPromptContextMiddleware) writeGitStatus(b *strings.Builder, pc *PromptContext) {
+func (m *FirstPromptContextMiddleware) writeGitStatus(b *strings.Builder, pc *PromptContext, sm *SystemMessages) {
 	if pc.WorkspacePath == "" {
 		return
 	}
@@ -229,7 +243,7 @@ func (m *FirstPromptContextMiddleware) writeGitStatus(b *strings.Builder, pc *Pr
 	}
 	logOut := runGit(pc.WorkspacePath, "log", "-5", "--oneline")
 
-	fmt.Fprintf(b, "\n## Git\n\n")
+	fmt.Fprintf(b, "\n%s\n\n", sm.GitHeader)
 	fmt.Fprintf(b, "```\n%s```\n", strings.TrimSpace(statusOut))
 	if logOut != "" {
 		fmt.Fprintf(b, "\nRecent commits:\n```\n%s```\n", strings.TrimSpace(logOut))
@@ -237,7 +251,7 @@ func (m *FirstPromptContextMiddleware) writeGitStatus(b *strings.Builder, pc *Pr
 }
 
 // writeAgentsMD appends the AGENTS.md content if present at the workspace root.
-func (m *FirstPromptContextMiddleware) writeAgentsMD(b *strings.Builder, pc *PromptContext) {
+func (m *FirstPromptContextMiddleware) writeAgentsMD(b *strings.Builder, pc *PromptContext, sm *SystemMessages) {
 	if pc.WorkspacePath == "" {
 		return
 	}
@@ -246,7 +260,7 @@ func (m *FirstPromptContextMiddleware) writeAgentsMD(b *strings.Builder, pc *Pro
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(b, "\n## AGENTS.md\n\n%s\n", string(data))
+	fmt.Fprintf(b, "\n%s\n\n%s\n", sm.AgentsMdHeader, string(data))
 }
 
 // flattenFileNodes walks the recursive FileNode tree depth-first and returns a

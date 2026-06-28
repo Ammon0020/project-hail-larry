@@ -160,9 +160,35 @@ func New(cfg *Config) (*Daemon, error) {
 
 	permissionMgr := permissions.NewManager()
 	acpClient := acp.NewClient(workspaceMgr, permissionMgr)
+	// Load externalized system-message templates (header strings + numeric
+	// limits) for the prompt middleware pipeline. Falls back to built-in
+	// defaults when the config file is missing or unreadable.
+	systemMessages, _ := acp.LoadSystemMessages("configs/system-messages.json")
+	// OpenFilesTracker holds the open/recently-edited file paths reported by
+	// the frontend via POST /api/sessions/{id}/context. It starts empty; the
+	// middlewares skip injection until the frontend reports state.
+	openFilesTracker := acp.NewOpenFilesTracker()
+	// ConversationTransferMiddleware queues an exported conversation transcript
+	// for injection into the first prompt of a session rebound to a new agent.
+	// RebindSession calls SetTransfer on it after exporting the prior history.
+	conversationTransfer := acp.NewConversationTransferMiddleware(systemMessages)
 	// Inject workspace context (file tree, git status, AGENTS.md) into the
-	// first prompt of each session so agents don't shell out to discover files.
-	acpClient.SetPipeline(acp.NewPromptPipeline(acp.NewFirstPromptContextMiddleware(workspaceMgr)))
+	// first prompt of each session so agents don't shell out to discover files,
+	// plus per-prompt time/open-files/recent-edits context. The conversation
+	// transfer middleware runs after the first-prompt context so the workspace
+	// bundle comes first, then the transferred conversation.
+	acpClient.SetPipeline(acp.NewPromptPipeline(
+		acp.NewFirstPromptContextMiddleware(workspaceMgr, systemMessages),
+		acp.NewTimeMiddleware(systemMessages),
+		acp.NewOpenFilesMiddleware(openFilesTracker, systemMessages),
+		acp.NewRecentEditsMiddleware(openFilesTracker, systemMessages),
+		conversationTransfer,
+	))
+	// Give the client access to the event store (for conversation export on
+	// rebind) and the transfer middleware (so RebindSession can queue the
+	// exported transcript for the new agent's first prompt).
+	acpClient.SetEventStore(eventStore)
+	acpClient.SetConversationTransfer(conversationTransfer)
 	// Persist conversation metadata so chats are remembered across restarts.
 	acpClient.SetStorePath(filepath.Join(cfg.DataDir, "conversations.json"))
 	if err := acpClient.LoadConversations(); err != nil {
@@ -196,13 +222,14 @@ func New(cfg *Config) (*Daemon, error) {
 
 	// Create the server with all dependencies wired in.
 	srv := server.New(&server.Deps{
-		EventStore:    eventStore,
-		PairingMgr:    pairingMgr,
-		WorkspaceMgr:  workspaceMgr,
-		ACPClient:     acpClient,
-		PermissionMgr: permissionMgr,
-		SyncHub:       syncHub,
-		Config:        appCfg,
+		EventStore:       eventStore,
+		PairingMgr:       pairingMgr,
+		WorkspaceMgr:     workspaceMgr,
+		ACPClient:        acpClient,
+		PermissionMgr:    permissionMgr,
+		SyncHub:          syncHub,
+		Config:           appCfg,
+		OpenFilesTracker: openFilesTracker,
 	})
 
 	return &Daemon{

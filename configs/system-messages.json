@@ -1,0 +1,15 @@
+{
+  "workspaceContextHeader": "## Workspace Context",
+  "filesHeader": "## Files (first {count}, depth ≤ {depth})",
+  "gitHeader": "## Git",
+  "agentsMdHeader": "## AGENTS.md",
+  "timeHeader": "## Current Time",
+  "openFilesHeader": "## Open Files",
+  "recentEditsHeader": "## Recently Edited Files",
+  "conversationTransferHeader": "## Previous Conversation (transferred from {agentName})",
+  "maxContextBytes": 8192,
+  "maxContextFiles": 200,
+  "maxFileTreeDepth": 3,
+  "maxOpenFiles": 20,
+  "maxRecentEdits": 10
+}

@@ -390,9 +390,35 @@ export function useBackend() {
     await loadSessions()
   }
 
-  async function rebindSession(sessionId: string, agentId: string, modelId: string) {
-    await api.patchSession(sessionId, { agentId, modelId })
+  async function rebindSession(
+    sessionId: string,
+    agentId: string,
+    modelId: string,
+    maxTransferBytes?: number,
+  ) {
+    await api.patchSession(sessionId, { agentId, modelId, maxTransferBytes })
     await loadSessions()
+  }
+
+  // Debounce timer for reportContext so rapid tab switches / edits don't
+  // flood the backend with context updates.
+  const reportContextTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  /**
+   * Reports the current open files and recent edits to the backend so the
+   * context middleware can inject them into the next agent prompt. Debounced
+   * by ~1s to coalesce rapid tab switches and keystroke-driven unsaved-state
+   * changes into a single request.
+   */
+  function reportContext(sessionId: string, openFiles: string[], recentEdits: string[]) {
+    if (reportContextTimerRef.current) clearTimeout(reportContextTimerRef.current)
+    reportContextTimerRef.current = setTimeout(async () => {
+      try {
+        await api.reportSessionContext(sessionId, openFiles, recentEdits)
+      } catch {
+        // Non-fatal — context reporting is best-effort.
+      }
+    }, 1000)
   }
 
   async function deleteSession(sessionId: string) {
@@ -447,6 +473,7 @@ export function useBackend() {
     renameSession,
     rebindSession,
     deleteSession,
+    reportContext,
     verifyPasscode,
     revokeDevice,
     respondPermission,

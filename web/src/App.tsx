@@ -199,6 +199,17 @@ export default function App() {
     else localStorage.removeItem('lai:activeTabId')
   }, [activeTabId])
 
+  // Report open files and recent (unsaved) edits to the backend so the context
+  // middleware can inject them into the next agent prompt. Debounced inside
+  // backend.reportContext (~1s) so rapid tab switches don't flood the API.
+  // Skipped when there's no active session or no active workspace.
+  useEffect(() => {
+    if (!activeSessionId || !backend.activeWorkspace) return
+    const openFiles = openTabs.map((t) => t.path)
+    const recentEdits = openTabs.filter((t) => t.unsaved).map((t) => t.path)
+    backend.reportContext(activeSessionId, openFiles, recentEdits)
+  }, [openTabs, activeSessionId, backend])
+
   useEffect(() => {
     localStorage.setItem('lai:leftPanel', leftPanel)
   }, [leftPanel])
@@ -594,7 +605,7 @@ export default function App() {
         onCancel={(id) => backend.cancelSession(id)}
         onRenameSession={(id, name) => backend.renameSession(id, name)}
         onDeleteSession={(id) => backend.deleteSession(id)}
-        onRebindSession={(id, agentId, modelId) => backend.rebindSession(id, agentId, modelId)}
+        onRebindSession={(id, agentId, modelId, maxTransferBytes) => backend.rebindSession(id, agentId, modelId, maxTransferBytes)}
         onExportSession={handleExportSession}
         style={isDesktop ? { width: rightPanelWidth } : undefined}
       />

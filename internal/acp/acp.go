@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +34,14 @@ type Client struct {
 	permMgr      interfaces.PermissionManager
 	storePath    string // file path for persisted conversation metadata
 	pipeline     *PromptPipeline
+	// eventStore is used by RebindSession to export the prior conversation
+	// history before switching to a new agent. Optional; when nil the
+	// conversation transfer is skipped.
+	eventStore interfaces.EventStore
+	// transfer is the middleware that queues exported transcripts for injection
+	// into the first prompt of a rebound session. Optional; when nil
+	// RebindSession skips the export/queue step.
+	transfer *ConversationTransferMiddleware
 }
 
 // AgentInfo describes a registered agent harness.
@@ -123,6 +132,27 @@ func (c *Client) SetPipeline(p *PromptPipeline) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pipeline = p
+}
+
+// SetEventStore installs the event store used by RebindSession to export the
+// prior conversation history when switching agents. When set, RebindSession
+// reads the session's events and queues a markdown transcript for injection
+// into the new agent's first prompt. When nil (the default), rebind skips the
+// conversation export and the new agent starts fresh.
+func (c *Client) SetEventStore(store interfaces.EventStore) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.eventStore = store
+}
+
+// SetConversationTransfer installs the middleware that queues exported
+// conversation transcripts for injection into the first prompt of a rebound
+// session. RebindSession calls SetTransfer on it after exporting the prior
+// conversation. When nil, RebindSession skips the transfer-queue step.
+func (c *Client) SetConversationTransfer(m *ConversationTransferMiddleware) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.transfer = m
 }
 
 // RegisterAgent adds an agent to the registry.
@@ -606,8 +636,12 @@ func (c *Client) RenameSession(sessionID, name string) error {
 
 // RebindSession switches a conversation to a different agent and/or model while
 // preserving its id and event history. The live ACP session is closed; a fresh
-// one starts on the next prompt (the new agent does not inherit prior context).
-func (c *Client) RebindSession(_ context.Context, sessionID, agentID, modelID string) (interfaces.SessionInfo, error) {
+// one starts on the next prompt. The prior conversation is exported as a
+// markdown transcript and queued for injection into the new agent's first
+// prompt so it can continue the conversation with context. The per-session
+// prompt counter is reset so first-prompt middlewares (workspace context and
+// the conversation transfer) fire again.
+func (c *Client) RebindSession(ctx context.Context, sessionID, agentID, modelID string, maxTransferBytes int) (interfaces.SessionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -631,6 +665,37 @@ func (c *Client) RebindSession(_ context.Context, sessionID, agentID, modelID st
 		return interfaces.SessionInfo{}, fmt.Errorf("model %s not available for agent %s", modelID, agentID)
 	}
 
+	// Capture the old agent's display name before switching, for the transfer
+	// header ("transferred from {agentName}").
+	oldAgentName := ""
+	if oldAgent, ok := c.agents[session.AgentID]; ok {
+		oldAgentName = oldAgent.Name
+	}
+
+	// Export the prior conversation history as a markdown transcript before
+	// tearing down the transport. The events live in the event store
+	// independently of the transport, so the export is valid even after the
+	// transport is closed — but doing it first keeps the ordering clear. The
+	// byte budget comes from the system-message config so a long history does
+	// not blow past the new agent's context window.
+	var conversationMarkdown string
+	if c.eventStore != nil && c.transfer != nil {
+		// Use the caller-provided limit when > 0; otherwise fall back to the
+		// config default. 0 or negative means "no limit" (full transcript).
+		maxBytes := maxTransferBytes
+		if maxBytes == 0 && c.transfer.Messages != nil {
+			maxBytes = c.transfer.Messages.MaxContextBytes
+		}
+		md, exportErr := ExportConversation(ctx, c.eventStore, sessionID, maxBytes)
+		if exportErr != nil {
+			// Best-effort: log via the event content and continue without a
+			// transfer rather than failing the rebind.
+			conversationMarkdown = fmt.Sprintf("[conversation export failed: %s]", exportErr)
+		} else {
+			conversationMarkdown = md
+		}
+	}
+
 	// Tear down the old transport; it restarts lazily on the next prompt.
 	// Release outstanding terminals first so their subprocesses are killed.
 	if session.transport != nil {
@@ -649,12 +714,25 @@ func (c *Client) RebindSession(_ context.Context, sessionID, agentID, modelID st
 	session.UpdatedAt = time.Now().UTC()
 	c.persistLocked()
 
+	// Reset the per-session prompt counter so first-prompt middlewares
+	// (workspace context and the conversation transfer) fire on the new
+	// agent's first prompt.
+	if c.pipeline != nil {
+		c.pipeline.Reset(sessionID)
+	}
+
+	// Queue the exported transcript so the ConversationTransferMiddleware
+	// injects it into the new agent's first prompt.
+	if c.transfer != nil && strings.TrimSpace(conversationMarkdown) != "" {
+		c.transfer.SetTransfer(sessionID, conversationMarkdown, oldAgentName)
+	}
+
 	if c.callbacks != nil {
 		c.callbacks.OnEvent(interfaces.Event{
 			Type:      interfaces.EventConnectionRestarted,
 			SessionID: sessionID,
 			Timestamp: time.Now().UTC(),
-			Content:   fmt.Sprintf("Switched to %s / %s — prior history kept; the agent's memory restarts.", agent.Name, modelID),
+			Content:   fmt.Sprintf("Switched to %s / %s — prior history exported and will be injected as context for the new agent.", agent.Name, modelID),
 		})
 	}
 

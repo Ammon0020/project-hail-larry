@@ -168,7 +168,7 @@ func makeTempWorkspace(t *testing.T, initGit bool) (string, *fakeWorkspaceManage
 
 func TestFirstPromptContextMiddleware_FirstPromptInjects(t *testing.T) {
 	dir, wm := makeTempWorkspace(t, false)
-	mw := NewFirstPromptContextMiddleware(wm)
+	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, UserPrompt: "hi", PromptCount: 0}
 
 	action, msg := mw.BeforePrompt(context.Background(), pc)
@@ -185,7 +185,7 @@ func TestFirstPromptContextMiddleware_FirstPromptInjects(t *testing.T) {
 
 func TestFirstPromptContextMiddleware_SecondPromptNoInject(t *testing.T) {
 	dir, wm := makeTempWorkspace(t, false)
-	mw := NewFirstPromptContextMiddleware(wm)
+	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 1}
 
 	action, msg := mw.BeforePrompt(context.Background(), pc)
@@ -199,7 +199,7 @@ func TestFirstPromptContextMiddleware_SecondPromptNoInject(t *testing.T) {
 
 func TestFirstPromptContextMiddleware_ResetReinjects(t *testing.T) {
 	dir, wm := makeTempWorkspace(t, false)
-	p := NewPromptPipeline(NewFirstPromptContextMiddleware(wm))
+	p := NewPromptPipeline(NewFirstPromptContextMiddleware(wm, nil))
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir}
 
 	// First prompt injects.
@@ -226,7 +226,7 @@ func TestFirstPromptContextMiddleware_EmptyWorkspace(t *testing.T) {
 		workspaces: []interfaces.WorkspaceInfo{{ID: "ws", Path: dir, Name: "empty"}},
 		tree:       nil,
 	}
-	mw := NewFirstPromptContextMiddleware(wm)
+	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 0}
 
 	action, msg := mw.BeforePrompt(context.Background(), pc)
@@ -243,9 +243,10 @@ func TestFirstPromptContextMiddleware_EmptyWorkspace(t *testing.T) {
 
 func TestFirstPromptContextMiddleware_LargeWorkspaceTruncates(t *testing.T) {
 	dir := t.TempDir()
-	// Build a tree with more than maxContextFiles files.
+	sm := DefaultSystemMessages()
+	// Build a tree with more than MaxContextFiles files.
 	var nodes []interfaces.FileNode
-	for i := 0; i < maxContextFiles+50; i++ {
+	for i := 0; i < sm.MaxContextFiles+50; i++ {
 		nodes = append(nodes, interfaces.FileNode{
 			Name: "file" + strconv.Itoa(i) + ".go",
 			Type: "file",
@@ -256,17 +257,17 @@ func TestFirstPromptContextMiddleware_LargeWorkspaceTruncates(t *testing.T) {
 		workspaces: []interfaces.WorkspaceInfo{{ID: "ws", Path: dir, Name: "big"}},
 		tree:       nodes,
 	}
-	mw := NewFirstPromptContextMiddleware(wm)
+	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 0}
 
 	_, msg := mw.BeforePrompt(context.Background(), pc)
 	// Count the number of file lines emitted.
 	lines := strings.Count(msg, "src/file")
-	if lines > maxContextFiles {
-		t.Errorf("expected at most %d file lines, got %d", maxContextFiles, lines)
+	if lines > sm.MaxContextFiles {
+		t.Errorf("expected at most %d file lines, got %d", sm.MaxContextFiles, lines)
 	}
-	if len(msg) > maxContextBytes {
-		t.Errorf("expected message ≤ %d bytes, got %d", maxContextBytes, len(msg))
+	if len(msg) > sm.MaxContextBytes {
+		t.Errorf("expected message ≤ %d bytes, got %d", sm.MaxContextBytes, len(msg))
 	}
 }
 
@@ -275,7 +276,7 @@ func TestFirstPromptContextMiddleware_NonGitWorkspaceOmitsGitSection(t *testing.
 	wm := &fakeWorkspaceManager{
 		workspaces: []interfaces.WorkspaceInfo{{ID: "ws", Path: dir, Name: "nogit"}},
 	}
-	mw := NewFirstPromptContextMiddleware(wm)
+	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 0}
 
 	action, msg := mw.BeforePrompt(context.Background(), pc)
@@ -297,7 +298,7 @@ func TestFirstPromptContextMiddleware_GitWorkspaceIncludesGitSection(t *testing.
 		{Name: "AGENTS.md", Type: "file", Path: "AGENTS.md"},
 		{Name: "README.md", Type: "file", Path: "README.md"},
 	}
-	mw := NewFirstPromptContextMiddleware(wm)
+	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 0}
 
 	action, msg := mw.BeforePrompt(context.Background(), pc)
@@ -332,7 +333,7 @@ func TestFirstPromptContextMiddleware_DepthLimit(t *testing.T) {
 			}},
 		},
 	}
-	mw := NewFirstPromptContextMiddleware(wm)
+	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 0}
 
 	_, msg := mw.BeforePrompt(context.Background(), pc)
@@ -362,7 +363,7 @@ func TestSendPrompt_PipelineInjectsOnFirstPromptOnly(t *testing.T) {
 	client := NewClient(wm, nil)
 	cb := &mockCallbacks{}
 	client.SetCallbacks(cb)
-	client.SetPipeline(NewPromptPipeline(NewFirstPromptContextMiddleware(wm)))
+	client.SetPipeline(NewPromptPipeline(NewFirstPromptContextMiddleware(wm, nil)))
 
 	// We can't call SendPrompt without a real transport (it would try to spawn
 	// an agent). Instead, exercise the pipeline directly to confirm the

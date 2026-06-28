@@ -202,11 +202,16 @@ export const api = {
     }),
   patchSession: (
     sessionId: string,
-    patch: { name?: string; agentId?: string; modelId?: string },
+    patch: { name?: string; agentId?: string; modelId?: string; maxTransferBytes?: number },
   ) =>
     apiFetch<{ status: string }>(`/sessions/${sessionId}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
+    }),
+  reportSessionContext: (sessionId: string, openFiles: string[], recentEdits: string[]) =>
+    apiFetch<{ status: string }>(`/sessions/${sessionId}/context`, {
+      method: 'POST',
+      body: JSON.stringify({ openFiles, recentEdits }),
     }),
   sendPrompt: (sessionId: string, content: string) =>
     apiFetch<{ status: string }>(`/sessions/${sessionId}/prompt`, {

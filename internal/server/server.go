@@ -30,13 +30,14 @@ var frontendFS embed.FS
 
 // Deps holds all the manager dependencies the server needs.
 type Deps struct {
-	EventStore    *events.Store
-	PairingMgr    *pairing.Manager
-	WorkspaceMgr  *workspace.Manager
-	ACPClient     *acp.Client
-	PermissionMgr *permissions.Manager
-	SyncHub       *sync.Hub
-	Config        *config.Config
+	EventStore       *events.Store
+	PairingMgr       *pairing.Manager
+	WorkspaceMgr     *workspace.Manager
+	ACPClient        *acp.Client
+	PermissionMgr    *permissions.Manager
+	SyncHub          *sync.Hub
+	Config           *config.Config
+	OpenFilesTracker *acp.OpenFilesTracker
 }
 
 // Server is the main HTTP server for the Local Agent Interface.
@@ -146,6 +147,7 @@ func (s *Server) apiRoutes() {
 	s.mux.HandleFunc("POST /api/sessions/{id}/prompt", s.requireAuth(s.handleSendPrompt))
 	s.mux.HandleFunc("POST /api/sessions/{id}/cancel", s.requireAuth(s.handleCancelSession))
 	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.requireAuth(s.handleCloseSession))
+	s.mux.HandleFunc("POST /api/sessions/{id}/context", s.requireAuth(s.handleSessionContext))
 
 	// Permission routes — require auth.
 	s.mux.HandleFunc("GET /api/permissions/pending", s.requireAuth(s.handlePendingPermissions))
