@@ -42,7 +42,7 @@ func (m *fakeWorkspaceManager) ReadFile(_ context.Context, _, _ string) (string,
 	return "", 0, nil
 }
 
-func (m *fakeWorkspaceManager) Search(_ context.Context, _, _ string, _ search.SearchOptions) ([]search.SearchResult, error) {
+func (m *fakeWorkspaceManager) Search(_ context.Context, _, _ string, _ search.Options) ([]search.Result, error) {
 	return nil, nil
 }
 

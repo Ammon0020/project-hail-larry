@@ -534,7 +534,7 @@ func localHTTPClient(cfg *config.Config) *http.Client {
 		if pool.AppendCertsFromPEM(certPEM) {
 			return &http.Client{
 				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{RootCAs: pool}, //nolint:gosec // explicit trust of the user's own daemon cert.
+					TLSClientConfig: &tls.Config{RootCAs: pool}, // explicit trust of the user's own daemon cert.
 				},
 			}
 		}

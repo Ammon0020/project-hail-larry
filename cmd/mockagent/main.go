@@ -182,9 +182,9 @@ func runShellCommand(ctx context.Context, cmd string) string {
 	var out []byte
 	var err error
 	if runtime.GOOS == "windows" {
-		out, err = exec.CommandContext(ctx, "cmd", "/c", cmd).Output()
+		out, err = exec.CommandContext(ctx, "cmd", "/c", cmd).Output() //nolint:gosec // cmd is a hardcoded internal mock command (ls/dir/pwd/cd), not user input.
 	} else {
-		out, err = exec.CommandContext(ctx, "sh", "-c", cmd).Output()
+		out, err = exec.CommandContext(ctx, "sh", "-c", cmd).Output() //nolint:gosec // cmd is a hardcoded internal mock command (ls/dir/pwd/cd), not user input.
 	}
 	if err != nil {
 		return fmt.Sprintf("error: %v", err)

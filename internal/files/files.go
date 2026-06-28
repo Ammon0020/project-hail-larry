@@ -240,7 +240,11 @@ func (c *lruCache) get(key string) (string, bool) {
 		return "", false
 	}
 	c.order.MoveToFront(el)
-	return el.Value.(*lruEntry).value, true
+	entry, ok := el.Value.(*lruEntry)
+	if !ok {
+		return "", false
+	}
+	return entry.value, true
 }
 
 // put inserts or updates key=value, evicting the least-recently-used entry when
@@ -248,7 +252,9 @@ func (c *lruCache) get(key string) (string, bool) {
 func (c *lruCache) put(key, value string) {
 	if el, ok := c.m[key]; ok {
 		c.order.MoveToFront(el)
-		el.Value.(*lruEntry).value = value
+		if entry, ok := el.Value.(*lruEntry); ok {
+			entry.value = value
+		}
 		return
 	}
 	el := c.order.PushFront(&lruEntry{key: key, value: value})
@@ -259,7 +265,9 @@ func (c *lruCache) put(key, value string) {
 			break
 		}
 		c.order.Remove(oldest)
-		delete(c.m, oldest.Value.(*lruEntry).key)
+		if entry, ok := oldest.Value.(*lruEntry); ok {
+			delete(c.m, entry.key)
+		}
 	}
 }
 

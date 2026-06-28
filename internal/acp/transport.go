@@ -27,7 +27,7 @@ type acpClientImpl struct {
 	terminals map[string]*terminalEntry
 }
 
-func (c *acpClientImpl) SessionUpdate(ctx context.Context, params acp.SessionNotification) error {
+func (c *acpClientImpl) SessionUpdate(_ context.Context, params acp.SessionNotification) error {
 	u := params.Update
 	if c.callbacks == nil {
 		return nil
@@ -347,6 +347,9 @@ type Transport struct {
 	cwd    string // workspace cwd captured at Start, reused for LoadSession
 }
 
+// NewTransport returns a new Transport that manages a single agent process
+// connection. The returned Transport is not started; call Start to launch the
+// agent subprocess.
 func NewTransport() *Transport {
 	return &Transport{}
 }
@@ -360,8 +363,11 @@ func (t *Transport) StderrTail() string {
 	return t.stderr.String()
 }
 
+// Start launches the agent subprocess with the given command and args in
+// workdir, wiring its stdin/stdout to a new ACP client-side connection backed
+// by impl. Agent stderr is captured into a bounded ring buffer for diagnostics.
 func (t *Transport) Start(ctx context.Context, command string, args []string, workdir string, impl *acpClientImpl) error {
-	t.cmd = exec.CommandContext(ctx, command, args...)
+	t.cmd = exec.CommandContext(ctx, command, args...) //nolint:gosec // command/args originate from the trusted agent registry (autodetect), not user input
 	t.cmd.Dir = workdir
 	// Remember the workspace cwd so LoadSession can re-supply it without the
 	// caller having to pass it back in (the ACP LoadSessionRequest requires it).
@@ -390,6 +396,9 @@ func (t *Transport) Start(ctx context.Context, command string, args []string, wo
 	return nil
 }
 
+// Initialize performs the ACP initialize handshake, advertising the client's
+// capabilities (filesystem read/write and terminal support) and returning the
+// agent's capabilities and info.
 func (t *Transport) Initialize(ctx context.Context) (acp.InitializeResponse, error) {
 	return t.conn.Initialize(ctx, acp.InitializeRequest{
 		ClientInfo: &acp.Implementation{
@@ -409,6 +418,8 @@ func (t *Transport) Initialize(ctx context.Context) (acp.InitializeResponse, err
 	})
 }
 
+// NewSession asks the agent to create a new ACP session rooted at cwd and
+// returns the new session ID.
 func (t *Transport) NewSession(ctx context.Context, cwd string) (string, error) {
 	result, err := t.conn.NewSession(ctx, acp.NewSessionRequest{
 		Cwd:        cwd,
@@ -452,6 +463,7 @@ func (t *Transport) DeleteSession(ctx context.Context, acpSessionID string) erro
 	return err
 }
 
+// Prompt sends a user prompt containing content to the given ACP session.
 func (t *Transport) Prompt(ctx context.Context, sessionID, content string) error {
 	_, err := t.conn.Prompt(ctx, acp.PromptRequest{
 		SessionId: acp.SessionId(sessionID),
@@ -462,6 +474,8 @@ func (t *Transport) Prompt(ctx context.Context, sessionID, content string) error
 	return err
 }
 
+// Cancel sends a cancel notification to the given ACP session, requesting the
+// agent to abort any in-progress work.
 func (t *Transport) Cancel(ctx context.Context, sessionID string) error {
 	err := t.conn.Cancel(ctx, acp.CancelNotification{
 		SessionId: acp.SessionId(sessionID),
@@ -469,6 +483,8 @@ func (t *Transport) Cancel(ctx context.Context, sessionID string) error {
 	return err
 }
 
+// Close terminates the agent subprocess (if still running) and waits for it
+// to exit. It is safe to call even when no process was started.
 func (t *Transport) Close() error {
 	if t.cmd != nil && t.cmd.Process != nil {
 		_ = t.cmd.Process.Kill()

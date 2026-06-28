@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,8 +25,8 @@ import (
 	"sync"
 )
 
-// SearchOptions controls a search run.
-type SearchOptions struct {
+// Options controls a search run.
+type Options struct {
 	// Pattern is the regular expression to search for (required).
 	Pattern string
 	// IgnoreCase makes the pattern case-insensitive when true.
@@ -42,8 +43,8 @@ type SearchOptions struct {
 	ContextLines int
 }
 
-// SearchResult is a single match within a file.
-type SearchResult struct {
+// Result is a single match within a file.
+type Result struct {
 	// Path is the file path relative to the workspace root.
 	Path string `json:"path"`
 	// LineNumber is the 1-based line number of the match.
@@ -58,7 +59,7 @@ type SearchResult struct {
 	MatchEnd int `json:"matchEnd"`
 }
 
-// defaultMaxResults is used when SearchOptions.MaxResults is <= 0.
+// defaultMaxResults is used when Options.MaxResults is <= 0.
 const defaultMaxResults = 200
 
 // ignoreDirs are directory names that are always skipped during the walk. They
@@ -97,7 +98,7 @@ func rgOnPath() bool {
 // matches. All returned paths are relative to root; absolute paths are never
 // returned. The ctx is honored for cancellation/timeout in both the rg and
 // Go-fallback strategies.
-func Search(ctx context.Context, root string, opts SearchOptions) ([]SearchResult, error) {
+func Search(ctx context.Context, root string, opts Options) ([]Result, error) {
 	if strings.TrimSpace(opts.Pattern) == "" {
 		return nil, errors.New("search pattern is required")
 	}
@@ -127,7 +128,7 @@ func Search(ctx context.Context, root string, opts SearchOptions) ([]SearchResul
 // searchWithRg shells out to ripgrep and parses its --json output. rg is fast
 // and respects .gitignore by default; we additionally pass --hidden and our
 // own -g negations so the skipped-directory set matches the Go fallback.
-func searchWithRg(ctx context.Context, root string, opts SearchOptions, re *regexp.Regexp) ([]SearchResult, error) {
+func searchWithRg(ctx context.Context, root string, opts Options, re *regexp.Regexp) ([]Result, error) {
 	args := []string{
 		"--json",
 		"--no-config",
@@ -151,9 +152,12 @@ func searchWithRg(ctx context.Context, root string, opts SearchOptions, re *rege
 	if opts.FilePattern != "" {
 		args = append(args, "-g", opts.FilePattern)
 	}
-	args = append(args, opts.Pattern, root)
+	// The "--" separator marks the end of ripgrep's options. Without it, a
+	// user-supplied pattern starting with "-" (e.g. "--exec=...") would be
+	// interpreted as a ripgrep flag — an argument-injection vector.
+	args = append(args, "--", opts.Pattern, root)
 
-	cmd := exec.CommandContext(ctx, "rg", args...)
+	cmd := exec.CommandContext(ctx, "rg", args...) //nolint:gosec // "rg" binary name is hardcoded; user-supplied pattern is sandboxed behind "--" so it cannot inject flags.
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -174,10 +178,10 @@ func searchWithRg(ctx context.Context, root string, opts SearchOptions, re *rege
 }
 
 // parseRgJSON parses ripgrep's --json output, collecting match lines into
-// SearchResult values. Only "match" record types are emitted; context/summary
+// Result values. Only "match" record types are emitted; context/summary
 // records are ignored so each result is a real hit.
-func parseRgJSON(data []byte, root string, re *regexp.Regexp, max int) ([]SearchResult, error) {
-	var results []SearchResult
+func parseRgJSON(data []byte, root string, re *regexp.Regexp, max int) ([]Result, error) {
+	var results []Result
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	// rg --json lines can be long (full file lines); raise the per-line cap.
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -220,7 +224,7 @@ func parseRgJSON(data []byte, root string, re *regexp.Regexp, max int) ([]Search
 			start, end = loc[0], loc[1]
 		}
 
-		results = append(results, SearchResult{
+		results = append(results, Result{
 			Path:        relPath,
 			LineNumber:  lineNum,
 			LineContent: lineText,
@@ -240,7 +244,7 @@ func parseRgJSON(data []byte, root string, re *regexp.Regexp, max int) ([]Search
 // searchWithGo is the stdlib fallback: it walks the tree with filepath.WalkDir,
 // skips noise directories and binary files, and scans each file line-by-line
 // with the compiled regex.
-func searchWithGo(ctx context.Context, root string, opts SearchOptions, re *regexp.Regexp) ([]SearchResult, error) {
+func searchWithGo(ctx context.Context, root string, opts Options, re *regexp.Regexp) ([]Result, error) {
 	var fileFilter *regexp.Regexp
 	if opts.FilePattern != "" {
 		// Convert a glob like "*.go" into an anchored regex.
@@ -251,7 +255,7 @@ func searchWithGo(ctx context.Context, root string, opts SearchOptions, re *rege
 		fileFilter = globRe
 	}
 
-	var results []SearchResult
+	var results []Result
 	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			// Skip unreadable entries rather than aborting the whole search.
@@ -310,10 +314,10 @@ func searchWithGo(ctx context.Context, root string, opts SearchOptions, re *rege
 // result cap is reached. It is filtered out by the caller.
 var errStopWalk = errors.New("search: max results reached")
 
-// searchFile scans a single file for matches and returns one SearchResult per
+// searchFile scans a single file for matches and returns one Result per
 // matching line, up to remaining slots. Binary files (detected via null bytes
 // in the first 512 bytes) are skipped.
-func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp, remaining int) ([]SearchResult, error) {
+func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp, remaining int) ([]Result, error) {
 	if remaining <= 0 {
 		return nil, nil
 	}
@@ -321,7 +325,13 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	// The file is opened read-only; a close error is not fatal to the search
+	// result, so log it rather than discarding it or overriding the return.
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Printf("search: closing %s: %v", absPath, err)
+		}
+	}()
 
 	// Binary detection: sample the first 512 bytes for null bytes.
 	sample := make([]byte, 512)
@@ -334,7 +344,7 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 		return nil, err
 	}
 
-	var results []SearchResult
+	var results []Result
 	sc := bufio.NewScanner(f)
 	// Allow long lines without truncation.
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -349,7 +359,7 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 		if loc == nil {
 			continue
 		}
-		results = append(results, SearchResult{
+		results = append(results, Result{
 			Path:        relPath,
 			LineNumber:  lineNum,
 			LineContent: line,
@@ -450,8 +460,12 @@ func jsonStringValue(data []byte, keys ...string) string {
 				case 'u':
 					if j+4 < len(rest) {
 						if r, err := strconv.ParseUint(string(rest[j+1:j+5]), 16, 32); err == nil {
-							sb.WriteRune(rune(r))
 							j += 4
+							// rune is int32; guard against overflow for code
+							// points outside the valid Unicode range (<= U+10FFFF).
+							if r <= 0x10FFFF {
+								sb.WriteRune(rune(r))
+							}
 						}
 					}
 				default:

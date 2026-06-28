@@ -110,7 +110,7 @@ export interface DeviceCredential {
   pairedAt: string
 }
 
-/** Options for a workspace content search (mirrors Go search.SearchOptions). */
+/** Options for a workspace content search (mirrors Go search.Options). */
 export interface SearchOptions {
   pattern: string
   ignoreCase?: boolean
@@ -119,7 +119,7 @@ export interface SearchOptions {
   contextLines?: number
 }
 
-/** A single search match within a file (mirrors Go search.SearchResult). */
+/** A single search match within a file (mirrors Go search.Result). */
 export interface SearchResult {
   path: string
   lineNumber: number

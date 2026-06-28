@@ -127,7 +127,7 @@ export type LeftPanel = 'files' | 'search'
 /** Mobile bottom-nav views (Blueprint Sec 17 — mobile layout). */
 export type MobileView = 'explorer' | 'editor' | 'chat' | 'settings'
 
-/** Options for a workspace content search (mirrors Go search.SearchOptions). */
+/** Options for a workspace content search (mirrors Go search.Options). */
 export interface SearchOptions {
   /** Regex pattern to search for (required). */
   pattern: string
@@ -141,7 +141,7 @@ export interface SearchOptions {
   contextLines?: number
 }
 
-/** A single search match within a file (mirrors Go search.SearchResult). */
+/** A single search match within a file (mirrors Go search.Result). */
 export interface SearchResult {
   /** File path relative to the workspace root. */
   path: string

@@ -212,8 +212,8 @@ func TestCloseAllSessionsPreservesMetadata(t *testing.T) {
 		t.Fatalf("read store: %v", err)
 	}
 	var records []Session
-	if err := json.Unmarshal(data, &records); err != nil {
-		t.Fatalf("unmarshal store: %v", err)
+	if unmarshalErr := json.Unmarshal(data, &records); unmarshalErr != nil {
+		t.Fatalf("unmarshal store: %v", unmarshalErr)
 	}
 	found := false
 	for _, r := range records {
@@ -231,8 +231,8 @@ func TestCloseAllSessionsPreservesMetadata(t *testing.T) {
 	// 5. A fresh client loads the persisted session.
 	c2 := NewClient(nil, nil)
 	c2.SetStorePath(storePath)
-	if err := c2.LoadConversations(); err != nil {
-		t.Fatalf("LoadConversations: %v", err)
+	if loadErr := c2.LoadConversations(); loadErr != nil {
+		t.Fatalf("LoadConversations: %v", loadErr)
 	}
 	loaded, err := c2.GetSession("sess-survive")
 	if err != nil {

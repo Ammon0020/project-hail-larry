@@ -1,12 +1,12 @@
 # Project Status — Local Agent Interface
 
-> Last updated: 2026-06-29. Source of truth for task-level status.
+> Last updated: 2026-06-27. Source of truth for task-level status.
 > See `docs/plans/Blueprint.md` for architecture, `docs/plans/execution-plan.md` for work streams.
 
 ## What Works
 
 - **Daemon + CLI** — start/stop/status/add-folder/pair/devices/revoke/logs. TLS support, config persistence.
-- **ACP client** — full Agent Client Protocol via `coder/acp-go-sdk`. Session lifecycle, streaming, tool calls, permission prompts, terminal support. Verified E2E with `mistral-vibe`/`devstral-small`. Autodetect supports Claude Code, Codex CLI, Cursor Agent (`agent acp`), and Mistral Vibe.
+- **ACP client** — full Agent Client Protocol via `coder/acp-go-sdk`. Session lifecycle, streaming, tool calls, permission prompts, terminal support. Verified E2E with `mistral-vibe`/`devstral-small`. Autodetect supports Claude Code, Codex CLI, Cursor Agent (`agent acp`), Devin (`devin acp`), and Mistral Vibe.
 - **Pairing** — QR + mnemonic passcode, device credentials (hashed at rest, persisted to disk), revocation. Rate-limited with constant-time compares.
 - **WebSocket sync** — real-time event broadcast, reconnection sync, keepalive pings, loopback auth bypass.
 - **Permissions** — request/response flow, `allow_always`/`allow_session` policies (shell commands keyed by command text, not just session), audit log.
@@ -21,7 +21,7 @@
 ### High Priority
 
 - [x] **File saving fixed** — Root cause: content-hash revisions were 64-bit, exceeding JS `Number.MAX_SAFE_INTEGER` (2^53-1). `JSON.parse` silently rounded them, causing every save to get 409 Conflict. Fixed by reducing `contentRevision` to 48 bits (within JS safe range). Verified: read → save → 200 OK.
-- [x] **CodeMirror 6 editor upgraded** — Added: language auto-detection (JS/TS/JSX/TSX, CSS/SCSS/Less, HTML/XML/SVG, Python, Markdown with nested code block highlighting via `@codemirror/lang-markdown` + `@codemirror/language-data`), search (Ctrl+F), autocompletion, bracket matching, code folding, `defaultKeymap` + `historyKeymap` + `indentWithTab`, active line/gutter highlighting, draw selection, rectangular selection, Ctrl+S keybinding, line wrapping toggle. Fixed: editor now fills container height (parent `overflow: hidden`, `.cm-editor`/`.cm-scroller` `height: 100%`, `.cm-content` `paddingBottom: 50vh`) so clicking below the last line works. Still missing: `@codemirror/merge` for diff/merge view (not installed).
+- [x] **CodeMirror 6 editor upgraded** — Added: language auto-detection (JS/TS/JSX/TSX, CSS/SCSS/Less, HTML/XML/SVG, Python, Markdown with nested code block highlighting via `@codemirror/lang-markdown` + `@codemirror/language-data`), search (Ctrl+F), autocompletion, bracket matching, code folding, `defaultKeymap` + `historyKeymap` + `indentWithTab`, active line/gutter highlighting, draw selection, rectangular selection, Ctrl+S keybinding, line wrapping toggle. Fixed: editor now fills container height (parent `overflow: hidden`, `.cm-editor`/`.cm-scroller` `height: 100%`, `.cm-content` `paddingBottom: 50vh`) so clicking below the last line works. Still missing: `@codemirror/merge` for diff/merge view (not installed) and some kind of WYSIWYG style markdown viewer, obsidian style, with live rendering. Should show symbols while you're typing them or your cursor is on the line but hide them when you leave the line. 
 - [x] **Workspace switching with active agent sessions** — Implemented the "show all sessions" model: sessions keep running when switching workspaces; the chat history popout lists sessions from ALL workspaces with a compact workspace badge next to each session name and an optional workspace filter `<select>` ("All Workspaces" + each registered workspace). Added `workspace` field to frontend `SessionInfo`/`Session` types (backend already sends it). Badge uses semantic Tailwind tokens and is hidden for legacy sessions with no workspace; filter still works with 0 workspaces.
 
 ### Medium Priority

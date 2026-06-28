@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -167,7 +168,7 @@ func TestTimeMiddleware_InjectsEveryPrompt(t *testing.T) {
 	mw := NewTimeMiddleware(nil)
 	pc := &PromptContext{SessionID: "s1", PromptCount: 0}
 	// First prompt.
-	action1, msg1 := mw.BeforePrompt(nil, pc)
+	action1, msg1 := mw.BeforePrompt(context.TODO(), pc)
 	if action1 != ActionInject {
 		t.Fatalf("first prompt: expected ActionInject, got %v", action1)
 	}
@@ -179,7 +180,7 @@ func TestTimeMiddleware_InjectsEveryPrompt(t *testing.T) {
 	}
 	// Second prompt also injects (time is per-prompt).
 	pc.PromptCount = 1
-	action2, msg2 := mw.BeforePrompt(nil, pc)
+	action2, msg2 := mw.BeforePrompt(context.TODO(), pc)
 	if action2 != ActionInject {
 		t.Fatalf("second prompt: expected ActionInject, got %v", action2)
 	}
@@ -191,7 +192,7 @@ func TestTimeMiddleware_InjectsEveryPrompt(t *testing.T) {
 func TestOpenFilesMiddleware_SkipsWhenEmpty(t *testing.T) {
 	mw := NewOpenFilesMiddleware(&stubProvider{}, nil)
 	pc := &PromptContext{SessionID: "s1", PromptCount: 0}
-	action, msg := mw.BeforePrompt(nil, pc)
+	action, msg := mw.BeforePrompt(context.TODO(), pc)
 	if action != ActionContinue {
 		t.Errorf("expected ActionContinue when no open files, got %v (%q)", action, msg)
 	}
@@ -204,7 +205,7 @@ func TestOpenFilesMiddleware_InjectsPaths(t *testing.T) {
 	prov := &stubProvider{openFiles: []string{"src/a.go", "src/b.go", "src/c.go"}}
 	mw := NewOpenFilesMiddleware(prov, nil)
 	pc := &PromptContext{SessionID: "s1", PromptCount: 0}
-	action, msg := mw.BeforePrompt(nil, pc)
+	action, msg := mw.BeforePrompt(context.TODO(), pc)
 	if action != ActionInject {
 		t.Fatalf("expected ActionInject, got %v", action)
 	}
@@ -224,7 +225,7 @@ func TestOpenFilesMiddleware_CapsAtMax(t *testing.T) {
 	}
 	prov := &stubProvider{openFiles: paths}
 	mw := NewOpenFilesMiddleware(prov, sm)
-	_, msg := mw.BeforePrompt(nil, &PromptContext{SessionID: "s1"})
+	_, msg := mw.BeforePrompt(context.TODO(), &PromptContext{SessionID: "s1"})
 	// Count the bullet lines.
 	lines := strings.Count(msg, "- file")
 	if lines > sm.MaxOpenFiles {
@@ -234,7 +235,7 @@ func TestOpenFilesMiddleware_CapsAtMax(t *testing.T) {
 
 func TestOpenFilesMiddleware_NilProviderSkips(t *testing.T) {
 	mw := NewOpenFilesMiddleware(nil, nil)
-	action, msg := mw.BeforePrompt(nil, &PromptContext{SessionID: "s1"})
+	action, msg := mw.BeforePrompt(context.TODO(), &PromptContext{SessionID: "s1"})
 	if action != ActionContinue {
 		t.Errorf("expected ActionContinue with nil provider, got %v (%q)", action, msg)
 	}
@@ -242,7 +243,7 @@ func TestOpenFilesMiddleware_NilProviderSkips(t *testing.T) {
 
 func TestRecentEditsMiddleware_SkipsWhenEmpty(t *testing.T) {
 	mw := NewRecentEditsMiddleware(&stubProvider{}, nil)
-	action, msg := mw.BeforePrompt(nil, &PromptContext{SessionID: "s1"})
+	action, msg := mw.BeforePrompt(context.TODO(), &PromptContext{SessionID: "s1"})
 	if action != ActionContinue {
 		t.Errorf("expected ActionContinue when no recent edits, got %v (%q)", action, msg)
 	}
@@ -251,7 +252,7 @@ func TestRecentEditsMiddleware_SkipsWhenEmpty(t *testing.T) {
 func TestRecentEditsMiddleware_InjectsPaths(t *testing.T) {
 	prov := &stubProvider{recentEdits: []string{"src/x.go", "src/y.go"}}
 	mw := NewRecentEditsMiddleware(prov, nil)
-	action, msg := mw.BeforePrompt(nil, &PromptContext{SessionID: "s1"})
+	action, msg := mw.BeforePrompt(context.TODO(), &PromptContext{SessionID: "s1"})
 	if action != ActionInject {
 		t.Fatalf("expected ActionInject, got %v", action)
 	}

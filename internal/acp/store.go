@@ -33,7 +33,8 @@ func (c *Client) LoadConversations() error {
 	if c.storePath == "" {
 		return nil
 	}
-	data, err := os.ReadFile(c.storePath) //nolint:gosec // storePath is set from the daemon's data dir.
+	// storePath is set from the daemon's data dir.
+	data, err := os.ReadFile(c.storePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil

@@ -40,8 +40,8 @@ const (
 // The host parameter is included as an additional DNS name in the SAN list
 // when it is not empty and not a wildcard ("0.0.0.0").
 func EnsureSelfSignedCert(certDir, host string) (certPath, keyPath string, err error) {
-	if err := os.MkdirAll(certDir, certDirPerm); err != nil {
-		return "", "", fmt.Errorf("create cert dir: %w", err)
+	if dirErr := os.MkdirAll(certDir, certDirPerm); dirErr != nil {
+		return "", "", fmt.Errorf("create cert dir: %w", dirErr)
 	}
 
 	certPath = filepath.Join(certDir, "cert.pem")
@@ -90,8 +90,8 @@ func EnsureSelfSignedCert(certDir, host string) (certPath, keyPath string, err e
 
 	// Write the certificate (public, PEM-encoded).
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	if err := os.WriteFile(certPath, certPEM, certFilePerm); err != nil {
-		return "", "", fmt.Errorf("write cert: %w", err)
+	if certErr := os.WriteFile(certPath, certPEM, certFilePerm); certErr != nil {
+		return "", "", fmt.Errorf("write cert: %w", certErr)
 	}
 
 	// Write the private key (PEM-encoded ECDSA).

@@ -320,7 +320,7 @@ func runGit(dir string, args ...string) string {
 	defer cancel()
 
 	full := append([]string{"-C", dir}, args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd := exec.CommandContext(ctx, "git", full...) //nolint:gosec // G204: arguments are hardcoded git subcommands and the registered workspace path, not user input.
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	// Discard stderr so git warnings don't pollute logs.

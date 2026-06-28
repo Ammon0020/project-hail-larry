@@ -175,7 +175,7 @@ func contentRevision(content []byte) int64 {
 	// The result is always in [0, 2^48), so it is non-zero for any realistic
 	// content (a SHA-256 whose first 6 bytes are all zero is astronomically
 	// unlikely) and fits exactly in a JavaScript number.
-	return int64(uint64(h[0])<<40 | uint64(h[1])<<32 | uint64(h[2])<<24 |
+	return int64(uint64(h[0])<<40 | uint64(h[1])<<32 | uint64(h[2])<<24 | //nolint:gosec // G115: value is only 48 bits (max 2^48-1), well within int64 range; see comment above.
 		uint64(h[3])<<16 | uint64(h[4])<<8 | uint64(h[5]))
 }
 
@@ -210,7 +210,7 @@ func (m *Manager) FileTree(_ context.Context, workspaceID string) ([]interfaces.
 // internal/search.Search, which uses ripgrep when available and falls back to
 // a Go-native walker otherwise. All returned paths are relative to the
 // workspace root.
-func (m *Manager) Search(ctx context.Context, workspaceID string, pattern string, opts search.SearchOptions) ([]search.SearchResult, error) {
+func (m *Manager) Search(ctx context.Context, workspaceID string, pattern string, opts search.Options) ([]search.Result, error) {
 	// Copy the workspace path out under the read lock, then release it before
 	// the (potentially slow) search walk.
 	m.mu.RLock()

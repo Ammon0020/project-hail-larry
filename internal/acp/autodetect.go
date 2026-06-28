@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -20,12 +22,18 @@ import (
 
 // agentSpec defines a known agent and how to discover its models.
 type agentSpec struct {
-	id       string
-	name     string
-	commands []string // tried in order (e.g. "vibe-acp" before "vibe")
+	id   string
+	name string
+	// commands are tried in order (e.g. "vibe-acp" before "vibe") via exec.LookPath.
+	commands []string
 	// args are extra arguments passed to the command when launching the agent
 	// (e.g. ["acp"] for Cursor CLI's ACP subcommand).
 	args []string
+	// searchPaths are extra directories to check if none of commands are on PATH.
+	// Entries may use ~ (expanded to the user home dir on all platforms) or
+	// %LOCALAPPDATA%-style Windows env var syntax. Bare command names (and, on
+	// Windows, .exe/.cmd variants) are looked up inside each expanded directory.
+	searchPaths []string
 	// fallbackModels returned if both ACP and file-based detection fail.
 	fallbackModels []AgentModel
 	// fileModels reads agent-specific config files for model lists.
@@ -52,6 +60,13 @@ var knownAgents = []agentSpec{
 		name:     "Cursor Agent",
 		commands: []string{"agent", "cursor-agent"},
 		args:     []string{"acp"},
+		// The cursor.com/install CLI adds these to PATH, but if the daemon was
+		// started before the install (or PATH wasn't refreshed), LookPath fails.
+		// Fall back to the known install locations.
+		searchPaths: []string{
+			`%LOCALAPPDATA%\cursor-agent`, // Windows
+			`~/.local/bin`,                // macOS / Linux
+		},
 		fallbackModels: []AgentModel{
 			{ID: "auto", Name: "Auto"},
 			{ID: "composer-2.5-fast", Name: "Composer 2.5 Fast (default)"},
@@ -63,6 +78,34 @@ var knownAgents = []agentSpec{
 			{ID: "grok-4.3", Name: "Grok 4.3 1M"},
 		},
 		fileModels: getCursorModelsFromCLI,
+	},
+	// Devin (formerly Windsurf / "chisel") — bundled with Devin Desktop.
+	// ACP mode is the "acp" subcommand, like Cursor's "agent acp".
+	// providers/list is not supported and there is no --list-models flag,
+	// so fallbackModels (sourced from the --model help-text examples) are used.
+	// NOTE: the devin binary is NOT on PATH by default — it lives inside the
+	// Devin Desktop install. searchPaths covers the Devin and legacy Windsurf
+	// bundle locations across Windows, macOS, and Linux.
+	{
+		id:       "devin",
+		name:     "Devin",
+		commands: []string{"devin"},
+		args:     []string{"acp"},
+		searchPaths: []string{
+			// Devin Desktop (current naming).
+			`%LOCALAPPDATA%\Programs\Devin\resources\app\extensions\windsurf\devin\bin`,    // Windows
+			`/Applications/Devin.app/Contents/Resources/app/extensions/windsurf/devin/bin`, // macOS
+			`~/.local/share/Devin/resources/app/extensions/windsurf/devin/bin`,             // Linux
+			// Legacy Windsurf naming (older installs).
+			`%LOCALAPPDATA%\Programs\Windsurf\resources\app\extensions\windsurf\devin\bin`,    // Windows
+			`/Applications/Windsurf.app/Contents/Resources/app/extensions/windsurf/devin/bin`, // macOS
+		},
+		fallbackModels: []AgentModel{
+			{ID: "claude-sonnet-4", Name: "Claude Sonnet 4"},
+			{ID: "claude-opus-4.6", Name: "Claude Opus 4.6"},
+			{ID: "opus", Name: "Opus"},
+			{ID: "codex", Name: "Codex"},
+		},
 	},
 	{
 		id:             "mistral-vibe",
@@ -109,7 +152,7 @@ func Autodetect() []AgentInfo {
 }
 
 func detectAgent(spec agentSpec) (AgentInfo, bool) {
-	path := findFirstCommand(spec.commands)
+	path := findFirstCommand(spec.commands, spec.searchPaths)
 	if path == "" {
 		return AgentInfo{}, false
 	}
@@ -140,15 +183,69 @@ func detectAgent(spec agentSpec) (AgentInfo, bool) {
 	}, true
 }
 
-// findFirstCommand returns the first command from the list found in PATH,
-// or empty string if none are found.
-func findFirstCommand(commands []string) string {
+// findFirstCommand returns the first command from the list found on PATH,
+// falling back to the provided searchPaths if none are on PATH. For each search
+// path it tries the bare command name and, on Windows, the .exe and .cmd
+// variants. It returns the full path to the first match, or empty string if
+// none are found.
+func findFirstCommand(commands, searchPaths []string) string {
+	// 1. Try PATH first.
 	for _, cmd := range commands {
 		if path, err := exec.LookPath(cmd); err == nil {
 			return path
 		}
 	}
+	// 2. Fall back to known install locations.
+	for _, dir := range searchPaths {
+		expandedDir := expandPath(dir)
+		if expandedDir == "" {
+			continue
+		}
+		for _, cmd := range commands {
+			candidates := []string{cmd}
+			if runtime.GOOS == "windows" {
+				candidates = append(candidates, cmd+".exe", cmd+".cmd")
+			}
+			for _, c := range candidates {
+				full := filepath.Join(expandedDir, c)
+				if info, err := os.Stat(full); err == nil && !info.IsDir() {
+					return full
+				}
+			}
+		}
+	}
 	return ""
+}
+
+// expandPath expands a path that may contain a leading ~ (replaced with the
+// user's home directory) or Windows %VAR% environment variable references.
+// Returns an empty string if expansion fails (e.g. home dir unavailable).
+func expandPath(p string) string {
+	// Expand a leading ~ to the user's home directory.
+	if strings.HasPrefix(p, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		p = filepath.Join(home, p[1:])
+	}
+	// Expand %VAR% references (Windows env var syntax). os.Expand only
+	// handles $VAR and ${VAR}, so we do %VAR% manually.
+	p = expandWindowsEnv(p)
+	return p
+}
+
+// windowsEnvRe matches %VAR%-style environment variable references on Windows.
+var windowsEnvRe = regexp.MustCompile(`%[A-Za-z_][A-Za-z0-9_]*%`)
+
+// expandWindowsEnv replaces %VAR% references with the corresponding env value.
+// On non-Windows platforms it is a no-op (the syntax is not used there), but it
+// is kept platform-agnostic so tests can exercise it regardless of GOOS.
+func expandWindowsEnv(s string) string {
+	return windowsEnvRe.ReplaceAllStringFunc(s, func(m string) string {
+		key := m[1 : len(m)-1] // strip the % delimiters
+		return os.Getenv(key)
+	})
 }
 
 // tryACPProvidersList spawns the agent, performs an ACP Initialize handshake,
@@ -158,7 +255,7 @@ func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, command, args...)
+	cmd := exec.CommandContext(ctx, command, args...) //nolint:gosec // command comes from the trusted known-agents registry, not user input
 	// Discard stderr — autodetect is a probe, not a real session.
 	// Agent stderr (e.g. "stdin is not a terminal") should not pollute daemon output.
 	cmd.Stderr = io.Discard
@@ -170,8 +267,8 @@ func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 	if err != nil {
 		return nil, fmt.Sprintf("open stdout pipe: %v", err)
 	}
-	if err := cmd.Start(); err != nil {
-		warning := fmt.Sprintf("start %s: %v", command, err)
+	if startErr := cmd.Start(); startErr != nil {
+		warning := fmt.Sprintf("start %s: %v", command, startErr)
 		return nil, warning
 	}
 	defer cleanupAutodetectProcess(cmd, stdin)
@@ -196,8 +293,8 @@ func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 	models := make([]AgentModel, 0, len(listRes.Providers))
 	for _, p := range listRes.Providers {
 		models = append(models, AgentModel{
-			ID:   string(p.Id),
-			Name: string(p.Id),
+			ID:   p.Id,
+			Name: p.Id,
 		})
 	}
 	return models, ""
@@ -326,19 +423,24 @@ func readConfigFile(relPath string) ([]byte, error) {
 // tips) are skipped. Falls back to nil (triggering fallbackModels) if the
 // command is not found or fails.
 func getCursorModelsFromCLI() []AgentModel {
-	// Try "agent" first (Cursor CLI's primary name), then "cursor-agent".
-	cmdPath, err := exec.LookPath("agent")
-	if err != nil {
-		cmdPath, err = exec.LookPath("cursor-agent")
-		if err != nil {
-			return nil
-		}
+	// Use the same search logic as detectAgent — PATH first, then the Cursor
+	// CLI install directory. This ensures model discovery works even when the
+	// daemon was started before the Cursor CLI installer added it to PATH.
+	cmdPath := findFirstCommand(
+		[]string{"agent", "cursor-agent"},
+		[]string{
+			"%LOCALAPPDATA%/cursor-agent",
+			"~/.local/bin",
+		},
+	)
+	if cmdPath == "" {
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, cmdPath, "--list-models").Output()
+	out, err := exec.CommandContext(ctx, cmdPath, "--list-models").Output() //nolint:gosec // cmdPath is resolved from the trusted known-agents registry, not user input
 	if err != nil {
 		log.Printf("autodetect: cursor --list-models failed: %v", err)
 		return nil

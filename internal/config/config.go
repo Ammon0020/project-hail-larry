@@ -94,8 +94,8 @@ func Load() (*Config, error) {
 	}
 
 	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, err
+	if unmarshalErr := json.Unmarshal(data, &cfg); unmarshalErr != nil {
+		return nil, unmarshalErr
 	}
 
 	// Fill in any missing defaults.

@@ -236,7 +236,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := search.SearchOptions{
+	opts := search.Options{
 		Pattern:      pattern,
 		IgnoreCase:   r.URL.Query().Get("ignoreCase") == "1" || r.URL.Query().Get("ignoreCase") == "true",
 		FilePattern:  r.URL.Query().Get("filePattern"),

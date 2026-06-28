@@ -45,8 +45,8 @@ func makeFixture(t *testing.T) string {
 	return root
 }
 
-// findResult returns the SearchResult matching a given path, or nil.
-func findResult(results []SearchResult, path string) *SearchResult {
+// findResult returns the Result matching a given path, or nil.
+func findResult(results []Result, path string) *Result {
 	for i := range results {
 		if results[i].Path == path {
 			return &results[i]
@@ -64,7 +64,7 @@ func TestSearch_GoFallback(t *testing.T) {
 	}
 	root := makeFixture(t)
 
-	results, err := Search(context.Background(), root, SearchOptions{
+	results, err := Search(context.Background(), root, Options{
 		Pattern:    "TODO",
 		IgnoreCase: false,
 		MaxResults: 50,
@@ -115,7 +115,7 @@ func TestSearch_IgnoreCase(t *testing.T) {
 	}
 	root := makeFixture(t)
 
-	results, err := Search(context.Background(), root, SearchOptions{
+	results, err := Search(context.Background(), root, Options{
 		Pattern:    "todo",
 		IgnoreCase: true,
 		MaxResults: 50,
@@ -137,7 +137,7 @@ func TestSearch_FilePattern(t *testing.T) {
 	}
 	root := makeFixture(t)
 
-	results, err := Search(context.Background(), root, SearchOptions{
+	results, err := Search(context.Background(), root, Options{
 		Pattern:     "TODO",
 		FilePattern: "*.go",
 		MaxResults:  50,
@@ -160,7 +160,7 @@ func TestSearch_FilePattern(t *testing.T) {
 // caller can map to a 400.
 func TestSearch_InvalidRegex(t *testing.T) {
 	root := makeFixture(t)
-	_, err := Search(context.Background(), root, SearchOptions{
+	_, err := Search(context.Background(), root, Options{
 		Pattern: "[unclosed",
 	})
 	if err == nil {
@@ -171,7 +171,7 @@ func TestSearch_InvalidRegex(t *testing.T) {
 // TestSearch_EmptyPattern verifies an empty pattern is rejected.
 func TestSearch_EmptyPattern(t *testing.T) {
 	root := makeFixture(t)
-	_, err := Search(context.Background(), root, SearchOptions{Pattern: ""})
+	_, err := Search(context.Background(), root, Options{Pattern: ""})
 	if err == nil {
 		t.Fatal("expected error for empty pattern, got nil")
 	}
@@ -222,7 +222,7 @@ func TestSearch_RelativePaths(t *testing.T) {
 		t.Skip("rg installed; Go fallback test skipped")
 	}
 	root := makeFixture(t)
-	results, err := Search(context.Background(), root, SearchOptions{
+	results, err := Search(context.Background(), root, Options{
 		Pattern: "TODO",
 	})
 	if err != nil {

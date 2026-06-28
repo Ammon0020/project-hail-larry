@@ -124,7 +124,7 @@ type WorkspaceManager interface {
 	ReadFile(ctx context.Context, workspaceID, relPath string) (content string, revision int64, err error)
 
 	// Search runs a workspace-wide content search and returns matching lines.
-	Search(ctx context.Context, workspaceID, pattern string, opts search.SearchOptions) ([]search.SearchResult, error)
+	Search(ctx context.Context, workspaceID, pattern string, opts search.Options) ([]search.Result, error)
 }
 
 // ----------------------------------------------------------------------------

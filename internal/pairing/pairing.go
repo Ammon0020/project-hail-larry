@@ -464,7 +464,7 @@ func (m *Manager) devicesPath() string {
 // must NOT hold m.mu (this is only called from NewManager before the manager
 // is shared).
 func (m *Manager) loadDevices() {
-	data, err := os.ReadFile(m.devicesPath()) //nolint:gosec // path is within the app data dir.
+	data, err := os.ReadFile(m.devicesPath()) // path is within the app data dir.
 	if err != nil {
 		if os.IsNotExist(err) {
 			return // first run, nothing to load
