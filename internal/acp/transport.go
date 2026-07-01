@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/adama/local-agent/internal/interfaces"
@@ -162,9 +164,12 @@ func (c *acpClientImpl) RequestPermission(ctx context.Context, params acp.Reques
 	// agent-supplied title; when absent, synthesize a human-readable label from
 	// the tool kind so the UI always shows a meaningful action description.
 	title := ""
-	if params.ToolCall.Title != nil && *params.ToolCall.Title != "" {
+	if params.ToolCall.Title != nil && *params.ToolCall.Title != "" && !looksLikeRawID(*params.ToolCall.Title) {
 		title = *params.ToolCall.Title
 	} else {
+		// Title missing, or the agent supplied an opaque tool-call ID as its
+		// title (e.g. "toolu_01H…", "call_abc123", a UUID, or "muNNhDHjd").
+		// Synthesize a human-readable label from the tool kind instead.
 		title = permissionTitleFromKind(params.ToolCall.Kind)
 	}
 
@@ -257,6 +262,50 @@ func permissionTitleFromKind(kind *acp.ToolKind) string {
 		return "Move file"
 	default:
 		return "Tool call"
+	}
+}
+
+// Patterns used by looksLikeRawID to recognize opaque generated identifiers.
+var (
+	// toolCallIDPrefixRe matches well-known agent tool-call ID prefixes followed
+	// by an opaque alphanumeric token: Claude's "toolu_", OpenAI's "call_"/"fc_",
+	// and generic "tooluse"/"tool_use"/"toolcall" forms.
+	toolCallIDPrefixRe = regexp.MustCompile(`(?i)^(toolu|tooluse|tool_use|toolcall|call|fc)[_-][A-Za-z0-9]+$`)
+	// uuidRe matches a UUID with or without hyphen separators.
+	uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$`)
+	// longHexRe matches long opaque hex tokens (e.g. SHA-style IDs).
+	longHexRe = regexp.MustCompile(`(?i)^[0-9a-f]{16,}$`)
+	// shortAlnumIDRe matches a separator-free short alphanumeric token, the
+	// classic random-ID shape (e.g. "muNNhDHjd").
+	shortAlnumIDRe = regexp.MustCompile(`^[A-Za-z0-9]{1,24}$`)
+)
+
+// looksLikeRawID reports whether s looks like an opaque generated identifier
+// rather than a human-readable action label. Some agents set a permission
+// request's ToolCall.Title to the raw tool-call ID; showing that to the user
+// ("Permission Required / toolu_01H…") is meaningless, so callers fall back to
+// a kind-derived label instead. The frontend mirrors this heuristic as a
+// defensive safety net (see ChatMessageItem.tsx#looksLikeRawId).
+func looksLikeRawID(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return true
+	}
+	// Multi-word, human-readable labels (containing whitespace) are never IDs.
+	if strings.ContainsAny(s, " \t\n") {
+		return false
+	}
+	switch {
+	case toolCallIDPrefixRe.MatchString(s):
+		return true
+	case uuidRe.MatchString(s):
+		return true
+	case longHexRe.MatchString(s):
+		return true
+	case shortAlnumIDRe.MatchString(s):
+		return true
+	default:
+		return false
 	}
 }
 

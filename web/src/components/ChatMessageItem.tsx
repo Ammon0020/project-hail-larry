@@ -42,15 +42,26 @@ function optionStyle(kind: string): string {
 
 /**
  * Returns true when a string looks like an opaque generated ID rather than a
- * human-readable label — e.g. "muNNhDHjd" (no spaces, short, alphanumeric).
- * Used to detect the bug where a raw ToolCallId leaked into the tool field.
+ * human-readable label. Detects the bug where a raw tool-call ID leaks into the
+ * tool field — including IDs that contain `_`/`-`, which the previous heuristic
+ * wrongly treated as real labels: e.g. Claude's "toolu_01H…", OpenAI's
+ * "call_abc123", UUIDs, long hex tokens, and "muNNhDHjd"-style random tokens.
+ * Mirrors the backend heuristic in internal/acp/transport.go#looksLikeRawID.
  */
-function looksLikeRawId(value: string): boolean {
-  if (!value) return true
-  // Real labels contain spaces or underscores or are known tool names.
-  if (/\s/.test(value) || value.includes('_') || value.includes('-')) return false
-  // Pure alphanumeric with no word boundaries and <= 24 chars is likely an ID.
-  return /^[a-zA-Z0-9]{1,24}$/.test(value)
+function looksLikeRawId(value?: string): boolean {
+  const v = (value ?? '').trim()
+  if (!v) return true
+  // Multi-word, human-readable labels (containing whitespace) are never IDs.
+  if (/\s/.test(v)) return false
+  // Well-known agent tool-call ID prefixes + opaque alphanumeric token.
+  if (/^(toolu|tooluse|tool_use|toolcall|call|fc)[_-][A-Za-z0-9]+$/i.test(v)) return true
+  // UUID, with or without hyphen separators.
+  if (/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(v)) return true
+  // Long opaque hex token (e.g. SHA-style IDs).
+  if (/^[0-9a-f]{16,}$/i.test(v)) return true
+  // Separator-free short alphanumeric token (classic random ID shape).
+  if (/^[a-zA-Z0-9]{1,24}$/.test(v)) return true
+  return false
 }
 
 /**

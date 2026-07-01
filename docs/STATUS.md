@@ -1,13 +1,19 @@
 # Project Status — Local Agent Interface
 
-> Last updated: 2026-06-27. Source of truth for task-level status.
+> Last updated: 2026-06-30. Source of truth for task-level status.
 > See `docs/plans/Blueprint.md` for architecture, `docs/plans/execution-plan.md` for work streams.
+
+## Recent Fixes (2026-06-30)
+
+- **Permission prompt label hardening** — Some agents set a permission request's `ToolCall.Title` to an opaque tool-call ID (e.g. Claude `toolu_…`, OpenAI `call_…`, UUIDs, or random tokens like `muNNhDHjd`), which surfaced as "Permission Required / <id>". The previous heuristic only caught separator-free tokens and wrongly treated any `_`/`-` value as a real label. Now `looksLikeRawID` (backend `internal/acp/transport.go`, mirrored in frontend `ChatMessageItem.tsx`) recognizes ID-prefixed tokens, UUIDs, and long hex, falling back to a kind-derived label ("Run command", "Edit file", …). Covered by `TestLooksLikeRawID`.
+- **Cross-platform test fix** — `TestExpandPathWindowsEnv` compared against `filepath.Join` (OS-dependent separator) and failed on Linux/macOS even though `expandWindowsEnv` only substitutes `%VAR%`. Expectation now uses the literal backslash path so it passes on all platforms.
+- **Linux/macOS build script** — Added `build.sh` (counterpart to `build.ps1`): builds the frontend, re-embeds `internal/server/dist`, and compiles/installs the Go binary. Note: `internal/server/dist/` is gitignored, so a frontend build (`npm install && npm run build`) is required before `go build` can embed assets.
 
 ## What Works
 
-- **Daemon + CLI** — start/stop/status/add-folder/pair/devices/revoke/logs. TLS support, config persistence.
-- **ACP client** — full Agent Client Protocol via `coder/acp-go-sdk`. Session lifecycle, streaming, tool calls, permission prompts, terminal support. Verified E2E with `mistral-vibe`/`devstral-small`. Autodetect supports Claude Code, Codex CLI, Cursor Agent (`agent acp`), Devin (`devin acp`), and Mistral Vibe.
-- **Pairing** — QR + mnemonic passcode, device credentials (hashed at rest, persisted to disk), revocation. Rate-limited with constant-time compares.
+- **Daemon + CLI** — start/stop/status/add-folder/pair/devices/revoke/logs. TLS support, config persistence. `remove-folder` and `list-folders` functional.
+- **ACP client** — full Agent Client Protocol via `coder/acp-go-sdk`. Session lifecycle, streaming, enriched tool calls, thoughts/plans, permission policies, terminal support properly wired to shell executor. Verified E2E.
+- **Pairing** — QR + mnemonic passcode, device credentials, revocation, and configurable TTL.
 - **WebSocket sync** — real-time event broadcast, reconnection sync, keepalive pings, loopback auth bypass.
 - **Permissions** — request/response flow, `allow_always`/`allow_session` policies (shell commands keyed by command text, not just session), audit log.
 - **Event store** — SQLite WAL mode, append-only, query/replay. Busy timeout + connection pool configured.

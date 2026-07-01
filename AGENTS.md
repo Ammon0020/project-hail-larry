@@ -52,7 +52,7 @@ docs/                    → Blueprint, plan, status, open items
 
 ## Development Standards
 
-- **Build:** Run `.\build.ps1` to rebuild frontend + backend
+- **Build:** Run `.\build.ps1` (Windows) or `./build.sh` (Linux/macOS) to rebuild frontend + backend. Both build the frontend, re-embed `internal/server/dist`, then compile the Go binary. `internal/server/dist/` is gitignored, so a frontend build must run before `go build` can embed assets (a fresh checkout also needs `npm install` in `web/`).
 - Run tests and linting before marking a task complete — `go test ./...`, `go vet ./...`, `npm run build`. Use quiet operators where possible to only get essential content. 
 - Stay on task — if a test fails in another task, note it in `docs/known-issues.md` and move on
 - Plans must be summary (see `docs/Blueprint.md`) or executable in one branch under a single work item (see `docs/plans/`)
@@ -77,10 +77,10 @@ Note: Cap lint output — fix a few errors per pass, not the whole dump. This is
 
 ## Docs
 
-- `docs/Blueprint.md` — full architecture and design (source of truth)
-- `docs/development/TechStack.md` — technology choices and library list
-- `docs/acp/responsibilities.md` — ACP division of responsibilities (agent vs. client), file write use case, and Context7 lookup instructions
-- `docs/plans/Blueprint.md` — phased implementation plan
-- `docs/plans/OpenItems.md` — tracked gaps and deferred decisions; do not implement deferred items
-- `docs/STATUS.md` — task-level status tracking; keep updated as work progresses
-- `mockup12.html` — UI mockup; frontend agents should reference this closely
+- **[AGENTS.md](AGENTS.md)** — Core agent rules and coordinating information (this file)
+- **[docs/plans/Blueprint.md](docs/plans/Blueprint.md)** — Core agent design and mutual understanding of the app (the design source of truth)
+- **[docs/STATUS.md](docs/STATUS.md)** — Central task-level implementation status, checklists, and active codebase gaps
+- `docs/development/TechStack.md` — Technology choices and library list
+- `docs/acp/responsibilities.md` — ACP division of responsibilities, file writes, and Context7 instructions
+- `docs/plans/` — Folder containing specific technical blueprints for complex tasks
+- `mockup12.html` — UI mockup for frontend agents

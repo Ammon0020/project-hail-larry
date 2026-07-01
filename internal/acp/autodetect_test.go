@@ -35,7 +35,11 @@ func TestExpandPathWindowsEnv(t *testing.T) {
 
 	in := `%LOCALAPPDATA%\Programs\Devin\bin`
 	got := expandPath(in)
-	want := filepath.Join(os.TempDir(), "Programs", "Devin", "bin")
+	// expandWindowsEnv only substitutes %VAR% — it does not normalize path
+	// separators — so the backslashes are preserved verbatim on every OS.
+	// (Using filepath.Join here would make the expectation OS-dependent and
+	// fail on non-Windows platforms.)
+	want := os.TempDir() + `\Programs\Devin\bin`
 	if got != want {
 		t.Errorf("expandPath(%q) = %q, want %q", in, got, want)
 	}
@@ -174,5 +178,42 @@ func TestExpandWindowsEnvReplacement(t *testing.T) {
 	got = expandWindowsEnv("a-%NOPE_NOT_SET_ACP%/b")
 	if !strings.HasSuffix(got, "/b") || !strings.HasPrefix(got, "a-") {
 		t.Errorf("expandWindowsEnv undefined = %q, want a-/b", got)
+	}
+}
+
+// TestLooksLikeRawID verifies that opaque tool-call identifiers are recognized
+// as IDs (so they fall back to a kind label) while human-readable titles are
+// preserved. Guards the "Permission Required / <random-id>" regression.
+func TestLooksLikeRawID(t *testing.T) {
+	ids := []string{
+		"muNNhDHjd",                            // classic short random token
+		"toolu_01HABCDEF0123456789",            // Claude tool-use ID
+		"call_abc123XYZ",                       // OpenAI call ID
+		"fc_9f8e7d",                            // function-call ID
+		"550e8400-e29b-41d4-a716-446655440000", // UUID with hyphens
+		"550e8400e29b41d4a716446655440000",     // UUID without hyphens
+		"deadbeefcafebabe1234",                 // long hex token
+		"",                                     // empty -> treat as ID (no label)
+		"   ",                                  // whitespace only
+	}
+	for _, s := range ids {
+		if !looksLikeRawID(s) {
+			t.Errorf("looksLikeRawID(%q) = false, want true (should be treated as an ID)", s)
+		}
+	}
+
+	labels := []string{
+		"Run command",            // synthesized kind label
+		"Edit file",              // synthesized kind label
+		"Read package.json",      // multi-word, has space
+		"read_file",              // snake_case tool name (not an ID prefix)
+		"mcp__server__do_thing",  // MCP-style tool name
+		"call_my_helper_routine", // descriptive name with extra separators
+		"Search the codebase",    // multi-word
+	}
+	for _, s := range labels {
+		if looksLikeRawID(s) {
+			t.Errorf("looksLikeRawID(%q) = true, want false (should be treated as a real label)", s)
+		}
 	}
 }
