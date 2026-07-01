@@ -62,7 +62,7 @@ docs/                    → Blueprint, plan, status, open items
  - `eslint` for JavaScript/TypeScript
 - **Keep `docs/STATUS.md` current.** When you start, modify, or complete a task, update the relevant row in STATUS.md immediately. Mark gaps honestly — "⚠️ Partial" or "⚠️ Stub" over false "✅ Done". Include short notes on what's missing.
 
-Note: Cap lint output — fix a few errors per pass, not the whole dump. This is a pacing guideline for incremental cleanup, not a scope boundary. All lint issues in our own code (not vendored libraries) are in scope; use parallel subagents to fix them in batches when there are many.
+Note: Cap lint output. If there are more issues than fit, fix the visible ones then rerun.
 
 ## Tailwind CSS Standards
 
