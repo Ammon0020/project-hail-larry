@@ -24,12 +24,13 @@ const iconMap: Record<string, typeof Folder> = {
  * Supports expand/collapse, unsaved-change indicators, and active file highlight.
  *
  * Indentation is produced by nesting each expanded folder's children inside a
- * `pl-4` wrapper rather than computing a per-node margin. Each level of
- * recursion adds one `pl-4` (16px), so depth accumulates naturally and works
- * for arbitrarily deep trees. This avoids dynamically-constructed Tailwind
- * classes (e.g. `ml-${depth * 4}`), which the JIT compiler cannot detect and
- * therefore never generates — that was the root cause of nested children
- * rendering at the wrong indent level.
+ * `pl-[20px]` wrapper rather than computing a per-node margin. Each level of
+ * recursion adds 20px (the chevron w-3.5 + gap-1.5 footprint), so depth
+ * accumulates naturally and works for arbitrarily deep trees, and nested
+ * icons line up under their parent folder's icon. This avoids
+ * dynamically-constructed Tailwind classes (e.g. `ml-${depth * 4}`), which
+ * the JIT compiler cannot detect and therefore never generates — that was
+ * the root cause of nested children rendering at the wrong indent level.
  */
 function TreeNode({
   node,
@@ -56,10 +57,13 @@ function TreeNode({
         >
           <ChevronIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           <FolderIcon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-primary')} />
-          {node.name}
+          <span className="flex-1 truncate">{node.name}</span>
         </div>
         {isExpanded && node.children && (
-          <div className="pl-4">
+          // Indent children by the chevron + gap footprint (w-3.5 + gap-1.5 =
+          // 20px) so nested icons line up under this folder's icon rather than
+          // under its chevron. pl-[20px] is a static value the JIT can detect.
+          <div className="pl-[20px]">
             {node.children.map((child) => (
               <TreeNode
                 key={child.path || child.name}
@@ -75,21 +79,26 @@ function TreeNode({
     )
   }
 
-  // File node
+  // File node. A spacer matching the folder chevron's footprint (w-3.5 + the
+  // flex gap that follows it) is reserved so file icons line up with folder
+  // icons at the same depth. Without it, files render ~20px left of sibling
+  // folders because they lack the chevron glyph.
   const Icon = iconMap[node.icon ?? 'file-text'] ?? FileText
+  const fileIcon = (
+    <Icon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-muted-foreground')} />
+  )
 
   if (node.active) {
     return (
       <div
-        className="flex items-center justify-between p-1 rounded cursor-pointer bg-primary/10 text-primary border-l-2 border-primary"
+        className="flex items-center gap-1.5 p-1 rounded cursor-pointer bg-primary/10 text-primary border-l-2 border-primary"
         onClick={() => onFileSelect(nodePath)}
       >
-        <div className="flex items-center gap-1.5">
-          <Icon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-muted-foreground')} />
-          {node.name}
-        </div>
+        <span className="w-3.5 shrink-0" aria-hidden />
+        {fileIcon}
+        <span className="flex-1 truncate">{node.name}</span>
         {node.unsaved && (
-          <div title="Unsaved changes">
+          <div title="Unsaved changes" className="shrink-0">
             <Circle className="w-2 h-2 text-primary fill-primary" />
           </div>
         )}
@@ -102,8 +111,9 @@ function TreeNode({
       className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-accent text-muted-foreground"
       onClick={() => onFileSelect(nodePath)}
     >
-      <Icon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-muted-foreground')} />
-      {node.name}
+      <span className="w-3.5 shrink-0" aria-hidden />
+      {fileIcon}
+      <span className="flex-1 truncate">{node.name}</span>
     </div>
   )
 }
