@@ -27,6 +27,18 @@ export interface Tab {
   revision: number
   unsaved: boolean
   language: string
+  /** The workspace ID this file was opened from. Stored so save/reload target
+   *  the correct workspace root even after a page reload changes the active
+   *  workspace — without it, a tab opened from workspace A would be saved
+   *  against workspace B's root and fail with "no such file or directory".
+   *  Optional for backward compat with tabs persisted before this field
+   *  existed; callers fall back to the active workspace when unset. */
+  workspaceId?: string
+  /** True when the file changed on disk (agent write or external edit) while
+   *  the tab was open AND the user had unsaved edits — so the content was NOT
+   *  auto-refreshed. Surfaces a "changed on disk" indicator + Reload action.
+   *  Clean tabs are refreshed silently instead of setting this flag. */
+  changedOnDisk?: boolean
 }
 
 /** A registered AI agent (Blueprint Sec 5 — agent registration). */
@@ -73,6 +85,16 @@ export interface PairedDevice {
   pairedAt: string
 }
 
+/** An image (or other file) attached to a prompt or event. The `uri` is
+ *  populated by the backend on events that echo back attachments; for
+ *  pending uploads the frontend builds the URL from the session + upload id. */
+export interface Attachment {
+  id: string
+  name: string
+  mimeType: string
+  uri?: string
+}
+
 /**
  * Event types from the event stream (Blueprint Sec 11).
  * The UI renders chat, tool timelines, and permissions from these.
@@ -97,6 +119,7 @@ export type EventType =
   | 'AgentExited'
   | 'ConnectionRestarted'
   | 'SessionResumed'
+  | 'FileChangedOnDisk'
 
 /** A single event in the immutable event log (Blueprint Sec 11). */
 export interface AppEvent {
@@ -119,6 +142,7 @@ export interface AppEvent {
   thought?: boolean
   exitCode?: number
   workspaceId?: string
+  attachments?: Attachment[]
 }
 
 /** Left panel view options (Blueprint Sec 17 — activity bar). */

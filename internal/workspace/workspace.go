@@ -31,6 +31,16 @@ import (
 type Manager struct {
 	mu         sync.RWMutex
 	workspaces map[string]string // id -> path
+
+	// Optional lifecycle hooks, set by the daemon to wire the filesystem
+	// watcher. They are invoked WITHOUT holding mu (to avoid coupling the
+	// watcher's work to the map lock) and may be nil. onWrite is called with
+	// the absolute path of a file the app itself wrote (so the watcher can
+	// suppress the corresponding external-change event); onRegister/onRemove
+	// track the set of watched workspace roots.
+	onWrite    func(absPath string)
+	onRegister func(id, absPath string)
+	onRemove   func(id string)
 }
 
 // NewManager creates a new workspace Manager.
@@ -38,6 +48,31 @@ func NewManager() *Manager {
 	return &Manager{
 		workspaces: make(map[string]string),
 	}
+}
+
+// SetOnWrite registers a hook invoked with the absolute path of every file the
+// app writes via WriteFile. Used by the filesystem watcher to suppress the
+// external-change event for the app's own writes. Call before use.
+func (m *Manager) SetOnWrite(fn func(absPath string)) {
+	m.mu.Lock()
+	m.onWrite = fn
+	m.mu.Unlock()
+}
+
+// SetOnRegister registers a hook invoked when a workspace is registered, with
+// its id and absolute path. Used to start watching the workspace's files.
+func (m *Manager) SetOnRegister(fn func(id, absPath string)) {
+	m.mu.Lock()
+	m.onRegister = fn
+	m.mu.Unlock()
+}
+
+// SetOnRemove registers a hook invoked when a workspace is removed, with its
+// id. Used to stop watching the workspace's files.
+func (m *Manager) SetOnRemove(fn func(id string)) {
+	m.mu.Lock()
+	m.onRemove = fn
+	m.mu.Unlock()
 }
 
 // Register adds a directory as a workspace.
@@ -65,7 +100,14 @@ func (m *Manager) Register(_ context.Context, path string) (interfaces.Workspace
 	// guarded to avoid holding the mutex during slow filesystem operations.
 	m.mu.Lock()
 	m.workspaces[id] = absPath
+	onRegister := m.onRegister
 	m.mu.Unlock()
+
+	// Notify the watcher (if wired) so the new workspace's files are watched.
+	// Called outside the lock to avoid coupling the watcher's tree walk to mu.
+	if onRegister != nil {
+		onRegister(id, absPath)
+	}
 
 	name := filepath.Base(absPath)
 
@@ -106,11 +148,19 @@ func (m *Manager) Remove(_ context.Context, id string) error {
 	// avoid a TOCTOU race where another goroutine removes the same ID between
 	// the check and the delete.
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if _, ok := m.workspaces[id]; !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("workspace not found: %s", id)
 	}
 	delete(m.workspaces, id)
+	onRemove := m.onRemove
+	m.mu.Unlock()
+
+	// Stop watching the workspace's files (if the watcher is wired). Called
+	// outside the lock to avoid coupling the watcher's work to mu.
+	if onRemove != nil {
+		onRemove(id)
+	}
 	return nil
 }
 
@@ -366,6 +416,17 @@ func (m *Manager) WriteFile(_ context.Context, workspaceID, relPath, content str
 
 	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil { //nolint:gosec // fullPath is constrained by safeJoin to the registered workspace root.
 		return 0, fmt.Errorf("write file: %w", err)
+	}
+
+	// Notify the watcher that the app itself wrote this path so it suppresses
+	// the resulting fsnotify event (agent writes separately emit
+	// EventFileWritten; user saves are already reflected in the editor). Read
+	// the hook under the lock, then call it without holding mu.
+	m.mu.RLock()
+	onWrite := m.onWrite
+	m.mu.RUnlock()
+	if onWrite != nil {
+		onWrite(fullPath)
 	}
 
 	// The new revision is the content hash of the written bytes. It is

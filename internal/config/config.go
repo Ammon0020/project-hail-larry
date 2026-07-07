@@ -33,7 +33,21 @@ type Config struct {
 	TLSEnabled        bool            `json:"tlsEnabled"`
 	TLSCertDir        string          `json:"tlsCertDir,omitempty"`
 	PairingTTLSeconds int             `json:"pairingTtlSeconds,omitempty"`
+	// CredentialInactivityTTLSeconds is the sliding-window inactivity expiry for
+	// paired device credentials. A device that goes this long without a
+	// successful authenticated request must re-pair. Sliding expiry is ON by
+	// default (defaultCredentialInactivityTTLSeconds, 30 days); an explicit value
+	// of 0 disables expiry entirely (credentials never expire). Note the default
+	// is only applied to a fresh config or a config file that omits the field
+	// (see Load) — so a user who writes 0 keeps expiry disabled.
+	CredentialInactivityTTLSeconds int `json:"credentialInactivityTtlSeconds,omitempty"`
 }
+
+// defaultCredentialInactivityTTLSeconds is the default sliding-window credential
+// inactivity expiry (30 days). It is applied to fresh configs so sliding expiry
+// is on by default per the product decision, while an explicitly configured 0
+// still disables expiry.
+const defaultCredentialInactivityTTLSeconds = 2592000
 
 // Default returns the default configuration.
 //
@@ -71,6 +85,8 @@ func DefaultOrError() (*Config, error) {
 		Agents:            []acp.AgentInfo{},
 		TLSCertDir:        filepath.Join(dataDir, "tls"),
 		PairingTTLSeconds: 300,
+
+		CredentialInactivityTTLSeconds: defaultCredentialInactivityTTLSeconds,
 	}, nil
 }
 
@@ -127,6 +143,12 @@ func Load() (*Config, error) {
 	if cfg.PairingTTLSeconds == 0 {
 		cfg.PairingTTLSeconds = def.PairingTTLSeconds
 	}
+	// CredentialInactivityTTLSeconds is intentionally NOT zero-filled from the
+	// default here. With a plain int we cannot distinguish "field omitted" from
+	// "explicitly set to 0", and 0 is a meaningful value (expiry disabled). A
+	// fresh install with no config file receives the 30-day default via
+	// DefaultOrError; a user who writes 0 into an existing config file keeps
+	// expiry disabled rather than having it silently re-enabled.
 
 	return &cfg, nil
 }

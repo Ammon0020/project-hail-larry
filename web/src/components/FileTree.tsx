@@ -51,11 +51,11 @@ function TreeNode({
     return (
       <>
         <div
-          className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-gray-800/50 text-gray-300"
+          className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-accent text-foreground"
           onClick={() => onToggleExpand(nodePath)}
         >
-          <ChevronIcon className="w-3.5 h-3.5 text-gray-500 shrink-0" />
-          <FolderIcon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-blue-400')} />
+          <ChevronIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <FolderIcon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-primary')} />
           {node.name}
         </div>
         {isExpanded && node.children && (
@@ -81,16 +81,16 @@ function TreeNode({
   if (node.active) {
     return (
       <div
-        className="flex items-center justify-between p-1 rounded cursor-pointer bg-blue-600/10 text-blue-300 border-l-2 border-blue-500"
+        className="flex items-center justify-between p-1 rounded cursor-pointer bg-primary/10 text-primary border-l-2 border-primary"
         onClick={() => onFileSelect(nodePath)}
       >
         <div className="flex items-center gap-1.5">
-          <Icon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-gray-400')} />
+          <Icon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-muted-foreground')} />
           {node.name}
         </div>
         {node.unsaved && (
           <div title="Unsaved changes">
-            <Circle className="w-2 h-2 text-blue-400 fill-blue-400" />
+            <Circle className="w-2 h-2 text-primary fill-primary" />
           </div>
         )}
       </div>
@@ -99,10 +99,10 @@ function TreeNode({
 
   return (
     <div
-      className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-gray-800/50 text-gray-400"
+      className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-accent text-muted-foreground"
       onClick={() => onFileSelect(nodePath)}
     >
-      <Icon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-gray-400')} />
+      <Icon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-muted-foreground')} />
       {node.name}
     </div>
   )

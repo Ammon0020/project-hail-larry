@@ -12,7 +12,7 @@ import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemir
 import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Prec, EditorSelection } from '@codemirror/state'
-import { FileCode, Circle, X, GitCompare, Save, GitBranch, CircleAlert, TriangleAlert, FileText, ChevronLeft, ChevronRight, WrapText } from 'lucide-react'
+import { FileCode, Circle, X, GitCompare, Save, GitBranch, CircleAlert, TriangleAlert, FileText, ChevronLeft, ChevronRight, WrapText, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { Extension } from '@codemirror/state'
@@ -33,6 +33,7 @@ export function EditorPane({
   onTabClose,
   onSave,
   onContentChange,
+  onReloadTab,
   scrollToLine,
 }: {
   tabs: Tab[]
@@ -42,6 +43,9 @@ export function EditorPane({
   onTabClose: (id: string) => void
   onSave: () => void
   onContentChange: (content: string) => void
+  /** Reloads a tab's content from disk, discarding local edits. Used by the
+   *  "changed on disk" banner's Reload action. */
+  onReloadTab?: (id: string) => void
   /** When set, scrolls the editor cursor to this 1-based line and scrolls it
    *  into view. Cleared by the parent after the jump is dispatched so a
    *  subsequent click on the same line re-triggers. */
@@ -262,7 +266,7 @@ export function EditorPane({
             type="button"
             aria-label="Scroll tabs left"
             onClick={() => scrollByTabs(-150)}
-            className="flex items-center justify-center w-5 h-9 shrink-0 text-gray-400 hover:text-gray-200 hover:bg-editor/50 transition"
+            className="flex items-center justify-center w-5 h-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-editor/50 transition"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -288,18 +292,24 @@ export function EditorPane({
                 className={cn(
                   'flex items-center gap-2 px-3 h-9 text-sm shrink-0 border-r border-background cursor-pointer',
                   isActive
-                    ? 'bg-editor text-gray-200 border-t-2 border-blue-500'
-                    : 'bg-panel text-gray-500 hover:bg-editor/50 transition',
+                    ? 'bg-editor text-foreground border-t-2 border-primary'
+                    : 'bg-panel text-muted-foreground hover:bg-editor/50 transition',
                 )}
                 onClick={() => onTabSelect(tab.id)}
               >
                 <FileCode className="w-3.5 h-3.5 text-yellow-400" />
                 {tab.name}
                 {tab.unsaved && (
-                  <Circle className="w-2 h-2 text-blue-400 fill-blue-400" />
+                  <Circle className="w-2 h-2 text-primary fill-primary" />
+                )}
+                {tab.changedOnDisk && (
+                  <RefreshCw
+                    className="w-3 h-3 text-amber-600 dark:text-amber-400"
+                    aria-label="Changed on disk"
+                  />
                 )}
                 <X
-                  className="w-3.5 h-3.5 text-gray-500 hover:text-white cursor-pointer ml-1"
+                  className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground cursor-pointer ml-1"
                   onClick={(e) => {
                     e.stopPropagation()
                     onTabClose(tab.id)
@@ -316,7 +326,7 @@ export function EditorPane({
             type="button"
             aria-label="Scroll tabs right"
             onClick={() => scrollByTabs(150)}
-            className="flex items-center justify-center w-5 h-9 shrink-0 text-gray-400 hover:text-gray-200 hover:bg-editor/50 transition"
+            className="flex items-center justify-center w-5 h-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-editor/50 transition"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -334,24 +344,46 @@ export function EditorPane({
               className={cn(
                 'flex items-center justify-center w-7 h-6 rounded transition',
                 wrap
-                  ? 'bg-blue-600 text-white hover:bg-blue-500'
-                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700',
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  : 'bg-secondary text-secondary-foreground hover:bg-accent',
               )}
             >
               <WrapText className="w-3.5 h-3.5" />
             </button>
-            <button className="text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-300 px-2.5 py-1 rounded transition flex items-center gap-1.5">
+            <button className="text-xs font-semibold bg-secondary hover:bg-accent text-secondary-foreground px-2.5 py-1 rounded transition flex items-center gap-1.5">
               <GitCompare className="w-3 h-3" /> Diff
             </button>
             <button
               onClick={onSave}
-              className="text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded flex items-center gap-1.5 transition"
+              className="text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground px-2.5 py-1 rounded flex items-center gap-1.5 transition"
             >
               <Save className="w-3 h-3" /> Save
             </button>
           </div>
         )}
       </div>
+
+      {/* Changed-on-disk banner — shown when the active tab's file was modified
+          on disk (agent write / external edit) while the user had unsaved
+          edits, so its content was NOT auto-refreshed. Offers a Reload that
+          discards local edits and fetches the on-disk version. Amber is an
+          intentional warning signal; a dark: variant keeps it legible in the
+          light theme. */}
+      {activeTab?.changedOnDisk && (
+        <div className="flex items-center justify-between gap-2 bg-amber-500/10 border-b border-amber-500/40 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300 shrink-0">
+          <span className="flex items-center gap-1.5">
+            <TriangleAlert className="w-3.5 h-3.5" />
+            This file changed on disk{activeTab.unsaved ? ' and you have unsaved edits' : ''}.
+          </span>
+          <button
+            type="button"
+            onClick={() => onReloadTab?.(activeTab.id)}
+            className="flex items-center gap-1 font-medium text-amber-800 dark:text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 px-2 py-0.5 rounded transition"
+          >
+            <RefreshCw className="w-3 h-3" /> Reload
+          </button>
+        </div>
+      )}
 
       {/* CodeMirror 6 Editor or Empty State (Blueprint Sec 17 — CodeMirror 6) */}
       <div className="flex-1 overflow-hidden bg-editor">
@@ -378,8 +410,8 @@ export function EditorPane({
           />
         ) : (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center text-gray-500">
-              <FileText className="w-12 h-12 mx-auto mb-3 text-gray-600" />
+            <div className="text-center text-muted-foreground">
+              <FileText className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
               <p className="text-sm">Open a file from the explorer</p>
             </div>
           </div>

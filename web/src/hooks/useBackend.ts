@@ -1,6 +1,17 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect, useRef, useState } from 'react'
 import { api, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential, type PendingPermission } from '@/lib/api'
+import type { Attachment } from '@/types'
+
+/**
+ * Upper bound on how many events we keep in memory at once. The in-memory
+ * event log is a cache, not the source of truth: the backend SQLite event
+ * store is append-only and authoritative, and loadSessionEvents(sessionId)
+ * re-fetches a session's events on demand. That makes evicting the oldest
+ * in-memory events SAFE — re-selecting a session repopulates its events from
+ * SQLite — while preventing unbounded memory growth on long-lived sessions
+ * where WebSocket events would otherwise accumulate forever.
+ */
+const MAX_EVENTS = 5000
 
 /**
  * Returns true when an error message indicates the targeted session no longer
@@ -52,7 +63,31 @@ export function useBackend() {
     activeWorkspaceRef.current = activeWorkspace
   }, [activeWorkspace])
 
+  /**
+   * Commits a new event list to both the ref and React state, enforcing the
+   * MAX_EVENTS cap. When the list exceeds the cap the oldest events (front of
+   * the array) are evicted so only the newest MAX_EVENTS survive — events are
+   * appended in arrival/ID order, so the tail is the newest. Every mutation of
+   * the event log routes through here so the cap is applied uniformly and the
+   * unbounded-growth problem cannot reappear at any call site. Eviction is
+   * safe: SQLite is the source of truth and loadSessionEvents re-fetches a
+   * session's events on demand (see MAX_EVENTS).
+   */
+  function commitEvents(next: AppEvent[]) {
+    const trimmed = next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next
+    eventsRef.current = trimmed
+    setEvents(trimmed)
+  }
+
   // ---- Load initial data on mount ----
+  // This effect must run EXACTLY ONCE on mount: it kicks off the initial data
+  // loads and opens the single WebSocket connection (connectWebSocket recreates
+  // the socket, so re-running it would leak/duplicate connections). The loader
+  // functions and connectWebSocket are stable for our purposes — they read
+  // current values through refs (activeWorkspaceRef, eventsRef, etc.) rather
+  // than captured render state — so listing them as deps would only risk
+  // reconnect-on-every-render without changing behavior. Hence the single
+  // targeted disable below instead of a file-level blanket disable.
   useEffect(() => {
     mountedRef.current = true
     loadWorkspaces()
@@ -69,6 +104,7 @@ export function useBackend() {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       wsRef.current?.close()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run-once-on-mount: opens the single WebSocket; must not re-run on every render.
   }, [])
 
   // ---- WebSocket connection for real-time events ----
@@ -121,8 +157,7 @@ export function useBackend() {
     ws.onmessage = (msg) => {
       try {
         const event = JSON.parse(msg.data) as AppEvent
-        eventsRef.current = [...eventsRef.current, event]
-        setEvents(eventsRef.current)
+        commitEvents([...eventsRef.current, event])
         // Permission lifecycle events change the pending set — refresh it.
         if (
           event.type === 'PermissionRequested' ||
@@ -131,11 +166,12 @@ export function useBackend() {
         ) {
           loadPendingPermissions()
         }
-        // File-written events (agent created/modified a file via ACP) trigger a
-        // file-tree refresh so the explorer shows the new file without a manual
-        // reload. Only refresh when the event's workspace matches the active
-        // workspace (the agent only writes within its session's workspace).
-        if (event.type === 'FileWritten') {
+        // File-written events (agent created/modified a file via ACP) and
+        // external file changes (FileChangedOnDisk, from the backend fs watcher)
+        // trigger a file-tree refresh so the explorer shows new/removed files
+        // without a manual reload. Only refresh when the event's workspace
+        // matches the active workspace.
+        if (event.type === 'FileWritten' || event.type === 'FileChangedOnDisk') {
           const evtWs = event.workspaceId
           const active = activeWorkspaceRef.current
           if (!evtWs || !active || evtWs === active.id) {
@@ -270,8 +306,7 @@ export function useBackend() {
       const existingIds = new Set(eventsRef.current.map((e) => e.id))
       const fresh = evts.filter((e) => !existingIds.has(e.id))
       if (fresh.length > 0) {
-        eventsRef.current = [...eventsRef.current, ...fresh]
-        setEvents(eventsRef.current)
+        commitEvents([...eventsRef.current, ...fresh])
       }
     } catch {
       // Event store may be empty.
@@ -315,13 +350,12 @@ export function useBackend() {
       const maxFetchedId = sessionEvts.length > 0
         ? Math.max(...sessionEvts.map((e) => e.id))
         : 0
-      eventsRef.current = [
+      commitEvents([
         ...sessionEvts,
         ...eventsRef.current.filter(
           (e) => e.sessionId !== sessionId || e.id > maxFetchedId,
         ),
-      ]
-      setEvents(eventsRef.current)
+      ])
     } catch {
       // Session may not have events yet.
     }
@@ -343,13 +377,13 @@ export function useBackend() {
     }
   }
 
-  async function readFile(path: string) {
-    const wsId = activeWorkspace?.id || ''
+  async function readFile(path: string, workspaceId?: string) {
+    const wsId = workspaceId || activeWorkspace?.id || ''
     return await api.readFile(wsId, path)
   }
 
-  async function saveFile(path: string, content: string, expectedRevision: number) {
-    const wsId = activeWorkspace?.id || ''
+  async function saveFile(path: string, content: string, expectedRevision: number, workspaceId?: string) {
+    const wsId = workspaceId || activeWorkspace?.id || ''
     return await api.saveFile(wsId, path, content, expectedRevision)
   }
 
@@ -361,9 +395,9 @@ export function useBackend() {
     return session
   }
 
-  async function sendPrompt(sessionId: string, content: string) {
+  async function sendPrompt(sessionId: string, content: string, attachments?: Attachment[]) {
     try {
-      await api.sendPrompt(sessionId, content)
+      await api.sendPrompt(sessionId, content, attachments)
     } catch (err) {
       // A stale activeSessionId (e.g. after a daemon restart that wiped
       // conversations.json, or a deleted session) makes the backend return
@@ -424,9 +458,10 @@ export function useBackend() {
   async function deleteSession(sessionId: string) {
     await api.closeSession(sessionId)
     setSessions((prev) => prev.filter((s) => s.id !== sessionId))
-    // Drop the deleted conversation's events from the local cache.
-    eventsRef.current = eventsRef.current.filter((e) => e.sessionId !== sessionId)
-    setEvents(eventsRef.current)
+    // Drop the deleted conversation's events from the local cache. Filtering
+    // only shrinks the list, but route it through commitEvents anyway so every
+    // event-log mutation goes through the single capped path.
+    commitEvents(eventsRef.current.filter((e) => e.sessionId !== sessionId))
   }
 
   // ---- Pairing actions ----

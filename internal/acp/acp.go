@@ -87,7 +87,7 @@ type transportLike interface {
 	NewSession(ctx context.Context, cwd string) (string, error)
 	LoadSession(ctx context.Context, acpSessionID string) (string, error)
 	DeleteSession(ctx context.Context, acpSessionID string) error
-	Prompt(ctx context.Context, sessionID, content string) error
+	Prompt(ctx context.Context, sessionID, content string, attachments []interfaces.Attachment) error
 	Cancel(ctx context.Context, sessionID string) error
 	Close() error
 	StderrTail() string
@@ -310,6 +310,9 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 		_ = transport.Close()
 		return fmt.Errorf("initialize transport: %w", err)
 	}
+	// Store the agent's prompt capabilities on the transport so Prompt can
+	// build capability-gated content blocks (inline images vs. resource links).
+	transport.promptCaps = initResp.AgentCapabilities.PromptCapabilities
 
 	// Decide whether to resume a persisted ACP session via session/load or
 	// create a fresh one. LoadSession is only attempted when the agent
@@ -349,7 +352,7 @@ func (c *Client) resolveACPSession(ctx context.Context, tr transportLike, initRe
 // SendPrompt sends a user prompt to the agent and streams responses.
 // Emits a PromptSubmitted event, then calls transport.Prompt in a goroutine.
 // Response chunks arrive asynchronously via acpClientImpl.SessionUpdate.
-func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) error {
+func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, attachments []interfaces.Attachment) error {
 	c.mu.Lock()
 	session, ok := c.sessions[sessionID]
 	if !ok {
@@ -397,11 +400,12 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) erro
 
 	if callbacks != nil {
 		callbacks.OnEvent(interfaces.Event{
-			Type:      interfaces.EventPromptSubmitted,
-			SessionID: sessionID,
-			Timestamp: time.Now().UTC(),
-			Role:      "user",
-			Content:   finalContent,
+			Type:        interfaces.EventPromptSubmitted,
+			SessionID:   sessionID,
+			Timestamp:   time.Now().UTC(),
+			Role:        "user",
+			Content:     finalContent,
+			Attachments: attachments,
 		})
 	}
 
@@ -422,7 +426,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string) erro
 			})
 		}
 
-		if err := session.transport.Prompt(promptCtx, session.ACPSessionID, finalContent); err != nil {
+		if err := session.transport.Prompt(promptCtx, session.ACPSessionID, finalContent, attachments); err != nil {
 			c.mu.Lock()
 			session.Status = "failed"
 			// The transport is likely dead; drop it so the next prompt restarts.

@@ -2,10 +2,12 @@ package acp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -394,6 +396,10 @@ type Transport struct {
 	conn   *acp.ClientSideConnection
 	stderr *ringBuffer
 	cwd    string // workspace cwd captured at Start, reused for LoadSession
+	// promptCaps holds the agent's advertised prompt capabilities, captured
+	// during Initialize. Prompt consults promptCaps.Image to decide whether
+	// to send inline image blocks or fall back to resource links + text.
+	promptCaps acp.PromptCapabilities
 }
 
 // NewTransport returns a new Transport that manages a single agent process
@@ -513,12 +519,43 @@ func (t *Transport) DeleteSession(ctx context.Context, acpSessionID string) erro
 }
 
 // Prompt sends a user prompt containing content to the given ACP session.
-func (t *Transport) Prompt(ctx context.Context, sessionID, content string) error {
+// Attachments are translated to ACP content blocks based on the agent's
+// advertised prompt capabilities: when the agent supports images, each
+// attachment is sent as an inline ImageBlock (with a URI hint); otherwise it
+// is sent as a ResourceLinkBlock plus a text instruction so non-vision agents
+// know to read the file from disk. File read errors fall back to the
+// resource-link path rather than failing the whole prompt.
+func (t *Transport) Prompt(ctx context.Context, sessionID, content string, attachments []interfaces.Attachment) error {
+	blocks := make([]acp.ContentBlock, 0, 1+len(attachments)*2)
+	blocks = append(blocks, acp.TextBlock(content))
+
+	for _, att := range attachments {
+		if t.promptCaps.Image {
+			data, err := os.ReadFile(att.Path)
+			if err != nil {
+				// Fall back to resource link + text hint for this attachment.
+				blocks = append(blocks, acp.ResourceLinkBlock(att.Name, att.URI))
+				blocks = append(blocks, acp.TextBlock(
+					fmt.Sprintf("[Attached image: %s at %s — please read this file to view it]", att.Name, att.URI)))
+				continue
+			}
+			uri := att.URI
+			blocks = append(blocks, acp.ContentBlock{Image: &acp.ContentBlockImage{
+				Data:     base64.StdEncoding.EncodeToString(data),
+				MimeType: att.MimeType,
+				Type:     "image",
+				Uri:      &uri,
+			}})
+		} else {
+			blocks = append(blocks, acp.ResourceLinkBlock(att.Name, att.URI))
+			blocks = append(blocks, acp.TextBlock(
+				fmt.Sprintf("[Attached image: %s at %s — please read this file to view it]", att.Name, att.URI)))
+		}
+	}
+
 	_, err := t.conn.Prompt(ctx, acp.PromptRequest{
 		SessionId: acp.SessionId(sessionID),
-		Prompt: []acp.ContentBlock{
-			acp.TextBlock(content),
-		},
+		Prompt:    blocks,
 	})
 	return err
 }

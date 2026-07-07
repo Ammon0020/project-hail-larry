@@ -23,6 +23,7 @@ _All items resolved. TLS on LAN (Work Stream 4a) and Event persistence (Phase 1)
 - [ ] **Reconnection behavior** — Phone drops Wi‑Fi mid-session; WebSocket reconnect; in-flight permission prompts
 - [ ] **Image upload flow** — How whiteboard photos / images reach the agent via ACP
 - [ ] **Multi-user vs multi-device** — One user's devices only, or can multiple people pair to the same daemon?
+- [ ] **ACP spec compliance** — Audit (`docs/reviews/2026-07-06/acp-audit.md`) found 3 deviations (context as flattened text not resource blocks, stop reason discarded, no open-file context) and 7 gaps (reject_always, terminal env/signal, MCP provisioning, protocol version pin, elicitation, session/list). Plan: `docs/plans/acp-spec-compliance.md`. Reference: `docs/reference/acp/spec.md`.
 
 ---
 

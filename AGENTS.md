@@ -39,7 +39,7 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
   src/lib/               → api.ts (REST client), utils.ts
   src/data/              → Mock data
   src/types/             → TypeScript types
-docs/                    → Blueprint, plan, status, open items
+docs/                    → see ## Docs section below
 ```
 
 ## Architecture Rules
@@ -50,19 +50,26 @@ docs/                    → Blueprint, plan, status, open items
 - Agents plan and propose; the client executes approved actions
 - Stay in your lane — define interfaces, don't implement another agent's code
 
+## Subagents
+
+Task delegation to specialized subagents (`.devin/agents/`) is a core workflow, not a fallback. For non-trivial features, decompose the work and delegate rather than doing everything serially in one context. Each subagent's description (auto-inserted into the prompt) states which difficulty tier and task type it's suited for — match subtasks to the right tier and dispatch them, in parallel where possible, rather than working through everything yourself.
+
+- Large/complex features: split into independent subtasks and delegate each to a subagent matching its difficulty.
+- Give each subagent a narrow, well-specified task; expect structured findings/results back, not just a status update.
+- The available roster will change over time — read each subagent's description at delegation time rather than assuming a fixed set of names.
+
 ## Development Standards
 
 - **Build:** Run `.\build.ps1` (Windows) or `./build.sh` (Linux/macOS) to rebuild frontend + backend. Both build the frontend, re-embed `internal/server/dist`, then compile the Go binary. `internal/server/dist/` is gitignored, so a frontend build must run before `go build` can embed assets (a fresh checkout also needs `npm install` in `web/`).
-- Run tests and linting before marking a task complete — `go test ./...`, `go vet ./...`, `npm run build`. Use quiet operators where possible to only get essential content. 
+- Run tests and linting before marking a task complete — `go test ./...`, `go vet ./...`, `npm run build`. Use quiet flags where possible to only get essential output.
 - Stay on task — if a test fails in another task, note it in `docs/known-issues.md` and move on
-- Plans must be summary (see `docs/Blueprint.md`) or executable in one branch under a single work item (see `docs/plans/`)
+- Plans must be a summary (see `docs/plans/Blueprint.md`) or executable in one branch under a single work item (see `docs/plans/`)
 - No inline CSS or hard-to-read styling
-- Use linters: 
- - `golangci-lint` for Go
- - `eslint` for JavaScript/TypeScript
+- Use linters:
+  - `golangci-lint` for Go
+  - `eslint` for JavaScript/TypeScript
+  - Cap lint output — fix a few errors per pass, not the whole dump. This is a pacing guideline for incremental cleanup, not a scope boundary. All lint issues in our own code (not vendored libraries) are in scope; delegate to subagents in batches when there are many (see `## Subagents`).
 - **Keep `docs/STATUS.md` current.** When you start, modify, or complete a task, update the relevant row in STATUS.md immediately. Mark gaps honestly — "⚠️ Partial" or "⚠️ Stub" over false "✅ Done". Include short notes on what's missing.
-
-Note: Cap lint output. If there are more issues than fit, fix the visible ones then rerun.
 
 ## Tailwind CSS Standards
 
@@ -80,7 +87,10 @@ Note: Cap lint output. If there are more issues than fit, fix the visible ones t
 - **[AGENTS.md](AGENTS.md)** — Core agent rules and coordinating information (this file)
 - **[docs/plans/Blueprint.md](docs/plans/Blueprint.md)** — Core agent design and mutual understanding of the app (the design source of truth)
 - **[docs/STATUS.md](docs/STATUS.md)** — Central task-level implementation status, checklists, and active codebase gaps
+- `docs/known-issues.md` — Deferred review findings and tracked gaps
 - `docs/development/TechStack.md` — Technology choices and library list
-- `docs/acp/responsibilities.md` — ACP division of responsibilities, file writes, and Context7 instructions
-- `docs/plans/` — Folder containing specific technical blueprints for complex tasks
+- `docs/reference/<topic>/` — Stable reference material for external standards and tools we conform to (e.g. `reference/acp/` for the Agent Client Protocol spec and division-of-responsibilities)
+- `docs/plans/` — Executable technical blueprints and work plans for complex tasks (e.g. `OpenItems.md`, `execution-plan.md`, `acp-spec-compliance.md`)
+- `docs/reviews/<date>/` — Dated audit snapshots and review findings
+- `docs/specs/` — Internal feature specs (backend, chat panel, UI)
 - `mockup12.html` — UI mockup for frontend agents

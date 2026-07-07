@@ -47,7 +47,7 @@
 
 **Docs to update on completion:**
 - `docs/STATUS.md` task 6 row → ✅ Done (or honest partial).
-- `docs/acp/responsibilities.md` line 23 — remove the `⚠️ _Planned:_ session/load … session/delete` clause; rewrite as ✅ implemented with the fallback note.
+- `docs/reference/acp/responsibilities.md` line 23 — remove the `⚠️ _Planned:_ session/load … session/delete` clause; rewrite as ✅ implemented with the fallback note.
 
 ---
 
@@ -80,7 +80,7 @@
 
 **Docs to update on completion:**
 - `docs/STATUS.md` task 7 row → ✅ Done.
-- `docs/acp/responsibilities.md` line 30 — remove `⚠️ _Planned:_` prefix from the permission policy bullet.
+- `docs/reference/acp/responsibilities.md` line 30 — remove `⚠️ _Planned:_` prefix from the permission policy bullet.
 
 ---
 
@@ -185,7 +185,7 @@
   - Connection state — banner behavior, reconnect flow, in-flight prompt handling.
   - Mobile — bottom-nav single-panel adaptation.
 
-**References:** `docs/acp/responsibilities.md` (authoritative ACP events/features), `mockup12.html` (existing UI style), `web/src/components/ChatPanel.tsx` + `ChatMessageItem.tsx` (what's already implemented).
+**References:** `docs/reference/acp/responsibilities.md` (authoritative ACP events/features), `mockup12.html` (existing UI style), `web/src/components/ChatPanel.tsx` + `ChatMessageItem.tsx` (what's already implemented).
 
 **Acceptance:**
 - Mockup opens in a browser and renders all states legibly.
@@ -236,7 +236,7 @@ Step 2f (done):    Stream 6 — E2E verification & docs    ✅
 - [x] `npm run lint` passes
 - [x] `.\build.ps1` passes
 - [x] `docs/STATUS.md` accurate — no false "✅ Done" on partial work
-- [x] `docs/acp/responsibilities.md` ⚠️ markers resolved or accurately tracked
+- [x] `docs/reference/acp/responsibilities.md` ⚠️ markers resolved or accurately tracked
 - [x] `docs/plans/OpenItems.md` reflects current state
 - [x] `docs/plans/execution-plan.md` exists and is accurate
 - [x] `mockup-chat-panel.html` renders all ACP panel states in a browser

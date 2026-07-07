@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { X } from 'lucide-react'
 import { LockScreen } from '@/components/LockScreen'
 import { ActivityBar } from '@/components/ActivityBar'
@@ -9,7 +9,7 @@ import { MobileNav } from '@/components/MobileNav'
 import { MobileSettings } from '@/components/MobileSettings'
 import { SettingsModal } from '@/components/SettingsModal'
 import { useBackend } from '@/hooks/useBackend'
-import type { LeftPanel, MobileView, FileTreeNode, AppEvent, SessionStatus, Tab } from '@/types'
+import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Attachment, SessionStatus, Tab } from '@/types'
 
 /**
  * Runtime guard that narrows an arbitrary backend status string to the
@@ -132,22 +132,15 @@ export default function App() {
   }, [activeSessionId])
 
   // Validate the persisted activeSessionId against the backend's session list.
-  // After a daemon restart the session may no longer exist (e.g.
-  // conversations.json was wiped or the session was deleted). If the loaded
-  // list is non-empty and does not contain the active id, clear it so the UI
-  // shows the new-chat state instead of sending prompts to a dead session.
-  // Uses the "adjust state during render" pattern from the React docs instead
-  // of setState-in-effect to avoid cascading renders. The empty-list case is
-  // handled defensively by sendPrompt's 404 path in useBackend.
+  // After a daemon restart the session may no longer exist (conversations.json
+  // wiped, or the session was deleted). If the loaded list is non-empty and
+  // does not contain the active id, clear it so the UI shows the new-chat state
+  // instead of sending prompts to a dead session. Uses the "adjust state during
+  // render" pattern (React docs) — this is a PURE state adjustment (no data
+  // fetch / side effect), so it neither runs a side effect during render nor
+  // trips react-hooks/set-state-in-effect. The empty-list case is handled
+  // defensively by sendPrompt's 404 path in useBackend.
   const [prevSessions, setPrevSessions] = useState(backend.sessions)
-  // Tracks the session id whose events we've already loaded so we only trigger
-  // loadSessionEvents once per active session (not on every render). Reset to
-  // null when activeSessionId changes so a freshly-selected session reloads.
-  const [loadedEventsForSession, setLoadedEventsForSession] = useState<string | null>(null)
-  if (activeSessionId !== loadedEventsForSession && activeSessionId === null) {
-    // Switched to "new chat" — no session to load events for.
-    setLoadedEventsForSession(null)
-  }
   if (backend.sessions !== prevSessions) {
     setPrevSessions(backend.sessions)
     if (
@@ -156,33 +149,44 @@ export default function App() {
       !backend.sessions.some((s) => s.id === activeSessionId)
     ) {
       setActiveSessionId(null)
-      setLoadedEventsForSession(null)
-    } else if (
-      // Only load session events on the INITIAL sessions load — i.e. when the
-      // session list transitions from empty to populated (page reload). A newly
-      // created session is added to an already-populated list and has no
-      // persisted history to fetch; its events arrive in real time via
-      // WebSocket. Calling loadSessionEvents for a brand-new session races with
-      // the in-flight prompt POST: the fetch returns an empty list (the
-      // PromptSubmitted event hasn't been persisted yet) and overwrites the
-      // WebSocket-delivered event, making the user's message flash then vanish.
-      prevSessions.length === 0 &&
-      activeSessionId &&
-      backend.sessions.some((s) => s.id === activeSessionId) &&
-      loadedEventsForSession !== activeSessionId
-    ) {
-      // The session list just loaded for the first time and contains the active
-      // session, but we haven't fetched its events yet. This is the reload
-      // path: the persisted activeSessionId is restored from localStorage, but
-      // the global loadEvents() only fetches the first 200 events across ALL
-      // sessions, so the active conversation's history may be missing. Fetch it
-      // explicitly. Uses the "adjust state during render" pattern (React docs)
-      // instead of setState-in-effect to avoid cascading renders and the ESLint
-      // rule react-hooks/set-state-in-effect.
-      setLoadedEventsForSession(activeSessionId)
-      backend.loadSessionEvents(activeSessionId)
     }
   }
+
+  // Tracks the session id whose events we've already loaded so each session's
+  // persisted history is fetched at most once. A ref (not state) so updating it
+  // inside the effect below doesn't trip react-hooks/set-state-in-effect and
+  // doesn't trigger a re-render. handleCreateSession / handleSelectSession
+  // pre-set it so the effect only handles the cold-reload restore path.
+  const loadedSessionRef = useRef<string | null>(null)
+
+  // On a cold reload, fetch the restored conversation's history exactly once.
+  // The DATA FETCH lives in a guarded effect (not a render-time side effect) so
+  // it never runs during render (fixes web-app-side-effect-during-render). On a
+  // page reload localStorage restores activeSessionId, but the global
+  // loadEvents() only fetched the first slice across all sessions, so the active
+  // conversation's history may be missing — fetch it explicitly here.
+  //
+  // Brand-new sessions can't reach the fetch because handleCreateSession
+  // pre-marks them loaded — preventing the fetch from racing the in-flight
+  // prompt POST (that race made the user's first message flash then vanish).
+  // Stale sessions are cleared by the render-time block above, so the effect
+  // simply skips them.
+  useEffect(() => {
+    if (!activeSessionId) {
+      loadedSessionRef.current = null
+      return
+    }
+    if (backend.sessions.length === 0) return
+    if (!backend.sessions.some((s) => s.id === activeSessionId)) return
+    if (loadedSessionRef.current !== activeSessionId) {
+      loadedSessionRef.current = activeSessionId
+      backend.loadSessionEvents(activeSessionId)
+    }
+    // backend's methods are recreated each render (not memoized), so we key on
+    // the sessions array + active id rather than the whole backend object to
+    // avoid re-running this effect on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backend.sessions, activeSessionId])
 
   /** Persist open tabs, active tab, panel, and mobile view so the layout
    *  survives a page reload (UI Spec §6.2 — UI Persistence). */
@@ -238,6 +242,74 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [searchResultLine])
 
+  // ---- Live file-change detection (Blueprint Sec 14) ----
+  // React to files changing on disk for files the user has open: the agent
+  // emits 'FileWritten' when it writes via ACP, and the backend fs-watcher
+  // emits 'FileChangedOnDisk' for external edits. Both are handled the same.
+  // A CLEAN open tab (no unsaved edits) is silently refreshed from disk so the
+  // editor shows the new content without a forced full reload; a tab WITH
+  // unsaved edits is flagged (changedOnDisk) so EditorPane shows a "changed on
+  // disk" banner + Reload instead of clobbering the user's work — conflict
+  // resolution otherwise happens on save (three-way merge, Blueprint Sec 14).
+  //
+  // processedFileEventIdRef tracks the last event id handled. On the first run
+  // (once events have loaded) we jump the cursor to the current max id and skip
+  // all pre-existing events, so a page reload does not re-refresh open tabs for
+  // historical writes.
+  const processedFileEventIdRef = useRef<number | null>(null)
+  useEffect(() => {
+    const events = backend.events
+    if (events.length === 0) return
+    const maxId = Math.max(...events.map((e) => e.id))
+    if (processedFileEventIdRef.current === null) {
+      processedFileEventIdRef.current = maxId
+      return
+    }
+    const since = processedFileEventIdRef.current
+    if (maxId <= since) return
+    processedFileEventIdRef.current = maxId
+    const active = backend.activeWorkspace
+    const changedPaths = new Set(
+      events
+        .filter(
+          (e) =>
+            e.id > since &&
+            (e.type === 'FileWritten' || e.type === 'FileChangedOnDisk') &&
+            !!e.target &&
+            (!e.workspaceId || !active || e.workspaceId === active.id),
+        )
+        .map((e) => e.target as string),
+    )
+    if (changedPaths.size === 0) return
+    // Flag open tabs that have unsaved edits; leave their content untouched.
+    // Reconciling editor state with external (websocket) file-change events.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpenTabs((prev) =>
+      prev.map((t) =>
+        changedPaths.has(t.path) && t.unsaved ? { ...t, changedOnDisk: true } : t,
+      ),
+    )
+    // Silently refresh CLEAN open tabs from disk (async, so not a synchronous
+    // setState in the effect body).
+    for (const tab of openTabs) {
+      if (!changedPaths.has(tab.path) || tab.unsaved) continue
+      backend
+        .readFile(tab.path)
+        .then((file) => {
+          setOpenTabs((prev) =>
+            prev.map((t) =>
+              t.id === tab.id && !t.unsaved
+                ? { ...t, content: file.content, revision: file.revision, changedOnDisk: false }
+                : t,
+            ),
+          )
+        })
+        .catch(() => {})
+    }
+    // backend's methods aren't memoized; key on the event list only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backend.events])
+
   // ---- Tab operations ----
   // Defined before the unpaired early return so the keyboard-shortcut
   // useEffect below them is not called conditionally (react-hooks/rules-of-hooks).
@@ -266,10 +338,12 @@ export default function App() {
     const tab = openTabs.find((t) => t.id === activeTabId)
     if (!tab) return
     try {
-      const result = await backend.saveFile(tab.path, tab.content, tab.revision)
+      const result = await backend.saveFile(tab.path, tab.content, tab.revision, tab.workspaceId)
       setOpenTabs((prev) =>
         prev.map((t) =>
-          t.id === activeTabId ? { ...t, revision: result.revision, unsaved: false } : t,
+          t.id === activeTabId
+            ? { ...t, revision: result.revision, unsaved: false, changedOnDisk: false }
+            : t,
         ),
       )
       setSaveError(null)
@@ -278,6 +352,35 @@ export default function App() {
       setSaveError(err instanceof Error ? err.message : String(err))
     }
   }, [backend, openTabs, activeTabId])
+
+  /** Reloads a tab's content from disk, discarding local edits. Invoked from
+   *  the EditorPane "changed on disk" banner's Reload action. */
+  const handleReloadTab = useCallback(
+    async (tabId: string) => {
+      const tab = openTabs.find((t) => t.id === tabId)
+      if (!tab) return
+      try {
+        const file = await backend.readFile(tab.path, tab.workspaceId)
+        setOpenTabs((prev) =>
+          prev.map((t) =>
+            t.id === tabId
+              ? {
+                  ...t,
+                  content: file.content,
+                  revision: file.revision,
+                  unsaved: false,
+                  changedOnDisk: false,
+                }
+              : t,
+          ),
+        )
+        setSaveError(null)
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [backend, openTabs],
+  )
 
   // ---- Global keyboard shortcuts ----
   // Registered on window so they work even when the CodeMirror editor isn't
@@ -367,6 +470,7 @@ export default function App() {
         revision: file.revision,
         unsaved: false,
         language: lang,
+        workspaceId: backend.activeWorkspace?.id,
       }
       setOpenTabs((prev) => [...prev, tab])
       setActiveTabId(path)
@@ -392,6 +496,9 @@ export default function App() {
   // ---- Session operations ----
   const handleCreateSession = async (agentId: string, modelId: string): Promise<string> => {
     const session = await backend.createSession(agentId, modelId)
+    // Mark the new session as already-loaded so the restore effect does NOT
+    // fetch its (empty) history and race the in-flight first prompt POST.
+    loadedSessionRef.current = session.id
     setActiveSessionId(session.id)
     return session.id
   }
@@ -414,12 +521,20 @@ export default function App() {
     // loadSessionEvents merges by ID: it keeps events for this session whose
     // IDs are higher than the fetched max (they arrived via WebSocket after
     // the fetch started), so actively streaming sessions are not disrupted.
+    //
+    // Mark it loaded so the restore effect treats this explicit fetch as the
+    // one-time load and does not fetch again for the same session.
+    loadedSessionRef.current = sessionId
     setActiveSessionId(sessionId)
     backend.loadSessionEvents(sessionId)
   }
 
-  const handleSendMessage = async (sessionId: string, content: string) => {
-    await backend.sendPrompt(sessionId, content)
+  const handleSendMessage = async (
+    sessionId: string,
+    content: string,
+    attachments?: Attachment[],
+  ) => {
+    await backend.sendPrompt(sessionId, content, attachments)
   }
 
   /** Export a conversation's events as a downloadable JSON file. */
@@ -495,7 +610,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex flex-col bg-background text-gray-200 font-sans selection:bg-blue-500/30">
+    <div className="h-screen w-screen overflow-hidden flex flex-col bg-background text-foreground font-sans selection:bg-primary/30">
       {/* Reconnecting banner — shown only after a prior successful connection
           drops (mid-session Wi-Fi loss). A cold-load failure does not set
           reconnecting, so the banner stays hidden on first load. The pulsing
@@ -565,6 +680,7 @@ export default function App() {
         onTabClose={handleTabClose}
         onSave={handleSave}
         onContentChange={handleContentChange}
+        onReloadTab={handleReloadTab}
         scrollToLine={searchResultLine}
       />
 

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import type { AppEvent } from '@/types'
+import type { AppEvent, Attachment } from '@/types'
 
 /**
  * Mock backend hook — simulates the Go daemon's WebSocket + ACP layer.
@@ -19,40 +19,49 @@ export function useMockBackend(initialEvents: AppEvent[]) {
    * In production: client sends PromptSubmitted → daemon forwards to agent
    * via ACP session/prompt → agent streams back responses.
    */
-  const sendPrompt = useCallback((sessionId: string, content: string) => {
-    // Add user message immediately
-    setEvents((prev) => [
-      ...prev,
-      { type: 'PromptSubmitted', sessionId, role: 'user', content },
-    ])
-
-    // Simulate agent response after delay
-    setTimeout(() => {
+  const sendPrompt = useCallback(
+    (sessionId: string, content: string, attachments?: Attachment[]) => {
+      // Add user message immediately
       setEvents((prev) => [
         ...prev,
         {
-          type: 'ResponseStarted',
+          type: 'PromptSubmitted',
           sessionId,
-          role: 'agent',
-          content: "I'll help with that. Let me analyze the current state of the code.",
+          role: 'user',
+          content,
+          attachments,
         },
       ])
 
-      // Simulate streaming indicator
+      // Simulate agent response after delay
       setTimeout(() => {
         setEvents((prev) => [
           ...prev,
           {
-            type: 'StreamUpdate',
+            type: 'ResponseStarted',
             sessionId,
             role: 'agent',
-            content: 'Analyzing file structure...',
-            streaming: true,
+            content: "I'll help with that. Let me analyze the current state of the code.",
           },
         ])
-      }, 800)
-    }, 500)
-  }, [])
+
+        // Simulate streaming indicator
+        setTimeout(() => {
+          setEvents((prev) => [
+            ...prev,
+            {
+              type: 'StreamUpdate',
+              sessionId,
+              role: 'agent',
+              content: 'Analyzing file structure...',
+              streaming: true,
+            },
+          ])
+        }, 800)
+      }, 500)
+    },
+    [],
+  )
 
   /** Simulates a permission response (Blueprint Sec 8). */
   const respondPermission = useCallback((sessionId: string, decision: 'allow' | 'deny') => {

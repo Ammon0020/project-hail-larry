@@ -52,13 +52,13 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
       <div className="w-full max-w-sm space-y-6">
         {/* Logo / title */}
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600/20 border border-blue-500/30">
-            <Terminal className="w-8 h-8 text-blue-400" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/20 border border-primary/30">
+            <Terminal className="w-8 h-8 text-primary" />
           </div>
-          <h1 className="text-xl font-bold text-gray-100">Local Agent Interface</h1>
-          <p className="text-sm text-gray-500">
+          <h1 className="text-xl font-bold text-foreground">Local Agent Interface</h1>
+          <p className="text-sm text-muted-foreground">
             Enter the four-word passcode from{' '}
-            <code className="text-blue-400 font-mono">app pair</code>
+            <code className="text-primary font-mono">app pair</code>
           </p>
         </div>
 
@@ -75,19 +75,19 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
             }}
             onKeyDown={handleKeyDown}
             placeholder="purple-fox-delta-wave"
-            className="w-full bg-panel border border-gray-700 rounded-xl px-4 py-3 text-sm font-mono text-center text-gray-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+            className="w-full bg-panel border border-input rounded-xl px-4 py-3 text-sm font-mono text-center text-foreground focus:outline-none focus:border-ring focus:ring-1 focus:ring-ring transition"
             autoComplete="off"
             spellCheck="false"
           />
           <button
             onClick={attemptPair}
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium py-3 rounded-xl transition"
+            className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground font-medium py-3 rounded-xl transition"
           >
             {loading ? 'Pairing...' : 'Pair Device'}
           </button>
           {error && (
-            <p className="text-xs text-red-400 text-center">{errorMsg}</p>
+            <p className="text-xs text-destructive text-center">{errorMsg}</p>
           )}
         </div>
 
@@ -95,25 +95,25 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
             STATUS: stub — the inputs are not yet wired. Shown as a disabled
             "coming soon" affordance so users are not misled into expecting a
             working connect action (AGENTS.md — mark gaps honestly). */}
-        <div className="pt-4 border-t border-gray-800">
-          <div className="text-xs text-gray-500 mb-2">Or connect manually:</div>
+        <div className="pt-4 border-t border-border">
+          <div className="text-xs text-muted-foreground mb-2">Or connect manually:</div>
           <div className="flex gap-2 opacity-50" aria-disabled="true">
             <input
               type="text"
               placeholder="192.168.1.100:7337"
-              className="flex-1 bg-panel border border-gray-700 rounded-lg px-3 py-2 text-xs font-mono text-gray-300 focus:outline-none focus:border-blue-500 transition"
+              className="flex-1 bg-panel border border-input rounded-lg px-3 py-2 text-xs font-mono text-foreground focus:outline-none focus:border-ring transition"
               disabled
               aria-label="Manual host and port (coming soon)"
             />
             <button
-              className="px-3 py-2 bg-gray-800 text-gray-300 text-xs rounded-lg cursor-not-allowed"
+              className="px-3 py-2 bg-secondary text-secondary-foreground text-xs rounded-lg cursor-not-allowed"
               disabled
               aria-label="Connect manually (coming soon)"
             >
               Connect
             </button>
           </div>
-          <p className="text-[10px] text-gray-600 mt-1.5">Coming soon.</p>
+          <p className="text-[10px] text-muted-foreground mt-1.5">Coming soon.</p>
         </div>
       </div>
     </div>

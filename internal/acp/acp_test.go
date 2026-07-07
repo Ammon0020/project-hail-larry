@@ -132,7 +132,7 @@ func TestSendPrompt(t *testing.T) {
 
 	session, _ := client.CreateSession(ctx, "agent-1", "model-a", ".")
 
-	err := client.SendPrompt(ctx, session.ID, "Hello, agent!")
+	err := client.SendPrompt(ctx, session.ID, "Hello, agent!", nil)
 	if err != nil {
 		t.Fatalf("send prompt: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestSendPromptInvalidSession(t *testing.T) {
 	client := NewClient(nil, nil)
 	ctx := context.Background()
 
-	err := client.SendPrompt(ctx, "nonexistent", "hello")
+	err := client.SendPrompt(ctx, "nonexistent", "hello", nil)
 	if err == nil {
 		t.Error("expected error for nonexistent session")
 	}

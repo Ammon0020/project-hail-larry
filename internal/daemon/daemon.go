@@ -17,10 +17,12 @@ import (
 	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/config"
 	"github.com/adama/local-agent/internal/events"
+	"github.com/adama/local-agent/internal/fswatch"
 	"github.com/adama/local-agent/internal/pairing"
 	"github.com/adama/local-agent/internal/permissions"
 	"github.com/adama/local-agent/internal/server"
 	"github.com/adama/local-agent/internal/sync"
+	"github.com/adama/local-agent/internal/uploads"
 	"github.com/adama/local-agent/internal/workspace"
 )
 
@@ -38,7 +40,16 @@ type Config struct {
 	TLSEnabled        bool   `json:"tlsEnabled"`
 	TLSCertDir        string `json:"tlsCertDir"`
 	PairingTTLSeconds int    `json:"pairingTtlSeconds"`
+	// CredentialInactivityTTLSeconds is the sliding-window inactivity expiry for
+	// paired device credentials, in seconds. > 0 enables sliding expiry (a device
+	// idle this long must re-pair); 0 disables it (credentials never expire). It
+	// defaults to 30 days (see DefaultConfigOrError).
+	CredentialInactivityTTLSeconds int `json:"credentialInactivityTtlSeconds"`
 }
+
+// defaultCredentialInactivityTTLSeconds is the default sliding-window credential
+// inactivity expiry (30 days) applied to a default daemon config.
+const defaultCredentialInactivityTTLSeconds = 2592000
 
 // DefaultConfig returns the default daemon configuration. It panics if the
 // user's home directory cannot be determined, since silently falling back to
@@ -71,6 +82,8 @@ func DefaultConfigOrError() (*Config, error) {
 		DBPath:            filepath.Join(dataDir, "local-agent.db"),
 		TLSCertDir:        filepath.Join(dataDir, "tls"),
 		PairingTTLSeconds: 300,
+
+		CredentialInactivityTTLSeconds: defaultCredentialInactivityTTLSeconds,
 	}, nil
 }
 
@@ -123,6 +136,8 @@ type Daemon struct {
 	acpClient     *acp.Client
 	permissionMgr *permissions.Manager
 	syncHub       *sync.Hub
+	fsWatcher     *fswatch.Watcher
+	uploadsMgr    *uploads.Manager
 }
 
 // New creates a new Daemon with the given configuration.
@@ -143,6 +158,11 @@ func New(cfg *Config) (*Daemon, error) {
 	pairingMgr := pairing.NewManager(cfg.DataDir)
 	if cfg.PairingTTLSeconds > 0 {
 		pairingMgr.SetTTL(time.Duration(cfg.PairingTTLSeconds) * time.Second)
+	}
+	// Wire the sliding-window credential inactivity expiry. A value > 0 enables
+	// it; 0 (or unset) leaves the manager's default of "never expire" in place.
+	if cfg.CredentialInactivityTTLSeconds > 0 {
+		pairingMgr.SetInactivityTTL(time.Duration(cfg.CredentialInactivityTTLSeconds) * time.Second)
 	}
 	workspaceMgr := workspace.NewManager()
 
@@ -220,6 +240,14 @@ func New(cfg *Config) (*Daemon, error) {
 		_ = appCfg.Save()
 	}
 
+	// Per-session uploads store for artifacts attached to prompts (e.g.
+	// images). A failure to initialize is non-fatal — the daemon runs without
+	// upload support, and the server handlers return a 503 when Uploads is nil.
+	uploadsMgr, err := uploads.New(filepath.Join(cfg.DataDir, "uploads"))
+	if err != nil {
+		log.Printf("WARNING: uploads manager unavailable: %v", err)
+	}
+
 	// Create the server with all dependencies wired in.
 	srv := server.New(&server.Deps{
 		EventStore:       eventStore,
@@ -230,7 +258,30 @@ func New(cfg *Config) (*Daemon, error) {
 		SyncHub:          syncHub,
 		Config:           appCfg,
 		OpenFilesTracker: openFilesTracker,
+		Uploads:          uploadsMgr,
 	})
+
+	// Filesystem watcher: detect external file changes (edits made outside the
+	// app) and broadcast EventFileChangedOnDisk through the server's event sink
+	// (the same path as agent writes). The workspace manager notifies it of the
+	// app's own writes (to suppress them) and of workspace add/remove. A watcher
+	// init failure is non-fatal — the daemon still runs, just without external
+	// change detection.
+	fsWatcher, werr := fswatch.New(srv.OnEvent)
+	if werr != nil {
+		log.Printf("WARNING: filesystem watcher unavailable: %v", werr)
+	} else {
+		workspaceMgr.SetOnWrite(fsWatcher.NoteAppWrite)
+		workspaceMgr.SetOnRegister(fsWatcher.AddWorkspace)
+		workspaceMgr.SetOnRemove(fsWatcher.RemoveWorkspace)
+		// Workspaces registered at startup (above) predate the watcher, so add
+		// them now; runtime registrations go through the SetOnRegister hook.
+		if wss, lerr := workspaceMgr.List(context.Background()); lerr == nil {
+			for _, ws := range wss {
+				fsWatcher.AddWorkspace(ws.ID, ws.Path)
+			}
+		}
+	}
 
 	return &Daemon{
 		config:        cfg,
@@ -241,6 +292,8 @@ func New(cfg *Config) (*Daemon, error) {
 		acpClient:     acpClient,
 		permissionMgr: permissionMgr,
 		syncHub:       syncHub,
+		fsWatcher:     fsWatcher,
+		uploadsMgr:    uploadsMgr,
 	}, nil
 }
 
@@ -315,6 +368,11 @@ func (d *Daemon) cleanup() {
 	// Shut down the HTTP server before closing the EventStore so in-flight
 	// handlers finish (or time out) before the store is closed. Without this,
 	// a handler could Append to a closed store (use-after-close).
+	// Stop the filesystem watcher first so it can't emit an event (→ EventStore
+	// Append) after the store is closed below.
+	if d.fsWatcher != nil {
+		_ = d.fsWatcher.Close()
+	}
 	if d.server != nil {
 		_ = d.server.Shutdown(ctx)
 	}

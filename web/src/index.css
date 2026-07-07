@@ -1,36 +1,54 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
 /*
- * Theme tokens — ported from mockup13.html @theme block.
+ * Theme tokens.
  * Maps to Blueprint Section 17 (UI Architecture) color scheme.
  * Uses the Tailwind v4 @theme inline pattern: CSS variables in :root/.dark,
  * mapped to utility-generating names in @theme inline.
+ *
+ * :root holds the LIGHT palette (default); `.dark` overrides with the DARK
+ * palette (the original mockup13.html scheme). The dark class is applied by
+ * main.tsx based on the persisted theme preference (defaulting to dark per
+ * Blueprint Sec 17). Every token below has a semantic (shadcn) name plus the
+ * app-specific surface tokens (panel/activity-bar/editor/status-bar/tool-call)
+ * so components can migrate off raw palette classes (text-gray-400, …) onto
+ * tokens that adapt to the active theme.
  */
 
 :root {
-  /* App-specific colors (from mockup) */
-  --background: #0f111a;
-  --panel: #161925;
-  --activity-bar: #0d0e16;
-  --editor: #1e1e1e;
+  /* App-specific surfaces (light) */
+  --background: #ffffff;
+  --panel: #f8fafc;
+  --activity-bar: #f1f5f9;
+  --editor: #ffffff;
   --status-bar: #007acc;
-  --tool-call: #12141d;
+  --tool-call: #f1f5f9;
 
-  /* shadcn/ui semantic tokens */
-  --foreground: #e5e7eb;
-  --primary: #3b82f6;
+  /* shadcn/ui semantic tokens (light) */
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #2563eb;
   --primary-foreground: #ffffff;
-  --destructive: #ef4444;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #f1f5f9;
+  --accent-foreground: #0f172a;
+  --destructive: #dc2626;
   --destructive-foreground: #ffffff;
-  --muted: #1f2937;
-  --muted-foreground: #6b7280;
-  --border: #1f2937;
-  --input: #1f2937;
-  --ring: #3b82f6;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #2563eb;
 }
 
 .dark {
+  /* App-specific surfaces (dark — original mockup scheme) */
   --background: #0f111a;
   --panel: #161925;
   --activity-bar: #0d0e16;
@@ -38,13 +56,22 @@
   --status-bar: #007acc;
   --tool-call: #12141d;
 
+  /* shadcn/ui semantic tokens (dark) */
   --foreground: #e5e7eb;
+  --card: #161925;
+  --card-foreground: #e5e7eb;
+  --popover: #1c2030;
+  --popover-foreground: #e5e7eb;
   --primary: #3b82f6;
   --primary-foreground: #ffffff;
+  --secondary: #1f2937;
+  --secondary-foreground: #e5e7eb;
+  --muted: #1f2937;
+  --muted-foreground: #9ca3af;
+  --accent: #262b3d;
+  --accent-foreground: #e5e7eb;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
-  --muted: #1f2937;
-  --muted-foreground: #6b7280;
   --border: #1f2937;
   --input: #1f2937;
   --ring: #3b82f6;
@@ -59,12 +86,20 @@
   --color-tool-call: var(--tool-call);
 
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);

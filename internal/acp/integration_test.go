@@ -90,7 +90,7 @@ func TestMockAgentFullFlow(t *testing.T) {
 	t.Logf("created session: %s", session.ID)
 
 	// Send prompt — this runs in a goroutine, events arrive via callbacks.
-	err = client.SendPrompt(ctx, session.ID, "Hello, mock agent!")
+	err = client.SendPrompt(ctx, session.ID, "Hello, mock agent!", nil)
 	if err != nil {
 		t.Fatalf("send prompt: %v", err)
 	}
@@ -223,13 +223,13 @@ func TestMockAgentMultiplePrompts(t *testing.T) {
 	}
 
 	// Send first prompt.
-	if err := client.SendPrompt(ctx, session.ID, "First message"); err != nil {
+	if err := client.SendPrompt(ctx, session.ID, "First message", nil); err != nil {
 		t.Fatalf("send prompt 1: %v", err)
 	}
 	waitForPromptComplete(t, cb, 1)
 
 	// Send second prompt.
-	if err := client.SendPrompt(ctx, session.ID, "Second message"); err != nil {
+	if err := client.SendPrompt(ctx, session.ID, "Second message", nil); err != nil {
 		t.Fatalf("send prompt 2: %v", err)
 	}
 	waitForPromptComplete(t, cb, 2)
@@ -296,7 +296,7 @@ func TestRealAgentDevstral(t *testing.T) {
 	}
 	t.Logf("created session with devstral: %s", session.ID)
 
-	if err := client.SendPrompt(ctx, session.ID, "Say hello in one sentence."); err != nil {
+	if err := client.SendPrompt(ctx, session.ID, "Say hello in one sentence.", nil); err != nil {
 		t.Fatalf("send prompt: %v", err)
 	}
 
@@ -385,7 +385,7 @@ func TestRealAgentCodex(t *testing.T) {
 	}
 	t.Logf("created session with codex: %s", session.ID)
 
-	if err := client.SendPrompt(ctx, session.ID, "Say hello in one sentence."); err != nil {
+	if err := client.SendPrompt(ctx, session.ID, "Say hello in one sentence.", nil); err != nil {
 		t.Fatalf("send prompt: %v", err)
 	}
 

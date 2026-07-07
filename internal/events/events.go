@@ -112,6 +112,7 @@ func (s *Store) Append(ctx context.Context, e interfaces.Event) (interfaces.Even
 		Thought:     e.Thought,
 		ExitCode:    e.ExitCode,
 		WorkspaceID: e.WorkspaceID,
+		Attachments: e.Attachments,
 	})
 	if err != nil {
 		return e, fmt.Errorf("marshal payload: %w", err)
@@ -173,21 +174,22 @@ func (s *Store) QueryAll(ctx context.Context, afterID int64, limit int) ([]inter
 
 // eventPayload holds the variable fields of an event, stored as JSON in the payload column.
 type eventPayload struct {
-	Role        string   `json:"role,omitempty"`
-	Content     string   `json:"content,omitempty"`
-	Streaming   bool     `json:"streaming,omitempty"`
-	Tool        string   `json:"tool,omitempty"`
-	Target      string   `json:"target,omitempty"`
-	Summary     string   `json:"summary,omitempty"`
-	Command     string   `json:"command,omitempty"`
-	Cwd         string   `json:"cwd,omitempty"`
-	Options     []string `json:"options,omitempty"`
-	RequestID   string   `json:"requestId,omitempty"`
-	ToolKind    string   `json:"toolKind,omitempty"`
-	ToolCallID  string   `json:"toolCallId,omitempty"`
-	Thought     bool     `json:"thought,omitempty"`
-	ExitCode    *int     `json:"exitCode,omitempty"`
-	WorkspaceID string   `json:"workspaceId,omitempty"`
+	Role        string                  `json:"role,omitempty"`
+	Content     string                  `json:"content,omitempty"`
+	Streaming   bool                    `json:"streaming,omitempty"`
+	Tool        string                  `json:"tool,omitempty"`
+	Target      string                  `json:"target,omitempty"`
+	Summary     string                  `json:"summary,omitempty"`
+	Command     string                  `json:"command,omitempty"`
+	Cwd         string                  `json:"cwd,omitempty"`
+	Options     []string                `json:"options,omitempty"`
+	RequestID   string                  `json:"requestId,omitempty"`
+	ToolKind    string                  `json:"toolKind,omitempty"`
+	ToolCallID  string                  `json:"toolCallId,omitempty"`
+	Thought     bool                    `json:"thought,omitempty"`
+	ExitCode    *int                    `json:"exitCode,omitempty"`
+	WorkspaceID string                  `json:"workspaceId,omitempty"`
+	Attachments []interfaces.Attachment `json:"attachments,omitempty"`
 }
 
 // scanEvents converts sql.Rows into a slice of Event structs.
@@ -240,6 +242,7 @@ func scanEvents(rows *sql.Rows) ([]interfaces.Event, error) {
 		e.ExitCode = payload.ExitCode
 		e.Cwd = payload.Cwd
 		e.WorkspaceID = payload.WorkspaceID
+		e.Attachments = payload.Attachments
 
 		events = append(events, e)
 	}

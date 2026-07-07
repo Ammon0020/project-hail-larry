@@ -496,6 +496,9 @@ func toDaemonConfig(cfg *config.Config) *daemon.Config {
 		TLSEnabled:        cfg.TLSEnabled,
 		TLSCertDir:        cfg.TLSCertDir,
 		PairingTTLSeconds: cfg.PairingTTLSeconds,
+		// Wire the sliding-TTL device credential inactivity window through to the
+		// daemon so CLI-started daemons actually enforce credential expiry.
+		CredentialInactivityTTLSeconds: cfg.CredentialInactivityTTLSeconds,
 	}
 }
 

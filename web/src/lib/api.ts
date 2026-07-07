@@ -3,6 +3,8 @@
  * All endpoints are relative to the same origin (served by the Go server).
  */
 
+import type { Attachment } from '@/types'
+
 const API_BASE = '/api'
 
 /** Generic fetch wrapper with JSON parsing. */
@@ -85,6 +87,7 @@ export interface AppEvent {
   thought?: boolean
   exitCode?: number
   workspaceId?: string
+  attachments?: Attachment[]
 }
 
 export interface PermissionOptionInfo {
@@ -137,6 +140,15 @@ export interface PairingSession {
   createdAt: string
   expiresAt: string
   used: boolean
+}
+
+/** Response from POST /sessions/:id/uploads — a stored upload ready to attach. */
+export interface UploadResult {
+  id: string
+  name: string
+  mimeType: string
+  url: string
+  size: number
 }
 
 // ---- API methods ----
@@ -213,11 +225,32 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ openFiles, recentEdits }),
     }),
-  sendPrompt: (sessionId: string, content: string) =>
+  sendPrompt: (sessionId: string, content: string, attachments?: Attachment[]) =>
     apiFetch<{ status: string }>(`/sessions/${sessionId}/prompt`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(
+        attachments && attachments.length > 0
+          ? { content, attachments }
+          : { content },
+      ),
     }),
+  /** Uploads an image file via multipart/form-data. Uses `fetch` directly
+   *  (not `apiFetch`) so the browser sets the multipart Content-Type and
+   *  boundary automatically — `apiFetch` forces `application/json`. Mirrors
+   *  `apiFetch`'s same-origin base URL and error handling. */
+  uploadFile: async (sessionId: string, file: File): Promise<UploadResult> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/uploads`, {
+      method: 'POST',
+      body: form,
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }))
+      throw new Error(body.error || `HTTP ${res.status}`)
+    }
+    return (await res.json()) as UploadResult
+  },
   cancelSession: (sessionId: string) =>
     apiFetch<{ status: string }>(`/sessions/${sessionId}/cancel`, {
       method: 'POST',

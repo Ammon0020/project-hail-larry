@@ -62,6 +62,10 @@ type DeviceInfo struct {
 	ID       string    `json:"id"`
 	Name     string    `json:"name"`
 	PairedAt time.Time `json:"pairedAt"`
+	// LastSeen is the last time the credential successfully authenticated. It is
+	// exposed for admin visibility (e.g. to show idle devices approaching the
+	// inactivity-expiry window). A zero value means never observed since load.
+	LastSeen time.Time `json:"lastSeen"`
 }
 
 // storedDevice is the internal at-rest record for a paired device. Only the
@@ -73,6 +77,11 @@ type storedDevice struct {
 	Name       string    `json:"name"`
 	SecretHash string    `json:"secretHash"`
 	PairedAt   time.Time `json:"pairedAt"`
+	// LastSeen is the timestamp of the most recent successful validation. It
+	// drives the sliding-window inactivity expiry: each successful
+	// ValidateCredential renews it (see ValidateCredential and inactivityTTL).
+	// It is persisted so the sliding window survives daemon restarts.
+	LastSeen time.Time `json:"lastSeen"`
 }
 
 // Rate-limiting constants for pairing verification. After maxVerifyAttempts
@@ -87,6 +96,16 @@ const (
 	maxLockout        = 5 * time.Minute
 )
 
+// persistThrottle bounds how often the sliding-window LastSeen renewal is
+// flushed to disk. ValidateCredential runs on every authenticated request, so
+// writing devices.json on each renewal would generate excessive disk I/O.
+// Instead the in-memory LastSeen is always updated, but the file is rewritten
+// at most once per persistThrottle interval (≈1 write/minute regardless of
+// request rate). Worst case, a crash loses up to persistThrottle of LastSeen
+// advancement, which only shortens the sliding window slightly — never grants
+// extra access — so it is safe.
+const persistThrottle = 1 * time.Minute
+
 // Manager handles pairing sessions and device credentials.
 type Manager struct {
 	mu       sync.Mutex
@@ -94,6 +113,17 @@ type Manager struct {
 	devices  map[string]*storedDevice
 	dataDir  string
 	ttl      time.Duration
+
+	// inactivityTTL is the sliding-window credential expiry. A credential that
+	// has not successfully validated within this duration is treated as invalid.
+	// Each successful validation renews the window (updates LastSeen). A value of
+	// 0 disables expiry entirely (credentials never expire — backward compatible).
+	inactivityTTL time.Duration
+
+	// lastPersist is the last time saveDevices was called to flush a LastSeen
+	// renewal. It throttles disk writes from ValidateCredential (see
+	// persistThrottle). Guarded by mu.
+	lastPersist time.Time
 
 	// Rate-limiting state for verify attempts. failures holds timestamps of
 	// recent failed attempts within rateLimitWindow; lockoutUntil is the time
@@ -134,6 +164,18 @@ func (m *Manager) SetTTL(ttl time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ttl = ttl
+}
+
+// SetInactivityTTL sets the sliding-window credential inactivity expiry. A
+// paired device credential that goes ttl without a successful validation is
+// treated as expired (ValidateCredential returns false). Every successful
+// validation renews the window. A ttl of 0 disables expiry (credentials never
+// expire), preserving the previous always-permanent behavior. This is unrelated
+// to SetTTL, which controls the short-lived pairing session window.
+func (m *Manager) SetInactivityTTL(ttl time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.inactivityTTL = ttl
 }
 
 // CreateSession generates a new pairing session with a QR code and mnemonic.
@@ -293,6 +335,9 @@ func (m *Manager) issueCredential(session *PairingSession, deviceName string) (*
 		Name:       deviceName,
 		SecretHash: HashSecret(secret),
 		PairedAt:   now,
+		// Seed the sliding window at issuance so a freshly paired device gets a
+		// full inactivityTTL window before it can expire.
+		LastSeen: now,
 	}
 	m.devices[credID] = stored
 	// Persist the new credential so the pairing survives a daemon restart.
@@ -324,6 +369,21 @@ func (m *Manager) issueCredential(session *PairingSession, deviceName string) (*
 // nor whether the deviceID exists is leaked via timing. The signature is kept
 // stable so callers (e.g. auth middleware) need no changes after secrets began
 // being hashed at rest.
+//
+// Sliding-window expiry: when an inactivity TTL is configured (inactivityTTL >
+// 0), a credential is only valid if it has been used within the window. On a
+// successful hash match:
+//   - If LastSeen is set and older than inactivityTTL, the credential has gone
+//     idle too long and is treated as invalid (returns false). It is NOT deleted
+//     here — ValidateCredential keeps minimal, predictable side effects; expired
+//     credentials simply fail auth (and may be revoked/re-paired out of band).
+//   - Otherwise the window is renewed by advancing LastSeen to now. Because this
+//     runs on every authenticated request, the disk write is throttled to at
+//     most once per persistThrottle interval; the in-memory LastSeen is always
+//     updated so the sliding window is accurate for subsequent checks.
+//
+// When inactivityTTL == 0 (disabled), credentials never expire and LastSeen is
+// still advanced/persisted opportunistically for admin visibility.
 func (m *Manager) ValidateCredential(deviceID, secret string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -338,7 +398,34 @@ func (m *Manager) ValidateCredential(deviceID, secret string) bool {
 		return false
 	}
 	got := HashSecret(secret)
-	return subtle.ConstantTimeCompare([]byte(got), []byte(stored.SecretHash)) == 1
+	if subtle.ConstantTimeCompare([]byte(got), []byte(stored.SecretHash)) != 1 {
+		// Wrong secret: keep the constant-time-compare behavior and reveal
+		// nothing further (no expiry checks, no writes).
+		return false
+	}
+
+	now := time.Now().UTC()
+
+	// Sliding-window expiry check. Only enforced when a TTL is configured and a
+	// LastSeen baseline exists (a zero LastSeen means "never seen" and should
+	// not be treated as instantly expired).
+	if m.inactivityTTL > 0 && !stored.LastSeen.IsZero() && now.Sub(stored.LastSeen) > m.inactivityTTL {
+		return false
+	}
+
+	// Valid and within the window: renew the sliding window in memory, and flush
+	// to disk at most once per persistThrottle interval to bound I/O.
+	stored.LastSeen = now
+	if time.Since(m.lastPersist) > persistThrottle {
+		if err := m.saveDevices(); err != nil {
+			// A persistence failure here is non-fatal: the credential is still
+			// valid in memory. Log loudly rather than reject a legitimate device.
+			log.Printf("pairing: failed to persist LastSeen renewal for %s: %v", deviceID, err)
+		} else {
+			m.lastPersist = now
+		}
+	}
+	return true
 }
 
 // ListDevices returns a secret-free view of all paired devices. Neither the
@@ -354,6 +441,7 @@ func (m *Manager) ListDevices() []DeviceInfo {
 			ID:       stored.ID,
 			Name:     stored.Name,
 			PairedAt: stored.PairedAt,
+			LastSeen: stored.LastSeen,
 		})
 	}
 	return devices
@@ -483,6 +571,12 @@ func (m *Manager) loadDevices() {
 
 	for i := range records {
 		r := records[i] // take address of a stable copy
+		// Migration: devices persisted before the LastSeen field existed have a
+		// zero LastSeen. Backfill it from PairedAt so they receive a fair
+		// sliding window rather than being treated as instantly expired.
+		if r.LastSeen.IsZero() {
+			r.LastSeen = r.PairedAt
+		}
 		m.devices[r.ID] = &r
 	}
 }
@@ -497,6 +591,7 @@ func (m *Manager) saveDevices() error {
 			Name:       d.Name,
 			SecretHash: d.SecretHash,
 			PairedAt:   d.PairedAt,
+			LastSeen:   d.LastSeen,
 		})
 	}
 

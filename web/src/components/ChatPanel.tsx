@@ -1,10 +1,27 @@
-import { useState, useEffect, useRef, type KeyboardEvent, type CSSProperties } from 'react'
-import { Menu, Paperclip, ArrowUp, Square, Wifi, WifiOff, ChevronDown } from 'lucide-react'
+import { useState, useEffect, useRef, type KeyboardEvent, type ChangeEvent, type CSSProperties } from 'react'
+import { Menu, Paperclip, ArrowUp, Square, Wifi, WifiOff, ChevronDown, X, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 import { ChatMessageItem } from './ChatMessageItem'
 import { ChatHistory } from './ChatHistory'
 import { useAutoscroll } from '@/hooks/useAutoscroll'
-import type { AppEvent, Agent, Session } from '@/types'
+import type { AppEvent, Agent, Attachment, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 
 /**
@@ -58,7 +75,7 @@ export function ChatPanel({
   connected: boolean
   pendingPermissions: PendingPermission[]
   activeSessionId: string | null
-  onSendMessage: (sessionId: string, content: string) => Promise<void>
+  onSendMessage: (sessionId: string, content: string, attachments?: Attachment[]) => Promise<void>
   onCreateSession: (agentId: string, modelId: string) => Promise<string>
   onPermissionResponse: (requestId: string, decision: string) => void
   onSelectSession: (sessionId: string) => void
@@ -93,6 +110,15 @@ export function ChatPanel({
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Pending image attachments for the next prompt. `pendingAttachments` holds
+  // the {id, name, mimeType} sent with the prompt; `pendingPreviews` holds the
+  // {url, name} used to render thumbnails before the message is sent.
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
+  const [pendingPreviews, setPendingPreviews] = useState<{ url: string; name: string }[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   // Switch-agent confirmation dialog state. When the user changes the agent
   // dropdown mid-conversation, we show a dialog instead of rebinding
   // immediately so they can pick a transfer-history truncate length.
@@ -120,15 +146,23 @@ export function ChatPanel({
   if (agents !== prevAgents) {
     setPrevAgents(agents)
     if (agents.length > 0) {
+      // Resolve the agent locally first. setState doesn't commit until after
+      // this render, so reading `selectedAgent` below would see the stale
+      // value — instead we track the freshly-resolved id in `nextAgent` and
+      // queue the state update from it.
+      let nextAgent = selectedAgent
       if (!selectedAgent || !agents.some((a) => a.id === selectedAgent)) {
         const storedAgent = localStorage.getItem('lai:selectedAgent')
-        const validAgent =
+        nextAgent =
           storedAgent && agents.some((a) => a.id === storedAgent)
             ? storedAgent
             : agents[0]?.id ?? ''
-        if (validAgent) setSelectedAgent(validAgent)
+        if (nextAgent) setSelectedAgent(nextAgent)
       }
-      const agent = agents.find((a) => a.id === selectedAgent)
+      // Derive the model from the freshly-resolved `nextAgent` (not the stale
+      // `selectedAgent` state), so model validation runs against the correct
+      // agent and doesn't pick a model from the previous selection.
+      const agent = agents.find((a) => a.id === nextAgent)
       if (!selectedModel || !agent?.models.some((m) => m.id === selectedModel)) {
         const storedModel = localStorage.getItem('lai:selectedModel')
         const validModel =
@@ -211,7 +245,7 @@ export function ChatPanel({
 
   const handleSend = async () => {
     const content = input.trim()
-    if (!content || sending || !effectiveAgentId || !effectiveModelId) return
+    if ((!content && pendingAttachments.length === 0) || sending || !effectiveAgentId || !effectiveModelId) return
 
     setSending(true)
     setError(null)
@@ -222,7 +256,14 @@ export function ChatPanel({
       if (!sessionId) {
         sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
       }
-      await onSendMessage(sessionId, content)
+      const attachmentsToSend = pendingAttachments
+      await onSendMessage(
+        sessionId,
+        content,
+        attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
+      )
+      setPendingAttachments([])
+      setPendingPreviews([])
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to send message'
       // A stale/deleted session surfaces a friendly message and resets to the
@@ -245,6 +286,56 @@ export function ChatPanel({
     setSending(false)
   }
 
+  /** Opens the native file picker for image attachments. */
+  const handlePickFiles = () => {
+    setUploadError(null)
+    fileInputRef.current?.click()
+  }
+
+  /** Uploads each selected image and appends it to the pending attachments.
+   *  Creates a session on demand if the user is in the "new chat" state, since
+   *  uploads require an existing session id. */
+  const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    // Reset the input so picking the same file again fires change.
+    e.target.value = ''
+
+    if (!effectiveAgentId || !effectiveModelId) return
+    setUploading(true)
+    setUploadError(null)
+    try {
+      let sessionId = activeSessionId
+      if (!sessionId) {
+        sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
+      }
+      for (const file of Array.from(files)) {
+        const result = await api.uploadFile(sessionId, file)
+        setPendingAttachments((prev) => [
+          ...prev,
+          { id: result.id, name: result.name, mimeType: result.mimeType },
+        ])
+        setPendingPreviews((prev) => [...prev, { url: result.url, name: result.name }])
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to upload file'
+      if (isSessionGone(message)) {
+        setError('This conversation is no longer available. Start a new chat.')
+        onSelectSession('')
+      } else {
+        setUploadError(message)
+      }
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  /** Removes a pending attachment by index. */
+  const removePendingAttachment = (index: number) => {
+    setPendingAttachments((prev) => prev.filter((_, i) => i !== index))
+    setPendingPreviews((prev) => prev.filter((_, i) => i !== index))
+  }
+
   // Map permission request IDs to their resolution so resolved cards collapse.
   const permissionResolution = new Map<string, 'granted' | 'denied'>()
   for (const e of events) {
@@ -260,7 +351,12 @@ export function ChatPanel({
     }
   }
 
-  const canSend = Boolean(input.trim() && effectiveAgentId && effectiveModelId && !sending)
+  const canSend = Boolean(
+    (input.trim() || pendingAttachments.length > 0) &&
+      effectiveAgentId &&
+      effectiveModelId &&
+      !sending,
+  )
 
   /**
    * Merges consecutive StreamUpdate events into a single accumulated message
@@ -305,43 +401,53 @@ export function ChatPanel({
   return (
     <aside
       className={cn(
-        'flex-col h-full shrink-0 w-full bg-background border-l border-gray-800 lg:w-96',
+        'flex-col h-full shrink-0 w-full bg-background border-l border-border lg:w-96',
         visible ? 'flex' : 'hidden',
         'absolute inset-0 z-30 lg:relative lg:inset-auto lg:z-auto',
       )}
       style={style}
     >
       {/* Chat Header (relative container for popout) */}
-      <div className="relative border-b border-gray-800 shrink-0 bg-panel">
+      <div className="relative border-b border-border shrink-0 bg-panel">
         {/* Top row: harness + model + hamburger */}
         <div className="flex items-center gap-2 p-3">
           {/* Harness selector — pick agent (Blueprint Sec 5) */}
-          <select
-            value={effectiveAgentId}
-            onChange={(e) => handleAgentChange(e.target.value)}
-            disabled={sending}
-            className="select-chevron appearance-none bg-background border border-gray-700 text-gray-200 text-xs font-semibold rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-500 cursor-pointer shadow-sm hover:border-gray-500 disabled:opacity-60 disabled:cursor-not-allowed transition shrink-0"
-            title="Agent Harness"
-            aria-label="Agent harness"
-          >
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
+          <Select value={effectiveAgentId} onValueChange={handleAgentChange} disabled={sending}>
+            <SelectTrigger
+              size="sm"
+              className="shrink-0 text-xs font-semibold"
+              title="Agent Harness"
+              aria-label="Agent harness"
+            >
+              <SelectValue placeholder="Agent" />
+            </SelectTrigger>
+            <SelectContent>
+              {agents.map((a) => (
+                <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {/* Model selector — pick model for selected agent */}
-          <select
+          <Select
             value={effectiveModelId}
-            onChange={(e) => handleModelChange(e.target.value)}
+            onValueChange={handleModelChange}
             disabled={sending || !currentAgent}
-            className="select-chevron-primary appearance-none bg-background border border-blue-500/50 text-blue-400 text-xs font-medium rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-400 cursor-pointer shadow-sm hover:border-blue-400 disabled:opacity-60 disabled:cursor-not-allowed transition shrink-0"
-            title="Model"
-            aria-label="Model"
           >
-            {currentAgent?.models.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
+            <SelectTrigger
+              size="sm"
+              className="shrink-0 border-primary/50 text-primary text-xs font-medium"
+              title="Model"
+              aria-label="Model"
+            >
+              <SelectValue placeholder="Model" />
+            </SelectTrigger>
+            <SelectContent>
+              {currentAgent?.models.map((m) => (
+                <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           <div className="flex-1" />
 
@@ -360,7 +466,7 @@ export function ChatPanel({
           {/* Hamburger menu — toggles chat list popout */}
           <button
             onClick={() => setChatHistoryOpen(!chatHistoryOpen)}
-            className="p-1.5 text-gray-400 hover:text-white bg-gray-800 rounded-md transition relative"
+            className="p-1.5 text-muted-foreground hover:text-foreground bg-secondary hover:bg-accent rounded-md transition relative"
             title="Chat History"
             aria-label="Chat history"
             aria-expanded={chatHistoryOpen}
@@ -403,7 +509,7 @@ export function ChatPanel({
           className="h-full overflow-y-auto p-3 lg:p-4 space-y-3 lg:space-y-4 pb-20 lg:pb-4"
         >
           {mergedEvents.length === 0 && (
-            <div className="rounded-lg border border-gray-800 bg-panel/50 p-3 text-xs text-gray-500">
+            <div className="rounded-lg border border-border bg-panel/50 p-3 text-xs text-muted-foreground">
               Send a message to start a conversation.
             </div>
           )}
@@ -436,7 +542,7 @@ export function ChatPanel({
         {!isAtBottom && (
           <button
             onClick={scrollToBottom}
-            className="absolute bottom-4 right-4 rounded-full bg-background border border-gray-700 p-2 shadow-md hover:bg-accent text-muted-foreground hover:text-foreground transition"
+            className="absolute bottom-4 right-4 rounded-full bg-background border border-border p-2 shadow-md hover:bg-accent text-muted-foreground hover:text-foreground transition"
             title="Jump to bottom"
             aria-label="Jump to bottom"
           >
@@ -446,15 +552,63 @@ export function ChatPanel({
       </div>
 
       {/* Chat Input (Blueprint Sec 17 — input composer) */}
-      <div className="p-2.5 lg:p-3 bg-gradient-to-t from-background to-transparent shrink-0 border-t border-gray-800/50 pb-20 lg:pb-3">
+      <div className="p-2.5 lg:p-3 bg-gradient-to-t from-background to-transparent shrink-0 border-t border-border/50 pb-20 lg:pb-3">
+        {/* Pending attachment previews — shown above the textarea while
+            composing. Each chip shows a thumbnail + filename + remove button. */}
+        {pendingPreviews.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {pendingPreviews.map((preview, i) => (
+              <div
+                key={`${preview.url}-${i}`}
+                className="relative group flex items-center gap-2 rounded-lg border border-border bg-muted px-2 py-1.5 pr-7 max-w-[180px]"
+              >
+                <img
+                  src={preview.url}
+                  alt={preview.name}
+                  className="w-8 h-8 rounded object-cover shrink-0 border border-border"
+                />
+                <span className="text-xs text-muted-foreground truncate" title={preview.name}>
+                  {preview.name}
+                </span>
+                <button
+                  onClick={() => removePendingAttachment(i)}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition"
+                  title="Remove attachment"
+                  aria-label={`Remove ${preview.name}`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {uploadError && (
+          <div className="mb-2 rounded-md border border-red-500/40 bg-red-950/20 px-2.5 py-1.5 text-xs text-red-300">
+            {uploadError}
+          </div>
+        )}
         <div className="relative flex items-end gap-2">
           <button
-            className="p-2.5 bg-panel border border-gray-700 rounded-xl hover:bg-gray-800 hover:border-gray-500 transition text-gray-400 shrink-0"
-            title="Upload Artifact"
-            aria-label="Upload artifact"
+            onClick={handlePickFiles}
+            disabled={uploading || sending || agents.length === 0}
+            className="p-2.5 bg-panel border border-border rounded-xl hover:bg-accent hover:border-ring transition text-muted-foreground hover:text-foreground shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
+            title="Upload image"
+            aria-label="Upload image"
           >
-            <Paperclip className="w-4 h-4" />
+            {uploading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Paperclip className="w-4 h-4" />
+            )}
           </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            multiple
+            onChange={handleFileChange}
+            className="hidden"
+          />
           <div className="relative flex-1">
             <textarea
               value={input}
@@ -462,7 +616,7 @@ export function ChatPanel({
               onKeyDown={handleKeyDown}
               placeholder={agents.length === 0 ? 'Configure an agent first...' : 'Message agent...'}
               disabled={sending || agents.length === 0}
-              className="w-full bg-panel border border-gray-700 rounded-xl pl-3 pr-10 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none h-12 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+              className="w-full bg-panel border border-input rounded-xl pl-3 pr-10 py-3 text-sm focus:outline-none focus:border-ring focus:ring-1 focus:ring-ring resize-none h-12 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
             />
             {agentRunning && activeSessionId ? (
               <button
@@ -477,10 +631,10 @@ export function ChatPanel({
               <button
                 onClick={handleSend}
                 disabled={!canSend}
-                className="absolute right-2 bottom-2 p-1.5 bg-blue-600 rounded-lg hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed transition"
+                className="absolute right-2 bottom-2 p-1.5 bg-primary rounded-lg hover:bg-primary/90 disabled:bg-muted disabled:cursor-not-allowed transition"
                 aria-label="Send message"
               >
-                <ArrowUp className="w-3.5 h-3.5 text-white" />
+                <ArrowUp className="w-3.5 h-3.5 text-primary-foreground" />
               </button>
             )}
           </div>
@@ -490,85 +644,72 @@ export function ChatPanel({
       {/* Switch-agent confirmation dialog — shown when the user changes the
           harness mid-conversation. Lets them pick how much of the prior
           conversation history to transfer as context for the new agent. */}
-      {pendingAgentId && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={cancelSwitchAgent}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Switch Agent"
-        >
-          <div
-            className="bg-panel border border-gray-700 rounded-xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
-              <h2 className="text-lg font-bold text-gray-200">Switch Agent</h2>
-            </div>
+      <Dialog
+        open={!!pendingAgentId}
+        onOpenChange={(o) => {
+          if (!o) cancelSwitchAgent()
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Switch Agent</DialogTitle>
+            <DialogDescription>
+              Switching from{' '}
+              <span className="font-semibold text-foreground">
+                {currentAgent?.name ?? effectiveAgentId}
+              </span>{' '}
+              to{' '}
+              <span className="font-semibold text-foreground">
+                {agents.find((a) => a.id === pendingAgentId)?.name ?? pendingAgentId}
+              </span>{' '}
+              will start a fresh conversation. The previous conversation history will be
+              transferred as context (truncated to{' '}
+              <span className="font-semibold text-foreground">
+                {truncateLength > 0
+                  ? `${truncateLength.toLocaleString()} chars`
+                  : 'no limit'}
+              </span>
+              ).
+            </DialogDescription>
+          </DialogHeader>
 
-            {/* Body */}
-            <div className="px-5 py-4 space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Switching from{' '}
-                <span className="font-semibold text-foreground">
-                  {currentAgent?.name ?? effectiveAgentId}
-                </span>{' '}
-                to{' '}
-                <span className="font-semibold text-foreground">
-                  {agents.find((a) => a.id === pendingAgentId)?.name ?? pendingAgentId}
-                </span>{' '}
-                will start a fresh conversation. The previous conversation history will be
-                transferred as context (truncated to{' '}
-                <span className="font-semibold text-foreground">
-                  {truncateLength > 0
-                    ? `${truncateLength.toLocaleString()} chars`
-                    : 'no limit'}
-                </span>
-                ).
-              </p>
-
-              {/* Truncate length control */}
-              <div className="space-y-2">
-                <label
-                  htmlFor="truncate-length"
-                  className="block text-xs font-medium text-gray-400"
-                >
-                  Transfer history length
-                </label>
-                <select
-                  id="truncate-length"
-                  value={truncateLength}
-                  onChange={(e) => setTruncateLength(Number(e.target.value))}
-                  className="w-full bg-background border border-gray-700 text-gray-200 text-sm rounded-md py-1.5 px-2.5 focus:outline-none focus:border-blue-500 cursor-pointer"
-                >
-                  <option value={4000}>4,000 chars</option>
-                  <option value={8000}>8,000 chars</option>
-                  <option value={16000}>16,000 chars</option>
-                  <option value={32000}>32,000 chars</option>
-                  <option value={0}>Full (no limit)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Footer — Cancel / Switch Agent */}
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-800">
-              <button
-                onClick={cancelSwitchAgent}
-                className="px-3 py-1.5 text-sm font-medium text-gray-300 bg-gray-800 hover:bg-gray-700 rounded-md border border-gray-700 transition"
+          {/* Truncate length control */}
+          <div className="space-y-2">
+            <label
+              htmlFor="truncate-length"
+              className="block text-xs font-medium text-muted-foreground"
+            >
+              Transfer history length
+            </label>
+            <Select
+              value={String(truncateLength)}
+              onValueChange={(v) => setTruncateLength(Number(v))}
+            >
+              <SelectTrigger
+                id="truncate-length"
+                className="w-full"
+                aria-label="Transfer history length"
               >
-                Cancel
-              </button>
-              <button
-                onClick={confirmSwitchAgent}
-                className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-md transition"
-              >
-                Switch Agent
-              </button>
-            </div>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="4000">4,000 chars</SelectItem>
+                <SelectItem value="8000">8,000 chars</SelectItem>
+                <SelectItem value="16000">16,000 chars</SelectItem>
+                <SelectItem value="32000">32,000 chars</SelectItem>
+                <SelectItem value="0">Full (no limit)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-        </div>
-      )}
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={cancelSwitchAgent}>
+              Cancel
+            </Button>
+            <Button onClick={confirmSwitchAgent}>Switch Agent</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </aside>
   )
 }

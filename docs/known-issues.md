@@ -5,45 +5,56 @@ note so the next agent can pick it up without re-reading the full review file.
 
 ## Web frontend — deferred review findings (from `review/2026-06-27/`)
 
-These 8 `web-*` findings were triaged but not fixed in this pass because they
-need a larger refactor or a design decision. The review markdown files remain
-in `review/2026-06-27/` (not moved to `implemented/`).
+RESOLVED (2026-07-06). All 8 previously-deferred `web-*` findings have been
+fixed as part of the light-theme + shadcn foundation work — see
+`docs/STATUS.md` → Recent Fixes (2026-07-06). Summary of how each was closed:
 
-- **web-app-side-effect-during-render.md** — `App.tsx` calls
-  `backend.loadSessionEvents` inside a render-time state-adjustment block and
-  all hooks run after an `if (!paired) return` early return (rules-of-hooks
-  violation). Fix: move the fetch into a guarded `useEffect` and move the
-  early return below all hook calls. Larger refactor — touches session-restore
-  flow.
-- **web-chatpanel-agent-model-restore-race.md** — `ChatPanel`'s render-time
-  agent/model restoration reads `selectedAgent` before it is validated in the
-  same pass. Fix: move the restoration into a `useEffect` keyed on `agents`
-  (or compute agent+model together). Coupled to the app-side-effect finding.
-- **web-dark-mode-js-class-no-light-theme.md** — `index.css` defines identical
-  `:root` and `.dark` palettes (no light theme); `main.tsx` hardcodes the
-  `dark` class via JS. Needs a genuine light-palette design decision before
-  wiring `data-theme`.
-- **web-dead-ui-mobilesettings-theme-toggle.md** — `MobileSettings` theme
-  buttons have no handlers. Blocked on the light-theme decision above.
-- **web-eslint-disable-exhaustive-deps-blanket.md** — `useBackend.ts` opens
-  with a file-level `eslint-disable react-hooks/exhaustive-deps`. Fix: move
-  loader functions outside the hook or wrap in `useCallback` with correct deps.
-  Larger refactor of the 300-line hook.
-- **web-event-log-unbounded-growth.md** — `eventsRef` appends every WebSocket
-  event forever; per-session rendering is O(total). Needs a per-session
-  `Map` index and/or eviction cap (perf refactor).
-- **web-raw-palette-colors-not-semantic-tokens.md** — pervasive raw Tailwind
-  palette classes (`text-gray-400`, `bg-gray-800`, etc.) across all
-  components instead of semantic tokens. Systematic migration; large surface
-  area, do in a dedicated pass.
-- **web-shadcn-components-not-used.md** — no shadcn primitives are installed
-  (`components/ui/` is absent); selects/modal/dropdown/popover are hand-rolled.
-  Migrating to shadcn `Select`/`Dialog`/`DropdownMenu`/`Popover` requires
-  installing the components and is a larger refactor.
+- **web-app-side-effect-during-render** — `App.tsx` no longer calls
+  `loadSessionEvents` during render; it's in a guarded `useEffect` with a
+  ref-tracked one-time load, and all hooks run before the `if (!paired)` early
+  return.
+- **web-chatpanel-agent-model-restore-race** — restoration computes a local
+  `nextAgent` and derives the model from it (no stale `selectedAgent` read),
+  kept render-time to avoid `set-state-in-effect`.
+- **web-dark-mode-js-class-no-light-theme** — real light palette added in
+  `:root` (dark in `.dark`); `src/lib/theme.ts` + `useTheme` manage
+  `dark | light | system` (default dark), applied by `main.tsx`.
+- **web-dead-ui-mobilesettings-theme-toggle** — the theme toggle is wired to
+  `useTheme` (Dark/Light/System) with active state.
+- **web-eslint-disable-exhaustive-deps-blanket** — file-level disable removed;
+  replaced by a single justified targeted disable on the run-once mount effect.
+- **web-event-log-unbounded-growth** — in-memory event log bounded at
+  `MAX_EVENTS=5000` via a `commitEvents` helper (SQLite remains source of
+  truth; `loadSessionEvents` re-fetches evicted history).
+- **web-raw-palette-colors-not-semantic-tokens** — all components migrated to
+  semantic tokens; intentional status/signal hues (green/red/amber) retained.
+- **web-shadcn-components-not-used** — shadcn primitives installed under
+  `src/components/ui/` (button, select, dialog, dropdown-menu, popover);
+  ChatPanel/SettingsModal now use `Select`/`Dialog`.
 
-## Pre-existing lint notes
+## Notes
 
-- `App.tsx` has a pre-existing `react-hooks/rules-of-hooks` error (early
-  return before hooks) and an `exhaustive-deps` warning on the keyboard
-  shortcut effect. Both predate this pass and are tracked under the
-  `web-app-side-effect-during-render` finding above.
+- Status-dot colors in `ChatHistory` (`bg-gray-600`, `bg-blue-400`) are kept as
+  intentional signal colors; they read acceptably in both themes.
+- Editor status bar uses fixed `bg-status-bar text-white` (VS Code blue) by
+  design in both themes.
+
+## Image upload — Claude Code inline-image delivery gap
+
+The image upload flow (Mode B) is implemented per ACP spec: when an agent
+advertises `PromptCapabilities.Image`, the transport sends an inline
+`ImageBlock` (base64) with a `Uri` hint; otherwise it sends a
+`ResourceLinkBlock` + text instruction telling the agent to read the file.
+
+Claude Code CLI (as of 2.1.128) has a documented parity gap: it does not
+reliably deliver inline base64 images to the model even when an `ImageBlock` is
+passed in the stdin frame. The resource-link + "please read this file" fallback
+path is therefore the robust one for Claude Code today — the agent reads the
+file from disk via its own `read` tool (which is the path Claude Code actually
+supports, however imperfectly). We mitigate the known `read`-tool bugs (mime
+detection by extension, no validation) by validating magic bytes and writing
+the correct extension ourselves before storing the upload.
+
+When Claude Code fixes the inline-image gap upstream, no change is needed on
+our side — the capability gate will already send the inline `ImageBlock` to any
+agent that advertises image support.

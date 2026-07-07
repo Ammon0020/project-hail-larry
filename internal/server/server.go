@@ -22,6 +22,7 @@ import (
 	"github.com/adama/local-agent/internal/pairing"
 	"github.com/adama/local-agent/internal/permissions"
 	"github.com/adama/local-agent/internal/sync"
+	"github.com/adama/local-agent/internal/uploads"
 	"github.com/adama/local-agent/internal/workspace"
 )
 
@@ -38,6 +39,7 @@ type Deps struct {
 	SyncHub          *sync.Hub
 	Config           *config.Config
 	OpenFilesTracker *acp.OpenFilesTracker
+	Uploads          *uploads.Manager
 }
 
 // Server is the main HTTP server for the Local Agent Interface.
@@ -148,6 +150,8 @@ func (s *Server) apiRoutes() {
 	s.mux.HandleFunc("POST /api/sessions/{id}/cancel", s.requireAuth(s.handleCancelSession))
 	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.requireAuth(s.handleCloseSession))
 	s.mux.HandleFunc("POST /api/sessions/{id}/context", s.requireAuth(s.handleSessionContext))
+	s.mux.HandleFunc("POST /api/sessions/{id}/uploads", s.requireAuth(s.handleUpload))
+	s.mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.requireAuth(s.handleServeUpload))
 
 	// Permission routes — require auth.
 	s.mux.HandleFunc("GET /api/permissions/pending", s.requireAuth(s.handlePendingPermissions))

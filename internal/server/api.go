@@ -14,6 +14,7 @@ import (
 	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/interfaces"
 	"github.com/adama/local-agent/internal/search"
+	"github.com/adama/local-agent/internal/uploads"
 )
 
 // ----------------------------------------------------------------------------
@@ -474,7 +475,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSendPrompt(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
 	var req struct {
-		Content string `json:"content"`
+		Content     string `json:"content"`
+		Attachments []struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			MimeType string `json:"mimeType"`
+		} `json:"attachments"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -487,7 +493,35 @@ func (s *Server) handleSendPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.deps.ACPClient.SendPrompt(r.Context(), sessionID, content); err != nil {
+	// Resolve each attachment ID to an on-disk path via the uploads manager so
+	// the ACP transport can read the file and build inline image / resource
+	// link blocks. An unresolvable ID means the frontend sent a stale or
+	// invalid reference — reject the whole request rather than sending a
+	// partial prompt.
+	var attachments []interfaces.Attachment
+	if len(req.Attachments) > 0 {
+		if s.deps.Uploads == nil {
+			writeError(w, http.StatusBadRequest, "uploads not configured")
+			return
+		}
+		attachments = make([]interfaces.Attachment, 0, len(req.Attachments))
+		for _, att := range req.Attachments {
+			absPath, err := s.deps.Uploads.Get(sessionID, att.ID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("attachment %s not found: %v", att.ID, err))
+				return
+			}
+			attachments = append(attachments, interfaces.Attachment{
+				ID:       att.ID,
+				Name:     att.Name,
+				MimeType: att.MimeType,
+				Path:     absPath,
+				URI:      "file://" + absPath,
+			})
+		}
+	}
+
+	if err := s.deps.ACPClient.SendPrompt(r.Context(), sessionID, content, attachments); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -521,7 +555,73 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Best-effort cleanup of per-session uploads now that the session is
+	// closed. The ACP client is intentionally decoupled from the uploads
+	// store, so the cleanup hook lives here in the server layer.
+	if s.deps.Uploads != nil {
+		_ = s.deps.Uploads.RemoveSession(sessionID)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "closed"})
+}
+
+// handleUpload accepts a multipart file upload for a session, validates it via
+// the uploads manager (magic-byte detection, size cap), and responds with the
+// upload metadata including a URL the frontend can use for <img src>.
+func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if s.deps == nil || s.deps.Uploads == nil {
+		writeError(w, http.StatusServiceUnavailable, "uploads not configured")
+		return
+	}
+	sessionID := r.PathValue("id")
+
+	// MaxUploadBytes (10 MB) matches the uploads manager's internal cap.
+	if err := r.ParseMultipartForm(uploads.MaxUploadBytes); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "missing 'file' field in multipart form")
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	stored, err := s.deps.Uploads.Store(sessionID, header.Filename, file)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":       stored.ID,
+		"name":     stored.Name,
+		"mimeType": stored.MimeType,
+		"url":      fmt.Sprintf("/api/sessions/%s/uploads/%s", sessionID, stored.ID),
+		"size":     stored.Size,
+	})
+}
+
+// handleServeUpload serves a previously stored upload file for a session. The
+// uploads manager resolves the upload ID to an on-disk path; http.ServeFile
+// sets the Content-Type from the stored extension (chosen by magic-byte
+// detection during Store).
+func (s *Server) handleServeUpload(w http.ResponseWriter, r *http.Request) {
+	if s.deps == nil || s.deps.Uploads == nil {
+		writeError(w, http.StatusServiceUnavailable, "uploads not configured")
+		return
+	}
+	sessionID := r.PathValue("id")
+	uploadID := r.PathValue("uploadID")
+
+	path, err := s.deps.Uploads.Get(sessionID, uploadID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	http.ServeFile(w, r, path)
 }
 
 // handleSessionContext accepts frontend-reported editor state (currently open

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adama/local-agent/internal/interfaces"
 	acpsdk "github.com/coder/acp-go-sdk"
 )
 
@@ -63,7 +64,7 @@ func (m *mockTransport) DeleteSession(_ context.Context, acpSessionID string) er
 	return m.deleteSessionErr
 }
 
-func (m *mockTransport) Prompt(_ context.Context, _, _ string) error {
+func (m *mockTransport) Prompt(_ context.Context, _, _ string, _ []interfaces.Attachment) error {
 	m.promptCalled = true
 	return m.promptErr
 }

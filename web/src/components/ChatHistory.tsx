@@ -107,7 +107,7 @@ export function ChatHistory({
   return (
     <div
       className={cn(
-        'absolute top-full left-0 right-0 z-50 bg-panel border-b border-gray-700 shadow-lg max-h-[60vh] overflow-y-auto',
+        'absolute top-full left-0 right-0 z-50 bg-panel border-b border-border shadow-lg max-h-[60vh] overflow-y-auto',
         open ? 'block' : 'hidden',
       )}
       role="dialog"
@@ -115,8 +115,8 @@ export function ChatHistory({
     >
       <div className="p-2 space-y-1">
         <div className="flex items-center justify-between px-1 pb-1">
-          <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Chat History</div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition" aria-label="Close chat history">
+          <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Chat History</div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition" aria-label="Close chat history">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -126,7 +126,7 @@ export function ChatHistory({
         <select
           value={workspaceFilter}
           onChange={(e) => setWorkspaceFilter(e.target.value)}
-          className="select-chevron appearance-none w-full bg-background border border-gray-700 text-muted-foreground text-xs rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-blue-500 cursor-pointer mb-1"
+          className="select-chevron appearance-none w-full bg-background border border-input text-muted-foreground text-xs rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-ring cursor-pointer mb-1"
           aria-label="Filter sessions by workspace"
         >
           <option value="all">All Workspaces</option>
@@ -142,8 +142,8 @@ export function ChatHistory({
             className={cn(
               'flex items-center justify-between p-2 rounded-lg session-item group',
               s.active
-                ? 'bg-blue-600/10 border border-blue-500/20'
-                : 'hover:bg-gray-800/50',
+                ? 'bg-primary/10 border border-primary/20'
+                : 'hover:bg-accent',
             )}
           >
             {editingId === s.id ? (
@@ -156,23 +156,23 @@ export function ChatHistory({
                   onChange={(e) => setEditValue(e.target.value)}
                   onKeyDown={handleRenameKey}
                   onBlur={commitRename}
-                  className="flex-1 bg-black/30 text-xs text-gray-200 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="flex-1 bg-background text-xs text-foreground rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring"
                 />
-                <button onMouseDown={(e) => e.preventDefault()} onClick={commitRename} className="text-gray-400 hover:text-green-400" title="Save" aria-label="Save rename">
+                <button onMouseDown={(e) => e.preventDefault()} onClick={commitRename} className="text-muted-foreground hover:text-green-400" title="Save" aria-label="Save rename">
                   <Check className="w-3.5 h-3.5" />
                 </button>
               </div>
             ) : confirmId === s.id ? (
               // Delete confirmation.
               <div className="flex items-center gap-2 flex-1 text-xs">
-                <span className="text-red-300 truncate flex-1">Delete "{s.name}"?</span>
+                <span className="text-destructive truncate flex-1">Delete "{s.name}"?</span>
                 <button
                   onClick={() => { setConfirmId(null); onDeleteSession(s.id) }}
-                  className="text-red-400 hover:text-red-300 font-medium"
+                  className="text-destructive hover:text-destructive/80 font-medium"
                 >
                   Delete
                 </button>
-                <button onClick={() => setConfirmId(null)} className="text-gray-400 hover:text-white">
+                <button onClick={() => setConfirmId(null)} className="text-muted-foreground hover:text-foreground">
                   Cancel
                 </button>
               </div>
@@ -185,7 +185,7 @@ export function ChatHistory({
                   <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', statusDotClass[s.status])} />
                   <span className={cn(
                     'truncate text-xs',
-                    s.active ? 'font-medium text-blue-400' : 'text-gray-400',
+                    s.active ? 'font-medium text-primary' : 'text-muted-foreground',
                   )}>
                     {s.name}
                   </span>
@@ -196,14 +196,14 @@ export function ChatHistory({
                   )}
                 </button>
                 <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition">
-                  {s.modelId && <span className="text-[10px] text-gray-600 mr-1">{s.modelId}</span>}
-                  <button onClick={() => startRename(s)} className="text-gray-500 hover:text-white" title="Rename" aria-label={`Rename ${s.name}`}>
+                  {s.modelId && <span className="text-[10px] text-muted-foreground mr-1">{s.modelId}</span>}
+                  <button onClick={() => startRename(s)} className="text-muted-foreground hover:text-foreground" title="Rename" aria-label={`Rename ${s.name}`}>
                     <Pencil className="w-3 h-3" />
                   </button>
-                  <button onClick={() => onExportSession(s.id)} className="text-gray-500 hover:text-white" title="Export" aria-label={`Export ${s.name}`}>
+                  <button onClick={() => onExportSession(s.id)} className="text-muted-foreground hover:text-foreground" title="Export" aria-label={`Export ${s.name}`}>
                     <Download className="w-3 h-3" />
                   </button>
-                  <button onClick={() => setConfirmId(s.id)} className="text-gray-500 hover:text-red-400" title="Delete" aria-label={`Delete ${s.name}`}>
+                  <button onClick={() => setConfirmId(s.id)} className="text-muted-foreground hover:text-destructive" title="Delete" aria-label={`Delete ${s.name}`}>
                     <Trash2 className="w-3 h-3" />
                   </button>
                 </div>
@@ -214,7 +214,7 @@ export function ChatHistory({
 
         {/* New chat button */}
         <button
-          className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-800/50 cursor-pointer text-gray-400 text-xs transition"
+          className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-accent cursor-pointer text-muted-foreground text-xs transition"
           onClick={onCreateSession}
         >
           <Plus className="w-3.5 h-3.5" /> New Chat

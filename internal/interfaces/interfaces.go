@@ -39,7 +39,15 @@ const (
 	// ACP WriteTextFile callback. It carries the workspace ID (WorkspaceID) and
 	// the affected file path (Target) so the frontend can refresh its file tree
 	// without a manual reload.
-	EventFileWritten         EventType = "FileWritten"
+	EventFileWritten EventType = "FileWritten"
+	// EventFileChangedOnDisk is broadcast by the filesystem watcher when a file
+	// inside a registered workspace changes on disk from OUTSIDE the app (e.g.
+	// edited in another editor). Like EventFileWritten it carries WorkspaceID +
+	// Target (relative path) so the editor can refresh an open file without a
+	// forced reload. Writes performed by the app itself are suppressed (agent
+	// writes already emit EventFileWritten), so this fires only for external
+	// changes.
+	EventFileChangedOnDisk   EventType = "FileChangedOnDisk"
 	EventSessionInterrupted  EventType = "SessionInterrupted"
 	EventSessionCancelled    EventType = "SessionCancelled"
 	EventAgentExited         EventType = "AgentExited"
@@ -70,6 +78,30 @@ type Event struct {
 	// WorkspaceID identifies the workspace a file-change event applies to (e.g.
 	// EventFileWritten), so the frontend can refresh the correct file tree.
 	WorkspaceID string `json:"workspaceId,omitempty"`
+	// Attachments carries metadata for files attached to a prompt (e.g. uploaded
+	// images). Only references are stored — never the blob data — so the event
+	// log stays lightweight. The frontend renders thumbnails from the URI; the
+	// agent reads the file from disk via Path.
+	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
+// Attachment describes a file attached to a user prompt (e.g. an uploaded
+// image). It carries only references — the blob lives on disk in the uploads
+// store — so it is cheap to persist in the event log and broadcast over
+// WebSocket.
+type Attachment struct {
+	// ID is the opaque uploads-store ID, used to build the serving URL.
+	ID string `json:"id"`
+	// Name is the user-supplied display name of the original file.
+	Name string `json:"name"`
+	// MimeType is the validated MIME type (e.g. "image/png").
+	MimeType string `json:"mimeType"`
+	// URI is a file:// URI pointing at the on-disk file, sent to the agent via
+	// ACP ImageBlock.Uri or ResourceLinkBlock.Uri.
+	URI string `json:"uri,omitempty"`
+	// Path is the absolute on-disk path, included in the text fallback so the
+	// agent can read the file directly. Not serialized to the frontend.
+	Path string `json:"-"`
 }
 
 // EventStore is the contract for the event persistence layer.
@@ -179,8 +211,11 @@ type ACPClient interface {
 	GetSessionInfo(sessionID string) (SessionInfo, error)
 
 	// SendPrompt sends a user prompt to the agent and streams responses.
+	// attachments carries metadata for files attached to the prompt (e.g.
+	// uploaded images); they are translated to ACP content blocks by the
+	// transport based on the agent's advertised prompt capabilities.
 	// Responses arrive via ACPCallbacks.OnEvent.
-	SendPrompt(ctx context.Context, sessionID, content string) error
+	SendPrompt(ctx context.Context, sessionID, content string, attachments []Attachment) error
 
 	// CancelSession interrupts a running session.
 	CancelSession(ctx context.Context, sessionID string) error

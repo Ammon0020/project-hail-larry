@@ -120,13 +120,13 @@ export function SearchPanel({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider shrink-0">
+      <div className="px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider shrink-0">
         Search
       </div>
       <div className="px-3 pb-2 shrink-0">
         <label htmlFor="search-panel-input" className="sr-only">Search files</label>
         <div className="relative">
-          <Search className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
           <input
             ref={inputRef}
             id="search-panel-input"
@@ -134,7 +134,7 @@ export function SearchPanel({
             value={query}
             onChange={(e) => handleQueryChange(e.target.value)}
             placeholder="Search files..."
-            className="w-full bg-background border border-gray-700 rounded-md pl-8 pr-8 py-1.5 text-xs focus:outline-none focus:border-blue-500 transition"
+            className="w-full bg-background border border-input rounded-md pl-8 pr-8 py-1.5 text-xs focus:outline-none focus:border-ring transition"
             aria-label="Search files"
             disabled={!workspaceId}
           />
@@ -144,8 +144,8 @@ export function SearchPanel({
             className={cn(
               'absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded transition',
               ignoreCase
-                ? 'text-gray-500 hover:text-gray-300'
-                : 'text-blue-400 bg-blue-600/10',
+                ? 'text-muted-foreground hover:text-foreground'
+                : 'text-primary bg-primary/10',
             )}
             aria-label="Toggle case sensitivity"
             aria-pressed={!ignoreCase}
@@ -157,31 +157,31 @@ export function SearchPanel({
       </div>
       <div className="flex-1 overflow-y-auto px-3 pb-2 text-xs">
         {!workspaceId ? (
-          <div className="text-gray-500 text-center py-6">
+          <div className="text-muted-foreground text-center py-6">
             Select a workspace to search.
           </div>
         ) : loading ? (
-          <div className="flex items-center justify-center gap-2 text-gray-500 py-6">
+          <div className="flex items-center justify-center gap-2 text-muted-foreground py-6">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             Searching...
           </div>
         ) : error ? (
-          <div className="text-red-400 text-center py-6 px-2 break-words">
+          <div className="text-destructive text-center py-6 px-2 break-words">
             {error}
           </div>
         ) : showEmpty ? (
-          <div className="text-gray-500 text-center py-6">
+          <div className="text-muted-foreground text-center py-6">
             No results found.
           </div>
         ) : !trimmed ? (
-          <div className="text-gray-500 text-center py-6">
+          <div className="text-muted-foreground text-center py-6">
             Type to search across the workspace.
           </div>
         ) : (
           <div className="space-y-3">
             {grouped.map(([path, matches]) => (
               <div key={path}>
-                <div className="text-gray-400 font-medium truncate mb-1" title={path}>
+                <div className="text-muted-foreground font-medium truncate mb-1" title={path}>
                   {path}
                 </div>
                 <ul className="space-y-0.5">
@@ -190,12 +190,12 @@ export function SearchPanel({
                       <button
                         type="button"
                         onClick={() => onSelectResult?.(r.path, r.lineNumber)}
-                        className="w-full text-left flex gap-2 px-1.5 py-1 rounded hover:bg-blue-500/10 transition group"
+                        className="w-full text-left flex gap-2 px-1.5 py-1 rounded hover:bg-primary/10 transition group"
                       >
-                        <span className="text-gray-600 tabular-nums shrink-0 group-hover:text-blue-400">
+                        <span className="text-muted-foreground tabular-nums shrink-0 group-hover:text-primary">
                           {r.lineNumber}
                         </span>
-                        <span className="text-gray-300 truncate font-mono text-[11px]">
+                        <span className="text-foreground truncate font-mono text-[11px]">
                           {renderLine(r)}
                         </span>
                       </button>
