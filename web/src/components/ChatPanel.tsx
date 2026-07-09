@@ -245,7 +245,7 @@ export function ChatPanel({
 
   const handleSend = async () => {
     const content = input.trim()
-    if ((!content && pendingAttachments.length === 0) || sending || !effectiveAgentId || !effectiveModelId) return
+    if ((!content && pendingAttachments.length === 0) || sending || uploading || !effectiveAgentId || !effectiveModelId) return
 
     setSending(true)
     setError(null)
@@ -355,7 +355,8 @@ export function ChatPanel({
     (input.trim() || pendingAttachments.length > 0) &&
       effectiveAgentId &&
       effectiveModelId &&
-      !sending,
+      !sending &&
+      !uploading,
   )
 
   /**
