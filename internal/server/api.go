@@ -508,7 +508,7 @@ func (s *Server) handleSendPrompt(w http.ResponseWriter, r *http.Request) {
 		for _, att := range req.Attachments {
 			absPath, err := s.deps.Uploads.Get(sessionID, att.ID)
 			if err != nil {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("attachment %s not found: %v", att.ID, err))
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("attachment %s not found", att.ID))
 				return
 			}
 			attachments = append(attachments, interfaces.Attachment{
@@ -574,12 +574,25 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := r.PathValue("id")
+	if !isValidSessionID(sessionID) {
+		writeError(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+
+	// Cap the request body so an oversized upload can't exhaust server memory.
+	// +1KB accounts for multipart headers/boundaries on top of the file payload.
+	r.Body = http.MaxBytesReader(w, r.Body, uploads.MaxUploadBytes+1024)
 
 	// MaxUploadBytes (10 MB) matches the uploads manager's internal cap.
 	if err := r.ParseMultipartForm(uploads.MaxUploadBytes); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, "invalid multipart form")
 		return
 	}
+	defer func() {
+		if r.MultipartForm != nil {
+			_ = r.MultipartForm.RemoveAll()
+		}
+	}()
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -590,7 +603,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	stored, err := s.deps.Uploads.Store(sessionID, header.Filename, file)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, "failed to store upload")
 		return
 	}
 
@@ -613,11 +626,15 @@ func (s *Server) handleServeUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := r.PathValue("id")
+	if !isValidSessionID(sessionID) {
+		writeError(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
 	uploadID := r.PathValue("uploadID")
 
 	path, err := s.deps.Uploads.Get(sessionID, uploadID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, "upload not found")
 		return
 	}
 
@@ -730,4 +747,26 @@ func shortSessionID(id string) string {
 		return id
 	}
 	return id[:8]
+}
+
+// isValidSessionID validates a session ID taken from a URL path parameter
+// before it is used as a filesystem path component (uploads root) or passed to
+// the ACP client. Session IDs are backend-generated opaque tokens shaped like
+// "sess-" + 16 hex chars (see internal/acp.generateSessionID), so we reject
+// empty strings, path separators, and ".." segments rather than requiring a
+// strict hex shape. This rejects path-traversal payloads like "../../foo"
+// early, before they can escape the uploads root or be passed to os.RemoveAll.
+func isValidSessionID(id string) bool {
+	if id == "" || id == "." || id == ".." {
+		return false
+	}
+	for _, c := range id {
+		if c == '/' || c == '\\' {
+			return false
+		}
+		if c < 0x20 {
+			return false
+		}
+	}
+	return !strings.Contains(id, "..")
 }

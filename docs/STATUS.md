@@ -53,6 +53,7 @@
 
 ### Lower Priority / Future
 
+- [ ] **Theme selector missing from SettingsModal** — The useTheme hook and MobileSettings theme toggle exist, but the desktop SettingsModal only shows auto-detected agents. A theme selector (dark/light/system) needs to be added to the desktop settings dialog.
 - [ ] **Editor on mobile** — CodeMirror needs touch optimization
 - [x] **Image upload flow** — Implemented (Mode B: filesystem upload + URI reference, capability-gated inline fallback). See Recent Fixes (2026-07-06).
 - [ ] **Multi-user vs multi-device** — One user's devices only, or can multiple people pair to the same daemon?

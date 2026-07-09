@@ -65,6 +65,9 @@ func (m *Manager) Store(sessionID, filename string, r io.Reader) (*StoredUpload,
 	if sessionID == "" {
 		return nil, errors.New("uploads: empty session id")
 	}
+	if !isValidSessionID(sessionID) {
+		return nil, fmt.Errorf("uploads: invalid session id")
+	}
 	// Read into memory with a size cap. Images are bounded by MaxUploadBytes;
 	// reading fully lets us validate magic bytes before writing to disk.
 	data, err := io.ReadAll(io.LimitReader(r, MaxUploadBytes+1))
@@ -83,13 +86,13 @@ func (m *Manager) Store(sessionID, filename string, r io.Reader) (*StoredUpload,
 	uploadID := newID()
 	sessionDir := filepath.Join(m.root, sessionID)
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
-		return nil, fmt.Errorf("uploads: create session dir: %w", err)
+		return nil, fmt.Errorf("uploads: failed to create session directory")
 	}
 
 	storedName := uploadID + ext
 	absPath := filepath.Join(sessionDir, storedName)
 	if err := os.WriteFile(absPath, data, 0o600); err != nil {
-		return nil, fmt.Errorf("uploads: write: %w", err)
+		return nil, fmt.Errorf("uploads: failed to write file")
 	}
 
 	return &StoredUpload{
@@ -106,6 +109,9 @@ func (m *Manager) Store(sessionID, filename string, r io.Reader) (*StoredUpload,
 // read; callers (e.g. an http handler) serve it. Returns an error if the file
 // does not exist.
 func (m *Manager) Get(sessionID, uploadID string) (string, error) {
+	if !isValidSessionID(sessionID) {
+		return "", fmt.Errorf("uploads: invalid session id")
+	}
 	if !isValidID(uploadID) {
 		return "", fmt.Errorf("uploads: invalid upload id")
 	}
@@ -114,7 +120,7 @@ func (m *Manager) Get(sessionID, uploadID string) (string, error) {
 	sessionDir := filepath.Join(m.root, sessionID)
 	entries, err := os.ReadDir(sessionDir)
 	if err != nil {
-		return "", fmt.Errorf("uploads: not found: %w", err)
+		return "", fmt.Errorf("uploads: not found")
 	}
 	prefix := uploadID + "."
 	for _, e := range entries {
@@ -128,6 +134,9 @@ func (m *Manager) Get(sessionID, uploadID string) (string, error) {
 // RemoveSession deletes all uploads for a session. It is safe to call when no
 // uploads exist for the session.
 func (m *Manager) RemoveSession(sessionID string) error {
+	if !isValidSessionID(sessionID) {
+		return fmt.Errorf("uploads: invalid session id")
+	}
 	sessionDir := filepath.Join(m.root, sessionID)
 	if err := os.RemoveAll(sessionDir); err != nil {
 		return fmt.Errorf("uploads: remove session: %w", err)
@@ -140,9 +149,9 @@ func newID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		// rand.Read should never fail on modern platforms; fall back to a
-		// fixed prefix so Store still produces a unique-ish name rather than
-		// crashing.
-		return "0000000000000000"
+		// fixed 32-char hex string so Store still produces an ID that passes
+		// isValidID (and is thus retrievable) rather than crashing.
+		return "00000000000000000000000000000000"
 	}
 	return hex.EncodeToString(b)
 }
@@ -154,11 +163,32 @@ func isValidID(id string) bool {
 		return false
 	}
 	for _, c := range id {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
 	}
 	return true
+}
+
+// isValidSessionID checks that a session ID is safe to use as a path component.
+// Session IDs are backend-generated opaque tokens (e.g. "sess-" + 16 hex chars,
+// or UUIDs), so we reject empty strings, path separators, and ".." segments
+// rather than requiring a specific shape. This prevents a malicious sessionID
+// like "../../foo" from escaping the uploads root via filepath.Join or
+// os.RemoveAll.
+func isValidSessionID(id string) bool {
+	if id == "" || id == "." || id == ".." {
+		return false
+	}
+	for _, c := range id {
+		if c == '/' || c == '\\' {
+			return false
+		}
+		if c < 0x20 {
+			return false
+		}
+	}
+	return !strings.Contains(id, "..")
 }
 
 // sanitizeFilename strips path separators and control chars from a user-
