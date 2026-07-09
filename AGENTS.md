@@ -54,6 +54,8 @@ docs/                    → see ## Docs section below
 
 Task delegation to specialized subagents is a core workflow and saves time. For non-trivial features, decompose the work and delegate rather than doing everything serially in one context. Each subagent's description (auto-inserted into the prompt) states which difficulty tier and task type it's suited for — match subtasks to the right tier and dispatch them, in parallel where possible, rather than working through everything yourself.
 
+Note that if commands are rejected in succession on a subagent, it's likely because only certain commands are auto-approved. Subagents should skip them and tell the parent. 
+
 ## Development Standards
 
 - **Build:** Build with `.\build.ps1` (Windows) or `./build.sh` (Linux/macOS). Both build the frontend, re-embed `internal/server/dist`, then compile the Go binary. `internal/server/dist/` is gitignored, so a frontend build must run before `go build` can embed assets (a fresh checkout also needs `npm install` in `web/`).
