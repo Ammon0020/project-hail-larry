@@ -79,6 +79,9 @@ export default function App() {
       ? stored
       : 260
   })
+  // Stashes the pre-hide width so Ctrl+B can restore the user's custom size
+  // instead of a hardcoded 260. A ref (not state) so toggling doesn't re-render.
+  const hiddenLeftWidthRef = useRef(260)
   const [rightPanelWidth, setRightPanelWidth] = useState(() => {
     const stored = Number(localStorage.getItem('lai:rightPanelWidth'))
     return Number.isFinite(stored) && stored >= RIGHT_MIN && stored <= RIGHT_MAX
@@ -212,7 +215,8 @@ export default function App() {
     const openFiles = openTabs.map((t) => t.path)
     const recentEdits = openTabs.filter((t) => t.unsaved).map((t) => t.path)
     backend.reportContext(activeSessionId, openFiles, recentEdits)
-  }, [openTabs, activeSessionId, backend])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- backend object is recreated every render; reportContext is debounced internally
+  }, [openTabs, activeSessionId])
 
   useEffect(() => {
     localStorage.setItem('lai:leftPanel', leftPanel)
@@ -223,8 +227,13 @@ export default function App() {
   }, [mobileView])
 
   // Persist panel widths so the resized layout survives a reload (Feature 2).
+  // Skip persisting when the left panel is hidden (width === 0) so localStorage
+  // always holds the last real width; otherwise the initializer's `>= LEFT_MIN`
+  // check would reject "0" and reset to the default, losing the custom width.
   useEffect(() => {
-    localStorage.setItem('lai:leftPanelWidth', String(leftPanelWidth))
+    if (leftPanelWidth > 0) {
+      localStorage.setItem('lai:leftPanelWidth', String(leftPanelWidth))
+    }
   }, [leftPanelWidth])
 
   useEffect(() => {
@@ -294,7 +303,7 @@ export default function App() {
     for (const tab of openTabs) {
       if (!changedPaths.has(tab.path) || tab.unsaved) continue
       backend
-        .readFile(tab.path)
+        .readFile(tab.path, tab.workspaceId)
         .then((file) => {
           setOpenTabs((prev) =>
             prev.map((t) =>
@@ -421,7 +430,13 @@ export default function App() {
       // Ctrl+B — toggle left sidebar visibility on desktop.
       if (mod && !e.shiftKey && e.key === 'b') {
         e.preventDefault()
-        setLeftPanelWidth((prev) => (prev > 0 ? 0 : 260))
+        setLeftPanelWidth((prev) => {
+          if (prev > 0) {
+            hiddenLeftWidthRef.current = prev
+            return 0
+          }
+          return hiddenLeftWidthRef.current ?? 260
+        })
         return
       }
     }
@@ -616,7 +631,7 @@ export default function App() {
           reconnecting, so the banner stays hidden on first load. The pulsing
           dot uses the animate-pulse utility; semantic tokens only. */}
       {backend.reconnecting && (
-        <div className="flex items-center gap-2 px-3 py-1.5 text-xs bg-muted text-muted-foreground border-b border-border shrink-0">
+        <div role="status" className="flex items-center gap-2 px-3 py-1.5 text-xs bg-muted text-muted-foreground border-b border-border shrink-0">
           <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/70 animate-pulse" />
           Reconnecting…
         </div>
@@ -624,7 +639,7 @@ export default function App() {
       {/* Save error banner — transient, dismissible. Shown when a save fails
           so the error isn't silent (previously only console.error'd). */}
       {saveError && (
-        <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs bg-destructive/10 text-destructive border-b border-destructive/20 shrink-0">
+        <div role="alert" className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs bg-destructive/10 text-destructive border-b border-destructive/20 shrink-0">
           <span className="truncate">Save failed: {saveError}</span>
           <button
             type="button"
@@ -665,8 +680,20 @@ export default function App() {
       {/* Resize handle between left sidebar and editor (desktop only) */}
       {isDesktop && showLeftSidebar && (
         <div
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-valuenow={leftPanelWidth}
+          aria-valuemin={LEFT_MIN}
+          aria-valuemax={LEFT_MAX}
           onMouseDown={startPanelDrag('left')}
-          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 transition-colors shrink-0"
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+            e.preventDefault()
+            const step = e.key === 'ArrowRight' ? 16 : -16
+            setLeftPanelWidth((w) => Math.min(LEFT_MAX, Math.max(LEFT_MIN, w + step)))
+          }}
+          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 focus:outline-none focus-visible:bg-accent-foreground/30 transition-colors shrink-0"
           title="Drag to resize"
         />
       )}
@@ -687,8 +714,22 @@ export default function App() {
       {/* Resize handle between editor and right chat panel (desktop only) */}
       {isDesktop && showChat && (
         <div
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-valuenow={rightPanelWidth}
+          aria-valuemin={RIGHT_MIN}
+          aria-valuemax={RIGHT_MAX}
           onMouseDown={startPanelDrag('right')}
-          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 transition-colors shrink-0"
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+            e.preventDefault()
+            // Inverted vs. the left handle: ArrowLeft widens the right panel,
+            // matching the mouse drag direction (drag left edge leftward).
+            const step = e.key === 'ArrowLeft' ? 16 : -16
+            setRightPanelWidth((w) => Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, w + step)))
+          }}
+          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 focus:outline-none focus-visible:bg-accent-foreground/30 transition-colors shrink-0"
           title="Drag to resize"
         />
       )}
