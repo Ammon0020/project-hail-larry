@@ -303,10 +303,10 @@ export function EditorPane({
                   <Circle className="w-2 h-2 text-primary fill-primary" />
                 )}
                 {tab.changedOnDisk && (
-                  <RefreshCw
-                    className="w-3 h-3 text-amber-600 dark:text-amber-400"
-                    aria-label="Changed on disk"
-                  />
+                  <>
+                    <RefreshCw className="w-3 h-3 text-warning" aria-hidden="true" />
+                    <span className="sr-only">Changed on disk</span>
+                  </>
                 )}
                 <X
                   className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground cursor-pointer ml-1"
@@ -366,11 +366,10 @@ export function EditorPane({
       {/* Changed-on-disk banner — shown when the active tab's file was modified
           on disk (agent write / external edit) while the user had unsaved
           edits, so its content was NOT auto-refreshed. Offers a Reload that
-          discards local edits and fetches the on-disk version. Amber is an
-          intentional warning signal; a dark: variant keeps it legible in the
-          light theme. */}
+          discards local edits and fetches the on-disk version. Uses the
+          warning semantic token so it adapts to the active theme. */}
       {activeTab?.changedOnDisk && (
-        <div className="flex items-center justify-between gap-2 bg-amber-500/10 border-b border-amber-500/40 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300 shrink-0">
+        <div className="flex items-center justify-between gap-2 bg-warning/10 border-b border-warning/40 px-3 py-1.5 text-xs text-warning shrink-0">
           <span className="flex items-center gap-1.5">
             <TriangleAlert className="w-3.5 h-3.5" />
             This file changed on disk{activeTab.unsaved ? ' and you have unsaved edits' : ''}.
@@ -378,9 +377,9 @@ export function EditorPane({
           <button
             type="button"
             onClick={() => onReloadTab?.(activeTab.id)}
-            className="flex items-center gap-1 font-medium text-amber-800 dark:text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 px-2 py-0.5 rounded transition"
+            className="flex items-center gap-1 font-medium text-warning bg-warning/15 hover:bg-warning/25 px-2 py-0.5 rounded transition"
           >
-            <RefreshCw className="w-3 h-3" /> Reload
+            <RefreshCw className="w-3 h-3" aria-hidden="true" /> Reload
           </button>
         </div>
       )}

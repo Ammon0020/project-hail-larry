@@ -497,7 +497,7 @@ export function ChatPanel({
 
       {/* Disconnected banner — surfaces connection loss to the user */}
       {!connected && (
-        <div className="bg-amber-950/40 border-b border-amber-500/40 px-3 py-2 text-xs text-amber-300 flex items-center gap-2 shrink-0">
+        <div className="bg-warning/10 border-b border-warning/40 px-3 py-2 text-xs text-warning flex items-center gap-2 shrink-0">
           <WifiOff className="w-3.5 h-3.5" /> Reconnecting to daemon…
         </div>
       )}
@@ -531,7 +531,7 @@ export function ChatPanel({
             />
           ))}
           {error && (
-            <div className="rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-300">
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
               {error}
             </div>
           )}
@@ -583,7 +583,7 @@ export function ChatPanel({
           </div>
         )}
         {uploadError && (
-          <div className="mb-2 rounded-md border border-red-500/40 bg-red-950/20 px-2.5 py-1.5 text-xs text-red-300">
+          <div className="mb-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
             {uploadError}
           </div>
         )}
@@ -621,7 +621,7 @@ export function ChatPanel({
             {agentRunning && activeSessionId ? (
               <button
                 onClick={handleStop}
-                className="absolute right-2 bottom-2 p-1.5 bg-red-600 rounded-lg hover:bg-red-500 transition"
+                className="absolute right-2 bottom-2 p-1.5 bg-destructive rounded-lg hover:bg-destructive/90 transition"
                 title="Stop"
                 aria-label="Stop"
               >
