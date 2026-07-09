@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { cva, type VariantProps } from 'class-variance-authority'
 import {
   ChevronRight,
   ChevronDown,
@@ -18,6 +19,38 @@ const iconMap: Record<string, typeof Folder> = {
   'file-code': FileCode,
   'file-text': FileText,
 }
+
+/**
+ * Row variants for every tree-node kind. The base carries the shared layout
+ * (flex row, padding, rounding, cursor); each variant only adds the colors and
+ * state styling that differ. This keeps the JSX readable — call sites say
+ * `rowStyles({ kind: 'folder' })` instead of re-stating the full class soup.
+ *
+ * Base gap is gap-1.5 (6px); the chevron is w-3.5 (14px). Together they're the
+ * 20px indent unit used by the children wrapper so nested icons line up under
+ * their parent folder's icon.
+ */
+const rowStyles = cva(
+  'flex items-center gap-1.5 p-1 rounded cursor-pointer',
+  {
+    variants: {
+      kind: {
+        folder: 'hover:bg-accent text-foreground',
+        active: 'bg-primary/10 text-primary border-l-2 border-primary',
+        default: 'hover:bg-accent text-muted-foreground',
+      },
+    },
+    defaultVariants: { kind: 'default' },
+  },
+)
+
+type RowKind = VariantProps<typeof rowStyles>['kind']
+
+/** Shared label styling — flex-1 so the name takes remaining space and truncates. */
+const labelStyles = 'flex-1 truncate'
+
+/** Chevron-width spacer reserved on file rows so icons align with folder icons. */
+const chevronSpacer = 'w-3.5 shrink-0'
 
 /**
  * Recursive file tree node (Blueprint Sec 17 — file explorer).
@@ -52,12 +85,12 @@ function TreeNode({
     return (
       <>
         <div
-          className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-accent text-foreground"
+          className={rowStyles({ kind: 'folder' })}
           onClick={() => onToggleExpand(nodePath)}
         >
           <ChevronIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           <FolderIcon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-primary')} />
-          <span className="flex-1 truncate">{node.name}</span>
+          <span className={labelStyles}>{node.name}</span>
         </div>
         {isExpanded && node.children && (
           // Indent children by the chevron + gap footprint (w-3.5 + gap-1.5 =
@@ -84,36 +117,21 @@ function TreeNode({
   // icons at the same depth. Without it, files render ~20px left of sibling
   // folders because they lack the chevron glyph.
   const Icon = iconMap[node.icon ?? 'file-text'] ?? FileText
-  const fileIcon = (
-    <Icon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-muted-foreground')} />
-  )
-
-  if (node.active) {
-    return (
-      <div
-        className="flex items-center gap-1.5 p-1 rounded cursor-pointer bg-primary/10 text-primary border-l-2 border-primary"
-        onClick={() => onFileSelect(nodePath)}
-      >
-        <span className="w-3.5 shrink-0" aria-hidden />
-        {fileIcon}
-        <span className="flex-1 truncate">{node.name}</span>
-        {node.unsaved && (
-          <div title="Unsaved changes" className="shrink-0">
-            <Circle className="w-2 h-2 text-primary fill-primary" />
-          </div>
-        )}
-      </div>
-    )
-  }
+  const kind: RowKind = node.active ? 'active' : 'default'
 
   return (
     <div
-      className="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-accent text-muted-foreground"
+      className={rowStyles({ kind })}
       onClick={() => onFileSelect(nodePath)}
     >
-      <span className="w-3.5 shrink-0" aria-hidden />
-      {fileIcon}
-      <span className="flex-1 truncate">{node.name}</span>
+      <span className={chevronSpacer} aria-hidden />
+      <Icon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-muted-foreground')} />
+      <span className={labelStyles}>{node.name}</span>
+      {node.unsaved && (
+        <div title="Unsaved changes" className="shrink-0">
+          <Circle className="w-2 h-2 text-primary fill-primary" />
+        </div>
+      )}
     </div>
   )
 }
