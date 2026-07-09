@@ -13,10 +13,10 @@ Each finding is in its own file, titled `name, difficulty, urgency`.
 
 ## Summary
 
-- **Total findings:** 61
+- **Total findings:** 50
 - **High urgency:** 6
 - **Medium urgency:** 18
-- **Low urgency:** 37
+- **Low urgency:** 26
 
 ## High Urgency (fix before commit)
 
@@ -33,7 +33,6 @@ Each finding is in its own file, titled `name, difficulty, urgency`.
 
 | File | Finding | Difficulty |
 |------|---------|-----------|
-| `fswatch-appwrite-suppression-race,-easy,-medium.md` | App-write suppression race | easy |
 | `fswatch-case-sensitive-prefix,-medium,-medium.md` | Case-sensitive prefix breaks Windows/macOS | medium |
 | `fswatch-synchronous-emit,-medium,-medium.md` | Synchronous emit blocks event loop | medium |
 | `events-attachment-path-lost,-medium,-medium.md` | Attachment.Path silently dropped on persistence | medium |
@@ -44,11 +43,9 @@ Each finding is in its own file, titled `name, difficulty, urgency`.
 | `workspace-onwrite-after-write-toctou,-medium,-medium.md` | onWrite suppression registered after write (TOCTOU) | medium |
 | `pairing-sliding-window-test-invalid,-easy,-medium.md` | Sliding-window test doesn't test renewal | easy |
 | `theme-system-no-os-change-listener,-medium,-medium.md` | System theme doesn't subscribe to OS changes at runtime | medium |
-| `indexcss-select-chevron-hardcoded-hex,-easy,-medium.md` | Select chevron hardcoded hex doesn't adapt to theme | easy |
 | `app-banners-not-announced-to-sr,-easy,-medium.md` | Reconnecting/save banners not announced to screen readers | easy |
 | `app-resize-handles-not-keyboard-accessible,-medium,-medium.md` | Panel resize handles not keyboard accessible | medium |
 | `chat-pending-attachments-leak-across-sessions,-easy,-medium.md` | Pending attachments leak across session switches | easy |
-| `editorpane-amber-raw-colors,-easy,-medium.md` | Changed-on-disk banner uses raw amber colors | easy |
 | `hooks-duplicated-appevent-interface,-medium,-medium.md` | Duplicated AppEvent interface with divergent shapes | medium |
 | `docs-known-issues-broken-review-ref,-trivial,-medium.md` | known-issues.md references non-existent review dir | trivial |
 | `acp-permission-key-doc-omits-command,-easy,-medium.md` | Permission policy key doc omits command discriminator | easy |
@@ -57,4 +54,4 @@ Each finding is in its own file, titled `name, difficulty, urgency`.
 
 ## Low Urgency
 
-See individual files in this directory. Categories: fswatch edge cases (3), uploads cleanup (2), events tests (1), acp logging/race (2), server defense-in-depth (1), interfaces design (3), daemon comment mismatch (1), config defaults (1), frontend React/a11y/conventions (12), docs cross-refs (2), acp audit accuracy (3), devin/agents overlap (2).
+See individual files in this directory. Categories: uploads cleanup (2), events tests (1), acp logging/race (2), server defense-in-depth (1), interfaces design (3), daemon comment mismatch (1), config defaults (1), frontend React/a11y/conventions (8), docs cross-refs (2), acp audit accuracy (3), devin/agents overlap (2).
