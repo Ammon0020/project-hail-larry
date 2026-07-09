@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppEvent, Attachment } from '@/types'
+import type { UploadResult } from '@/lib/api'
 
 /**
  * Mock backend hook — simulates the Go daemon's WebSocket + ACP layer.
@@ -13,6 +14,17 @@ import type { AppEvent, Attachment } from '@/types'
  */
 export function useMockBackend(initialEvents: AppEvent[]) {
   const [events, setEvents] = useState<AppEvent[]>(initialEvents)
+  // Tracks active setTimeout ids so they can be cleared on unmount, preventing
+  // setState-after-unmount warnings and leaked timers if the mock is hot-reloaded
+  // mid-stream.
+  const timersRef = useRef<number[]>([])
+
+  useEffect(
+    () => () => {
+      timersRef.current.forEach((id) => clearTimeout(id))
+    },
+    [],
+  )
 
   /**
    * Simulates sending a prompt to the agent via ACP (Blueprint Sec 6).
@@ -34,7 +46,7 @@ export function useMockBackend(initialEvents: AppEvent[]) {
       ])
 
       // Simulate agent response after delay
-      setTimeout(() => {
+      const id1 = window.setTimeout(() => {
         setEvents((prev) => [
           ...prev,
           {
@@ -46,7 +58,7 @@ export function useMockBackend(initialEvents: AppEvent[]) {
         ])
 
         // Simulate streaming indicator
-        setTimeout(() => {
+        const id2 = window.setTimeout(() => {
           setEvents((prev) => [
             ...prev,
             {
@@ -58,7 +70,9 @@ export function useMockBackend(initialEvents: AppEvent[]) {
             },
           ])
         }, 800)
+        timersRef.current.push(id2)
       }, 500)
+      timersRef.current.push(id1)
     },
     [],
   )
@@ -74,5 +88,17 @@ export function useMockBackend(initialEvents: AppEvent[]) {
     ])
   }, [])
 
-  return { events, sendPrompt, respondPermission }
+  /** Mock upload — returns a static UploadResult matching api.uploadFile's shape. */
+  const uploadFile = useCallback(
+    async (_sessionId: string, file: File): Promise<UploadResult> => ({
+      id: `mock-upload-${Date.now()}`,
+      name: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      url: URL.createObjectURL(file),
+      size: file.size,
+    }),
+    [],
+  )
+
+  return { events, sendPrompt, respondPermission, uploadFile }
 }

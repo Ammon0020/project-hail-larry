@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type KeyboardEvent, type ChangeEvent, type CSSProperties } from 'react'
 import { Menu, Paperclip, ArrowUp, Square, Wifi, WifiOff, ChevronDown, X, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { api } from '@/lib/api'
+import type { UploadResult } from '@/lib/api'
 import {
   Select,
   SelectContent,
@@ -65,6 +65,7 @@ export function ChatPanel({
   onDeleteSession,
   onRebindSession,
   onExportSession,
+  onUploadFile,
   style,
 }: {
   events: AppEvent[]
@@ -84,6 +85,10 @@ export function ChatPanel({
   onDeleteSession: (sessionId: string) => void
   onRebindSession: (sessionId: string, agentId: string, modelId: string, maxTransferBytes?: number) => void
   onExportSession: (sessionId: string) => void
+  /** Uploads a file to a session's upload store. Routed through useBackend so
+   *  uploads share the hook's session-recovery semantics instead of bypassing
+   *  it via api.uploadFile directly. */
+  onUploadFile: (sessionId: string, file: File) => Promise<UploadResult>
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
   style?: CSSProperties
 }) {
@@ -310,7 +315,7 @@ export function ChatPanel({
         sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
       }
       for (const file of Array.from(files)) {
-        const result = await api.uploadFile(sessionId, file)
+        const result = await onUploadFile(sessionId, file)
         setPendingAttachments((prev) => [
           ...prev,
           { id: result.id, name: result.name, mimeType: result.mimeType },

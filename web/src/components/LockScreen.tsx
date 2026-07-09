@@ -18,6 +18,7 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
    * On success, stores the device credential and calls onPaired.
    */
   const attemptPair = async () => {
+    if (loading) return
     const words = passcode.trim().toLowerCase().split(/[\s-]+/).filter(Boolean)
     if (words.length !== 4) {
       setError(true)

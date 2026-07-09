@@ -4,6 +4,7 @@ import type { AgentInfo } from '@/lib/api'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -77,6 +78,7 @@ export function SettingsModal({
         {/* Header */}
         <DialogHeader className="px-5 py-4 border-b border-border">
           <DialogTitle className="text-lg font-bold text-foreground">Settings</DialogTitle>
+          <DialogDescription className="sr-only">Configure workspace, agents, devices, and preferences.</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-1 overflow-hidden">

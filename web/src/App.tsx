@@ -269,7 +269,7 @@ export default function App() {
   useEffect(() => {
     const events = backend.events
     if (events.length === 0) return
-    const maxId = Math.max(...events.map((e) => e.id))
+    const maxId = Math.max(...events.map((e) => e.id ?? 0))
     if (processedFileEventIdRef.current === null) {
       processedFileEventIdRef.current = maxId
       return
@@ -282,7 +282,7 @@ export default function App() {
       events
         .filter(
           (e) =>
-            e.id > since &&
+            (e.id ?? 0) > since &&
             (e.type === 'FileWritten' || e.type === 'FileChangedOnDisk') &&
             !!e.target &&
             (!e.workspaceId || !active || e.workspaceId === active.id),
@@ -764,6 +764,7 @@ export default function App() {
         onDeleteSession={(id) => backend.deleteSession(id)}
         onRebindSession={(id, agentId, modelId, maxTransferBytes) => backend.rebindSession(id, agentId, modelId, maxTransferBytes)}
         onExportSession={handleExportSession}
+        onUploadFile={(sessionId, file) => backend.uploadFile(sessionId, file)}
         style={isDesktop ? { width: rightPanelWidth } : undefined}
       />
 

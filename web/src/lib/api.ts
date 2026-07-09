@@ -3,7 +3,12 @@
  * All endpoints are relative to the same origin (served by the Go server).
  */
 
-import type { Attachment } from '@/types'
+import type { AppEvent, Attachment } from '@/types'
+
+// Re-export AppEvent so existing callers importing it from '@/lib/api' keep
+// working — the canonical definition lives in @/types (optional id, typed
+// EventType) and is shared by both the real and mock backend hooks.
+export type { AppEvent }
 
 const API_BASE = '/api'
 
@@ -67,27 +72,6 @@ export interface SessionInfo {
   modelId?: string
   updatedAt?: string
   workspace?: string
-}
-
-export interface AppEvent {
-  id: number
-  type: string
-  sessionId: string
-  role?: string
-  content?: string
-  streaming?: boolean
-  tool?: string
-  target?: string
-  summary?: string
-  command?: string
-  options?: string[]
-  requestId?: string
-  toolKind?: string
-  toolCallId?: string
-  thought?: boolean
-  exitCode?: number
-  workspaceId?: string
-  attachments?: Attachment[]
 }
 
 export interface PermissionOptionInfo {
@@ -246,7 +230,7 @@ export const api = {
       body: form,
     })
     if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: res.statusText }))
+      const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string }
       throw new Error(body.error || `HTTP ${res.status}`)
     }
     return (await res.json()) as UploadResult

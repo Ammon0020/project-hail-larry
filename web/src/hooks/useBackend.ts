@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential, type PendingPermission } from '@/lib/api'
+import { api, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential, type PendingPermission, type UploadResult } from '@/lib/api'
 import type { Attachment } from '@/types'
 
 /**
@@ -295,7 +295,7 @@ export function useBackend() {
       // bug). Appending preserves them.
       const afterId =
         eventsRef.current.length > 0
-          ? Math.max(...eventsRef.current.map((e) => e.id))
+          ? Math.max(...eventsRef.current.map((e) => e.id ?? 0))
           : 0
       const evts = await api.getEvents(afterId, 1000)
       if (evts.length === 0) return
@@ -348,12 +348,12 @@ export function useBackend() {
       // that arrived via WebSocket after the fetch was initiated (they have
       // IDs higher than the fetched events).
       const maxFetchedId = sessionEvts.length > 0
-        ? Math.max(...sessionEvts.map((e) => e.id))
+        ? Math.max(...sessionEvts.map((e) => e.id ?? 0))
         : 0
       commitEvents([
         ...sessionEvts,
         ...eventsRef.current.filter(
-          (e) => e.sessionId !== sessionId || e.id > maxFetchedId,
+          (e) => e.sessionId !== sessionId || (e.id ?? 0) > maxFetchedId,
         ),
       ])
     } catch {
@@ -413,6 +413,13 @@ export function useBackend() {
       }
       throw err
     }
+  }
+
+  /** Uploads a file to a session's upload store. Thin wrapper around
+   *  api.uploadFile so components can call it through the hook and share the
+   *  hook's session-recovery semantics. */
+  async function uploadFile(sessionId: string, file: File): Promise<UploadResult> {
+    return await api.uploadFile(sessionId, file)
   }
 
   async function cancelSession(sessionId: string) {
@@ -504,6 +511,7 @@ export function useBackend() {
     saveFile,
     createSession,
     sendPrompt,
+    uploadFile,
     cancelSession,
     renameSession,
     rebindSession,
