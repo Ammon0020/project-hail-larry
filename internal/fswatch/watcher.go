@@ -56,8 +56,9 @@ type Watcher struct {
 	appWrites map[string]time.Time // absPath -> time the app wrote it
 	lastEmit  map[string]time.Time // absPath -> last emit time (throttle)
 
-	done chan struct{}
-	wg   sync.WaitGroup
+	done   chan struct{}
+	closed bool // guarded by mu; true once Close has run
+	wg     sync.WaitGroup
 }
 
 // New creates a Watcher and starts its event loop. emit is invoked for each
@@ -85,8 +86,20 @@ func New(emit func(interfaces.Event)) (*Watcher, error) {
 // recursive, so the tree is walked once and every non-ignored directory is
 // added; new directories are added on the fly as they are created. Per-path
 // errors are logged and skipped so one bad directory doesn't abort the rest.
+// If id is already registered with a different absolute path, the old watches
+// are removed first so stale fsnotify watches are not leaked. Returns early
+// (no-op) if the watcher is closed.
 func (w *Watcher) AddWorkspace(id, absPath string) {
 	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return
+	}
+	if existing, ok := w.roots[id]; ok && existing != absPath {
+		w.mu.Unlock()
+		w.removeWorkspace(id, existing)
+		w.mu.Lock()
+	}
 	w.roots[id] = absPath
 	w.mu.Unlock()
 	w.addTree(absPath)
@@ -112,14 +125,27 @@ func (w *Watcher) addTree(root string) {
 }
 
 // RemoveWorkspace stops watching a workspace root and all its subdirectories.
+// Returns early (no-op) if the watcher is closed or id is not registered.
 func (w *Watcher) RemoveWorkspace(id string) {
 	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return
+	}
 	root, ok := w.roots[id]
 	delete(w.roots, id)
 	w.mu.Unlock()
 	if !ok {
 		return
 	}
+	w.removeWorkspace(id, root)
+}
+
+// removeWorkspace unwatches root and all paths under it. It does not touch
+// w.roots; the caller is responsible for the map bookkeeping. The id is
+// accepted only for symmetry with RemoveWorkspace (currently unused beyond
+// that) and may be passed empty when called from AddWorkspace's re-add path.
+func (w *Watcher) removeWorkspace(_, root string) {
 	prefix := root + string(os.PathSeparator)
 	for _, p := range w.fsw.WatchList() {
 		if p == root || strings.HasPrefix(p, prefix) {
@@ -130,15 +156,29 @@ func (w *Watcher) RemoveWorkspace(id string) {
 
 // NoteAppWrite records that the app itself just wrote absPath so the imminent
 // fsnotify event for it is suppressed (not surfaced as an external change).
+// Returns early (no-op) if the watcher is closed, so shutdown-time hook calls
+// don't leak entries into appWrites (whose cleanup loop has exited).
 func (w *Watcher) NoteAppWrite(absPath string) {
 	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return
+	}
 	w.appWrites[absPath] = time.Now()
 	w.mu.Unlock()
 }
 
-// Close stops the watcher's event loop and releases resources.
+// Close stops the watcher's event loop and releases resources. It is
+// idempotent: calling it more than once returns nil without panicking.
 func (w *Watcher) Close() error {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return nil
+	}
+	w.closed = true
 	close(w.done)
+	w.mu.Unlock()
 	err := w.fsw.Close()
 	w.wg.Wait()
 	return err

@@ -414,19 +414,22 @@ func (m *Manager) WriteFile(_ context.Context, workspaceID, relPath, content str
 		}
 	}
 
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil { //nolint:gosec // fullPath is constrained by safeJoin to the registered workspace root.
-		return 0, fmt.Errorf("write file: %w", err)
-	}
-
-	// Notify the watcher that the app itself wrote this path so it suppresses
-	// the resulting fsnotify event (agent writes separately emit
-	// EventFileWritten; user saves are already reflected in the editor). Read
-	// the hook under the lock, then call it without holding mu.
+	// Notify the watcher that the app itself is about to write this path so it
+	// suppresses the resulting fsnotify event (agent writes separately emit
+	// EventFileWritten; user saves are already reflected in the editor). The
+	// hook MUST run before os.WriteFile: the fsnotify event is delivered to the
+	// watcher's loop asynchronously, and recording the app-write timestamp
+	// pre-write guarantees the suppression check in handle() sees it. Read the
+	// hook under the lock, then call it without holding mu.
 	m.mu.RLock()
 	onWrite := m.onWrite
 	m.mu.RUnlock()
 	if onWrite != nil {
 		onWrite(fullPath)
+	}
+
+	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil { //nolint:gosec // fullPath is constrained by safeJoin to the registered workspace root.
+		return 0, fmt.Errorf("write file: %w", err)
 	}
 
 	// The new revision is the content hash of the written bytes. It is
