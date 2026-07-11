@@ -97,8 +97,9 @@ type Attachment struct {
 	// MimeType is the validated MIME type (e.g. "image/png").
 	MimeType string `json:"mimeType"`
 	// URI is a file:// URI pointing at the on-disk file, sent to the agent via
-	// ACP ImageBlock.Uri or ResourceLinkBlock.Uri.
-	URI string `json:"uri,omitempty"`
+	// ACP ImageBlock.Uri or ResourceLinkBlock.Uri. Backend-only: not serialized
+	// to JSON (the frontend builds serving URLs from the upload ID, not this).
+	URI string `json:"-"`
 	// Path is the absolute on-disk path, included in the text fallback so the
 	// agent can read the file directly. Persisted to SQLite so it survives
 	// reload, but omitted from JSON when empty (the frontend ignores it

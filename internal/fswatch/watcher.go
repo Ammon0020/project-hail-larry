@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,8 @@ type Watcher struct {
 	appWrites map[string]time.Time // absPath -> time the app wrote it
 	lastEmit  map[string]time.Time // absPath -> last emit time (throttle)
 
+	emitCh chan interfaces.Event // buffered; drained by emitLoop so emit() never blocks the event loop
+
 	done   chan struct{}
 	closed bool // guarded by mu; true once Close has run
 	wg     sync.WaitGroup
@@ -75,10 +78,12 @@ func New(emit func(interfaces.Event)) (*Watcher, error) {
 		roots:     make(map[string]string),
 		appWrites: make(map[string]time.Time),
 		lastEmit:  make(map[string]time.Time),
+		emitCh:    make(chan interfaces.Event, 64),
 		done:      make(chan struct{}),
 	}
-	w.wg.Add(1)
+	w.wg.Add(2)
 	go w.loop()
+	go w.emitLoop()
 	return w, nil
 }
 
@@ -146,9 +151,8 @@ func (w *Watcher) RemoveWorkspace(id string) {
 // accepted only for symmetry with RemoveWorkspace (currently unused beyond
 // that) and may be passed empty when called from AddWorkspace's re-add path.
 func (w *Watcher) removeWorkspace(_, root string) {
-	prefix := root + string(os.PathSeparator)
 	for _, p := range w.fsw.WatchList() {
-		if p == root || strings.HasPrefix(p, prefix) {
+		if pathEqual(p, root) || hasPathPrefix(p, root) {
 			_ = w.fsw.Remove(p)
 		}
 	}
@@ -236,7 +240,7 @@ func (w *Watcher) handle(ev fsnotify.Event) {
 	// Resolve the owning workspace root.
 	var wsID, root string
 	for id, r := range w.roots {
-		if path == r || strings.HasPrefix(path, r+string(os.PathSeparator)) {
+		if pathEqual(path, r) || hasPathPrefix(path, r) {
 			wsID, root = id, r
 			break
 		}
@@ -256,7 +260,6 @@ func (w *Watcher) handle(ev fsnotify.Event) {
 		return
 	}
 	w.lastEmit[path] = time.Now()
-	emit := w.emit
 	w.mu.Unlock()
 
 	rel, err := filepath.Rel(root, path)
@@ -264,12 +267,17 @@ func (w *Watcher) handle(ev fsnotify.Event) {
 		return
 	}
 	rel = filepath.ToSlash(rel)
-	if emit != nil {
-		emit(interfaces.Event{
-			Type:        interfaces.EventFileChangedOnDisk,
-			WorkspaceID: wsID,
-			Target:      rel,
-		})
+	// Emit on a buffered channel so a slow emit callback (WebSocket broadcast,
+	// event store append, …) never blocks the fsnotify event loop. A full
+	// channel drops the event rather than blocking — preferable to stalling
+	// filesystem event delivery.
+	select {
+	case w.emitCh <- interfaces.Event{
+		Type:        interfaces.EventFileChangedOnDisk,
+		WorkspaceID: wsID,
+		Target:      rel,
+	}:
+	default:
 	}
 }
 
@@ -297,4 +305,49 @@ func (w *Watcher) cleanup() {
 		}
 	}
 	w.mu.Unlock()
+}
+
+// emitLoop drains emitCh on a dedicated goroutine so the fsnotify event loop
+// never blocks on the emit callback (which may do WebSocket broadcast, event
+// store append, etc.). w.emit is set once at construction and never mutated,
+// so reading it here without holding w.mu is safe. Exits when w.done closes;
+// any buffered events are drained first because select chooses randomly when
+// both cases are ready — but on close, the loop returns after draining in-flight
+// sends already queued.
+func (w *Watcher) emitLoop() {
+	defer w.wg.Done()
+	for {
+		select {
+		case <-w.done:
+			return
+		case ev := <-w.emitCh:
+			if w.emit != nil {
+				w.emit(ev)
+			}
+		}
+	}
+}
+
+// pathEqual reports whether two paths are equal, using case-insensitive
+// comparison on Windows and macOS (case-insensitive filesystems) and
+// case-sensitive elsewhere.
+func pathEqual(a, b string) bool {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// hasPathPrefix reports whether path starts with prefix + separator, using
+// case-insensitive comparison on Windows and macOS (case-insensitive
+// filesystems) and case-sensitive elsewhere.
+func hasPathPrefix(path, prefix string) bool {
+	sep := string(os.PathSeparator)
+	if !strings.HasSuffix(prefix, sep) {
+		prefix += sep
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return len(path) >= len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+	}
+	return strings.HasPrefix(path, prefix)
 }

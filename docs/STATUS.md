@@ -111,3 +111,4 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
 - Event-driven UI: all rendering derives from `AppEvent[]` stream
 - SQLite via `modernc.org/sqlite` (pure-Go, no CGO)
 - Must rebuild binary (`.\build.ps1`) after frontend changes — `go:embed` freezes frontend at compile time
+- Note: `ACPClient.SendPrompt` signature change (adding `[]Attachment`) is a breaking change for out-of-tree implementers.
