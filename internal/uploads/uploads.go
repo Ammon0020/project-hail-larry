@@ -144,6 +144,19 @@ func (m *Manager) RemoveSession(sessionID string) error {
 	return nil
 }
 
+// RemoveAll deletes the entire uploads root and its contents. It is used on
+// daemon shutdown to clean up all per-session upload directories. The manager
+// remains usable after this only if New is called again to recreate the root.
+func (m *Manager) RemoveAll() error {
+	if m == nil || m.root == "" {
+		return nil
+	}
+	if err := os.RemoveAll(m.root); err != nil {
+		return fmt.Errorf("uploads: remove all: %w", err)
+	}
+	return nil
+}
+
 // newID returns a 16-byte hex-encoded random ID.
 func newID() string {
 	b := make([]byte, 16)

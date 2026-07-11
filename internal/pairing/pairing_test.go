@@ -273,33 +273,29 @@ func TestValidateCredentialExpiresAfterInactivity(t *testing.T) {
 	}
 }
 
-// TestValidateCredentialSlidingWindow verifies that activity before expiry keeps
-// renewing the window, so a credential stays valid even after the total elapsed
-// time since pairing exceeds the TTL — as long as gaps stay under the TTL.
+// TestValidateCredentialSlidingWindow verifies that ValidateCredential renews
+// LastSeen on each successful call, so a credential stays valid as long as the
+// gap between validations stays under the TTL — even when the total elapsed
+// time since pairing exceeds the TTL. Uses a short TTL and real sleeps so the
+// renewal (not manual setLastSeen) is what keeps the window alive.
 func TestValidateCredentialSlidingWindow(t *testing.T) {
 	m := newTestManager(t)
-	m.SetInactivityTTL(time.Hour)
+	m.SetInactivityTTL(200 * time.Millisecond)
 	cred := pairDevice(t, m, "Device")
 
-	// Pair 90 minutes ago (already older than the 1h TTL in absolute terms),
-	// but keep validating at sub-TTL intervals so the sliding window survives.
-	m.setLastSeen(cred.ID, time.Now().UTC().Add(-90*time.Minute))
-
-	// First validation: LastSeen is 90m old > 1h TTL -> would be expired.
-	// To exercise the sliding behavior, step LastSeen forward in <TTL hops.
-	m.setLastSeen(cred.ID, time.Now().UTC().Add(-50*time.Minute))
+	// Validate at t=0 — renews LastSeen to now.
 	if !m.ValidateCredential(cred.ID, cred.Secret) {
-		t.Fatal("expected valid at 50m (< 1h) inactivity")
+		t.Fatal("expected valid immediately after pairing")
 	}
-	// Advance the clock partway (still under TTL from the just-renewed LastSeen).
-	m.setLastSeen(cred.ID, time.Now().UTC().Add(-40*time.Minute))
+	// 100ms later (within TTL of the renewal) — should renew again.
+	time.Sleep(100 * time.Millisecond)
 	if !m.ValidateCredential(cred.ID, cred.Secret) {
-		t.Fatal("expected valid at 40m (< 1h) inactivity after renewal")
+		t.Fatal("expected valid 100ms after renewal (< 200ms TTL)")
 	}
-	// Even though it's now been >1h30m since the original pairing, the sliding
-	// window keeps the credential alive because each gap was under the TTL.
-	if !m.ValidateCredential(cred.ID, cred.Secret) {
-		t.Fatal("expected credential to remain valid via sliding renewal")
+	// 300ms later (> TTL since last renewal) — should be expired.
+	time.Sleep(300 * time.Millisecond)
+	if m.ValidateCredential(cred.ID, cred.Secret) {
+		t.Fatal("expected expired after 300ms > 200ms TTL since last renewal")
 	}
 }
 
@@ -319,8 +315,10 @@ func TestValidateCredentialDisabledNeverExpires(t *testing.T) {
 }
 
 // TestLoadDevicesMigratesLastSeen verifies that a persisted device with a zero
-// LastSeen (written before the field existed) gets LastSeen backfilled from
-// PairedAt on load.
+// LastSeen (written before the field existed) gets LastSeen backfilled to the
+// current time on load, so legacy devices receive a fresh full window from
+// upgrade time rather than being instantly expired if PairedAt is older than
+// the TTL.
 func TestLoadDevicesMigratesLastSeen(t *testing.T) {
 	dir := t.TempDir()
 
@@ -342,11 +340,13 @@ func TestLoadDevicesMigratesLastSeen(t *testing.T) {
 		t.Fatalf("write legacy devices file: %v", err)
 	}
 
+	before := time.Now().UTC()
 	m := NewManager(dir)
+	after := time.Now().UTC()
 
 	got := m.getLastSeen("legacy-device")
-	if !got.Equal(pairedAt) {
-		t.Errorf("expected migrated LastSeen to equal PairedAt %v, got %v", pairedAt, got)
+	if got.Before(before) || got.After(after) {
+		t.Errorf("expected migrated LastSeen to be ~now (upgrade time), got %v; before=%v after=%v", got, before, after)
 	}
 }
 

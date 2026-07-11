@@ -572,10 +572,11 @@ func (m *Manager) loadDevices() {
 	for i := range records {
 		r := records[i] // take address of a stable copy
 		// Migration: devices persisted before the LastSeen field existed have a
-		// zero LastSeen. Backfill it from PairedAt so they receive a fair
-		// sliding window rather than being treated as instantly expired.
+		// zero LastSeen. Backfill from now so legacy devices get a fresh full
+		// window from upgrade time rather than potentially being instantly
+		// expired if PairedAt is older than the TTL.
 		if r.LastSeen.IsZero() {
-			r.LastSeen = r.PairedAt
+			r.LastSeen = time.Now().UTC()
 		}
 		m.devices[r.ID] = &r
 	}

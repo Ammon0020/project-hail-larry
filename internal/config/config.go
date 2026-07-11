@@ -36,10 +36,12 @@ type Config struct {
 	// CredentialInactivityTTLSeconds is the sliding-window inactivity expiry for
 	// paired device credentials. A device that goes this long without a
 	// successful authenticated request must re-pair. Sliding expiry is ON by
-	// default (defaultCredentialInactivityTTLSeconds, 30 days); an explicit value
-	// of 0 disables expiry entirely (credentials never expire). Note the default
-	// is only applied to a fresh config or a config file that omits the field
-	// (see Load) — so a user who writes 0 keeps expiry disabled.
+	// default for fresh installs (defaultCredentialInactivityTTLSeconds, 30
+	// days). For existing config files that omit this field, the value loads as
+	// 0 (disabled) — this is intentional to avoid silently re-enabling expiry
+	// for users who may have relied on permanent credentials. Set this field
+	// explicitly to enable expiry on an existing install. An explicit value of
+	// 0 disables expiry entirely (credentials never expire).
 	CredentialInactivityTTLSeconds int `json:"credentialInactivityTtlSeconds,omitempty"`
 }
 
@@ -147,8 +149,10 @@ func Load() (*Config, error) {
 	// default here. With a plain int we cannot distinguish "field omitted" from
 	// "explicitly set to 0", and 0 is a meaningful value (expiry disabled). A
 	// fresh install with no config file receives the 30-day default via
-	// DefaultOrError; a user who writes 0 into an existing config file keeps
-	// expiry disabled rather than having it silently re-enabled.
+	// DefaultOrError; an existing config file that omits the field loads as 0
+	// (disabled) to avoid silently re-enabling expiry for users who may have
+	// relied on permanent credentials. Set the field explicitly to enable
+	// expiry on an existing install.
 
 	return &cfg, nil
 }

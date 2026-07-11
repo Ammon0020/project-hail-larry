@@ -242,7 +242,8 @@ func New(cfg *Config) (*Daemon, error) {
 
 	// Per-session uploads store for artifacts attached to prompts (e.g.
 	// images). A failure to initialize is non-fatal — the daemon runs without
-	// upload support, and the server handlers return a 503 when Uploads is nil.
+	// upload support, and the server handlers return a 400 (send prompt) or
+	// 503 (upload endpoints) when Uploads is nil.
 	uploadsMgr, err := uploads.New(filepath.Join(cfg.DataDir, "uploads"))
 	if err != nil {
 		log.Printf("WARNING: uploads manager unavailable: %v", err)
@@ -386,6 +387,14 @@ func (d *Daemon) cleanup() {
 	}
 	if d.eventStore != nil {
 		_ = d.eventStore.Close()
+	}
+	// Clean up all per-session upload directories on shutdown. The HTTP server
+	// and ACP sessions are already torn down above, so no in-flight handler or
+	// agent can still be reading an upload path.
+	if d.uploadsMgr != nil {
+		if err := d.uploadsMgr.RemoveAll(); err != nil {
+			log.Printf("WARNING: failed to clean uploads on shutdown: %v", err)
+		}
 	}
 }
 
