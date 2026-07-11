@@ -320,3 +320,37 @@ export const api = {
       body: JSON.stringify({ decision }),
     }),
 }
+
+// ---- MCP config ----
+
+/** GET /api/mcp — returns raw JSON text of mcp.json (or empty envelope).
+ *  Uses `fetch` directly (not `apiFetch`) because the body is returned
+ *  verbatim so the editor preserves the user's exact formatting on
+ *  round-trips — `apiFetch` would re-parse and lose the raw text. Mirrors
+ *  `apiFetch`'s same-origin base URL and error handling. */
+export async function getMcpConfig(): Promise<string> {
+  const res = await fetch(`${API_BASE}/mcp`)
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string }
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res.text()
+}
+
+/** PUT /api/mcp — validates and writes raw JSON. Returns 400 on parse error.
+ *  The body is sent as-is (not re-stringified) so the user's formatting
+ *  survives the round-trip; the backend parses it only to validate. */
+export async function putMcpConfig(rawJson: string): Promise<void> {
+  await apiFetch<unknown>('/mcp', {
+    method: 'PUT',
+    body: rawJson,
+  })
+}
+
+/** PATCH /api/mcp/servers/{name} — toggles a single server's enabled flag. */
+export async function patchMcpServer(name: string, enabled: boolean): Promise<void> {
+  await apiFetch<unknown>(`/mcp/servers/${encodeURIComponent(name)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  })
+}

@@ -39,6 +39,10 @@ export interface Tab {
    *  auto-refreshed. Surfaces a "changed on disk" indicator + Reload action.
    *  Clean tabs are refreshed silently instead of setting this flag. */
   changedOnDisk?: boolean
+  /** Tab content kind. 'file' (default) renders CodeMirror; 'settings' renders
+   *  the settings panel. Settings tabs use a synthetic path like 'settings'
+   *  and are not persisted to localStorage. */
+  kind?: 'file' | 'settings'
 }
 
 /** A registered AI agent (Blueprint Sec 5 — agent registration). */

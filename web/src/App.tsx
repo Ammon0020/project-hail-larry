@@ -7,7 +7,6 @@ import { EditorPane } from '@/components/EditorPane'
 import { ChatPanel } from '@/components/ChatPanel'
 import { MobileNav } from '@/components/MobileNav'
 import { MobileSettings } from '@/components/MobileSettings'
-import { SettingsModal } from '@/components/SettingsModal'
 import { useBackend } from '@/hooks/useBackend'
 import type { EditorSelection } from '@/lib/api'
 import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Attachment, SessionStatus, Tab } from '@/types'
@@ -66,7 +65,6 @@ export default function App() {
   const [isDesktop, setIsDesktop] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true,
   )
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
 
   // Resizable panel widths — restored from localStorage so the layout
   // survives a reload (Feature 2). Defaults: 260px left, 420px right.
@@ -202,7 +200,9 @@ export default function App() {
    *  survives a page reload (UI Spec §6.2 — UI Persistence). */
   useEffect(() => {
     try {
-      localStorage.setItem('lai:openTabs', JSON.stringify(openTabs))
+      // Settings tabs are not persisted — they're synthetic, not files.
+      const persistable = openTabs.filter((t) => t.kind !== 'settings')
+      localStorage.setItem('lai:openTabs', JSON.stringify(persistable))
     } catch {
       // Ignore serialization errors (e.g. quota exceeded).
     }
@@ -332,6 +332,26 @@ export default function App() {
   // Defined before the unpaired early return so the keyboard-shortcut
   // useEffect below them is not called conditionally (react-hooks/rules-of-hooks).
   const handleTabSelect = (id: string) => setActiveTabId(id)
+
+  /** Opens the settings tab (singleton id 'settings'). If already open,
+   *  activates it; otherwise creates and activates it. Settings tabs are
+   *  not persisted to localStorage (filtered out in the persistence effect). */
+  const openSettingsTab = () => {
+    setOpenTabs((prev) => {
+      if (prev.some((t) => t.id === 'settings')) return prev
+      return [...prev, {
+        id: 'settings',
+        name: 'Settings',
+        path: 'settings',
+        content: '',
+        revision: 0,
+        unsaved: false,
+        language: '',
+        kind: 'settings' as const,
+      }]
+    })
+    setActiveTabId('settings')
+  }
 
   const handleTabClose = useCallback(
     (id: string) => {
@@ -652,7 +672,7 @@ export default function App() {
         activePanel={leftPanel}
         onSwitchPanel={setLeftPanel}
         onOpenSettings={() => {
-          if (isDesktop) setIsSettingsModalOpen(true)
+          if (isDesktop) openSettingsTab()
           else setMobileView('settings')
         }}
       />
@@ -704,6 +724,12 @@ export default function App() {
         onReloadTab={handleReloadTab}
         onSelectionChange={setEditorSelection}
         scrollToLine={searchResultLine}
+        settingsProps={{
+          agents: backend.agents,
+          onAddAgent: backend.addAgent,
+          onDeleteAgent: backend.deleteAgent,
+          onAutodetect: backend.autodetectAgents,
+        }}
       />
 
       {/* Resize handle between editor and right chat panel (desktop only) */}
@@ -793,16 +819,6 @@ export default function App() {
 
       {/* Mobile Bottom Nav (hidden on desktop) */}
       <MobileNav activeView={mobileView} onSwitchView={setMobileView} />
-
-      {/* Desktop Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsModalOpen}
-        onClose={() => setIsSettingsModalOpen(false)}
-        agents={backend.agents}
-        onAddAgent={backend.addAgent}
-        onDeleteAgent={backend.deleteAgent}
-        onAutodetect={backend.autodetectAgents}
-      />
     </div>
   )
 }

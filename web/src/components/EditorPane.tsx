@@ -12,9 +12,11 @@ import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemir
 import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Prec, EditorSelection } from '@codemirror/state'
-import { FileCode, Circle, X, GitCompare, Save, GitBranch, CircleAlert, TriangleAlert, FileText, ChevronLeft, ChevronRight, WrapText, RefreshCw } from 'lucide-react'
+import { FileCode, Circle, X, GitCompare, Save, GitBranch, CircleAlert, TriangleAlert, FileText, ChevronLeft, ChevronRight, WrapText, RefreshCw, Settings as SettingsIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
+import { SettingsPanel } from '@/components/SettingsPanel'
+import type { AgentInfo } from '@/lib/api'
 import type { Extension } from '@codemirror/state'
 import type { Tab } from '@/types'
 
@@ -36,6 +38,7 @@ export function EditorPane({
   onReloadTab,
   onSelectionChange,
   scrollToLine,
+  settingsProps,
 }: {
   tabs: Tab[]
   activeTabId: string | null
@@ -55,6 +58,14 @@ export function EditorPane({
    *  into view. Cleared by the parent after the jump is dispatched so a
    *  subsequent click on the same line re-triggers. */
   scrollToLine?: number | null
+  /** Props for the SettingsPanel, rendered when the active tab has
+   *  kind === 'settings'. Passed through from App.tsx. */
+  settingsProps?: {
+    agents: AgentInfo[]
+    onAddAgent: (a: AgentInfo) => Promise<void>
+    onDeleteAgent: (id: string) => Promise<void>
+    onAutodetect: () => Promise<AgentInfo[]>
+  }
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
 
@@ -334,12 +345,16 @@ export function EditorPane({
                 )}
                 onClick={() => onTabSelect(tab.id)}
               >
-                <FileCode className="w-3.5 h-3.5 text-yellow-400" />
+                {tab.kind === 'settings' ? (
+                  <SettingsIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                ) : (
+                  <FileCode className="w-3.5 h-3.5 text-yellow-400" />
+                )}
                 {tab.name}
-                {tab.unsaved && (
+                {tab.unsaved && tab.kind !== 'settings' && (
                   <Circle className="w-2 h-2 text-primary fill-primary" />
                 )}
-                {tab.changedOnDisk && (
+                {tab.changedOnDisk && tab.kind !== 'settings' && (
                   <>
                     <RefreshCw className="w-3 h-3 text-warning" aria-hidden="true" />
                     <span className="sr-only">Changed on disk</span>
@@ -369,8 +384,9 @@ export function EditorPane({
           </button>
         )}
         <div className="flex-1" />
-        {/* Editor actions: Wrap toggle + Diff + Save (Blueprint Sec 14 — file sync) */}
-        {activeTab && (
+        {/* Editor actions: Wrap toggle + Diff + Save (Blueprint Sec 14 — file sync).
+            Hidden for settings tabs — they have their own action buttons. */}
+        {activeTab && activeTab.kind !== 'settings' && (
           <div className="hidden md:flex gap-1.5 pr-3 items-center">
             <button
               type="button"
@@ -405,7 +421,7 @@ export function EditorPane({
           edits, so its content was NOT auto-refreshed. Offers a Reload that
           discards local edits and fetches the on-disk version. Uses the
           warning semantic token so it adapts to the active theme. */}
-      {activeTab?.changedOnDisk && (
+      {activeTab?.changedOnDisk && activeTab.kind !== 'settings' && (
         <div className="flex items-center justify-between gap-2 bg-warning/10 border-b border-warning/40 px-3 py-1.5 text-xs text-warning shrink-0">
           <span className="flex items-center gap-1.5">
             <TriangleAlert className="w-3.5 h-3.5" />
@@ -421,9 +437,13 @@ export function EditorPane({
         </div>
       )}
 
-      {/* CodeMirror 6 Editor or Empty State (Blueprint Sec 17 — CodeMirror 6) */}
+      {/* CodeMirror 6 Editor, Settings Panel, or Empty State */}
       <div className="flex-1 overflow-hidden bg-editor">
-        {activeTab ? (
+        {activeTab?.kind === 'settings' ? (
+          <div className="h-full overflow-hidden bg-background">
+            {settingsProps && <SettingsPanel {...settingsProps} />}
+          </div>
+        ) : activeTab ? (
           <CodeMirror
             value={activeTab.content}
             onChange={onContentChange}
@@ -462,7 +482,7 @@ export function EditorPane({
           <span className="hidden md:flex items-center gap-1"><TriangleAlert className="w-3 h-3" /> 0 warnings</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="hidden md:inline">{activeTab?.language || 'Plain Text'}</span>
+          <span className="hidden md:inline">{activeTab?.kind === 'settings' ? 'Settings' : (activeTab?.language || 'Plain Text')}</span>
           <span className="hidden md:inline">UTF-8</span>
           <span className="hidden md:inline">LF</span>
           <span>Ln 1, Col 1</span>
