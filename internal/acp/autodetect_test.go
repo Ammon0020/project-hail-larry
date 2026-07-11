@@ -1,11 +1,14 @@
 package acp
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestExpandPathTilde verifies that a leading ~ is expanded to the user's
@@ -216,4 +219,160 @@ func TestLooksLikeRawID(t *testing.T) {
 			t.Errorf("looksLikeRawID(%q) = true, want false (should be treated as a real label)", s)
 		}
 	}
+}
+
+// TestCodexSpecExcludesBareTUI verifies that the codex agent spec in
+// knownAgents does NOT include the bare "codex" command. The bare "codex"
+// binary is the OpenAI Codex CLI — an interactive TUI that requires a TTY on
+// stdin. Spawning it over pipes (as the ACP transport does) makes it exit
+// immediately with "stdin is not a terminal", causing the ACP Initialize
+// handshake to fail with "peer disconnected before response". Only the
+// separate "codex-acp" adapter package speaks ACP over stdio.
+//
+// This is a static regression guard — it always runs, no agent installation
+// required.
+func TestCodexSpecExcludesBareTUI(t *testing.T) {
+	for _, spec := range knownAgents {
+		if spec.id != "codex" {
+			continue
+		}
+		for _, cmd := range spec.commands {
+			if cmd == "codex" {
+				t.Fatalf("codex agent spec includes bare %q command — the OpenAI Codex CLI is a TUI "+
+					"that cannot speak ACP over stdio. Only %q should be listed.", cmd, "codex-acp")
+			}
+		}
+		if len(spec.commands) == 0 {
+			t.Fatal("codex agent spec has no commands")
+		}
+		// Confirm codex-acp is the command we expect.
+		foundACP := false
+		for _, cmd := range spec.commands {
+			if cmd == "codex-acp" {
+				foundACP = true
+			}
+		}
+		if !foundACP {
+			t.Fatalf("codex agent spec does not include %q: commands=%v", "codex-acp", spec.commands)
+		}
+		return
+	}
+	t.Fatal("codex agent spec not found in knownAgents")
+}
+
+// codexInstalled reports whether the bare "codex" CLI is on PATH. Used to
+// gate integration tests that verify the TUI-fallback regression doesn't
+// recur.
+func codexInstalled() bool {
+	_, err := exec.LookPath("codex")
+	return err == nil
+}
+
+// TestCodexTUINotACPCompatible is an integration test that proves the bare
+// "codex" CLI is a TUI that cannot be used as an ACP agent. It spawns "codex"
+// with no args over pipes (exactly as the ACP transport would) and verifies
+// it exits with a "stdin is not a terminal" error rather than speaking ACP.
+//
+// This documents the root cause of the "peer disconnected before response"
+// bug: the autodetect used to fall back from "codex-acp" to the bare "codex"
+// TUI, which can never work.
+//
+// Only runs when the "codex" CLI is installed.
+func TestCodexTUINotACPCompatible(t *testing.T) {
+	if !codexInstalled() {
+		t.Skip("codex CLI not installed — skipping TUI compatibility test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "codex")
+	// Use pipes, not a TTY — this is what the ACP transport does.
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start codex: %v", err)
+	}
+
+	// The TUI should exit quickly with "stdin is not a terminal".
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case <-time.After(8 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("codex did not exit within 8s — expected it to refuse non-TTY stdin")
+	case waitErr := <-done:
+		// The process should have exited with a non-zero status and a clear
+		// stderr message about stdin not being a terminal.
+		_ = stdin.Close()
+		_ = stdout.Close()
+
+		stderrText := stderr.String()
+		t.Logf("codex exited: err=%v stderr=%q", waitErr, stderrText)
+
+		if !strings.Contains(strings.ToLower(stderrText), "stdin is not a terminal") {
+			t.Fatalf("codex stderr does not mention 'stdin is not a terminal'; "+
+				"the TUI behavior may have changed. stderr: %s", stderrText)
+		}
+	}
+}
+
+// TestCodexAutodetectNoTUIFallback is an integration test that verifies
+// Autodetect() does not register a codex agent whose Command points to the
+// bare "codex" TUI. Before the fix, when "codex-acp" was absent but "codex"
+// was on PATH, autodetect fell back to the TUI — causing every session to
+// fail with "peer disconnected before response".
+//
+// Only runs when the "codex" CLI is installed.
+func TestCodexAutodetectNoTUIFallback(t *testing.T) {
+	if !codexInstalled() {
+		t.Skip("codex CLI not installed — skipping autodetect fallback test")
+	}
+
+	codexACPPath, codexACPErr := exec.LookPath("codex-acp")
+	codexPath, _ := exec.LookPath("codex")
+	codexACPInstalled := codexACPErr == nil
+
+	agents := Autodetect()
+
+	var codexAgent *AgentInfo
+	for i := range agents {
+		if agents[i].ID == "codex" {
+			codexAgent = &agents[i]
+			break
+		}
+	}
+
+	if !codexACPInstalled {
+		// codex-acp is not installed, so the codex agent should NOT be
+		// detected at all — the bare TUI is not a valid ACP agent.
+		if codexAgent != nil {
+			t.Fatalf("codex agent was detected without codex-acp installed; "+
+				"Command=%q (codex=%q). The bare codex TUI cannot speak ACP and "+
+				"should not be registered.", codexAgent.Command, codexPath)
+		}
+		t.Logf("correct: codex not detected (codex-acp not installed, codex TUI at %q is not ACP-compatible)", codexPath)
+		return
+	}
+
+	// codex-acp IS installed — the codex agent should be detected, and its
+	// Command must point to codex-acp, not the bare codex TUI.
+	if codexAgent == nil {
+		t.Fatal("codex-acp is installed but codex agent was not detected")
+	}
+	if codexAgent.Command == codexPath && codexPath != codexACPPath {
+		t.Fatalf("codex agent Command points to the bare TUI (%q), not codex-acp (%q)",
+			codexAgent.Command, codexACPPath)
+	}
+	t.Logf("correct: codex agent detected with Command=%q", codexAgent.Command)
 }

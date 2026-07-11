@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential, type PendingPermission, type UploadResult, type EditorSelection } from '@/lib/api'
+import { api, getDeviceCredential, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential, type PendingPermission, type UploadResult, type EditorSelection } from '@/lib/api'
 import type { Attachment } from '@/types'
 
 /**
@@ -111,7 +111,17 @@ export function useBackend() {
   function connectWebSocket() {
     if (!mountedRef.current) return
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws`
+    // Attach device credentials as query params so the backend's WebSocket
+    // auth checker (sync.Hub.HandleWS) accepts the handshake from remote
+    // (LAN) devices. Loopback connections bypass auth, so the host browser
+    // works without these — but mobile/remote devices are rejected with 401
+    // unless deviceId+secret are present. The credential is read fresh on
+    // each connect so a newly-paired device doesn't need a page reload.
+    const cred = getDeviceCredential()
+    const wsParams = cred
+      ? `?deviceId=${encodeURIComponent(cred.id)}&secret=${encodeURIComponent(cred.secret)}`
+      : ''
+    const wsUrl = `${protocol}//${window.location.host}/ws${wsParams}`
 
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws

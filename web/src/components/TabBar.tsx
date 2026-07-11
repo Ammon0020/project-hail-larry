@@ -44,6 +44,32 @@ export function TabBar({
     return () => cancelAnimationFrame(id)
   }, [tabs.length])
 
+  // Automatically scroll the active tab into view when selected
+  useEffect(() => {
+    if (!activeTabId || !scrollRef.current) return
+    
+    // Defer to next tick to ensure newly added tabs are in the DOM and measured correctly
+    const timeoutId = setTimeout(() => {
+      const container = scrollRef.current
+      if (!container) return
+      
+      const el = container.querySelector(`[data-tab-id="${CSS.escape(activeTabId)}"]`) as HTMLElement
+      if (!el) return
+
+      const containerRect = container.getBoundingClientRect()
+      const elRect = el.getBoundingClientRect()
+
+      // Calculate scroll offset if element is outside the visible container bounds
+      if (elRect.left < containerRect.left) {
+        container.scrollBy({ left: elRect.left - containerRect.left - 20, behavior: 'smooth' })
+      } else if (elRect.right > containerRect.right) {
+        container.scrollBy({ left: elRect.right - containerRect.right + 20, behavior: 'smooth' })
+      }
+    }, 0)
+    
+    return () => clearTimeout(timeoutId)
+  }, [activeTabId, tabs.length])
+
   const scrollByTabs = (delta: number) => {
     const el = scrollRef.current
     if (!el) return
@@ -77,6 +103,7 @@ export function TabBar({
           return (
             <div
               key={tab.id}
+              data-tab-id={tab.id}
               className={cn(
                 'flex items-center gap-2 px-3 h-9 text-sm shrink-0 border-r border-background cursor-pointer select-none',
                 isActive

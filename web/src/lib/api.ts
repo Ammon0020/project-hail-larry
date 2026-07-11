@@ -12,13 +12,72 @@ export type { AppEvent }
 
 const API_BASE = '/api'
 
+/** localStorage key for the paired device credential (id + secret). */
+const DEVICE_CREDENTIAL_KEY = 'lai:deviceCredential'
+
+/**
+ * Reads the paired device credential from localStorage.
+ * Returns `{ id, secret }` or `null` when the device is not paired
+ * (e.g. before completing the lock-screen passcode flow). The credential
+ * is stored by LockScreen.tsx / useBackend.verifyPasscode after a successful
+ * pairing handshake.
+ */
+export function getDeviceCredential(): { id: string; secret: string } | null {
+  try {
+    const raw = localStorage.getItem(DEVICE_CREDENTIAL_KEY)
+    if (!raw) return null
+    const cred = JSON.parse(raw) as { id?: string; secret?: string }
+    if (!cred.id || !cred.secret) return null
+    return { id: cred.id, secret: cred.secret }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Builds the `Authorization: Bearer <deviceId>:<secret>` header value for
+ * the stored device credential, or `null` when no credential is stored.
+ * The backend's `requireAuth` middleware checks this header (or query params
+ * for WebSocket) on every non-pairing API route. Loopback connections bypass
+ * auth, so the host browser works without it — but remote (LAN) devices
+ * are rejected with 401 unless this header is present.
+ */
+function authHeader(): string | null {
+  const cred = getDeviceCredential()
+  if (!cred) return null
+  return `Bearer ${cred.id}:${cred.secret}`
+}
+
+/**
+ * Merges auth + caller headers into a single headers object. The auth header
+ * is only added when a credential exists AND the caller hasn't already set
+ * an Authorization header (e.g. for the pairing endpoints that run before
+ * pairing completes — no credential exists yet, so this is a no-op there).
+ */
+function withAuthHeaders(custom?: HeadersInit): HeadersInit {
+  const auth = authHeader()
+  const headers: Record<string, string> = {}
+  if (auth) headers['Authorization'] = auth
+  if (custom) {
+    // Flatten HeadersInit into a plain object so we can detect overrides.
+    if (custom instanceof Headers) {
+      custom.forEach((v, k) => { headers[k] = v })
+    } else if (Array.isArray(custom)) {
+      for (const [k, v] of custom) headers[k] = v
+    } else {
+      Object.assign(headers, custom)
+    }
+  }
+  return headers
+}
+
 /** Generic fetch wrapper with JSON parsing. */
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...options?.headers,
+      ...withAuthHeaders(options?.headers),
     },
   })
   if (!res.ok) {
@@ -243,6 +302,7 @@ export const api = {
     form.append('file', file)
     const res = await fetch(`${API_BASE}/sessions/${sessionId}/uploads`, {
       method: 'POST',
+      headers: withAuthHeaders(),
       body: form,
     })
     if (!res.ok) {
@@ -268,7 +328,9 @@ export const api = {
    *  filename is taken from the Content-Disposition header the server sets,
    *  falling back to `session-<id>.md` when the header is absent. */
   exportSession: async (sessionId: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/sessions/${sessionId}/export`)
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/export`, {
+      headers: withAuthHeaders(),
+    })
     if (!res.ok) {
       const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string }
       throw new Error(body.error || `HTTP ${res.status}`)
@@ -329,7 +391,9 @@ export const api = {
  *  round-trips — `apiFetch` would re-parse and lose the raw text. Mirrors
  *  `apiFetch`'s same-origin base URL and error handling. */
 export async function getMcpConfig(): Promise<string> {
-  const res = await fetch(`${API_BASE}/mcp`)
+  const res = await fetch(`${API_BASE}/mcp`, {
+    headers: withAuthHeaders(),
+  })
   if (!res.ok) {
     const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string }
     throw new Error(body.error || `HTTP ${res.status}`)

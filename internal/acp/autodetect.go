@@ -51,13 +51,17 @@ var knownAgents = []agentSpec{
 	{
 		id:   "codex",
 		name: "Codex CLI",
-		// Prefer the dedicated ACP bridge ("codex-acp") over the bare "codex"
-		// binary. On most machines the "codex" command is the OpenAI Codex CLI
-		// (an interactive TUI), not an ACP agent — spawning it with no args
-		// starts a TUI that hangs the probe. "codex-acp" is the standalone ACP
-		// adapter package; only fall back to "codex" if that bridge isn't
-		// installed (some installs wire the ACP entrypoint onto "codex" itself).
-		commands:       []string{"codex-acp", "codex"}, // prefer ACP bridge
+		// Only the dedicated ACP adapter ("codex-acp") speaks ACP over stdio.
+		// The bare "codex" command is the OpenAI Codex CLI — an interactive TUI
+		// that requires a TTY on stdin. Spawning it with pipes (as the ACP
+		// transport does) makes it exit immediately with "stdin is not a
+		// terminal", causing the ACP Initialize handshake to fail with "peer
+		// disconnected before response". The codex CLI has no "acp" subcommand;
+		// ACP support is provided solely by the separate @agentclientprotocol/
+		// codex-acp (or @zed-industries/codex-acp) npm package, which installs
+		// the "codex-acp" binary. Do NOT add "codex" as a fallback — it can
+		// never work as an ACP agent.
+		commands:       []string{"codex-acp"},
 		fallbackModels: []AgentModel{{ID: "gpt-4o", Name: "GPT-4o"}, {ID: "gpt-4-turbo", Name: "GPT-4 Turbo"}},
 		fileModels:     getCodexModelsFromFile,
 	},

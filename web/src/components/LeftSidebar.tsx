@@ -69,12 +69,12 @@ export function LeftSidebar({
       style={style}
     >
       {/* Workspace Switcher (mobile only, visible at the very top) */}
-      <div className="lg:hidden p-3 border-b border-border shrink-0">
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Workspace</label>
+      <div className="lg:hidden p-3 border-b border-border shrink-0 flex flex-col gap-3">
+        {/* Online Indicator (Top Left) */}
+        <div className="flex items-start">
           <div
             className={cn(
-              'flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border',
+              'flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border',
               connected
                 ? 'text-green-400 bg-green-400/10 border-green-500/20'
                 : 'text-muted-foreground bg-muted/40 border-border',
@@ -83,28 +83,30 @@ export function LeftSidebar({
           >
             {connected ? (
               <>
-                <Wifi className="w-3 h-3" /> Online
+                <Wifi className="w-4 h-4" /> Online
               </>
             ) : (
               <>
-                <WifiOff className="w-3 h-3 animate-pulse" /> Offline
+                <WifiOff className="w-4 h-4 animate-pulse" /> Offline
               </>
             )}
           </div>
         </div>
+
+        {/* Workspace Selector (Below Online Indicator) */}
         <div className="relative">
           <button
             onClick={() => setShowWorkspaceDropdown(!showWorkspaceDropdown)}
-            className="w-full bg-background border border-input rounded-lg p-2 flex items-center justify-between hover:border-muted-foreground transition shadow-sm"
+            className="w-full bg-background border border-input rounded-md px-3 py-2 flex items-center justify-between hover:border-muted-foreground transition shadow-sm"
             aria-label="Switch workspace"
             aria-expanded={showWorkspaceDropdown}
             aria-haspopup="listbox"
           >
-            <div className="flex items-center gap-2 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0">
               <FolderCode className="w-4 h-4 text-primary shrink-0" />
               <span className="truncate text-xs font-medium">{activeWorkspace?.name || 'No workspace'}</span>
             </div>
-            <ChevronsUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0" />
           </button>
           
           {/* Dropdown Menu */}
