@@ -100,8 +100,10 @@ type Attachment struct {
 	// ACP ImageBlock.Uri or ResourceLinkBlock.Uri.
 	URI string `json:"uri,omitempty"`
 	// Path is the absolute on-disk path, included in the text fallback so the
-	// agent can read the file directly. Not serialized to the frontend.
-	Path string `json:"-"`
+	// agent can read the file directly. Persisted to SQLite so it survives
+	// reload, but omitted from JSON when empty (the frontend ignores it
+	// regardless — it builds serving URLs from the upload ID).
+	Path string `json:"path,omitempty"`
 }
 
 // EventStore is the contract for the event persistence layer.

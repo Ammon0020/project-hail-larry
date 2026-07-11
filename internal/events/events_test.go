@@ -201,6 +201,54 @@ func TestAppendToolEvent(t *testing.T) {
 	}
 }
 
+// TestAppendAttachmentsEvent verifies attachments survive the append→query
+// round-trip with all fields intact (ID, Name, MimeType, Path).
+func TestAppendAttachmentsEvent(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	_, err := store.Append(ctx, interfaces.Event{
+		Type:      interfaces.EventPromptSubmitted,
+		SessionID: "s1",
+		Role:      "user",
+		Content:   "see attached",
+		Attachments: []interfaces.Attachment{{
+			ID:       "abc123def456",
+			Name:     "test.png",
+			MimeType: "image/png",
+			Path:     "/some/path",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("append attachments event: %v", err)
+	}
+
+	events, err := store.Query(ctx, "s1", 0, 100)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if len(events[0].Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(events[0].Attachments))
+	}
+
+	a := events[0].Attachments[0]
+	if a.ID != "abc123def456" {
+		t.Errorf("expected ID 'abc123def456', got %q", a.ID)
+	}
+	if a.Name != "test.png" {
+		t.Errorf("expected Name 'test.png', got %q", a.Name)
+	}
+	if a.MimeType != "image/png" {
+		t.Errorf("expected MimeType 'image/png', got %q", a.MimeType)
+	}
+	if a.Path != "/some/path" {
+		t.Errorf("expected Path '/some/path', got %q", a.Path)
+	}
+}
+
 // TestAppendPermissionEvent verifies permission-specific fields are persisted.
 func TestAppendPermissionEvent(t *testing.T) {
 	store := newTestStore(t)

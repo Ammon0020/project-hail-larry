@@ -49,7 +49,7 @@
 - [x] **Live agent change detection in editor** — Implemented (Blueprint Sec 14). Clean open tabs auto-refresh from disk on change; tabs with unsaved edits show a "changed on disk" banner + Reload (resolution otherwise on save via the existing three-way merge). Covers both agent writes (`FileWritten`) and external edits (new `EventFileChangedOnDisk` from the `internal/fswatch` fsnotify watcher, which suppresses the app's own writes). See Recent Fixes (2026-07-06).
 - [x] **Remaining review findings** — All 8 previously-deferred `web-*` frontend findings are now fixed (see Recent Fixes 2026-07-06): app-side-effect-during-render, chatpanel-agent-model-restore-race, dark-mode-js-class-no-light-theme, dead-ui-mobilesettings-theme-toggle, eslint-disable-exhaustive-deps-blanket, event-log-unbounded-growth, raw-palette-colors-not-semantic-tokens, shadcn-components-not-used. All 25 review findings are now resolved.
 
-  Done earlier (moved to `implemented/`): `go-core-config-data-race`, `go-core-pair-initiate-swallows-decode-error`, `go-permissions-audit-log-unbounded`, `go-permissions-clearsession-no-cancel`.
+  Done earlier: `go-core-config-data-race`, `go-core-pair-initiate-swallows-decode-error`, `go-permissions-audit-log-unbounded`, `go-permissions-clearsession-no-cancel`.
 
 ### Lower Priority / Future
 

@@ -3,7 +3,7 @@
 Gaps and deferred work tracked from review passes. Each entry is a one-line
 note so the next agent can pick it up without re-reading the full review file.
 
-## Web frontend — deferred review findings (from `review/2026-06-27/`)
+## Web frontend — deferred review findings (from `docs/reviews/2026-07-06/`)
 
 RESOLVED (2026-07-06). All 8 previously-deferred `web-*` findings have been
 fixed as part of the light-theme + shadcn foundation work — see

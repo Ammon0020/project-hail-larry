@@ -34,13 +34,13 @@ func (m *Manager) getLastSeen(deviceID string) time.Time {
 
 // pairDevice is a small helper that creates a session and pairs a device,
 // returning the issued credential.
-func pairDevice(t *testing.T, m *Manager, name string) *DeviceCredential {
+func pairDevice(t *testing.T, m *Manager) *DeviceCredential {
 	t.Helper()
 	session, err := m.CreateSession("localhost", 7337)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	cred, err := m.VerifyPasscode(session.Passcode, name)
+	cred, err := m.VerifyPasscode(session.Passcode, "Device")
 	if err != nil {
 		t.Fatalf("verify passcode: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestListDevices(t *testing.T) {
 func TestValidateCredentialRenewsWithinWindow(t *testing.T) {
 	m := newTestManager(t)
 	m.SetInactivityTTL(time.Hour)
-	cred := pairDevice(t, m, "Device")
+	cred := pairDevice(t, m)
 
 	// Push LastSeen back to just inside the window, then validate. The
 	// validation should succeed and renew LastSeen to (approximately) now.
@@ -258,7 +258,7 @@ func TestValidateCredentialRenewsWithinWindow(t *testing.T) {
 func TestValidateCredentialExpiresAfterInactivity(t *testing.T) {
 	m := newTestManager(t)
 	m.SetInactivityTTL(time.Hour)
-	cred := pairDevice(t, m, "Device")
+	cred := pairDevice(t, m)
 
 	// Simulate inactivity well beyond the TTL.
 	m.setLastSeen(cred.ID, time.Now().UTC().Add(-2*time.Hour))
@@ -281,7 +281,7 @@ func TestValidateCredentialExpiresAfterInactivity(t *testing.T) {
 func TestValidateCredentialSlidingWindow(t *testing.T) {
 	m := newTestManager(t)
 	m.SetInactivityTTL(200 * time.Millisecond)
-	cred := pairDevice(t, m, "Device")
+	cred := pairDevice(t, m)
 
 	// Validate at t=0 — renews LastSeen to now.
 	if !m.ValidateCredential(cred.ID, cred.Secret) {
@@ -305,7 +305,7 @@ func TestValidateCredentialDisabledNeverExpires(t *testing.T) {
 	m := newTestManager(t)
 	// Default TTL is 0 (disabled); be explicit for clarity.
 	m.SetInactivityTTL(0)
-	cred := pairDevice(t, m, "Device")
+	cred := pairDevice(t, m)
 
 	m.setLastSeen(cred.ID, time.Now().UTC().Add(-100*24*time.Hour)) // 100 days idle
 
@@ -354,7 +354,7 @@ func TestLoadDevicesMigratesLastSeen(t *testing.T) {
 // LastSeen initialized (non-zero) so it starts with a full window.
 func TestNewCredentialSeedsLastSeen(t *testing.T) {
 	m := newTestManager(t)
-	cred := pairDevice(t, m, "Device")
+	cred := pairDevice(t, m)
 	if m.getLastSeen(cred.ID).IsZero() {
 		t.Error("expected newly issued credential to have a non-zero LastSeen")
 	}

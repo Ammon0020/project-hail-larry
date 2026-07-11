@@ -211,8 +211,8 @@ func New(cfg *Config) (*Daemon, error) {
 	acpClient.SetConversationTransfer(conversationTransfer)
 	// Persist conversation metadata so chats are remembered across restarts.
 	acpClient.SetStorePath(filepath.Join(cfg.DataDir, "conversations.json"))
-	if err := acpClient.LoadConversations(); err != nil {
-		log.Printf("WARNING: failed to load conversations: %v", err)
+	if loadErr := acpClient.LoadConversations(); loadErr != nil {
+		log.Printf("WARNING: failed to load conversations: %v", loadErr)
 	}
 	syncHub := sync.NewHub()
 
@@ -222,7 +222,7 @@ func New(cfg *Config) (*Daemon, error) {
 	// Verify executables and register
 	for i := range activeAgents {
 		// Use acp.AgentInfo struct defined in acp.go
-		if _, err := os.Stat(activeAgents[i].Command); err != nil {
+		if _, statErr := os.Stat(activeAgents[i].Command); statErr != nil {
 			// fallback to LookPath
 			if _, lpErr := exec.LookPath(activeAgents[i].Command); lpErr != nil {
 				activeAgents[i].Warning = "Executable not found in PATH"
