@@ -1,0 +1,326 @@
+// Package mcp manages persistent MCP (Model Context Protocol) server
+// configuration for the Local Agent Interface.
+//
+// Config is stored as a Claude Desktop–compatible `mcpServers` map wrapped in a
+// small envelope that carries `enabled` flags and a schema version. The file
+// lives at `~/.local-agent/mcp.json` (the same base dir as config.json). On the
+// wire to ACP we translate each enabled entry to an `acp.McpServer`, expanding
+// `${VAR}` environment references against `os.Getenv` at that point so secrets
+// can be kept out of the config file.
+//
+// Blueprint references: docs/research/mcp-config-design.md.
+package mcp
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/coder/acp-go-sdk"
+)
+
+const (
+	// appDataDirPerm matches internal/config: the data dir is private to the
+	// current user and may contain secrets (env values, bearer tokens).
+	appDataDirPerm = 0o700
+	// configFilePerm matches internal/config: the file may contain secrets, so
+	// it is readable/writable only by the owner.
+	configFilePerm = 0o600
+	// CurrentVersion is the on-disk envelope version this build understands.
+	// Bump (and add a migration) when the envelope shape changes.
+	CurrentVersion = 1
+)
+
+// ServerConfig is our on-disk representation of one MCP server entry. It is a
+// superset of the Claude Desktop / Cursor / Windsurf shape: the per-server
+// object is byte-for-byte copy/paste compatible with those editors, and we add
+// an optional `enabled` flag (nil => enabled) plus optional `cwd` for stdio.
+//
+// The `Env` and `Headers` fields use the Claude-style `{"K":"V"}` map shape on
+// disk; translation to ACP's `[]EnvVariable` / `[]HttpHeader` array shape
+// happens in ToACP at session-start time.
+type ServerConfig struct {
+	// Type selects the transport. "http" | "sse" | "stdio". Empty defaults to
+	// "stdio" (the Claude Desktop convention: no `type` field means stdio).
+	Type    string            `json:"type,omitempty"`
+	Command string            `json:"command,omitempty"` // stdio
+	Args    []string          `json:"args,omitempty"`    // stdio
+	Env     map[string]string `json:"env,omitempty"`     // stdio (Claude-style map)
+	Cwd     string            `json:"cwd,omitempty"`     // stdio (optional)
+	URL     string            `json:"url,omitempty"`     // http/sse
+	Headers map[string]string `json:"headers,omitempty"` // http/sse
+	// Enabled gates whether the server is sent to ACP. nil => enabled (default
+	// on, so a freshly pasted Claude Desktop config — which omits this field —
+	// activates every entry without the user having to flip each one).
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// File is the on-disk envelope for mcp.json.
+//
+//   - `$schema` powers editor autocomplete for users who open the file in VS Code.
+//   - `version` lets us migrate the envelope shape later.
+//   - `mcpServers` is the Claude Desktop–compatible map keyed by server name.
+type File struct {
+	Schema     string                  `json:"$schema,omitempty"`
+	Version    int                     `json:"version"`
+	McpServers map[string]ServerConfig `json:"mcpServers"`
+}
+
+// NewFile returns an empty, valid File (Version set, McpServers initialized)
+// suitable for first-write or for callers that want a non-nil placeholder.
+func NewFile() *File {
+	return &File{
+		Version:    CurrentVersion,
+		McpServers: map[string]ServerConfig{},
+	}
+}
+
+// Load reads the MCP config from the given path. A missing file is not an
+// error: an empty File (Version=1, empty McpServers map) is returned so
+// callers can treat "no config yet" and "empty config" uniformly. Any other
+// read or parse error is returned to the caller.
+func Load(path string) (*File, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // path is constructed by the caller from a trusted base dir.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return NewFile(), nil
+		}
+		return nil, fmt.Errorf("read mcp config: %w", err)
+	}
+
+	f := NewFile()
+	if err := json.Unmarshal(data, f); err != nil {
+		return nil, fmt.Errorf("parse mcp config: %w", err)
+	}
+	if f.McpServers == nil {
+		f.McpServers = map[string]ServerConfig{}
+	}
+	return f, nil
+}
+
+// Save writes the MCP config to the given path atomically (temp file + rename)
+// so a crashed write never leaves a half-written config. The parent directory
+// is created with mode 0700 if missing, and the file is written with mode 0600
+// because it may contain secrets (env values, bearer tokens).
+func Save(path string, f *File) error {
+	if f == nil {
+		return fmt.Errorf("save mcp config: nil file")
+	}
+	if f.McpServers == nil {
+		// Avoid serializing `"mcpServers":null` — round-trip should be stable.
+		f.McpServers = map[string]ServerConfig{}
+	}
+	if f.Version == 0 {
+		f.Version = CurrentVersion
+	}
+
+	data, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal mcp config: %w", err)
+	}
+
+	if err := WriteFileAtomic(path, data, configFilePerm); err != nil {
+		return fmt.Errorf("write mcp config: %w", err)
+	}
+	return nil
+}
+
+// WriteFileAtomic writes data to path atomically (temp file in the same
+// directory + MkdirAll + Chmod + rename) so a crashed write never leaves a
+// half-written file. The parent directory is created with mode 0700 if
+// missing; the file is written with the given perm (0600 for mcp.json, which
+// may contain secrets). The temp file lives in the same directory so the
+// rename is guaranteed to be on the same filesystem. Exported so the server
+// package can share it (e.g. PUT /api/mcp writes raw request bytes verbatim
+// through this helper to preserve the user's exact formatting).
+func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, appDataDirPerm); err != nil {
+		return fmt.Errorf("create dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".mcp.json.*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup if any step below fails before the rename succeeds.
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename into place: %w", err)
+	}
+	return nil
+}
+
+// Enabled returns a map containing only the enabled servers from f. A server
+// with Enabled == nil is treated as enabled (the default-on convention), so a
+// freshly pasted Claude Desktop config activates every entry. Servers with
+// Enabled == &false are dropped.
+func Enabled(f *File) map[string]ServerConfig {
+	out := make(map[string]ServerConfig, len(f.McpServers))
+	for name, cfg := range f.McpServers {
+		if cfg.Enabled != nil && !*cfg.Enabled {
+			continue
+		}
+		out[name] = cfg
+	}
+	return out
+}
+
+// envVarRe matches ${VAR} references for env expansion. It matches the longest
+// legal env-var name (letters, digits, underscore; must start with a letter or
+// underscore) so ${API_KEY}_suffix is expanded correctly.
+var envVarRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// expandEnv replaces ${VAR} references in s with os.Getenv(VAR). Unknown
+// variables expand to the empty string (matching Claude Code/Cursor behavior).
+// This is applied at session-start time so secrets can be kept out of mcp.json.
+func expandEnv(s string) string {
+	return envVarRe.ReplaceAllStringFunc(s, func(m string) string {
+		name := m[2 : len(m)-1] // strip ${ and }
+		return os.Getenv(name)
+	})
+}
+
+// ToACP translates one ServerConfig to an acp.McpServer ready to be sent on
+// session/new or session/load. The transport is selected by cfg.Type:
+//
+//   - "http"  => McpServerHttpInline (requires mcp_capabilities.http on the agent)
+//   - "sse"   => McpServerSseInline  (requires mcp_capabilities.sse on the agent)
+//   - "stdio" (or empty) => McpServerStdio (always supported)
+//
+// ${VAR} env references in Command, Args, Env values, Url, and Header values
+// are expanded against os.Getenv at this point. The Claude-style Env map and
+// Headers map are translated to ACP's []EnvVariable / []HttpHeader array shape.
+// Returns an error for an unknown Type.
+func ToACP(name string, cfg ServerConfig) (acp.McpServer, error) {
+	switch strings.ToLower(cfg.Type) {
+	case "", "stdio":
+		env := make([]acp.EnvVariable, 0, len(cfg.Env))
+		// Sort keys for deterministic wire output (stable diffs in tests/logs).
+		keys := make([]string, 0, len(cfg.Env))
+		for k := range cfg.Env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			env = append(env, acp.EnvVariable{
+				Name:  k,
+				Value: expandEnv(cfg.Env[k]),
+			})
+		}
+		args := make([]string, len(cfg.Args))
+		for i, a := range cfg.Args {
+			args[i] = expandEnv(a)
+		}
+		return acp.McpServer{
+			Stdio: &acp.McpServerStdio{
+				Name:    name,
+				Command: expandEnv(cfg.Command),
+				Args:    args,
+				Env:     env,
+			},
+		}, nil
+
+	case "http":
+		return acp.McpServer{
+			Http: &acp.McpServerHttpInline{
+				Name:    name,
+				Type:    "http",
+				Url:     expandEnv(cfg.URL),
+				Headers: headersToACP(cfg.Headers),
+			},
+		}, nil
+
+	case "sse":
+		return acp.McpServer{
+			Sse: &acp.McpServerSseInline{
+				Name:    name,
+				Type:    "sse",
+				Url:     expandEnv(cfg.URL),
+				Headers: headersToACP(cfg.Headers),
+			},
+		}, nil
+
+	default:
+		return acp.McpServer{}, fmt.Errorf("mcp server %q: unknown type %q (want http, sse, or stdio)", name, cfg.Type)
+	}
+}
+
+// headersToACP translates a Claude-style {name: value} headers map to ACP's
+// []HttpHeader array shape, expanding ${VAR} references in values. Keys are
+// sorted for deterministic wire output.
+func headersToACP(headers map[string]string) []acp.HttpHeader {
+	out := make([]acp.HttpHeader, 0, len(headers))
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		out = append(out, acp.HttpHeader{
+			Name:  k,
+			Value: expandEnv(headers[k]),
+		})
+	}
+	return out
+}
+
+// ToACPSlice translates every enabled server in f to an []acp.McpServer,
+// filtering by the agent's advertised McpCapabilities. stdio servers are
+// always included (the ACP spec requires every agent to support stdio). http
+// servers are dropped unless caps.Http is true; sse servers are dropped unless
+// caps.Sse is true. Servers are emitted in deterministic (sorted-by-name) order
+// so the wire payload is stable across runs.
+//
+// Errors from individual ToACP translations are aggregated: a single bad entry
+// (e.g. unknown type) causes the whole call to fail rather than silently
+// dropping a server the user configured. The caller should log the error and
+// fall back to an empty server list rather than sending a partial one.
+func ToACPSlice(f *File, caps acp.McpCapabilities) ([]acp.McpServer, error) {
+	enabled := Enabled(f)
+	names := make([]string, 0, len(enabled))
+	for name := range enabled {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]acp.McpServer, 0, len(names))
+	for _, name := range names {
+		cfg := enabled[name]
+		switch strings.ToLower(cfg.Type) {
+		case "http":
+			if !caps.Http {
+				continue
+			}
+		case "sse":
+			if !caps.Sse {
+				continue
+			}
+		case "", "stdio":
+			// Always supported per ACP spec.
+		default:
+			return nil, fmt.Errorf("mcp server %q: unknown type %q", name, cfg.Type)
+		}
+		srv, err := ToACP(name, cfg)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, srv)
+	}
+	return out, nil
+}

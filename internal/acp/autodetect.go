@@ -49,9 +49,15 @@ var knownAgents = []agentSpec{
 		fallbackModels: []AgentModel{{ID: "claude-3-5-sonnet-20240620", Name: "Claude 3.5 Sonnet"}, {ID: "claude-3-opus-20240229", Name: "Claude 3 Opus"}},
 	},
 	{
-		id:             "codex",
-		name:           "Codex CLI",
-		commands:       []string{"codex"},
+		id:   "codex",
+		name: "Codex CLI",
+		// Prefer the dedicated ACP bridge ("codex-acp") over the bare "codex"
+		// binary. On most machines the "codex" command is the OpenAI Codex CLI
+		// (an interactive TUI), not an ACP agent — spawning it with no args
+		// starts a TUI that hangs the probe. "codex-acp" is the standalone ACP
+		// adapter package; only fall back to "codex" if that bridge isn't
+		// installed (some installs wire the ACP entrypoint onto "codex" itself).
+		commands:       []string{"codex-acp", "codex"}, // prefer ACP bridge
 		fallbackModels: []AgentModel{{ID: "gpt-4o", Name: "GPT-4o"}, {ID: "gpt-4-turbo", Name: "GPT-4 Turbo"}},
 		fileModels:     getCodexModelsFromFile,
 	},
@@ -256,9 +262,14 @@ func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, command, args...) //nolint:gosec // command comes from the trusted known-agents registry, not user input
-	// Discard stderr — autodetect is a probe, not a real session.
-	// Agent stderr (e.g. "stdin is not a terminal") should not pollute daemon output.
-	cmd.Stderr = io.Discard
+	// Capture stderr into a bounded ring buffer instead of discarding it. The
+	// probe still doesn't stream agent stderr to daemon output, but retaining
+	// the tail lets us include it in the warning string when the probe fails,
+	// so users can see *why* a detected agent failed the ACP handshake (e.g.
+	// "stdin is not a terminal", missing auth, wrong subcommand) instead of a
+	// bare "initialize failed".
+	stderrBuf := newRingBuffer(4 << 10) // 4 KiB tail
+	cmd.Stderr = stderrBuf
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Sprintf("open stdin pipe: %v", err)
@@ -273,6 +284,17 @@ func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 	}
 	defer cleanupAutodetectProcess(cmd, stdin)
 
+	// withStderr appends the captured agent stderr tail to a warning when
+	// present, so failure diagnostics explain *why* the probe failed rather
+	// than just naming the failing step. It is only meaningful after the
+	// process has started (earlier failures can't have produced stderr).
+	withStderr := func(warning string) string {
+		if tail := strings.TrimSpace(stderrBuf.String()); tail != "" {
+			return fmt.Sprintf("%s (agent stderr: %s)", warning, tail)
+		}
+		return warning
+	}
+
 	client := acp.NewClientSideConnection(&dummyClientImpl{}, stdin, stdout)
 	// Suppress ACP SDK diagnostic logging (e.g. "connection closed") during probing.
 	client.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -285,8 +307,7 @@ func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 		return nil, warning
 	}
 	if _, err = client.Initialize(ctx, initReq); err != nil {
-		warning := fmt.Sprintf("initialize failed: %v", err)
-		return nil, warning
+		return nil, withStderr(fmt.Sprintf("initialize failed: %v", err))
 	}
 
 	listReq := acp.UnstableListProvidersRequest{}
@@ -296,8 +317,7 @@ func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 	}
 	listRes, err := client.UnstableListProviders(ctx, listReq)
 	if err != nil {
-		warning := fmt.Sprintf("providers/list failed: %v", err)
-		return nil, warning
+		return nil, withStderr(fmt.Sprintf("providers/list failed: %v", err))
 	}
 
 	models := make([]AgentModel, 0, len(listRes.Providers))

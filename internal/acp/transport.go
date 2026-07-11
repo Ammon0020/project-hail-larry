@@ -31,6 +31,21 @@ type acpClientImpl struct {
 	terminals map[string]*terminalEntry
 }
 
+// emitStreamUpdate emits an agent StreamUpdate event with streaming=true.
+// `thought` distinguishes agent reasoning (thought chunks) from regular
+// message chunks. Used by SessionUpdate for the AgentMessageChunk and
+// AgentThoughtChunk update kinds, which differ only in the Thought flag.
+func (c *acpClientImpl) emitStreamUpdate(content string, thought bool) {
+	c.emit(interfaces.Event{
+		Type:      interfaces.EventStreamUpdate,
+		SessionID: c.sessionID,
+		Role:      "agent",
+		Content:   content,
+		Streaming: true,
+		Thought:   thought,
+	})
+}
+
 func (c *acpClientImpl) SessionUpdate(_ context.Context, params acp.SessionNotification) error {
 	u := params.Update
 	if c.callbacks == nil {
@@ -40,24 +55,11 @@ func (c *acpClientImpl) SessionUpdate(_ context.Context, params acp.SessionNotif
 	switch {
 	case u.AgentMessageChunk != nil:
 		if u.AgentMessageChunk.Content.Text != nil {
-			c.callbacks.OnEvent(interfaces.Event{
-				Type:      interfaces.EventStreamUpdate,
-				SessionID: c.sessionID,
-				Role:      "agent",
-				Content:   u.AgentMessageChunk.Content.Text.Text,
-				Streaming: true,
-			})
+			c.emitStreamUpdate(u.AgentMessageChunk.Content.Text.Text, false)
 		}
 	case u.AgentThoughtChunk != nil:
 		if u.AgentThoughtChunk.Content.Text != nil {
-			c.callbacks.OnEvent(interfaces.Event{
-				Type:      interfaces.EventStreamUpdate,
-				SessionID: c.sessionID,
-				Role:      "agent",
-				Content:   u.AgentThoughtChunk.Content.Text.Text,
-				Streaming: true,
-				Thought:   true,
-			})
+			c.emitStreamUpdate(u.AgentThoughtChunk.Content.Text.Text, true)
 		}
 	case u.ToolCall != nil:
 		target := ""
@@ -241,6 +243,18 @@ func (c *acpClientImpl) RequestPermission(ctx context.Context, params acp.Reques
 	}, nil
 }
 
+// permissionTitleKindLabels maps an ACP tool kind to a human-readable action
+// label, used by permissionTitleFromKind when the agent did not supply a
+// Title in its permission request.
+var permissionTitleKindLabels = map[string]string{
+	"execute": "Run command",
+	"edit":    "Edit file",
+	"read":    "Read file",
+	"search":  "Search",
+	"delete":  "Delete file",
+	"move":    "Move file",
+}
+
 // permissionTitleFromKind synthesizes a human-readable action label from an
 // ACP tool kind when the agent did not supply a Title in its permission
 // request. This prevents the raw ToolCallId (an opaque ID like "muNNhDHjd")
@@ -249,22 +263,10 @@ func permissionTitleFromKind(kind *acp.ToolKind) string {
 	if kind == nil {
 		return "Tool call"
 	}
-	switch string(*kind) {
-	case "execute":
-		return "Run command"
-	case "edit":
-		return "Edit file"
-	case "read":
-		return "Read file"
-	case "search":
-		return "Search"
-	case "delete":
-		return "Delete file"
-	case "move":
-		return "Move file"
-	default:
-		return "Tool call"
+	if label, ok := permissionTitleKindLabels[string(*kind)]; ok {
+		return label
 	}
+	return "Tool call"
 }
 
 // Patterns used by looksLikeRawID to recognize opaque generated identifiers.
@@ -377,14 +379,12 @@ func (c *acpClientImpl) WriteTextFile(ctx context.Context, params acp.WriteTextF
 	// Broadcast a file-written event so the frontend can refresh its file tree
 	// and show the newly created/modified file without a manual reload. The
 	// workspace ID lets the UI refresh only the affected workspace's tree.
-	if c.callbacks != nil {
-		c.callbacks.OnEvent(interfaces.Event{
-			Type:        interfaces.EventFileWritten,
-			SessionID:   c.sessionID,
-			WorkspaceID: c.workspaceID,
-			Target:      relPath,
-		})
-	}
+	c.emit(interfaces.Event{
+		Type:        interfaces.EventFileWritten,
+		SessionID:   c.sessionID,
+		WorkspaceID: c.workspaceID,
+		Target:      relPath,
+	})
 	return acp.WriteTextFileResponse{}, nil
 }
 
@@ -400,6 +400,20 @@ type Transport struct {
 	// during Initialize. Prompt consults promptCaps.Image to decide whether
 	// to send inline image blocks or fall back to resource links + text.
 	promptCaps acp.PromptCapabilities
+	// mcpServers holds the MCP servers to pass to the agent on session/new and
+	// session/load. It is set by the Client (startTransportLocked) after
+	// Initialize returns the agent's McpCapabilities, so the list is already
+	// filtered to transports the agent advertised support for. nil/empty means
+	// "no MCP servers" (the pre-MCP-config behavior).
+	mcpServers []acp.McpServer
+}
+
+// SetMcpServers sets the MCP server list to pass on the next NewSession /
+// LoadSession call. The Client calls this after Initialize so the list can be
+// filtered against the agent's advertised McpCapabilities before any session
+// RPC is made. It is safe to call before Start; the slice is copied.
+func (t *Transport) SetMcpServers(servers []acp.McpServer) {
+	t.mcpServers = append(t.mcpServers[:0:0], servers...)
 }
 
 // NewTransport returns a new Transport that manages a single agent process
@@ -485,7 +499,13 @@ func (t *Transport) Initialize(ctx context.Context) (acp.InitializeResponse, err
 func (t *Transport) NewSession(ctx context.Context, cwd string) (string, error) {
 	req := acp.NewSessionRequest{
 		Cwd:        cwd,
-		McpServers: []acp.McpServer{},
+		McpServers: t.mcpServers,
+	}
+	// The SDK's Validate rejects a nil McpServers slice ("mcpServers is
+	// required"), so normalize nil to an empty slice. SetMcpServers leaves a
+	// nil slice when never called; this keeps the pre-MCP-config path valid.
+	if req.McpServers == nil {
+		req.McpServers = []acp.McpServer{}
 	}
 	if err := req.Validate(); err != nil {
 		return "", fmt.Errorf("validate new session request: %w", err)
@@ -507,7 +527,12 @@ func (t *Transport) LoadSession(ctx context.Context, acpSessionID string) (strin
 	req := acp.LoadSessionRequest{
 		SessionId:  acp.SessionId(acpSessionID),
 		Cwd:        t.cwd,
-		McpServers: []acp.McpServer{},
+		McpServers: t.mcpServers,
+	}
+	// The SDK's Validate rejects a nil McpServers slice ("mcpServers is
+	// required"), so normalize nil to an empty slice.
+	if req.McpServers == nil {
+		req.McpServers = []acp.McpServer{}
 	}
 	if err := req.Validate(); err != nil {
 		return "", fmt.Errorf("validate load session request: %w", err)

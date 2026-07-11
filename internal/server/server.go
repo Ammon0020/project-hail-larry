@@ -40,6 +40,11 @@ type Deps struct {
 	Config           *config.Config
 	OpenFilesTracker *acp.OpenFilesTracker
 	Uploads          *uploads.Manager
+	// McpConfigPath is the path to mcp.json (typically
+	// ~/.local-agent/mcp.json). The /api/mcp endpoints read/write this file;
+	// the ACP client loads it at session start. Empty disables the MCP REST
+	// API (handlers return 503) and the client passes no MCP servers.
+	McpConfigPath string
 }
 
 // Server is the main HTTP server for the Local Agent Interface.
@@ -157,6 +162,13 @@ func (s *Server) apiRoutes() {
 	// Permission routes — require auth.
 	s.mux.HandleFunc("GET /api/permissions/pending", s.requireAuth(s.handlePendingPermissions))
 	s.mux.HandleFunc("POST /api/permissions/{id}/respond", s.requireAuth(s.handleRespondPermission))
+
+	// MCP server config routes — require auth. The MCP config is a separate
+	// mcp.json file (Claude Desktop–compatible) edited as raw JSON by the
+	// frontend so formatting/comments survive round-trips.
+	s.mux.HandleFunc("GET /api/mcp", s.requireAuth(s.handleGetMcp))
+	s.mux.HandleFunc("PUT /api/mcp", s.requireAuth(s.handlePutMcp))
+	s.mux.HandleFunc("PATCH /api/mcp/servers/{name}", s.requireAuth(s.handlePatchMcpServer))
 
 	// WebSocket endpoint — auth is enforced inside HandleWS via the hub's
 	// AuthChecker (browsers cannot set headers on the WS handshake, so the

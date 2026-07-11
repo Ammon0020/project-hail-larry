@@ -210,6 +210,12 @@ func New(cfg *Config) (*Daemon, error) {
 	// exported transcript for the new agent's first prompt).
 	acpClient.SetEventStore(eventStore)
 	acpClient.SetConversationTransfer(conversationTransfer)
+	// MCP server config: load ~/.local-agent/mcp.json at session start and
+	// pass the enabled, capability-filtered server list to the agent on
+	// session/new and session/load. The same path is exposed to the server for
+	// the /api/mcp REST endpoints.
+	mcpConfigPath := filepath.Join(cfg.DataDir, "mcp.json")
+	acpClient.SetMcpConfigPath(mcpConfigPath)
 	// Persist conversation metadata so chats are remembered across restarts.
 	acpClient.SetStorePath(filepath.Join(cfg.DataDir, "conversations.json"))
 	if loadErr := acpClient.LoadConversations(); loadErr != nil {
@@ -261,6 +267,7 @@ func New(cfg *Config) (*Daemon, error) {
 		Config:           appCfg,
 		OpenFilesTracker: openFilesTracker,
 		Uploads:          uploadsMgr,
+		McpConfigPath:    mcpConfigPath,
 	})
 
 	// Filesystem watcher: detect external file changes (edits made outside the

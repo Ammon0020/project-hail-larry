@@ -13,12 +13,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/adama/local-agent/internal/interfaces"
+	"github.com/adama/local-agent/internal/mcp"
 	"github.com/coder/acp-go-sdk"
 )
 
@@ -42,6 +44,12 @@ type Client struct {
 	// into the first prompt of a rebound session. Optional; when nil
 	// RebindSession skips the export/queue step.
 	transfer *ConversationTransferMiddleware
+	// mcpConfigPath is the path to mcp.json (typically
+	// ~/.local-agent/mcp.json). When set, startTransportLocked loads it after
+	// Initialize and passes the enabled, capability-filtered server list to
+	// the agent on session/new and session/load. When empty, no MCP servers are
+	// passed (the pre-MCP-config behavior).
+	mcpConfigPath string
 }
 
 // AgentInfo describes a registered agent harness.
@@ -125,6 +133,17 @@ func (c *Client) SetCallbacks(cb interfaces.ACPCallbacks) {
 	c.callbacks = cb
 }
 
+// emit forwards an event to the registered callbacks, if any. Safe to call
+// while holding c.mu (the common case) — it only reads c.callbacks, which is
+// mutated under the same lock. Callers that emit outside the lock (e.g.
+// SendPrompt's detached goroutine) capture callbacks into a local variable
+// first and call it directly rather than via this helper.
+func (c *Client) emit(ev interfaces.Event) {
+	if c.callbacks != nil {
+		c.callbacks.OnEvent(ev)
+	}
+}
+
 // SetPipeline installs a prompt middleware pipeline. When set, SendPrompt runs
 // the pipeline before each prompt and prepends any injected context to the
 // prompt content sent to the agent (and to the PromptSubmitted event). When
@@ -154,6 +173,35 @@ func (c *Client) SetConversationTransfer(m *ConversationTransferMiddleware) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.transfer = m
+}
+
+// SetMcpConfigPath configures the path to mcp.json. When set, the client loads
+// MCP server config from this file at session start (after Initialize returns
+// the agent's McpCapabilities) and passes the enabled, capability-filtered
+// server list to the agent on session/new and session/load. When empty (the
+// default), no MCP servers are passed. The path is typically
+// ~/.local-agent/mcp.json and is wired by the daemon.
+func (c *Client) SetMcpConfigPath(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.mcpConfigPath = path
+}
+
+// loadMcpServersLocked reads mcp.json and returns the enabled, capability-
+// filtered MCP server list. The caller must hold c.mu (it reads c.mcpConfigPath
+// and is invoked from startTransportLocked). A missing file returns an empty
+// list with no error; any other read/parse/translation error is returned so
+// the caller can log it and continue without MCP servers.
+func (c *Client) loadMcpServersLocked(caps acp.McpCapabilities) ([]acp.McpServer, error) {
+	f, err := mcp.Load(c.mcpConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("load mcp config %q: %w", c.mcpConfigPath, err)
+	}
+	servers, err := mcp.ToACPSlice(f, caps)
+	if err != nil {
+		return nil, fmt.Errorf("translate mcp config: %w", err)
+	}
+	return servers, nil
 }
 
 // RegisterAgent adds an agent to the registry.
@@ -194,20 +242,15 @@ func (c *Client) ListAgents(_ context.Context) ([]interfaces.AgentInfo, error) {
 	return agents, nil
 }
 
-// CreateSession starts a new agent session.
-// Spawns the agent process, performs ACP handshake (Initialize + NewSession),
-// and stores the transport for subsequent prompt/cancel calls.
-func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceID string) (interfaces.SessionInfo, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Verify the agent exists.
+// validateAgentModelLocked verifies that agentID is registered and modelID is
+// offered by that agent, returning the resolved AgentInfo. The caller must hold
+// c.mu (it reads c.agents). Used by CreateSession and RebindSession to share
+// the same agent+model validation and error messages.
+func (c *Client) validateAgentModelLocked(agentID, modelID string) (AgentInfo, error) {
 	agent, ok := c.agents[agentID]
 	if !ok {
-		return interfaces.SessionInfo{}, fmt.Errorf("agent not found: %s", agentID)
+		return AgentInfo{}, fmt.Errorf("agent not found: %s", agentID)
 	}
-
-	// Verify the model is offered by the agent.
 	modelValid := false
 	for _, m := range agent.Models {
 		if m.ID == modelID {
@@ -216,7 +259,20 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 		}
 	}
 	if !modelValid {
-		return interfaces.SessionInfo{}, fmt.Errorf("model %s not available for agent %s", modelID, agentID)
+		return AgentInfo{}, fmt.Errorf("model %s not available for agent %s", modelID, agentID)
+	}
+	return agent, nil
+}
+
+// CreateSession starts a new agent session.
+// Spawns the agent process, performs ACP handshake (Initialize + NewSession),
+// and stores the transport for subsequent prompt/cancel calls.
+func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceID string) (interfaces.SessionInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, err := c.validateAgentModelLocked(agentID, modelID); err != nil {
+		return interfaces.SessionInfo{}, err
 	}
 
 	sessionID, err := generateSessionID()
@@ -308,12 +364,36 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 	}
 	initResp, err := transport.Initialize(ctx)
 	if err != nil {
+		// Surface the agent's stderr tail before closing the transport —
+		// otherwise the user only sees "peer disconnected before response"
+		// with no clue why the agent exited (missing auth, wrong subcommand,
+		// crashed on startup, etc.). Close still runs so the process is
+		// reaped; we just read the captured tail first.
+		stderr := transport.StderrTail()
 		_ = transport.Close()
+		if strings.TrimSpace(stderr) != "" {
+			return fmt.Errorf("initialize transport: %w (agent stderr: %s)", err, strings.TrimSpace(stderr))
+		}
 		return fmt.Errorf("initialize transport: %w", err)
 	}
 	// Store the agent's prompt capabilities on the transport so Prompt can
 	// build capability-gated content blocks (inline images vs. resource links).
 	transport.promptCaps = initResp.AgentCapabilities.PromptCapabilities
+
+	// Load MCP server config and filter it against the agent's advertised
+	// McpCapabilities before any session RPC. A missing config file is not an
+	// error (no servers configured); a parse error is logged and treated as
+	// "no servers" so a malformed mcp.json doesn't block session creation.
+	if c.mcpConfigPath != "" {
+		servers, mcpErr := c.loadMcpServersLocked(initResp.AgentCapabilities.McpCapabilities)
+		if mcpErr != nil {
+			// Log and continue with no servers rather than failing session
+			// creation — MCP config is additive, not load-bearing for the
+			// session itself.
+			slog.Warn("loading mcp config; continuing without mcp servers", "path", c.mcpConfigPath, "err", mcpErr)
+		}
+		transport.SetMcpServers(servers)
+	}
 
 	// Decide whether to resume a persisted ACP session via session/load or
 	// create a fresh one. LoadSession is only attempted when the agent
@@ -551,13 +631,11 @@ func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
 	c.persistLocked()
 
 	// Emit cancellation event.
-	if c.callbacks != nil {
-		c.callbacks.OnEvent(interfaces.Event{
-			Type:      interfaces.EventSessionCancelled,
-			SessionID: sessionID,
-			Timestamp: time.Now().UTC(),
-		})
-	}
+	c.emit(interfaces.Event{
+		Type:      interfaces.EventSessionCancelled,
+		SessionID: sessionID,
+		Timestamp: time.Now().UTC(),
+	})
 
 	return nil
 }
@@ -707,19 +785,9 @@ func (c *Client) RebindSession(ctx context.Context, sessionID, agentID, modelID 
 		return interfaces.SessionInfo{}, fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	agent, ok := c.agents[agentID]
-	if !ok {
-		return interfaces.SessionInfo{}, fmt.Errorf("agent not found: %s", agentID)
-	}
-	modelValid := false
-	for _, m := range agent.Models {
-		if m.ID == modelID {
-			modelValid = true
-			break
-		}
-	}
-	if !modelValid {
-		return interfaces.SessionInfo{}, fmt.Errorf("model %s not available for agent %s", modelID, agentID)
+	agent, err := c.validateAgentModelLocked(agentID, modelID)
+	if err != nil {
+		return interfaces.SessionInfo{}, err
 	}
 
 	// Capture the old agent's display name before switching, for the transfer
@@ -784,14 +852,12 @@ func (c *Client) RebindSession(ctx context.Context, sessionID, agentID, modelID 
 		c.transfer.SetTransfer(sessionID, conversationMarkdown, oldAgentName)
 	}
 
-	if c.callbacks != nil {
-		c.callbacks.OnEvent(interfaces.Event{
-			Type:      interfaces.EventConnectionRestarted,
-			SessionID: sessionID,
-			Timestamp: time.Now().UTC(),
-			Content:   fmt.Sprintf("Switched to %s / %s — prior history exported and will be injected as context for the new agent.", agent.Name, modelID),
-		})
-	}
+	c.emit(interfaces.Event{
+		Type:      interfaces.EventConnectionRestarted,
+		SessionID: sessionID,
+		Timestamp: time.Now().UTC(),
+		Content:   fmt.Sprintf("Switched to %s / %s — prior history exported and will be injected as context for the new agent.", agent.Name, modelID),
+	})
 
 	return sessionToInfo(session), nil
 }
