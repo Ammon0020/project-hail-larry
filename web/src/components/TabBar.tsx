@@ -123,9 +123,8 @@ export function TabBar({
           <ChevronRight className="w-4 h-4" />
         </button>
       )}
-      <div className="flex-1" />
       {showEditorActions && activeTab && activeTab.kind !== 'settings' && (
-        <div className="hidden md:flex gap-1.5 pr-3 items-center shrink-0">
+        <div className="flex gap-1.5 pr-3 pl-1.5 items-center shrink-0">
           {onToggleWrap && (
             <button
               type="button"
