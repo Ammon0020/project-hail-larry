@@ -12,10 +12,11 @@ import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemir
 import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Prec, EditorSelection } from '@codemirror/state'
-import { FileCode, Circle, X, GitCompare, Save, GitBranch, CircleAlert, TriangleAlert, FileText, ChevronLeft, ChevronRight, WrapText, RefreshCw, Settings as SettingsIcon } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { GitBranch, CircleAlert, TriangleAlert, FileText, RefreshCw } from 'lucide-react'
+import { useEffect, useMemo, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { SettingsPanel } from '@/components/SettingsPanel'
+import { TabBar } from './TabBar'
 import type { AgentInfo } from '@/lib/api'
 import type { Extension } from '@codemirror/state'
 import type { Tab } from '@/types'
@@ -39,6 +40,9 @@ export function EditorPane({
   onSelectionChange,
   scrollToLine,
   settingsProps,
+  hideTabBar = false,
+  wrap = false,
+  onToggleWrap,
 }: {
   tabs: Tab[]
   activeTabId: string | null
@@ -66,11 +70,11 @@ export function EditorPane({
     onDeleteAgent: (id: string) => Promise<void>
     onAutodetect: () => Promise<AgentInfo[]>
   }
+  hideTabBar?: boolean
+  wrap?: boolean
+  onToggleWrap?: () => void
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
-
-  // Line wrapping toggle — persisted across tab switches within the session.
-  const [wrap, setWrap] = useState(false)
 
   // Keep a ref to the latest onSave so the memoized CodeMirror Ctrl+S keybinding
   // always calls the fresh closure. Without this, the keybinding captures the
@@ -112,34 +116,6 @@ export function EditorPane({
       scrollIntoView: true,
     })
   }, [scrollToLine])
-
-  // Scroll affordances for the tab bar: show left/right chevrons when the tab
-  // list overflows. State is updated from the onScroll handler (an event
-  // handler, so setState is allowed) and re-measured via requestAnimationFrame
-  // when the tab set changes — the rAF callback defers the DOM read until after
-  // layout and keeps setState out of the effect body (react-hooks/set-state-in-effect).
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const [canScrollLeft, setCanScrollLeft] = useState(false)
-  const [canScrollRight, setCanScrollRight] = useState(false)
-
-  const measureScroll = () => {
-    const el = scrollRef.current
-    if (!el) return
-    setCanScrollLeft(el.scrollLeft > 0)
-    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 1)
-  }
-
-  useEffect(() => {
-    const id = requestAnimationFrame(measureScroll)
-    return () => cancelAnimationFrame(id)
-    // Re-measure whenever the number of tabs changes (add/remove).
-  }, [tabs.length])
-
-  const scrollByTabs = (delta: number) => {
-    const el = scrollRef.current
-    if (!el) return
-    el.scrollBy({ left: delta, behavior: 'smooth' })
-  }
 
   /**
    * Resolve a CodeMirror language extension from the tab's language hint.
@@ -308,113 +284,17 @@ export function EditorPane({
       )}
     >
       {/* Tab Bar */}
-      <div className="flex items-center bg-panel border-b border-background shrink-0 h-9">
-        {canScrollLeft && (
-          <button
-            type="button"
-            aria-label="Scroll tabs left"
-            onClick={() => scrollByTabs(-150)}
-            className="flex items-center justify-center w-5 h-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-editor/50 transition"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-        )}
-        <div
-          ref={scrollRef}
-          onScroll={measureScroll}
-          onWheel={(e) => {
-            // Translate vertical scrollwheel into horizontal tab scrolling.
-            // The container only scrolls on x, so without this the wheel
-            // does nothing when hovering the tab bar.
-            if (e.deltaY !== 0) {
-              scrollRef.current?.scrollBy({ left: e.deltaY, behavior: 'smooth' })
-            }
-          }}
-          className="flex overflow-x-auto tab-scrollbar"
-        >
-          {tabs.map((tab) => {
-            const isActive = tab.id === activeTabId
-            return (
-              <div
-                key={tab.id}
-                className={cn(
-                  'flex items-center gap-2 px-3 h-9 text-sm shrink-0 border-r border-background cursor-pointer',
-                  isActive
-                    ? 'bg-editor text-foreground border-t-2 border-primary'
-                    : 'bg-panel text-muted-foreground hover:bg-editor/50 transition',
-                )}
-                onClick={() => onTabSelect(tab.id)}
-              >
-                {tab.kind === 'settings' ? (
-                  <SettingsIcon className="w-3.5 h-3.5 text-muted-foreground" />
-                ) : (
-                  <FileCode className="w-3.5 h-3.5 text-yellow-400" />
-                )}
-                {tab.name}
-                {tab.unsaved && tab.kind !== 'settings' && (
-                  <Circle className="w-2 h-2 text-primary fill-primary" />
-                )}
-                {tab.changedOnDisk && tab.kind !== 'settings' && (
-                  <>
-                    <RefreshCw className="w-3 h-3 text-warning" aria-hidden="true" />
-                    <span className="sr-only">Changed on disk</span>
-                  </>
-                )}
-                <X
-                  className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground cursor-pointer ml-1"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onTabClose(tab.id)
-                  }}
-                  aria-label={`Close ${tab.name}`}
-                  role="button"
-                />
-              </div>
-            )
-          })}
-        </div>
-        {canScrollRight && (
-          <button
-            type="button"
-            aria-label="Scroll tabs right"
-            onClick={() => scrollByTabs(150)}
-            className="flex items-center justify-center w-5 h-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-editor/50 transition"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        )}
-        <div className="flex-1" />
-        {/* Editor actions: Wrap toggle + Diff + Save (Blueprint Sec 14 — file sync).
-            Hidden for settings tabs — they have their own action buttons. */}
-        {activeTab && activeTab.kind !== 'settings' && (
-          <div className="hidden md:flex gap-1.5 pr-3 items-center">
-            <button
-              type="button"
-              aria-label="Toggle line wrapping"
-              aria-pressed={wrap}
-              title="Toggle line wrapping"
-              onClick={() => setWrap((w) => !w)}
-              className={cn(
-                'flex items-center justify-center w-7 h-6 rounded transition',
-                wrap
-                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                  : 'bg-secondary text-secondary-foreground hover:bg-accent',
-              )}
-            >
-              <WrapText className="w-3.5 h-3.5" />
-            </button>
-            <button className="text-xs font-semibold bg-secondary hover:bg-accent text-secondary-foreground px-2.5 py-1 rounded transition flex items-center gap-1.5">
-              <GitCompare className="w-3 h-3" /> Diff
-            </button>
-            <button
-              onClick={onSave}
-              className="text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground px-2.5 py-1 rounded flex items-center gap-1.5 transition"
-            >
-              <Save className="w-3 h-3" /> Save
-            </button>
-          </div>
-        )}
-      </div>
+      {!hideTabBar && (
+        <TabBar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onTabSelect={onTabSelect}
+          onTabClose={onTabClose}
+          onSave={onSave}
+          wrap={wrap}
+          onToggleWrap={onToggleWrap}
+        />
+      )}
 
       {/* Changed-on-disk banner — shown when the active tab's file was modified
           on disk (agent write / external edit) while the user had unsaved

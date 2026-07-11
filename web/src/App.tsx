@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { X } from 'lucide-react'
+import { X, FolderCode, ChevronsUpDown, Wifi, WifiOff, Check } from 'lucide-react'
 import { LockScreen } from '@/components/LockScreen'
 import { ActivityBar } from '@/components/ActivityBar'
 import { LeftSidebar } from '@/components/LeftSidebar'
 import { EditorPane } from '@/components/EditorPane'
+import { TabBar } from '@/components/TabBar'
+import { cn } from '@/lib/utils'
 import { ChatPanel } from '@/components/ChatPanel'
 import { MobileNav } from '@/components/MobileNav'
 import { useBackend } from '@/hooks/useBackend'
@@ -99,6 +101,22 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(
     () => localStorage.getItem('lai:activeTabId') || null,
   )
+
+  const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false)
+  const [wrap, setWrap] = useState(false)
+
+  // Close the workspace dropdown on Escape (keyboard accessibility).
+  useEffect(() => {
+    if (!showWorkspaceDropdown) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setShowWorkspaceDropdown(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showWorkspaceDropdown])
 
   // Current editor selection, lifted from EditorPane via the
   // onSelectionChange callback so it can be reported to the backend alongside
@@ -664,6 +682,103 @@ export default function App() {
           </button>
         </div>
       )}
+      {/* Top Header Bar (Desktop only) */}
+      {isDesktop && (
+        <div className="h-9 border-b border-border flex items-center bg-panel shrink-0 select-none">
+          {/* Left section: width matches ActivityBar + LeftSidebar */}
+          <div
+            className="flex items-center justify-between pl-2 pr-3 h-full border-r border-border shrink-0"
+            style={{ width: leftPanelWidth + 48 }}
+          >
+            <div className={cn("flex items-center gap-1.5 w-full", leftPanelWidth === 0 ? "justify-center" : "justify-start")}>
+              {/* Online indicator */}
+              <div
+                className={cn(
+                  'flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border shrink-0',
+                  backend.connected
+                    ? 'text-green-400 bg-green-400/10 border-green-500/20'
+                    : 'text-muted-foreground bg-muted/40 border-border',
+                  leftPanelWidth === 0 && 'border-none bg-transparent p-0'
+                )}
+                title={backend.connected ? 'Connected to backend' : 'Backend offline — reconnecting…'}
+              >
+                {backend.connected ? (
+                  <>
+                    <Wifi className="w-4 h-4 text-green-400 shrink-0" />
+                    {leftPanelWidth > 0 && <span className="text-xs">Online</span>}
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="w-4 h-4 text-muted-foreground animate-pulse shrink-0" />
+                    {leftPanelWidth > 0 && <span className="text-xs animate-pulse">Offline</span>}
+                  </>
+                )}
+              </div>
+
+              {/* Workspace Selector (only if leftPanelWidth > 0) */}
+              {leftPanelWidth > 0 && (
+                <div className="flex items-center gap-1 flex-1 min-w-0">
+                  <div className="relative shrink-0 flex-1 min-w-0">
+                    <button
+                      onClick={() => setShowWorkspaceDropdown(!showWorkspaceDropdown)}
+                      className="w-full bg-background border border-input rounded-md px-2 py-1 flex items-center justify-between hover:border-muted-foreground transition shadow-sm max-w-[140px]"
+                      aria-label="Switch workspace"
+                      aria-expanded={showWorkspaceDropdown}
+                      aria-haspopup="listbox"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <FolderCode className="w-4 h-4 text-primary shrink-0" />
+                        <span className="truncate text-xs font-medium">{backend.activeWorkspace?.name || 'No workspace'}</span>
+                      </div>
+                      <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </button>
+                    {/* Dropdown Menu */}
+                    {showWorkspaceDropdown && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setShowWorkspaceDropdown(false)} aria-hidden="true" />
+                        <div className="absolute top-full left-0 mt-1 w-48 bg-panel border border-border rounded-md shadow-xl z-50 py-1 max-h-60 overflow-y-auto" role="listbox" aria-label="Workspaces">
+                          {backend.workspaces.map((ws) => (
+                            <button
+                              key={ws.id}
+                              onClick={() => {
+                                backend.selectWorkspace(ws)
+                                setShowWorkspaceDropdown(false)
+                              }}
+                              className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent flex items-center justify-between transition group"
+                            >
+                              <span className="truncate">{ws.name}</span>
+                              {backend.activeWorkspace?.id === ws.id && (
+                                <Check className="w-3 h-3 text-primary" />
+                              )}
+                            </button>
+                          ))}
+                          {backend.workspaces.length === 0 && (
+                            <div className="px-3 py-1.5 text-xs text-muted-foreground italic">No workspaces found</div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right section: Tabs to the right */}
+          <div className="flex-1 flex items-center min-w-0 h-full">
+            <TabBar
+              tabs={openTabs}
+              activeTabId={activeTabId}
+              onTabSelect={handleTabSelect}
+              onTabClose={handleTabClose}
+              onSave={handleSave}
+              wrap={wrap}
+              onToggleWrap={() => setWrap(!wrap)}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Main app shell — activity bar + sidebar + editor + chat (horizontal) */}
       <div className="flex-1 min-h-0 flex">
       {/* Activity Bar (far left, icon-only — desktop only) */}
@@ -726,7 +841,6 @@ export default function App() {
         />
       )}
 
-      {/* Center Editor — tabbed CodeMirror 6 with status bar */}
       <EditorPane
         tabs={openTabs}
         activeTabId={activeTabId}
@@ -744,6 +858,9 @@ export default function App() {
           onDeleteAgent: backend.deleteAgent,
           onAutodetect: backend.autodetectAgents,
         }}
+        hideTabBar={isDesktop}
+        wrap={wrap}
+        onToggleWrap={() => setWrap(!wrap)}
       />
 
       {/* Resize handle between editor and right chat panel (desktop only) */}
