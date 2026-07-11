@@ -42,34 +42,59 @@ export function ConversationView({
   onDismissMcpBanner,
   onRestartForMcp,
 }: ConversationViewProps) {
+  // Group events into turns: each user prompt starts a new turn, and all
+  // subsequent agent events fold into the same agent turn until the next
+  // prompt. User turns render as a single bubble; agent turns get tight
+  // `space-y-1` spacing so the trace reads as one block (design §2).
+  const turns: Array<{ kind: 'user' | 'agent'; events: AppEvent[] }> = []
+  for (const ev of events) {
+    if (ev.type === 'PromptSubmitted') turns.push({ kind: 'user', events: [ev] })
+    else {
+      const last = turns[turns.length - 1]
+      if (last && last.kind === 'agent') last.events.push(ev)
+      else turns.push({ kind: 'agent', events: [ev] })
+    }
+  }
+
   return (
     <div className="relative flex-1 min-h-0">
       <div
         ref={scrollContainerRef}
-        className="h-full overflow-y-auto p-3 lg:p-4 space-y-3 lg:space-y-4 pb-20 lg:pb-4"
+        className="h-full overflow-y-auto p-3 lg:p-4 pb-20 lg:pb-4"
       >
         {events.length === 0 && !error && (
           <div className="rounded-lg border border-border bg-panel/50 p-3 text-xs text-muted-foreground">
             Send a message to start a conversation.
           </div>
         )}
-        {events.map((event, i) => (
-          <ChatMessageItem
-            key={event.id ?? `${event.type}-${i}`}
-            event={event}
-            pending={
-              event.type === 'PermissionRequested' && event.requestId
-                ? pendingPermissions.find((p) => p.id === event.requestId)
-                : undefined
-            }
-            resolution={
-              event.type === 'PermissionRequested' && event.requestId
-                ? permissionResolution.get(event.requestId)
-                : undefined
-            }
-            onPermissionResponse={onPermissionResponse}
-          />
-        ))}
+        {turns.map((turn, ti) => {
+          const inner = turn.events.map((event, ei) => (
+            <ChatMessageItem
+              key={event.id ?? `${event.type}-${ti}-${ei}`}
+              event={event}
+              pending={
+                event.type === 'PermissionRequested' && event.requestId
+                  ? pendingPermissions.find((p) => p.id === event.requestId)
+                  : undefined
+              }
+              resolution={
+                event.type === 'PermissionRequested' && event.requestId
+                  ? permissionResolution.get(event.requestId)
+                  : undefined
+              }
+              onPermissionResponse={onPermissionResponse}
+            />
+          ))
+          return turn.kind === 'user' ? (
+            <div key={`turn-${ti}`} className="mb-3">
+              {inner}
+            </div>
+          ) : (
+            <div key={`turn-${ti}`} className="space-y-1 mb-3">
+              {inner}
+            </div>
+          )
+        })}
         {mcpConfigChanged && (
           <div className="rounded-lg border border-primary/40 bg-primary/10 p-3 text-xs text-primary flex items-center justify-between gap-2">
             <span>MCP config changed — restart to apply</span>

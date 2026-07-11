@@ -1,5 +1,5 @@
 import { type KeyboardEvent } from 'react'
-import { Paperclip, ArrowUp, Square, X, Loader2 } from 'lucide-react'
+import { Plus, ArrowUp, Square, X, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   Select,
@@ -13,7 +13,7 @@ import type { Agent } from '@/types'
 // Compact neutral pill styling shared by both selectors (design §3 — drop
 // the old `border-primary/50 text-primary` accent on the model selector).
 const selectorTriggerClass =
-  'shrink-0 bg-background border border-input rounded-md text-xs px-2.5 py-1.5 ' +
+  'shrink-0 bg-background border border-input rounded-full text-xs px-3 py-1.5 ' +
   'text-muted-foreground hover:text-foreground hover:border-ring/60 h-auto font-medium'
 
 interface CompactSelectProps {
@@ -159,21 +159,21 @@ export function ChatComposer({
         />
 
         {/* Thin divider between textarea and actions. */}
-        <div className="border-t border-white/5" />
+        <div className="border-t border-border/30" />
 
         {/* Actions row: [attach] [harness] [model] ... [send/stop] */}
         <div className="flex items-center gap-2">
           <button
             onClick={onPickFiles}
             disabled={uploading || disabled}
-            className="p-1.5 rounded-md bg-background border border-input text-muted-foreground hover:text-foreground hover:border-ring/60 transition shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="p-1.5 rounded-full bg-background border border-input text-muted-foreground hover:text-foreground hover:border-ring/60 transition shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
             title="Attach image"
             aria-label="Attach image"
           >
             {uploading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
-              <Paperclip className="w-4 h-4" />
+              <Plus className="w-4 h-4" />
             )}
           </button>
 

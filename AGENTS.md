@@ -56,6 +56,8 @@ Task delegation to specialized subagents is a core workflow and saves time. For 
 
 Note that if commands are rejected in succession on a subagent, it's likely because only certain commands are auto-approved. Subagents should skip them and tell the parent. 
 
+If the quota runs out, use the small subagent. It's still very powerful and can handle most tasks. Trivial will continue to function as well. 
+
 ## Development Standards
 
 - **Build:** Build with `.\build.ps1` (Windows) or `./build.sh` (Linux/macOS). Both build the frontend, re-embed `internal/server/dist`, then compile the Go binary. `internal/server/dist/` is gitignored, so a frontend build must run before `go build` can embed assets (a fresh checkout also needs `npm install` in `web/`).

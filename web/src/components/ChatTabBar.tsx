@@ -27,7 +27,7 @@ import type { Session } from '@/types'
  * (`border-r border-border`) lives in the base classes so every tab gets one.
  */
 const tabVariant = cva(
-  'group relative flex items-center gap-1.5 h-full px-3 text-xs border-t-[3px] border-r border-border ' +
+  'group relative flex items-center gap-1 h-full px-2.5 text-xs border-t-[3px] border-r border-border ' +
     'border-t-transparent transition-colors whitespace-nowrap shrink-0',
   {
     variants: {
@@ -241,7 +241,7 @@ export function ChatTabBar({
         </div>
 
         {/* Right-side controls — never scroll away. */}
-        <div className="flex items-center gap-1 px-2 shrink-0 border-l border-border">
+        <div className="flex items-center gap-1 px-2 shrink-0 border-l border-border/60">
           <TabBarIconButton
             icon={<Plus className="w-4 h-4" />}
             label="New chat"
