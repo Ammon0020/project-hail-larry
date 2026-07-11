@@ -86,6 +86,7 @@ type Session struct {
 type transportLike interface {
 	NewSession(ctx context.Context, cwd string) (string, error)
 	LoadSession(ctx context.Context, acpSessionID string) (string, error)
+	ListSessions(ctx context.Context) ([]acp.SessionInfo, error)
 	DeleteSession(ctx context.Context, acpSessionID string) error
 	Prompt(ctx context.Context, sessionID, content string, resources []ContextResource, attachments []interfaces.Attachment) (acp.StopReason, error)
 	Cancel(ctx context.Context, sessionID string) error
@@ -333,20 +334,63 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 
 // resolveACPSession decides whether to resume a persisted ACP session via
 // session/load or create a fresh one with session/new. It returns the ACP
-// session ID to use (and mutates nothing — the caller assigns it). When
-// session.ACPSessionID is non-empty and the agent advertised loadSession, it
-// tries LoadSession first; on success the prior session is reused. On any
-// failure it falls back to NewSession. The caller must hold c.mu (it reads
-// session fields); the transport methods are called under the lock to keep the
-// load/new decision atomic with the assignment in startTransportLocked.
+// session ID to use (and mutates nothing — the caller assigns it).
+//
+// Reconciliation flow (when the agent supports session/list):
+//  1. Call ListSessions filtered by cwd.
+//  2. If our persisted ACPSessionID is in the list, attempt LoadSession.
+//  3. If it is NOT in the list, skip the doomed LoadSession and go straight to
+//     NewSession — the session is known to be gone on the agent side.
+//  4. If ListSessions fails, fall back to the legacy flow (try LoadSession,
+//     then NewSession).
+//
+// Legacy flow (no session/list capability):
+//  1. When session.ACPSessionID is non-empty and the agent advertised
+//     loadSession, try LoadSession first; on success the prior session is
+//     reused.
+//  2. On any failure fall back to NewSession.
+//
+// The caller must hold c.mu (it reads session fields); the transport methods
+// are called under the lock to keep the load/new decision atomic with the
+// assignment in startTransportLocked.
 func (c *Client) resolveACPSession(ctx context.Context, tr transportLike, initResp acp.InitializeResponse, session *Session, workspacePath string) (string, error) {
-	if session.ACPSessionID != "" && initResp.AgentCapabilities.LoadSession {
-		if loadedID, loadErr := tr.LoadSession(ctx, session.ACPSessionID); loadErr == nil {
+	persistedID := session.ACPSessionID
+	canLoad := initResp.AgentCapabilities.LoadSession
+	canList := initResp.AgentCapabilities.SessionCapabilities.List != nil
+
+	// When the agent supports session/list, reconcile first: only attempt
+	// LoadSession if the agent confirms the session still exists. This avoids
+	// a doomed LoadSession RPC when the session is known to be gone. If
+	// ListSessions itself fails, fall through to the legacy try-load-then-new
+	// flow so we don't regress on agents with flaky list support.
+	if persistedID != "" && canLoad && canList {
+		if sessions, err := tr.ListSessions(ctx); err == nil {
+			if !sessionExists(sessions, persistedID) {
+				return tr.NewSession(ctx, workspacePath)
+			}
+			// Session confirmed present — attempt LoadSession below.
+		}
+		// ListSessions error or session found: fall through to LoadSession.
+	}
+
+	if persistedID != "" && canLoad {
+		if loadedID, loadErr := tr.LoadSession(ctx, persistedID); loadErr == nil {
 			return loadedID, nil
 		}
 		// Fall through to NewSession on any load error.
 	}
 	return tr.NewSession(ctx, workspacePath)
+}
+
+// sessionExists reports whether the given ACP session ID appears in the
+// agent's session list. SessionInfo.SessionId is the ACP session identifier.
+func sessionExists(sessions []acp.SessionInfo, acpSessionID string) bool {
+	for _, s := range sessions {
+		if string(s.SessionId) == acpSessionID {
+			return true
+		}
+	}
+	return false
 }
 
 // SendPrompt sends a user prompt to the agent and streams responses.

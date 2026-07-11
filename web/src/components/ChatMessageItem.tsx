@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { AppEvent } from '@/types'
+import type { AppEvent, StopReason } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 
 /** Picks an icon for a tool card based on the ACP tool kind. */
@@ -102,21 +102,23 @@ function permissionToolLabel(tool?: string, toolKind?: string): string {
  * Maps an ACP stop reason to a human-readable label, or returns null when the
  * reason is a normal completion that should not be surfaced to the user.
  *
- * - end_turn / tool_use: normal — hide.
+ * - end_turn: normal — hide.
  * - max_tokens: "hit token limit"
+ * - max_turn_requests: "hit turn-request limit"
  * - refusal: "refused"
  * - cancelled: "cancelled"
  * - anything else: shown verbatim so unknown reasons are still visible.
  */
-function stopReasonLabel(stopReason?: string): string | null {
+function stopReasonLabel(stopReason?: StopReason): string | null {
   const r = (stopReason ?? '').trim()
   if (!r) return null
   switch (r) {
     case 'end_turn':
-    case 'tool_use':
       return null
     case 'max_tokens':
       return 'hit token limit'
+    case 'max_turn_requests':
+      return 'hit turn-request limit'
     case 'refusal':
       return 'refused'
     case 'cancelled':
@@ -376,8 +378,8 @@ export function ChatMessageItem({
       }
       if (!event.content && !event.streaming) return null
       // Surface non-normal stop reasons (e.g. max_tokens, refusal, cancelled)
-      // subtly below the final assistant message. Normal reasons (end_turn,
-      // tool_use) are hidden by stopReasonLabel.
+      // subtly below the final assistant message. Normal reasons (end_turn)
+      // are hidden by stopReasonLabel.
       const stopLabel = !event.streaming ? stopReasonLabel(event.stopReason) : null
       return (
         <div className="flex gap-3">

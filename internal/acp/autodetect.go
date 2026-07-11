@@ -276,15 +276,25 @@ func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 	client := acp.NewClientSideConnection(&dummyClientImpl{}, stdin, stdout)
 	// Suppress ACP SDK diagnostic logging (e.g. "connection closed") during probing.
 	client.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err = client.Initialize(ctx, acp.InitializeRequest{
+	initReq := acp.InitializeRequest{
 		ClientInfo:         &acp.Implementation{Name: "local-agent-autodetect", Version: "1.0"},
 		ClientCapabilities: acp.ClientCapabilities{},
-	}); err != nil {
+	}
+	if err = initReq.Validate(); err != nil {
+		warning := fmt.Sprintf("validate initialize request: %v", err)
+		return nil, warning
+	}
+	if _, err = client.Initialize(ctx, initReq); err != nil {
 		warning := fmt.Sprintf("initialize failed: %v", err)
 		return nil, warning
 	}
 
-	listRes, err := client.UnstableListProviders(ctx, acp.UnstableListProvidersRequest{})
+	listReq := acp.UnstableListProvidersRequest{}
+	if err = listReq.Validate(); err != nil {
+		warning := fmt.Sprintf("validate list providers request: %v", err)
+		return nil, warning
+	}
+	listRes, err := client.UnstableListProviders(ctx, listReq)
 	if err != nil {
 		warning := fmt.Sprintf("providers/list failed: %v", err)
 		return nil, warning

@@ -96,6 +96,19 @@ export interface Attachment {
 }
 
 /**
+ * ACP stop reason for the final StreamUpdate of a turn.
+ * Mirrors the ACP spec / coder/acp-go-sdk StopReason union. Kept local
+ * because the frontend consumes backend-projected events, not raw ACP
+ * wire types (architecture: UI never talks to agents directly).
+ */
+export type StopReason =
+  | 'end_turn'
+  | 'max_tokens'
+  | 'max_turn_requests'
+  | 'refusal'
+  | 'cancelled'
+
+/**
  * Event types from the event stream (Blueprint Sec 11).
  * The UI renders chat, tool timelines, and permissions from these.
  */
@@ -143,10 +156,11 @@ export interface AppEvent {
   exitCode?: number
   workspaceId?: string
   attachments?: Attachment[]
-  /** ACP stop reason for the final StreamUpdate of a turn (e.g. "end_turn",
-   *  "tool_use", "max_tokens", "refusal", "cancelled"). Empty on intermediate
-   *  chunks. The frontend surfaces non-normal terminations subtly. */
-  stopReason?: string
+  /** ACP stop reason for the final StreamUpdate of a turn. Empty on
+   *  intermediate chunks. The frontend surfaces non-normal terminations
+   *  subtly. Mirrors the ACP spec StopReason union — kept as a local type
+   *  because the frontend talks to our backend, not to ACP directly. */
+  stopReason?: StopReason
 }
 
 /** Left panel view options (Blueprint Sec 17 — activity bar). */

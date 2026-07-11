@@ -98,6 +98,8 @@ Priority 1 + 2 (all 7 items) are implemented (2026-07-08), along with several fo
 
 ### 3.3 Reconcile sessions via `session/list`
 
+**Status:** ✅ Done (promoted to P4.4, implemented there).
+
 **Rationale:** Sessions are tracked client-side only. If the agent process restarts independently, the client's session map may drift from the agent's actual sessions.
 
 **Suggested change:** On transport restart, call `session/list` and reconcile. `Agent.ListSessions()` has been stable in the SDK since v0.11.7 and the method is available on our `t.conn` — it just isn't wired into the restart path. (Promoted to P4.4 as near-term; see below.)
@@ -110,33 +112,47 @@ These are features available in `coder/acp-go-sdk v0.13.5` (or the TypeScript SD
 
 #### 4.1 Adopt `@agentclientprotocol/sdk` for frontend types
 
-**Rationale:** The frontend (`web/src/types/index.ts`) hand-rolls TypeScript types mirroring the ACP structs. The official `@agentclientprotocol/sdk` package (4.6M weekly downloads) ships the canonical types, method constants, type guards, and `PROTOCOL_VERSION`. Using it eliminates type drift.
+**Status:** ✅ Done (scoped).
 
-**Suggested change:** Add `@agentclientprotocol/sdk` as a dependency; replace the hand-rolled ACP types in `web/src/types/index.ts` with imports from the SDK. Keep app-specific types (Session, Event, etc.) as-is.
+**Rationale:** The frontend (`web/src/types/index.ts`) hand-rolls TypeScript types mirroring the ACP structs. The official `@agentclientprotocol/sdk` package ships the canonical types, method constants, type guards, and `PROTOCOL_VERSION`.
 
-**Affected files:** `web/package.json`, `web/src/types/index.ts`, any components importing the replaced types.
+**What was done:** Investigation revealed `web/src/types/index.ts` contains **app-specific view-models**, not raw ACP wire types. The architecture rule "UI never communicates directly with agent implementations" means the frontend consumes backend-projected events, not ACP `SessionUpdate`/`SessionNotification` payloads. There are no pure ACP types in the file to replace — `AppEvent`, `Session`, `Agent`, `Attachment`, etc. are all app-specific projections with fields the SDK types don't have (`workspaceId`, `attachments`, `toolKind`, `agentId`, `modelId`, etc.).
+
+The one practical adoption: typed `AppEvent.stopReason` as a local `StopReason` union matching the 5 ACP spec values (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`). Removed vestigial `tool_use` handling (not in the ACP spec) and added `max_turn_requests` label in `ChatMessageItem.tsx`. Kept the type local rather than importing from the SDK to avoid adding the `@agentclientprotocol/sdk` + `zod` peer dependency for a single union type, consistent with the architecture rule.
+
+**Affected files:** `web/src/types/index.ts` (added `StopReason` type, retyped `AppEvent.stopReason`), `web/src/components/ChatMessageItem.tsx` (updated `stopReasonLabel` signature and switch cases).
 
 #### 4.2 Add explicit `Validate()` calls on constructed requests
 
+**Status:** ✅ Done.
+
 **Rationale:** Every SDK request type (`PromptRequest`, `InitializeRequest`, `NewSessionRequest`, etc.) exposes a `Validate()` method that catches malformed requests before they hit the wire. We currently construct requests and send them without validating.
 
-**Suggested change:** Call `Validate()` on each constructed request in `transport.go` before sending; return any validation error instead of dispatching.
+**What was done:** Added `Validate()` calls on `InitializeRequest`, `NewSessionRequest`, `LoadSessionRequest`, `DeleteSessionRequest`, `PromptRequest`, and `ListSessionsRequest` in `transport.go`, returning any validation error before dispatching.
 
 **Affected files:** `internal/acp/transport.go`.
 
 #### 4.3 Use SDK tool content helpers
 
-**Rationale:** The SDK provides `acp.ToolContent()`, `acp.ToolDiffContent()`, and `acp.ToolTerminalRef()` to simplify tool-call response construction. The transport currently builds these structs by hand.
+**Status:** ✅ No-op (not applicable).
 
-**Suggested change:** Replace hand-rolled tool-content struct construction in `transport.go`'s tool-call update handling with the SDK helpers.
+**Rationale:** The SDK provides `acp.ToolContent()`, `acp.ToolDiffContent()`, and `acp.ToolTerminalRef()` to simplify tool-call **response** construction. These are sender-side helpers for agents constructing tool-call content to send to clients.
 
-**Affected files:** `internal/acp/transport.go`.
+**Why no-op:** We are the ACP **client**, not the agent. `transport.go` only **consumes** tool-call updates from the agent (via `SessionUpdate` callbacks); it never constructs tool-call content. The helpers have no applicable call site.
 
 #### 4.4 Reconcile sessions via `session/list` (promoted from P3.3)
 
-**Rationale:** `Agent.ListSessions()` is stable as of SDK v0.11.7 and the method is available on our transport's `t.conn`. On transport restart we currently assume the client-side session map is authoritative; calling `session/list` would let us reconcile (drop stale IDs, surface orphaned sessions).
+**Status:** ✅ Done.
 
-**Suggested change:** After `Initialize` on a restart path, call `t.conn.ListSessions(ctx)` and reconcile the in-memory session map. Tolerate agents that don't support it (treat as no-op).
+**Rationale:** `Agent.ListSessions()` is stable as of SDK v0.11.7 and the method is available on our transport's `t.conn`. On transport restart we previously tried `LoadSession` with the persisted ID and fell back to `NewSession` on failure. Calling `session/list` first (when the agent supports it) lets us skip the doomed `LoadSession` RPC when the session is known to be gone.
+
+**What was done:**
+- Added `Transport.ListSessions(ctx)` — calls `t.conn.ListSessions` filtered by cwd, returns `[]acp.SessionInfo`.
+- Added `ListSessions` to the `transportLike` interface and mock transport.
+- Modified `resolveACPSession` to reconcile: when the agent supports both `loadSession` and `sessionCapabilities.list`, it calls `ListSessions` first. If the persisted ID is not in the list, it skips `LoadSession` and goes straight to `NewSession`. If `ListSessions` fails, it falls back to the legacy try-load-then-new flow.
+- Added 5 new test cases covering: list confirms session exists, list says session gone, list returns empty, list fails (fallback), list capability without load capability.
+
+**Affected files:** `internal/acp/transport.go`, `internal/acp/acp.go`, `internal/acp/lifecycle_test.go`.
 
 **Affected files:** `internal/acp/transport.go`, `internal/acp/acp.go` (restart path).
 

@@ -455,7 +455,7 @@ func (t *Transport) Start(ctx context.Context, command string, args []string, wo
 // capabilities (filesystem read/write and terminal support) and returning the
 // agent's capabilities and info.
 func (t *Transport) Initialize(ctx context.Context) (acp.InitializeResponse, error) {
-	return t.conn.Initialize(ctx, acp.InitializeRequest{
+	req := acp.InitializeRequest{
 		// Pin the protocol version to the SDK-supported v1 value instead of
 		// relying on the zero default.
 		ProtocolVersion: acp.ProtocolVersionNumber,
@@ -473,16 +473,24 @@ func (t *Transport) Initialize(ctx context.Context) (acp.InitializeResponse, err
 			},
 			Terminal: true,
 		},
-	})
+	}
+	if err := req.Validate(); err != nil {
+		return acp.InitializeResponse{}, fmt.Errorf("validate initialize request: %w", err)
+	}
+	return t.conn.Initialize(ctx, req)
 }
 
 // NewSession asks the agent to create a new ACP session rooted at cwd and
 // returns the new session ID.
 func (t *Transport) NewSession(ctx context.Context, cwd string) (string, error) {
-	result, err := t.conn.NewSession(ctx, acp.NewSessionRequest{
+	req := acp.NewSessionRequest{
 		Cwd:        cwd,
 		McpServers: []acp.McpServer{},
-	})
+	}
+	if err := req.Validate(); err != nil {
+		return "", fmt.Errorf("validate new session request: %w", err)
+	}
+	result, err := t.conn.NewSession(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -496,11 +504,15 @@ func (t *Transport) NewSession(ctx context.Context, cwd string) (string, error) 
 // (the ACP LoadSessionRequest requires it). Returns the loaded ACP session ID
 // (the same value passed in as acpSessionID) on success.
 func (t *Transport) LoadSession(ctx context.Context, acpSessionID string) (string, error) {
-	_, err := t.conn.LoadSession(ctx, acp.LoadSessionRequest{
+	req := acp.LoadSessionRequest{
 		SessionId:  acp.SessionId(acpSessionID),
 		Cwd:        t.cwd,
 		McpServers: []acp.McpServer{},
-	})
+	}
+	if err := req.Validate(); err != nil {
+		return "", fmt.Errorf("validate load session request: %w", err)
+	}
+	_, err := t.conn.LoadSession(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -515,10 +527,38 @@ func (t *Transport) LoadSession(ctx context.Context, acpSessionID string) (strin
 // callers should ignore. The process is not affected — call Close to terminate
 // the agent subprocess.
 func (t *Transport) DeleteSession(ctx context.Context, acpSessionID string) error {
-	_, err := t.conn.UnstableDeleteSession(ctx, acp.UnstableDeleteSessionRequest{
+	req := acp.UnstableDeleteSessionRequest{
 		SessionId: acp.SessionId(acpSessionID),
-	})
+	}
+	if err := req.Validate(); err != nil {
+		return fmt.Errorf("validate delete session request: %w", err)
+	}
+	_, err := t.conn.UnstableDeleteSession(ctx, req)
 	return err
+}
+
+// ListSessions asks the agent to list its known sessions, optionally filtered
+// by cwd. This is only valid when the agent advertised the
+// sessionCapabilities.list capability in its InitializeResponse; callers must
+// check initResp.AgentCapabilities.SessionCapabilities.List before invoking.
+// Returns the list of SessionInfo entries the agent knows about. Errors from
+// agents that do not support session/list should be treated as "no data" by
+// callers (the reconcile path falls back to the LoadSession-then-NewSession
+// flow). The cwd filter is set to the transport's workspace root so only
+// sessions for this workspace are returned.
+func (t *Transport) ListSessions(ctx context.Context) ([]acp.SessionInfo, error) {
+	cwd := t.cwd
+	req := acp.ListSessionsRequest{
+		Cwd: &cwd,
+	}
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validate list sessions request: %w", err)
+	}
+	resp, err := t.conn.ListSessions(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Sessions, nil
 }
 
 // Prompt sends a user prompt containing content to the given ACP session.
@@ -534,10 +574,14 @@ func (t *Transport) DeleteSession(ctx context.Context, acpSessionID string) erro
 func (t *Transport) Prompt(ctx context.Context, sessionID, content string, resources []ContextResource, attachments []interfaces.Attachment) (acp.StopReason, error) {
 	blocks := buildPromptBlocks(t.promptCaps, content, resources, attachments)
 
-	resp, err := t.conn.Prompt(ctx, acp.PromptRequest{
+	req := acp.PromptRequest{
 		SessionId: acp.SessionId(sessionID),
 		Prompt:    blocks,
-	})
+	}
+	if err := req.Validate(); err != nil {
+		return "", fmt.Errorf("validate prompt request: %w", err)
+	}
+	resp, err := t.conn.Prompt(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -606,10 +650,13 @@ func buildPromptBlocks(caps acp.PromptCapabilities, content string, resources []
 // Cancel sends a cancel notification to the given ACP session, requesting the
 // agent to abort any in-progress work.
 func (t *Transport) Cancel(ctx context.Context, sessionID string) error {
-	err := t.conn.Cancel(ctx, acp.CancelNotification{
+	req := acp.CancelNotification{
 		SessionId: acp.SessionId(sessionID),
-	})
-	return err
+	}
+	if err := req.Validate(); err != nil {
+		return fmt.Errorf("validate cancel notification: %w", err)
+	}
+	return t.conn.Cancel(ctx, req)
 }
 
 // Close terminates the agent subprocess (if still running) and waits for it

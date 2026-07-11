@@ -32,6 +32,11 @@ type mockTransport struct {
 	deleteSessionID     string
 	deleteSessionErr    error
 
+	// ListSessions
+	listSessionsResult []acpsdk.SessionInfo
+	listSessionsErr    error
+	listSessionsCalled bool
+
 	// Prompt
 	promptErr    error
 	promptCalled bool
@@ -64,6 +69,11 @@ func (m *mockTransport) DeleteSession(_ context.Context, acpSessionID string) er
 	return m.deleteSessionErr
 }
 
+func (m *mockTransport) ListSessions(_ context.Context) ([]acpsdk.SessionInfo, error) {
+	m.listSessionsCalled = true
+	return m.listSessionsResult, m.listSessionsErr
+}
+
 func (m *mockTransport) Prompt(_ context.Context, _, _ string, _ []ContextResource, _ []interfaces.Attachment) (acpsdk.StopReason, error) {
 	m.promptCalled = true
 	return "", m.promptErr
@@ -86,16 +96,22 @@ func (m *mockTransport) StderrTail() string {
 // TestResolveACPSession verifies the session/load-vs-session/new decision in
 // resolveACPSession: load is attempted only when a persisted ACP session ID
 // exists AND the agent advertised loadSession; any load error falls back to
-// NewSession.
+// NewSession. When the agent supports session/list, the persisted ID is
+// reconciled against the agent's session list before attempting LoadSession.
 func TestResolveACPSession(t *testing.T) {
+	listCap := &acpsdk.SessionListCapabilities{}
 	cases := []struct {
 		name           string
 		acpSessionID   string
 		loadCapability bool
+		listCapability *acpsdk.SessionListCapabilities
+		listErr        error
+		listSessions   []acpsdk.SessionInfo
 		loadErr        error
 		loadResult     string
 		newResult      string
 		newErr         error
+		wantListCalled bool
 		wantLoadCalled bool
 		wantNewCalled  bool
 		wantID         string
@@ -147,21 +163,92 @@ func TestResolveACPSession(t *testing.T) {
 			wantNewCalled:  true,
 			wantErr:        true,
 		},
+		// --- session/list reconciliation cases ---
+		{
+			name:           "list confirms session exists, load succeeds",
+			acpSessionID:   "acp-123",
+			loadCapability: true,
+			listCapability: listCap,
+			listSessions: []acpsdk.SessionInfo{
+				{SessionId: "acp-123"},
+			},
+			loadResult:     "acp-123",
+			newResult:      "new-456",
+			wantListCalled: true,
+			wantLoadCalled: true,
+			wantNewCalled:  false,
+			wantID:         "acp-123",
+		},
+		{
+			name:           "list says session gone, skip load go straight to new",
+			acpSessionID:   "acp-123",
+			loadCapability: true,
+			listCapability: listCap,
+			listSessions: []acpsdk.SessionInfo{
+				{SessionId: "other-999"},
+			},
+			newResult:      "new-456",
+			wantListCalled: true,
+			wantLoadCalled: false,
+			wantNewCalled:  true,
+			wantID:         "new-456",
+		},
+		{
+			name:           "list returns empty, skip load go straight to new",
+			acpSessionID:   "acp-123",
+			loadCapability: true,
+			listCapability: listCap,
+			listSessions:   []acpsdk.SessionInfo{},
+			newResult:      "new-456",
+			wantListCalled: true,
+			wantLoadCalled: false,
+			wantNewCalled:  true,
+			wantID:         "new-456",
+		},
+		{
+			name:           "list fails, fall back to legacy load-then-new",
+			acpSessionID:   "acp-123",
+			loadCapability: true,
+			listCapability: listCap,
+			listErr:        errors.New("list not supported"),
+			loadResult:     "acp-123",
+			newResult:      "new-456",
+			wantListCalled: true,
+			wantLoadCalled: true,
+			wantNewCalled:  false,
+			wantID:         "acp-123",
+		},
+		{
+			name:           "list capability but no load capability, skip both list and load",
+			acpSessionID:   "acp-123",
+			loadCapability: false,
+			listCapability: listCap,
+			newResult:      "new-456",
+			wantListCalled: false,
+			wantLoadCalled: false,
+			wantNewCalled:  true,
+			wantID:         "new-456",
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mt := &mockTransport{
-				loadSessionResult: tc.loadResult,
-				loadSessionErr:    tc.loadErr,
-				newSessionResult:  tc.newResult,
-				newSessionErr:     tc.newErr,
+				loadSessionResult:  tc.loadResult,
+				loadSessionErr:     tc.loadErr,
+				newSessionResult:   tc.newResult,
+				newSessionErr:      tc.newErr,
+				listSessionsResult: tc.listSessions,
+				listSessionsErr:    tc.listErr,
 			}
 			session := &Session{ACPSessionID: tc.acpSessionID}
 			initResp := acpsdk.InitializeResponse{
 				AgentCapabilities: acpsdk.AgentCapabilities{
 					LoadSession: tc.loadCapability,
 				},
+			}
+			if tc.listCapability != nil {
+				initResp.AgentCapabilities.SessionCapabilities.List = tc.listCapability
 			}
 
 			c := NewClient(nil, nil)
@@ -178,6 +265,9 @@ func TestResolveACPSession(t *testing.T) {
 			}
 			if gotID != tc.wantID {
 				t.Errorf("acp session ID = %q, want %q", gotID, tc.wantID)
+			}
+			if mt.listSessionsCalled != tc.wantListCalled {
+				t.Errorf("ListSessions called = %v, want %v", mt.listSessionsCalled, tc.wantListCalled)
 			}
 			if mt.loadSessionCalled != tc.wantLoadCalled {
 				t.Errorf("LoadSession called = %v, want %v", mt.loadSessionCalled, tc.wantLoadCalled)
