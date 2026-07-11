@@ -1,7 +1,8 @@
-import { useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
+import { useState, useRef, useMemo, useEffect, type ChangeEvent, type CSSProperties } from 'react'
 import { WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UploadResult } from '@/lib/api'
+import { getMcpConfig, patchMcpServer } from '@/lib/api'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatComposer } from './ChatComposer'
 import { ConversationView } from './ConversationView'
@@ -136,6 +137,57 @@ export function ChatPanel({
   // immediately so they can pick a transfer-history truncate length.
   const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
   const [truncateLength, setTruncateLength] = useState<number>(8000)
+
+  // MCP server list + toggle state for the chat overflow menu's "MCP servers"
+  // sub-menu. The settings panel is the primary editing surface; the chat menu
+  // just reflects the current config and lets users toggle servers inline.
+  // ACP mandates a restart to apply MCP changes (no live add/remove in v1), so
+  // toggling a server while a session is active surfaces a restart banner.
+  const [mcpServers, setMcpServers] = useState<{ name: string; enabled: boolean }[]>([])
+  const [mcpTogglingServer, setMcpTogglingServer] = useState<string | null>(null)
+  const [mcpConfigChanged, setMcpConfigChanged] = useState(false)
+
+  async function loadMcpServers() {
+    try {
+      const text = await getMcpConfig()
+      const parsed = JSON.parse(text) as { mcpServers?: Record<string, { enabled?: boolean }> }
+      const entries = Object.entries(parsed.mcpServers || {})
+      setMcpServers(
+        entries.map(([name, cfg]) => ({
+          name,
+          enabled: cfg.enabled !== false,
+        })),
+      )
+    } catch {
+      // If MCP config can't be loaded, just show empty list
+    }
+  }
+
+  useEffect(() => {
+    loadMcpServers()
+  }, [])
+
+  const handleToggleMcpServer = async (name: string, enabled: boolean) => {
+    setMcpTogglingServer(name)
+    try {
+      await patchMcpServer(name, enabled)
+      await loadMcpServers()
+      setMcpConfigChanged(true)
+    } catch (e) {
+      console.error('Failed to toggle MCP server:', e)
+    } finally {
+      setMcpTogglingServer(null)
+    }
+  }
+
+  /** Restart for MCP: ACP doesn't support live add/remove in v1, so the
+   *  simplest correct action is to drop the active session and let the user
+   *  start a new chat, which will pick up the updated MCP config. */
+  const handleRestartForMcp = () => {
+    setMcpConfigChanged(false)
+    onSelectSession('')
+    setShowNewChatTab(true)
+  }
 
   // Scroll container ref for the smart-autoscroll hook (Feature 1).
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -494,6 +546,9 @@ export function ChatPanel({
             onSelectSession(openTabIds[openTabIds.length - 1])
           }
         }}
+        mcpServers={mcpServers}
+        onToggleMcpServer={handleToggleMcpServer}
+        mcpTogglingServer={mcpTogglingServer}
       >
         <ChatHistory
           sessions={sessions}
@@ -527,6 +582,9 @@ export function ChatPanel({
         scrollContainerRef={scrollContainerRef}
         isAtBottom={isAtBottom}
         onJumpToBottom={scrollToBottom}
+        mcpConfigChanged={mcpConfigChanged}
+        onDismissMcpBanner={() => setMcpConfigChanged(false)}
+        onRestartForMcp={handleRestartForMcp}
       />
 
       <ChatComposer

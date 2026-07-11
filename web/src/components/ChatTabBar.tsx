@@ -9,6 +9,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuCheckboxItem,
 } from '@/components/ui/dropdown-menu'
 import {
   Tooltip,
@@ -69,13 +73,6 @@ function TabBarIconButton({ icon, label, onClick, className, ariaExpanded }: Tab
   )
 }
 
-/** Disabled placeholder entries in the overflow menu (design §4 — wired later).
- *  Rendered in two groups separated by a divider. */
-const disabledOverflowGroups: string[][] = [
-  ['MCP servers', 'Skills', 'Rules'],
-  ['Export conversation'],
-]
-
 interface ChatTabBarProps {
   /** Sessions currently shown as tabs (already filtered to openTabIds). */
   openTabs: Session[]
@@ -97,6 +94,13 @@ interface ChatTabBarProps {
   showNewChatTab?: boolean
   /** Closes the transient "New chat" placeholder tab. */
   onCloseNewChatTab?: () => void
+  /** MCP server configs for the overflow menu's MCP servers sub-menu.
+   *  Each entry has a name and enabled flag. */
+  mcpServers?: { name: string; enabled: boolean }[]
+  /** Toggle a single MCP server's enabled flag via PATCH /api/mcp/servers/{name}. */
+  onToggleMcpServer?: (name: string, enabled: boolean) => void
+  /** Whether a server toggle is currently in flight (shows loading state). */
+  mcpTogglingServer?: string | null
   /** Slot for the ChatHistory popout — rendered inside the relative container
    *  so it can absolute-position below the bar. */
   children?: React.ReactNode
@@ -124,6 +128,9 @@ export function ChatTabBar({
   isDesktop,
   showNewChatTab = false,
   onCloseNewChatTab,
+  mcpServers,
+  onToggleMcpServer,
+  mcpTogglingServer,
   children,
 }: ChatTabBarProps) {
   const tabListRef = useRef<HTMLDivElement>(null)
@@ -254,8 +261,8 @@ export function ChatTabBar({
             ariaExpanded={historyOpen}
           />
 
-          {/* Overflow menu — placeholder items for now. MCP toggle and other
-              entries are wired in a later work item (design §4). */}
+          {/* Overflow menu — MCP servers sub-menu (design §4) + a disabled
+              "Export conversation" placeholder. */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -268,16 +275,31 @@ export function ChatTabBar({
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Chat options</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {disabledOverflowGroups.map((group, gi) => (
-                <div key={gi}>
-                  {gi > 0 && <DropdownMenuSeparator />}
-                  {group.map((item) => (
-                    <DropdownMenuItem key={item} disabled>
-                      {item}
-                    </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>MCP servers</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  {(!mcpServers || mcpServers.length === 0) && (
+                    <DropdownMenuItem disabled>No servers configured</DropdownMenuItem>
+                  )}
+                  {mcpServers?.map((server) => (
+                    <DropdownMenuCheckboxItem
+                      key={server.name}
+                      checked={server.enabled}
+                      onSelect={(e) => {
+                        e.preventDefault()
+                        onToggleMcpServer?.(server.name, !server.enabled)
+                      }}
+                    >
+                      {mcpTogglingServer === server.name ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : null}
+                      <span className="ml-2">{server.name}</span>
+                    </DropdownMenuCheckboxItem>
                   ))}
-                </div>
-              ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled>Export conversation</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 

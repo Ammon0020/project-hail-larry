@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, X } from 'lucide-react'
 import { ChatMessageItem } from './ChatMessageItem'
 import type { AppEvent } from '@/types'
 import type { PendingPermission } from '@/lib/api'
@@ -14,6 +14,12 @@ interface ConversationViewProps {
   scrollContainerRef: React.RefObject<HTMLDivElement | null>
   isAtBottom: boolean
   onJumpToBottom: () => void
+  /** When true, shows a "MCP config changed — restart to apply" banner. */
+  mcpConfigChanged?: boolean
+  /** Dismisses the MCP config changed banner. */
+  onDismissMcpBanner?: () => void
+  /** Restarts the session to apply MCP config changes. */
+  onRestartForMcp?: () => void
 }
 
 /**
@@ -32,6 +38,9 @@ export function ConversationView({
   scrollContainerRef,
   isAtBottom,
   onJumpToBottom,
+  mcpConfigChanged,
+  onDismissMcpBanner,
+  onRestartForMcp,
 }: ConversationViewProps) {
   return (
     <div className="relative flex-1 min-h-0">
@@ -61,6 +70,30 @@ export function ConversationView({
             onPermissionResponse={onPermissionResponse}
           />
         ))}
+        {mcpConfigChanged && (
+          <div className="rounded-lg border border-primary/40 bg-primary/10 p-3 text-xs text-primary flex items-center justify-between gap-2">
+            <span>MCP config changed — restart to apply</span>
+            <div className="flex items-center gap-2">
+              {onRestartForMcp && (
+                <button
+                  onClick={onRestartForMcp}
+                  className="font-medium bg-primary text-primary-foreground px-2 py-0.5 rounded hover:bg-primary/90 transition"
+                >
+                  Restart
+                </button>
+              )}
+              {onDismissMcpBanner && (
+                <button
+                  onClick={onDismissMcpBanner}
+                  className="text-primary/70 hover:text-primary transition"
+                  aria-label="Dismiss"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         {error && (
           <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
             {error}
