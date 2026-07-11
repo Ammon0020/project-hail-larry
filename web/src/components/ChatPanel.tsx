@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, type KeyboardEvent, type ChangeEvent, type CSSProperties } from 'react'
-import { Menu, Paperclip, ArrowUp, Square, Wifi, WifiOff, ChevronDown, X, Loader2 } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
+import { WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UploadResult } from '@/lib/api'
 import {
@@ -18,7 +18,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { ChatMessageItem } from './ChatMessageItem'
+import { ChatTabBar } from './ChatTabBar'
+import { ChatComposer } from './ChatComposer'
+import { ConversationView } from './ConversationView'
 import { ChatHistory } from './ChatHistory'
 import { useAutoscroll } from '@/hooks/useAutoscroll'
 import type { AppEvent, Agent, Attachment, Session } from '@/types'
@@ -39,21 +41,41 @@ function isSessionGone(message: string): boolean {
   )
 }
 
+/** Reads persisted open-tab ids from localStorage, validating each against the
+ *  known session ids. Stale ids (deleted sessions) are dropped silently. */
+function loadOpenTabIds(knownIds: Set<string>): string[] {
+  try {
+    const stored = localStorage.getItem('lai:openTabIds')
+    if (!stored) return []
+    const parsed = JSON.parse(stored)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((id): id is string => typeof id === 'string' && knownIds.has(id))
+  } catch {
+    return []
+  }
+}
+
 /**
  * Right sidebar — agent chat (Blueprint Sec 17 — right sidebar).
- * Contains harness/model selectors, chat history popout, conversation view
- * rendered from events, and input composer.
+ *
+ * Slim orchestrator after the WI-3 restructure: owns agent/model state +
+ * persistence, the switch-agent dialog, autoscroll, history popout open
+ * state, input/attachment/sending/uploading state, and the open-tab ids.
+ * Header markup lives in `ChatTabBar`, message rendering in `ConversationView`,
+ * input markup in `ChatComposer`.
  *
  * On desktop: always visible alongside editor.
  * On mobile: full-screen via bottom nav.
  */
 export function ChatPanel({
   events,
+  allEvents,
   agents,
   sessions,
   workspaces,
   visible,
   connected,
+  isDesktop,
   pendingPermissions,
   activeSessionId,
   onSendMessage,
@@ -69,11 +91,17 @@ export function ChatPanel({
   style,
 }: {
   events: AppEvent[]
+  /** All events across all sessions — used only to compute the running
+   *  indicator for non-active open tabs. The active session's running state
+   *  is derived from `events` (already filtered to it) plus the `sending`
+   *  state. Don't use this for conversation rendering. */
+  allEvents: AppEvent[]
   agents: Agent[]
   sessions: Session[]
   workspaces: { id: string; name: string }[]
   visible: boolean
   connected: boolean
+  isDesktop: boolean
   pendingPermissions: PendingPermission[]
   activeSessionId: string | null
   onSendMessage: (sessionId: string, content: string, attachments?: Attachment[]) => Promise<void>
@@ -103,7 +131,6 @@ export function ChatPanel({
   const [selectedModel, setSelectedModel] = useState(() => {
     const stored = localStorage.getItem('lai:selectedModel')
     if (stored) {
-      // Validate the model belongs to the selected agent (or any agent).
       const agent = agents.find((a) => a.id === selectedAgent)
       if (agent?.models.some((m) => m.id === stored)) return stored
       if (agents.some((a) => a.models.some((m) => m.id === stored))) return stored
@@ -114,6 +141,13 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Open-tab ids — local UI state for which sessions appear as tabs. Closing
+  // a tab hides it (does NOT delete the session); the agent keeps running in
+  // the background. Persisted to localStorage so open tabs survive a reload.
+  const [openTabIds, setOpenTabIds] = useState<string[]>(() =>
+    loadOpenTabIds(new Set(sessions.map((s) => s.id))),
+  )
 
   // Pending image attachments for the next prompt. `pendingAttachments` holds
   // the {id, name, mimeType} sent with the prompt; `pendingPreviews` holds the
@@ -127,8 +161,6 @@ export function ChatPanel({
   // Switch-agent confirmation dialog state. When the user changes the agent
   // dropdown mid-conversation, we show a dialog instead of rebinding
   // immediately so they can pick a transfer-history truncate length.
-  // `pendingAgentId` holds the new agent id while the dialog is open; null
-  // means the dialog is closed.
   const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
   const [truncateLength, setTruncateLength] = useState<number>(8000)
 
@@ -144,6 +176,27 @@ export function ChatPanel({
     if (selectedModel) localStorage.setItem('lai:selectedModel', selectedModel)
   }, [selectedModel])
 
+  // Persist open-tab ids.
+  useEffect(() => {
+    localStorage.setItem('lai:openTabIds', JSON.stringify(openTabIds))
+  }, [openTabIds])
+
+  // Auto-open the active session as a tab. New chats (created via handleSend /
+  // handleFileChange) and existing chats restored via activeSessionId (e.g.
+  // cold reload, history click that didn't go through handleSelectAndOpen)
+  // would otherwise never enter openTabIds, so they wouldn't render a tab.
+  // Uses the "adjust state during render" pattern (React docs) — same as the
+  // prevSessions block below — to avoid react-hooks/set-state-in-effect.
+  const [prevActiveSessionId, setPrevActiveSessionId] = useState(activeSessionId)
+  if (activeSessionId !== prevActiveSessionId) {
+    setPrevActiveSessionId(activeSessionId)
+    if (activeSessionId && sessions.some((s) => s.id === activeSessionId)) {
+      setOpenTabIds((prev) =>
+        prev.includes(activeSessionId) ? prev : [...prev, activeSessionId],
+      )
+    }
+  }
+
   // When the agents list loads asynchronously (empty on first mount), restore
   // persisted selections. Uses the "adjust state during render" pattern from
   // the React docs instead of setState-in-effect to avoid cascading renders.
@@ -151,10 +204,6 @@ export function ChatPanel({
   if (agents !== prevAgents) {
     setPrevAgents(agents)
     if (agents.length > 0) {
-      // Resolve the agent locally first. setState doesn't commit until after
-      // this render, so reading `selectedAgent` below would see the stale
-      // value — instead we track the freshly-resolved id in `nextAgent` and
-      // queue the state update from it.
       let nextAgent = selectedAgent
       if (!selectedAgent || !agents.some((a) => a.id === selectedAgent)) {
         const storedAgent = localStorage.getItem('lai:selectedAgent')
@@ -164,9 +213,6 @@ export function ChatPanel({
             : agents[0]?.id ?? ''
         if (nextAgent) setSelectedAgent(nextAgent)
       }
-      // Derive the model from the freshly-resolved `nextAgent` (not the stale
-      // `selectedAgent` state), so model validation runs against the correct
-      // agent and doesn't pick a model from the previous selection.
       const agent = agents.find((a) => a.id === nextAgent)
       if (!selectedModel || !agent?.models.some((m) => m.id === selectedModel)) {
         const storedModel = localStorage.getItem('lai:selectedModel')
@@ -177,6 +223,25 @@ export function ChatPanel({
         if (validModel) setSelectedModel(validModel)
       }
     }
+  }
+
+  // Drop open-tab ids whose sessions have been deleted (e.g. after a daemon
+  // restart that wiped conversations.json). Render-time pure adjustment.
+  // Also auto-opens the active session as a tab — covers the cold-reload case
+  // where activeSessionId is restored from localStorage immediately but
+  // sessions load asynchronously, so the prevActiveSessionId block above
+  // (which only fires on activeSessionId change) would miss it.
+  const [prevSessions, setPrevSessions] = useState(sessions)
+  if (sessions !== prevSessions) {
+    setPrevSessions(sessions)
+    const known = new Set(sessions.map((s) => s.id))
+    setOpenTabIds((prev) => {
+      const filtered = prev.filter((id) => known.has(id))
+      if (activeSessionId && known.has(activeSessionId) && !filtered.includes(activeSessionId)) {
+        return [...filtered, activeSessionId]
+      }
+      return filtered
+    })
   }
 
   // The active conversation owns its agent/model — derive the selectors from it
@@ -198,11 +263,62 @@ export function ChatPanel({
         lastEvent.type === 'ToolStarted' ||
         lastEvent.type === 'ShellCommandStarted'))
 
+  // Per-tab running indicator. The active session uses the global `sending`
+  // state (only one send can be in flight at a time and it always targets the
+  // active session) plus its last event. Non-active open tabs are derived
+  // purely from their last event in `allEvents` — `sending` is NOT applied to
+  // them, since a background tab's send state is owned by whichever session
+  // was active when it was dispatched.
+  const runningSessionIds = useMemo(() => {
+    const ids = new Set<string>()
+    const isRunningEvent = (e: AppEvent | undefined): boolean =>
+      !!e &&
+      ((e.type === 'StreamUpdate' && !!e.streaming) ||
+        e.type === 'ResponseStarted' ||
+        e.type === 'ToolStarted' ||
+        e.type === 'ShellCommandStarted')
+    if (activeSessionId && (sending || isRunningEvent(lastEvent))) {
+      ids.add(activeSessionId)
+    }
+    for (const id of openTabIds) {
+      if (id === activeSessionId) continue
+      const eventsForTab = allEvents.filter((e) => e.sessionId === id)
+      if (isRunningEvent(eventsForTab[eventsForTab.length - 1])) {
+        ids.add(id)
+      }
+    }
+    return ids
+  }, [activeSessionId, sending, lastEvent, openTabIds, allEvents])
+
+  // Tabs to render — sessions whose id is in openTabIds, in openTabIds order.
+  const openTabs = openTabIds
+    .map((id) => sessions.find((s) => s.id === id))
+    .filter((s): s is Session => !!s)
+
+  /** Adds a session id to the open tabs (idempotent — no reorder if already open). */
+  const openTab = (id: string) => {
+    setOpenTabIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
+  }
+
+  /** Hides a tab without deleting the session. If the closed tab was active,
+   *  fall back to the most-recently still-open tab (or new-chat state). */
+  const handleCloseTab = (id: string) => {
+    setOpenTabIds((prev) => {
+      const next = prev.filter((tid) => tid !== id)
+      if (id === activeSessionId) {
+        if (next.length > 0) {
+          onSelectSession(next[next.length - 1])
+        } else {
+          onSelectSession('')
+        }
+      }
+      return next
+    })
+  }
+
   /** Updates models when the harness changes; rebinds an active conversation. */
   const handleAgentChange = (agentId: string) => {
     const previousAgentId = effectiveAgentId
-    // If there's no active conversation, or the session has no prompts yet,
-    // switch immediately without a confirmation dialog (same as before).
     const hasConversation =
       !!activeSessionId && events.some((e) => e.type === 'PromptSubmitted')
     if (!hasConversation) {
@@ -213,10 +329,6 @@ export function ChatPanel({
       if (activeSessionId && modelId) onRebindSession(activeSessionId, agentId, modelId)
       return
     }
-    // Mid-conversation switch — open the confirmation dialog instead of
-    // rebinding immediately. The dropdown value is driven by
-    // `effectiveAgentId` (derived from the active session), so it stays on
-    // the current agent until the user confirms the switch.
     if (agentId === previousAgentId) return
     setPendingAgentId(agentId)
   }
@@ -261,6 +373,11 @@ export function ChatPanel({
       if (!sessionId) {
         sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
       }
+      // Always ensure the active session is open as a tab — covers both the
+      // newly-created case above and an existing activeSessionId that hasn't
+      // been added to openTabIds yet (the auto-open effect also handles this,
+      // but calling it here makes the tab appear immediately on send).
+      openTab(sessionId)
       const attachmentsToSend = pendingAttachments
       await onSendMessage(
         sessionId,
@@ -271,15 +388,12 @@ export function ChatPanel({
       setPendingPreviews([])
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to send message'
-      // A stale/deleted session surfaces a friendly message and resets to the
-      // new-chat state so the user can start a fresh conversation instead of
-      // retrying against a dead session id.
       if (isSessionGone(message)) {
         setError('This conversation is no longer available. Start a new chat.')
-        onSelectSession('') // empty string = no active session = "new chat"
+        onSelectSession('')
       } else {
         setError(message)
-        setInput(content) // preserve the user's text so they can retry
+        setInput(content)
       }
     } finally {
       setSending(false)
@@ -303,7 +417,6 @@ export function ChatPanel({
   const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
-    // Reset the input so picking the same file again fires change.
     e.target.value = ''
 
     if (!effectiveAgentId || !effectiveModelId) return
@@ -314,6 +427,8 @@ export function ChatPanel({
       if (!sessionId) {
         sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
       }
+      // Always ensure the active session is open as a tab (see handleSend).
+      openTab(sessionId)
       for (const file of Array.from(files)) {
         const result = await onUploadFile(sessionId, file)
         setPendingAttachments((prev) => [
@@ -349,13 +464,6 @@ export function ChatPanel({
     }
   }
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
-
   const canSend = Boolean(
     (input.trim() || pendingAttachments.length > 0) &&
       effectiveAgentId &&
@@ -373,7 +481,6 @@ export function ChatPanel({
     if (event.type === 'StreamUpdate') {
       const last = acc[acc.length - 1]
       if (last && last.type === 'StreamUpdate' && last.role === event.role && !!last.thought === !!event.thought) {
-        // Append to the previous stream event
         acc[acc.length - 1] = {
           ...last,
           content: (last.content || '') + (event.content || ''),
@@ -388,20 +495,36 @@ export function ChatPanel({
 
   // Smart autoscroll — follows new content only when the user is already
   // near the bottom; otherwise stays put and shows a jump-to-bottom button.
-  // Depends on mergedEvents (the rendered stream) and the error banner so
-  // newly surfaced errors also trigger a scroll check.
   const { isAtBottom, scrollToBottom } = useAutoscroll(
     scrollContainerRef,
     [mergedEvents, error],
   )
 
-  const handleNewChat = () => {
-    // Frontend-only: reset to a new chat state. The actual session is
-    // created on the backend when the user sends their first message.
+  const handleNewChat = async () => {
+    // Reset transient UI state, then create a fresh session on the backend so
+    // it shows up as a tab immediately. The auto-open effect adds the new
+    // session's id to openTabIds once activeSessionId propagates back from
+    // App. If no agent/model is selectable we fall back to the empty-string
+    // selection (new-chat placeholder state) — there's nothing to create.
     setChatHistoryOpen(false)
     setError(null)
     setInput('')
-    onSelectSession('')  // empty string = no active session = "new chat"
+    if (effectiveAgentId && effectiveModelId) {
+      try {
+        await onCreateSession(effectiveAgentId, effectiveModelId)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to start new chat')
+      }
+    } else {
+      onSelectSession('')
+    }
+  }
+
+  /** Selecting a session from a tab or the history popout also opens it as a tab. */
+  const handleSelectAndOpen = (id: string) => {
+    if (id) openTab(id)
+    onSelectSession(id)
+    setChatHistoryOpen(false)
   }
 
   return (
@@ -413,85 +536,25 @@ export function ChatPanel({
       )}
       style={style}
     >
-      {/* Chat Header (relative container for popout) */}
-      <div className="relative border-b border-border shrink-0 bg-panel">
-        {/* Top row: harness + model + hamburger */}
-        <div className="flex items-center gap-2 p-3">
-          {/* Harness selector — pick agent (Blueprint Sec 5) */}
-          <Select value={effectiveAgentId} onValueChange={handleAgentChange} disabled={sending}>
-            <SelectTrigger
-              size="sm"
-              className="shrink-0 text-xs font-semibold"
-              title="Agent Harness"
-              aria-label="Agent harness"
-            >
-              <SelectValue placeholder="Agent" />
-            </SelectTrigger>
-            <SelectContent>
-              {agents.map((a) => (
-                <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* Model selector — pick model for selected agent */}
-          <Select
-            value={effectiveModelId}
-            onValueChange={handleModelChange}
-            disabled={sending || !currentAgent}
-          >
-            <SelectTrigger
-              size="sm"
-              className="shrink-0 border-primary/50 text-primary text-xs font-medium"
-              title="Model"
-              aria-label="Model"
-            >
-              <SelectValue placeholder="Model" />
-            </SelectTrigger>
-            <SelectContent>
-              {currentAgent?.models.map((m) => (
-                <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <div className="flex-1" />
-
-          {/* Connection indicator */}
-          <span
-            className="flex items-center gap-1 text-[11px] shrink-0"
-            title={connected ? 'Connected to daemon' : 'Disconnected — reconnecting'}
-          >
-            {connected ? (
-              <Wifi className="w-3.5 h-3.5 text-green-500" />
-            ) : (
-              <WifiOff className="w-3.5 h-3.5 text-red-500" />
-            )}
-          </span>
-
-          {/* Hamburger menu — toggles chat list popout */}
-          <button
-            onClick={() => setChatHistoryOpen(!chatHistoryOpen)}
-            className="p-1.5 text-muted-foreground hover:text-foreground bg-secondary hover:bg-accent rounded-md transition relative"
-            title="Chat History"
-            aria-label="Chat history"
-            aria-expanded={chatHistoryOpen}
-          >
-            <Menu className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Chat list popout (floats over chat messages) */}
+      <ChatTabBar
+        openTabs={openTabs}
+        activeSessionId={activeSessionId}
+        runningSessionIds={runningSessionIds}
+        onSelectSession={handleSelectAndOpen}
+        onNewChat={handleNewChat}
+        onCloseTab={handleCloseTab}
+        onToggleHistory={() => setChatHistoryOpen((v) => !v)}
+        historyOpen={chatHistoryOpen}
+        connected={connected}
+        isDesktop={isDesktop}
+      >
         <ChatHistory
           sessions={sessions}
           workspaces={workspaces}
           open={chatHistoryOpen}
           onClose={() => setChatHistoryOpen(false)}
           onCreateSession={handleNewChat}
-          onSelectSession={(id) => {
-            onSelectSession(id)
-            setChatHistoryOpen(false)
-          }}
+          onSelectSession={handleSelectAndOpen}
           onRenameSession={onRenameSession}
           onExportSession={onExportSession}
           onDeleteSession={(id) => {
@@ -499,153 +562,55 @@ export function ChatPanel({
             onDeleteSession(id)
           }}
         />
-      </div>
+      </ChatTabBar>
 
-      {/* Disconnected banner — surfaces connection loss to the user */}
+      {/* Disconnected banner — surfaces connection loss to the user. */}
       {!connected && (
         <div className="bg-warning/10 border-b border-warning/40 px-3 py-2 text-xs text-warning flex items-center gap-2 shrink-0">
           <WifiOff className="w-3.5 h-3.5" /> Reconnecting to daemon…
         </div>
       )}
 
-      {/* Chat Messages — rendered from event stream (Blueprint Sec 11) */}
-      <div className="relative flex-1 min-h-0">
-        <div
-          ref={scrollContainerRef}
-          className="h-full overflow-y-auto p-3 lg:p-4 space-y-3 lg:space-y-4 pb-20 lg:pb-4"
-        >
-          {mergedEvents.length === 0 && (
-            <div className="rounded-lg border border-border bg-panel/50 p-3 text-xs text-muted-foreground">
-              Send a message to start a conversation.
-            </div>
-          )}
-          {mergedEvents.map((event, i) => (
-            <ChatMessageItem
-              key={event.id ?? `${event.type}-${i}`}
-              event={event}
-              pending={
-                event.type === 'PermissionRequested' && event.requestId
-                  ? pendingPermissions.find((p) => p.id === event.requestId)
-                  : undefined
-              }
-              resolution={
-                event.type === 'PermissionRequested' && event.requestId
-                  ? permissionResolution.get(event.requestId)
-                  : undefined
-              }
-              onPermissionResponse={onPermissionResponse}
-            />
-          ))}
-          {error && (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-              {error}
-            </div>
-          )}
-        </div>
+      <ConversationView
+        events={mergedEvents}
+        pendingPermissions={pendingPermissions}
+        permissionResolution={permissionResolution}
+        onPermissionResponse={onPermissionResponse}
+        error={error}
+        scrollContainerRef={scrollContainerRef}
+        isAtBottom={isAtBottom}
+        onJumpToBottom={scrollToBottom}
+      />
 
-        {/* Jump-to-bottom button — shown only when the user has scrolled
-            away from the bottom (Feature 1). Clicking snaps to the bottom. */}
-        {!isAtBottom && (
-          <button
-            onClick={scrollToBottom}
-            className="absolute bottom-4 right-4 rounded-full bg-background border border-border p-2 shadow-md hover:bg-accent text-muted-foreground hover:text-foreground transition"
-            title="Jump to bottom"
-            aria-label="Jump to bottom"
-          >
-            <ChevronDown className="w-4 h-4" />
-          </button>
-        )}
-      </div>
+      <ChatComposer
+        agents={agents}
+        effectiveAgentId={effectiveAgentId}
+        effectiveModelId={effectiveModelId}
+        onAgentChange={handleAgentChange}
+        onModelChange={handleModelChange}
+        input={input}
+        onInputChange={setInput}
+        onSend={handleSend}
+        onStop={handleStop}
+        agentRunning={agentRunning}
+        canSend={canSend}
+        pendingPreviews={pendingPreviews}
+        onRemoveAttachment={removePendingAttachment}
+        onPickFiles={handlePickFiles}
+        uploading={uploading}
+        uploadError={uploadError}
+        disabled={sending || agents.length === 0}
+      />
 
-      {/* Chat Input (Blueprint Sec 17 — input composer) */}
-      <div className="p-2.5 lg:p-3 bg-gradient-to-t from-background to-transparent shrink-0 border-t border-border/50 pb-20 lg:pb-3">
-        {/* Pending attachment previews — shown above the textarea while
-            composing. Each chip shows a thumbnail + filename + remove button. */}
-        {pendingPreviews.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-2">
-            {pendingPreviews.map((preview, i) => (
-              <div
-                key={`${preview.url}-${i}`}
-                className="relative group flex items-center gap-2 rounded-lg border border-border bg-muted px-2 py-1.5 pr-7 max-w-[180px]"
-              >
-                <img
-                  src={preview.url}
-                  alt={preview.name}
-                  className="w-8 h-8 rounded object-cover shrink-0 border border-border"
-                />
-                <span className="text-xs text-muted-foreground truncate" title={preview.name}>
-                  {preview.name}
-                </span>
-                <button
-                  onClick={() => removePendingAttachment(i)}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition"
-                  title="Remove attachment"
-                  aria-label={`Remove ${preview.name}`}
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        {uploadError && (
-          <div className="mb-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
-            {uploadError}
-          </div>
-        )}
-        <div className="relative flex items-end gap-2">
-          <button
-            onClick={handlePickFiles}
-            disabled={uploading || sending || agents.length === 0}
-            className="p-2.5 bg-panel border border-border rounded-xl hover:bg-accent hover:border-ring transition text-muted-foreground hover:text-foreground shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
-            title="Upload image"
-            aria-label="Upload image"
-          >
-            {uploading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Paperclip className="w-4 h-4" />
-            )}
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            multiple
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          <div className="relative flex-1">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={agents.length === 0 ? 'Configure an agent first...' : 'Message agent...'}
-              disabled={sending || agents.length === 0}
-              className="w-full bg-panel border border-input rounded-xl pl-3 pr-10 py-3 text-sm focus:outline-none focus:border-ring focus:ring-1 focus:ring-ring resize-none h-12 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
-            />
-            {agentRunning && activeSessionId ? (
-              <button
-                onClick={handleStop}
-                className="absolute right-2 bottom-2 p-1.5 bg-destructive rounded-lg hover:bg-destructive/90 transition"
-                title="Stop"
-                aria-label="Stop"
-              >
-                <Square className="w-3.5 h-3.5 text-white" />
-              </button>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={!canSend}
-                className="absolute right-2 bottom-2 p-1.5 bg-primary rounded-lg hover:bg-primary/90 disabled:bg-muted disabled:cursor-not-allowed transition"
-                aria-label="Send message"
-              >
-                <ArrowUp className="w-3.5 h-3.5 text-primary-foreground" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* Hidden file input — triggered by the attach button via ref. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        multiple
+        onChange={handleFileChange}
+        className="hidden"
+      />
 
       {/* Switch-agent confirmation dialog — shown when the user changes the
           harness mid-conversation. Lets them pick how much of the prior

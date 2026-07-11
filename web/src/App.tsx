@@ -732,6 +732,7 @@ export default function App() {
       {/* Right Sidebar — agent chat */}
       <ChatPanel
         events={sessionEvents}
+        allEvents={backend.events as AppEvent[]}
         agents={backend.agents}
         sessions={backend.sessions.map((s) => ({
           id: s.id,
@@ -746,6 +747,7 @@ export default function App() {
         workspaces={backend.workspaces}
         visible={showChat}
         connected={backend.connected}
+        isDesktop={isDesktop}
         pendingPermissions={backend.pendingPermissions}
         activeSessionId={activeSessionId}
         onSendMessage={handleSendMessage}
