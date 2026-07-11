@@ -38,6 +38,44 @@ const tabVariant = cva(
 
 type TabVariant = VariantProps<typeof tabVariant>
 
+interface TabBarIconButtonProps {
+  icon: React.ReactNode
+  label: string
+  onClick: () => void
+  /** Extra classes (color/hover state) appended to the shared base classes. */
+  className?: string
+  ariaExpanded?: boolean
+}
+
+/**
+ * TabBarIconButton — a Tooltip-wrapped icon button used in the right-side
+ * controls strip. Extracts the repeated Tooltip + TooltipTrigger + button
+ * pattern shared by the new-chat and history toggle buttons.
+ */
+function TabBarIconButton({ icon, label, onClick, className, ariaExpanded }: TabBarIconButtonProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          className={cn('p-1.5 rounded-md transition', className)}
+          aria-label={label}
+          aria-expanded={ariaExpanded}
+        >
+          {icon}
+        </button>
+      </TooltipTrigger>
+    </Tooltip>
+  )
+}
+
+/** Disabled placeholder entries in the overflow menu (design §4 — wired later).
+ *  Rendered in two groups separated by a divider. */
+const disabledOverflowGroups: string[][] = [
+  ['MCP servers', 'Skills', 'Rules'],
+  ['Export conversation'],
+]
+
 interface ChatTabBarProps {
   /** Sessions currently shown as tabs (already filtered to openTabIds). */
   openTabs: Session[]
@@ -53,6 +91,12 @@ interface ChatTabBarProps {
   /** Hides the connection indicator on mobile (per the design — mobile users
    *  see the reconnect banner already). */
   isDesktop: boolean
+  /** When true, render a transient "New chat" placeholder tab at the end of
+   *  the strip. Shown after the user clicks "+" but before a real session is
+   *  created (lazy session creation — the session is spawned on first send). */
+  showNewChatTab?: boolean
+  /** Closes the transient "New chat" placeholder tab. */
+  onCloseNewChatTab?: () => void
   /** Slot for the ChatHistory popout — rendered inside the relative container
    *  so it can absolute-position below the bar. */
   children?: React.ReactNode
@@ -78,6 +122,8 @@ export function ChatTabBar({
   historyOpen,
   connected,
   isDesktop,
+  showNewChatTab = false,
+  onCloseNewChatTab,
   children,
 }: ChatTabBarProps) {
   const tabListRef = useRef<HTMLDivElement>(null)
@@ -110,7 +156,7 @@ export function ChatTabBar({
           onWheel={handleWheel}
           className="flex items-stretch overflow-x-auto overflow-y-hidden hide-scrollbar min-w-0 flex-1"
         >
-          {openTabs.length === 0 && (
+          {openTabs.length === 0 && !showNewChatTab && (
             <div className="flex items-center px-3 text-xs text-muted-foreground">
               No open chats
             </div>
@@ -153,39 +199,60 @@ export function ChatTabBar({
               </button>
             )
           })}
+          {/* Transient "New chat" placeholder tab — shown after the user clicks
+              "+" but before a real session is created (lazy creation). Active
+              whenever there is no real active session. Replaced by the real
+              session's tab once the first message/attachment is sent. */}
+          {showNewChatTab && (
+            <button
+              ref={!activeSessionId ? activeTabRef : undefined}
+              onClick={onNewChat}
+              className={tabVariant({ state: !activeSessionId ? 'active' : 'inactive' })}
+              title="New chat"
+              aria-current={!activeSessionId ? 'page' : undefined}
+            >
+              <span className="max-w-[7rem] md:max-w-[10rem] truncate italic text-muted-foreground">
+                New chat
+              </span>
+              {onCloseNewChatTab && (
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onCloseNewChatTab()
+                  }}
+                  className="ml-1 flex items-center justify-center w-4 h-4 rounded text-muted-foreground hover:text-foreground hover:bg-accent opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Close tab"
+                  aria-label="Close New chat"
+                >
+                  <X className="w-3 h-3" />
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Right-side controls — never scroll away. */}
         <div className="flex items-center gap-1 px-2 shrink-0 border-l border-border">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onNewChat}
-                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition"
-                aria-label="New chat"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            </TooltipTrigger>
-          </Tooltip>
+          <TabBarIconButton
+            icon={<Plus className="w-4 h-4" />}
+            label="New chat"
+            onClick={onNewChat}
+            className="text-muted-foreground hover:text-foreground hover:bg-accent"
+          />
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onToggleHistory}
-                className={cn(
-                  'p-1.5 rounded-md transition',
-                  historyOpen
-                    ? 'text-foreground bg-accent'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent',
-                )}
-                aria-label="Chat history"
-                aria-expanded={historyOpen}
-              >
-                <History className="w-4 h-4" />
-              </button>
-            </TooltipTrigger>
-          </Tooltip>
+          <TabBarIconButton
+            icon={<History className="w-4 h-4" />}
+            label="Chat history"
+            onClick={onToggleHistory}
+            className={
+              historyOpen
+                ? 'text-foreground bg-accent'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+            }
+            ariaExpanded={historyOpen}
+          />
 
           {/* Overflow menu — placeholder items for now. MCP toggle and other
               entries are wired in a later work item (design §4). */}
@@ -201,19 +268,16 @@ export function ChatTabBar({
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Chat options</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled>
-                MCP servers
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled>
-                Skills
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled>
-                Rules
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem disabled>
-                Export conversation
-              </DropdownMenuItem>
+              {disabledOverflowGroups.map((group, gi) => (
+                <div key={gi}>
+                  {gi > 0 && <DropdownMenuSeparator />}
+                  {group.map((item) => (
+                    <DropdownMenuItem key={item} disabled>
+                      {item}
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
 

@@ -1,28 +1,14 @@
-import { useState, useEffect, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
+import { useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
 import { WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UploadResult } from '@/lib/api'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatComposer } from './ChatComposer'
 import { ConversationView } from './ConversationView'
 import { ChatHistory } from './ChatHistory'
+import { SwitchAgentDialog } from './SwitchAgentDialog'
 import { useAutoscroll } from '@/hooks/useAutoscroll'
+import { useLocalStorage } from '@/hooks/useLocalStorage'
 import type { AppEvent, Agent, Attachment, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 
@@ -39,20 +25,6 @@ function isSessionGone(message: string): boolean {
     lower.includes('no longer available') ||
     lower.includes('not found')
   )
-}
-
-/** Reads persisted open-tab ids from localStorage, validating each against the
- *  known session ids. Stale ids (deleted sessions) are dropped silently. */
-function loadOpenTabIds(knownIds: Set<string>): string[] {
-  try {
-    const stored = localStorage.getItem('lai:openTabIds')
-    if (!stored) return []
-    const parsed = JSON.parse(stored)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((id): id is string => typeof id === 'string' && knownIds.has(id))
-  } catch {
-    return []
-  }
 }
 
 /**
@@ -120,34 +92,35 @@ export function ChatPanel({
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
   style?: CSSProperties
 }) {
-  // Persisted agent/model selections — restored from localStorage on mount,
-  // falling back to the first available agent/model if the stored value is
-  // missing or no longer valid (UI Spec §6.2 — UI Persistence).
-  const [selectedAgent, setSelectedAgent] = useState(() => {
-    const stored = localStorage.getItem('lai:selectedAgent')
-    if (stored && agents.some((a) => a.id === stored)) return stored
-    return agents[0]?.id ?? ''
-  })
-  const [selectedModel, setSelectedModel] = useState(() => {
-    const stored = localStorage.getItem('lai:selectedModel')
-    if (stored) {
-      const agent = agents.find((a) => a.id === selectedAgent)
-      if (agent?.models.some((m) => m.id === stored)) return stored
-      if (agents.some((a) => a.models.some((m) => m.id === stored))) return stored
-    }
-    return agents[0]?.models[0]?.id ?? ''
-  })
+  // Persisted agent/model selections and open-tab ids — restored from
+  // localStorage on mount via useLocalStorage, falling back to the first
+  // available agent/model when the stored value is missing or no longer valid
+  // (UI Spec §6.2 — UI Persistence). The selected* values below are derived
+  // from the stored values against the current agents list so a stale stored
+  // selection (agent/model removed since last run) is corrected reactively as
+  // agents load asynchronously — no separate prevAgents reconciliation block.
+  const [storedAgent, setStoredAgent] = useLocalStorage<string>('lai:selectedAgent', '')
+  const [storedModel, setStoredModel] = useLocalStorage<string>('lai:selectedModel', '')
+  const [openTabIds, setOpenTabIds] = useLocalStorage<string[]>('lai:openTabIds', [])
+  const selectedAgent = agents.some((a) => a.id === storedAgent)
+    ? storedAgent
+    : (agents[0]?.id ?? '')
+  const agentForModel = agents.find((a) => a.id === selectedAgent)
+  const selectedModel = agentForModel?.models.some((m) => m.id === storedModel)
+    ? storedModel
+    : (agentForModel?.models[0]?.id ?? '')
+
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Open-tab ids — local UI state for which sessions appear as tabs. Closing
-  // a tab hides it (does NOT delete the session); the agent keeps running in
-  // the background. Persisted to localStorage so open tabs survive a reload.
-  const [openTabIds, setOpenTabIds] = useState<string[]>(() =>
-    loadOpenTabIds(new Set(sessions.map((s) => s.id))),
-  )
+  // Transient "New chat" placeholder tab. Set true by handleNewChat so the tab
+  // bar shows a "New chat" tab immediately (without a backend round-trip).
+  // Cleared once a real session becomes active (via send/upload) or another
+  // tab is selected. This keeps new-tab creation instant — the actual session
+  // is created lazily on first send/upload by handleSend/handleFileChange.
+  const [showNewChatTab, setShowNewChatTab] = useState(false)
 
   // Pending image attachments for the next prompt. `pendingAttachments` holds
   // the {id, name, mimeType} sent with the prompt; `pendingPreviews` holds the
@@ -167,20 +140,6 @@ export function ChatPanel({
   // Scroll container ref for the smart-autoscroll hook (Feature 1).
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
-  // Persist agent and model selections whenever they change.
-  useEffect(() => {
-    if (selectedAgent) localStorage.setItem('lai:selectedAgent', selectedAgent)
-  }, [selectedAgent])
-
-  useEffect(() => {
-    if (selectedModel) localStorage.setItem('lai:selectedModel', selectedModel)
-  }, [selectedModel])
-
-  // Persist open-tab ids.
-  useEffect(() => {
-    localStorage.setItem('lai:openTabIds', JSON.stringify(openTabIds))
-  }, [openTabIds])
-
   // Auto-open the active session as a tab. New chats (created via handleSend /
   // handleFileChange) and existing chats restored via activeSessionId (e.g.
   // cold reload, history click that didn't go through handleSelectAndOpen)
@@ -190,38 +149,14 @@ export function ChatPanel({
   const [prevActiveSessionId, setPrevActiveSessionId] = useState(activeSessionId)
   if (activeSessionId !== prevActiveSessionId) {
     setPrevActiveSessionId(activeSessionId)
+    // Only auto-open a real session as a tab. The new-chat state
+    // (activeSessionId is null/empty) is represented by the transient
+    // `showNewChatTab` placeholder, NOT an entry in openTabIds — adding an
+    // empty id here would corrupt the persisted openTabIds list.
     if (activeSessionId && sessions.some((s) => s.id === activeSessionId)) {
       setOpenTabIds((prev) =>
         prev.includes(activeSessionId) ? prev : [...prev, activeSessionId],
       )
-    }
-  }
-
-  // When the agents list loads asynchronously (empty on first mount), restore
-  // persisted selections. Uses the "adjust state during render" pattern from
-  // the React docs instead of setState-in-effect to avoid cascading renders.
-  const [prevAgents, setPrevAgents] = useState(agents)
-  if (agents !== prevAgents) {
-    setPrevAgents(agents)
-    if (agents.length > 0) {
-      let nextAgent = selectedAgent
-      if (!selectedAgent || !agents.some((a) => a.id === selectedAgent)) {
-        const storedAgent = localStorage.getItem('lai:selectedAgent')
-        nextAgent =
-          storedAgent && agents.some((a) => a.id === storedAgent)
-            ? storedAgent
-            : agents[0]?.id ?? ''
-        if (nextAgent) setSelectedAgent(nextAgent)
-      }
-      const agent = agents.find((a) => a.id === nextAgent)
-      if (!selectedModel || !agent?.models.some((m) => m.id === selectedModel)) {
-        const storedModel = localStorage.getItem('lai:selectedModel')
-        const validModel =
-          storedModel && agent?.models.some((m) => m.id === storedModel)
-            ? storedModel
-            : agent?.models[0]?.id ?? ''
-        if (validModel) setSelectedModel(validModel)
-      }
     }
   }
 
@@ -322,10 +257,10 @@ export function ChatPanel({
     const hasConversation =
       !!activeSessionId && events.some((e) => e.type === 'PromptSubmitted')
     if (!hasConversation) {
-      setSelectedAgent(agentId)
+      setStoredAgent(agentId)
       const agent = agents.find((a) => a.id === agentId)
       const modelId = agent?.models[0]?.id ?? ''
-      if (agent) setSelectedModel(modelId)
+      if (agent) setStoredModel(modelId)
       if (activeSessionId && modelId) onRebindSession(activeSessionId, agentId, modelId)
       return
     }
@@ -340,10 +275,10 @@ export function ChatPanel({
       return
     }
     const agentId = pendingAgentId
-    setSelectedAgent(agentId)
+    setStoredAgent(agentId)
     const agent = agents.find((a) => a.id === agentId)
     const modelId = agent?.models[0]?.id ?? ''
-    if (agent) setSelectedModel(modelId)
+    if (agent) setStoredModel(modelId)
     const maxBytes = truncateLength > 0 ? truncateLength : undefined
     onRebindSession(activeSessionId, agentId, modelId, maxBytes)
     setPendingAgentId(null)
@@ -356,7 +291,7 @@ export function ChatPanel({
 
   /** Switches model; rebinds an active conversation in place. */
   const handleModelChange = (modelId: string) => {
-    setSelectedModel(modelId)
+    setStoredModel(modelId)
     if (activeSessionId) onRebindSession(activeSessionId, effectiveAgentId, modelId)
   }
 
@@ -372,8 +307,10 @@ export function ChatPanel({
       let sessionId = activeSessionId
       if (!sessionId) {
         sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
+        // A real session now exists — drop the transient "New chat" placeholder.
+        setShowNewChatTab(false)
       }
-      // Always ensure the active session is open as a tab — covers both the
+      // Always ensure the active session is opened as a tab — covers both the
       // newly-created case above and an existing activeSessionId that hasn't
       // been added to openTabIds yet (the auto-open effect also handles this,
       // but calling it here makes the tab appear immediately on send).
@@ -426,8 +363,10 @@ export function ChatPanel({
       let sessionId = activeSessionId
       if (!sessionId) {
         sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
+        // A real session now exists — drop the transient "New chat" placeholder.
+        setShowNewChatTab(false)
       }
-      // Always ensure the active session is open as a tab (see handleSend).
+      // Always ensure the active session is opened as a tab (see handleSend).
       openTab(sessionId)
       for (const file of Array.from(files)) {
         const result = await onUploadFile(sessionId, file)
@@ -500,29 +439,27 @@ export function ChatPanel({
     [mergedEvents, error],
   )
 
-  const handleNewChat = async () => {
-    // Reset transient UI state, then create a fresh session on the backend so
-    // it shows up as a tab immediately. The auto-open effect adds the new
-    // session's id to openTabIds once activeSessionId propagates back from
-    // App. If no agent/model is selectable we fall back to the empty-string
-    // selection (new-chat placeholder state) — there's nothing to create.
+  const handleNewChat = () => {
+    // Lazy session creation: just reset transient UI state and drop into the
+    // new-chat state (activeSessionId = null). The actual backend session is
+    // created on first send/upload by handleSend/handleFileChange, which both
+    // already handle the null-activeSessionId case. This keeps "+" instant —
+    // no agent-process spawn / ACP handshake round-trip on tab creation.
+    // Show a transient "New chat" placeholder tab so the user sees feedback.
     setChatHistoryOpen(false)
     setError(null)
     setInput('')
-    if (effectiveAgentId && effectiveModelId) {
-      try {
-        await onCreateSession(effectiveAgentId, effectiveModelId)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to start new chat')
-      }
-    } else {
-      onSelectSession('')
-    }
+    setShowNewChatTab(true)
+    onSelectSession('')
   }
 
   /** Selecting a session from a tab or the history popout also opens it as a tab. */
   const handleSelectAndOpen = (id: string) => {
-    if (id) openTab(id)
+    if (id) {
+      openTab(id)
+      // Selecting a real session dismisses the transient "New chat" placeholder.
+      setShowNewChatTab(false)
+    }
     onSelectSession(id)
     setChatHistoryOpen(false)
   }
@@ -547,6 +484,16 @@ export function ChatPanel({
         historyOpen={chatHistoryOpen}
         connected={connected}
         isDesktop={isDesktop}
+        showNewChatTab={showNewChatTab}
+        onCloseNewChatTab={() => {
+          // Closing the transient "New chat" placeholder just drops it and
+          // falls back to the most-recently still-open real tab (or the empty
+          // new-chat state if none are open).
+          setShowNewChatTab(false)
+          if (!activeSessionId && openTabIds.length > 0) {
+            onSelectSession(openTabIds[openTabIds.length - 1])
+          }
+        }}
       >
         <ChatHistory
           sessions={sessions}
@@ -615,72 +562,16 @@ export function ChatPanel({
       {/* Switch-agent confirmation dialog — shown when the user changes the
           harness mid-conversation. Lets them pick how much of the prior
           conversation history to transfer as context for the new agent. */}
-      <Dialog
+      <SwitchAgentDialog
         open={!!pendingAgentId}
-        onOpenChange={(o) => {
-          if (!o) cancelSwitchAgent()
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Switch Agent</DialogTitle>
-            <DialogDescription>
-              Switching from{' '}
-              <span className="font-semibold text-foreground">
-                {currentAgent?.name ?? effectiveAgentId}
-              </span>{' '}
-              to{' '}
-              <span className="font-semibold text-foreground">
-                {agents.find((a) => a.id === pendingAgentId)?.name ?? pendingAgentId}
-              </span>{' '}
-              will start a fresh conversation. The previous conversation history will be
-              transferred as context (truncated to{' '}
-              <span className="font-semibold text-foreground">
-                {truncateLength > 0
-                  ? `${truncateLength.toLocaleString()} chars`
-                  : 'no limit'}
-              </span>
-              ).
-            </DialogDescription>
-          </DialogHeader>
-
-          {/* Truncate length control */}
-          <div className="space-y-2">
-            <label
-              htmlFor="truncate-length"
-              className="block text-xs font-medium text-muted-foreground"
-            >
-              Transfer history length
-            </label>
-            <Select
-              value={String(truncateLength)}
-              onValueChange={(v) => setTruncateLength(Number(v))}
-            >
-              <SelectTrigger
-                id="truncate-length"
-                className="w-full"
-                aria-label="Transfer history length"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="4000">4,000 chars</SelectItem>
-                <SelectItem value="8000">8,000 chars</SelectItem>
-                <SelectItem value="16000">16,000 chars</SelectItem>
-                <SelectItem value="32000">32,000 chars</SelectItem>
-                <SelectItem value="0">Full (no limit)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <DialogFooter>
-            <Button variant="secondary" onClick={cancelSwitchAgent}>
-              Cancel
-            </Button>
-            <Button onClick={confirmSwitchAgent}>Switch Agent</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        pendingAgentId={pendingAgentId}
+        currentAgentName={currentAgent?.name ?? effectiveAgentId}
+        pendingAgentName={agents.find((a) => a.id === pendingAgentId)?.name ?? ''}
+        truncateLength={truncateLength}
+        setTruncateLength={setTruncateLength}
+        onConfirm={confirmSwitchAgent}
+        onCancel={cancelSwitchAgent}
+      />
     </aside>
   )
 }
