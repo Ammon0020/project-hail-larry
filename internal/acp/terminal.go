@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -100,6 +102,36 @@ func resolveCwd(workspacePath, candidate string) string {
 	return cleaned
 }
 
+// envToSlice converts agent-supplied ACP EnvVariable entries into the "KEY=VALUE"
+// slice format expected by exec.Cmd.Env. Empty names are skipped (they would
+// produce malformed entries like "=value").
+func envToSlice(vars []acp.EnvVariable) []string {
+	out := make([]string, 0, len(vars))
+	for _, v := range vars {
+		if v.Name == "" {
+			continue
+		}
+		out = append(out, v.Name+"="+v.Value)
+	}
+	return out
+}
+
+// containsShellOperators reports whether s contains shell metacharacters that
+// indicate it should be run via a shell rather than exec'd directly as a single
+// binary. This is the fallback path for agents (e.g. mistral-vibe with
+// devstral-small) that send the entire shell string as params.Command with an
+// empty params.Args, instead of splitting it into an executable + argument list.
+//
+// The check is intentionally conservative: it triggers on any of the common
+// shell operators — `&`, `|`, `;`, `<`, `>`, `(`, `)`, backtick, `$`, `\`, `"`,
+// `'`, and newline — so a simple command like "python3" or "go build" is still
+// exec'd directly, while a compound command like
+// "cd /tmp && python3 hello.py | tee log" is routed through `sh -c` / `cmd /c`.
+// A trailing `&` (background) is included via the bare `&` check.
+func containsShellOperators(s string) bool {
+	return strings.ContainsAny(s, "&|;<>()`$\\\"'\n")
+}
+
 // CreateTerminal starts a command in the session workspace and returns a terminal
 // id immediately. Output is streamed via shell events and buffered for later
 // retrieval through TerminalOutput / WaitForTerminalExit.
@@ -156,6 +188,31 @@ func (c *acpClientImpl) CreateTerminal(ctx context.Context, params acp.CreateTer
 	})
 
 	executor := shell.NewExecutor(cwd)
+	// Honor agent-supplied environment variables. The agent's vars take
+	// precedence over the daemon's inherited environment (e.g. PATH additions
+	// or API keys), so we overlay them on os.Environ(). A nil/empty env slice
+	// leaves the inherited environment untouched.
+	if len(params.Env) > 0 {
+		executor = executor.WithEnv(shell.MergeEnv(os.Environ(), envToSlice(params.Env)))
+	}
+
+	// Determine the actual executable and arguments. Some agents send the entire
+	// shell string as params.Command with an empty params.Args instead of
+	// splitting it into executable + args. When shell metacharacters are present
+	// and no args were provided, route through sh -c (or cmd /c on Windows) so
+	// compound commands like "cd /tmp && python3 hello.py" actually execute.
+	command := params.Command
+	args := params.Args
+	if len(args) == 0 && containsShellOperators(command) {
+		if runtime.GOOS == "windows" {
+			args = []string{"/c", command}
+			command = "cmd"
+		} else {
+			args = []string{"-c", command}
+			command = "sh"
+		}
+	}
+
 	go func() {
 		onOutput := func(s string) {
 			entry.appendOutput(s)
@@ -168,22 +225,30 @@ func (c *acpClientImpl) CreateTerminal(ctx context.Context, params acp.CreateTer
 		// Pass the structured command + args directly to exec.Command (no
 		// shell wrapping) so arguments containing spaces or shell
 		// metacharacters are passed verbatim instead of being re-parsed.
-		res, runErr := executor.RunAsyncArgs(runCtx, params.Command, params.Args, onOutput, onOutput)
-		code := res.ExitCode
+		res, runErr := executor.RunAsyncArgs(runCtx, command, args, onOutput, onOutput)
+		status := &acp.TerminalExitStatus{}
+		var exitCode *int
+		summary := res.Stderr
+		if res.Signal != nil {
+			status.Signal = res.Signal
+			summary = "signal: " + *res.Signal
+		} else {
+			exitCode = &res.ExitCode
+			status.ExitCode = exitCode
+			if runErr != nil {
+				summary = runErr.Error()
+			}
+		}
 		entry.mu.Lock()
-		entry.exit = &acp.TerminalExitStatus{ExitCode: &code}
+		entry.exit = status
 		entry.mu.Unlock()
 		close(entry.done)
 
-		summary := res.Stderr
-		if runErr != nil {
-			summary = runErr.Error()
-		}
 		c.emit(interfaces.Event{
 			Type:      interfaces.EventShellCommandCompleted,
 			SessionID: c.sessionID,
 			Command:   cmdStr,
-			ExitCode:  &code,
+			ExitCode:  exitCode,
 			Summary:   summary,
 		})
 	}()

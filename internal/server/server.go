@@ -144,6 +144,7 @@ func (s *Server) apiRoutes() {
 	s.mux.HandleFunc("POST /api/agents/autodetect", s.requireAuth(s.handleAutodetectAgents))
 	s.mux.HandleFunc("GET /api/sessions", s.requireAuth(s.handleListSessions))
 	s.mux.HandleFunc("GET /api/sessions/{id}", s.requireAuth(s.handleGetSession))
+	s.mux.HandleFunc("GET /api/sessions/{id}/export", s.requireAuth(s.handleExportSession))
 	s.mux.HandleFunc("POST /api/sessions", s.requireAuth(s.handleCreateSession))
 	s.mux.HandleFunc("PATCH /api/sessions/{id}", s.requireAuth(s.handlePatchSession))
 	s.mux.HandleFunc("POST /api/sessions/{id}/prompt", s.requireAuth(s.handleSendPrompt))

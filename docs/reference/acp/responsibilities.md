@@ -27,7 +27,12 @@ Verified against the official ACP spec via [agentclientprotocol.com](https://age
 - **File writes** — implements `WriteTextFile` against the workspace filesystem
 - **Terminal execution** — implements `CreateTerminal`, `TerminalOutput`, `WaitForTerminalExit`, `KillTerminal`, `ReleaseTerminal` via `internal/shell`
 - **Permission UI** — implements `RequestPermission` by emitting a prompt event to the web UI, waiting for user decision from any paired device, responding to the agent
-- **Permission policy** — ✅ Implemented: `allow_always` / `allow_session` decisions are cached in a session-scoped policy map keyed by `(sessionID, tool, target)` and auto-resolve subsequent identical requests without re-prompting the user; `allow_once` still prompts every time. Policies are dropped via `ClearSession` when a session closes. Reject-always auto-deny is not implemented (the codebase has no `reject_always` constant; documented in `docs/plans/execution-plan.md` Work Stream 2).
+- **Permission policy** — ✅ Implemented: `allow_always` / `allow_session` / `reject_always` decisions are cached in session-scoped policy maps keyed by `(sessionID, tool, target)`. Allow decisions auto-resolve subsequent identical requests without re-prompting; `reject_always` auto-denies without re-prompting. `allow_once` / `reject_once` still prompt every time. Policies are dropped via `ClearSession` when a session closes.
+- **Context injection** — ✅ Context (workspace info, file tree, git status, AGENTS.md, open file contents, editor selection) is sent as structured `resource` ContentBlocks when the agent advertises `embeddedContext`, with a `resource_link` + text fallback for agents that don't. Open files and selection are sent with every prompt; workspace context on the first prompt only.
+- **Stop reason** — ✅ The agent's `stopReason` from the `session/prompt` response is captured and forwarded to the frontend in the final `StreamUpdate` event. The UI displays non-normal stop reasons (e.g. "hit token limit", "refused").
+- **Protocol version** — ✅ Pinned to `acp.ProtocolVersionNumber` (v1) in the `InitializeRequest`.
+- **Terminal env** — ✅ Agent-supplied environment variables (`terminal/create` `env` param) are overlaid on the daemon environment and passed to the subprocess.
+- **Terminal signal** — ✅ Signal termination is detected via `syscall.WaitStatus` and the signal name (e.g. "killed", "terminated") is populated in `TerminalExitStatus.Signal`.
 
 ## Use Case: User Requests a File Write
 
@@ -53,3 +58,22 @@ User types *"Create a config.json with debug mode enabled"* in the web UI.
 | 16 | Daemon | Forwards all updates to web UI — file appears in editor with diff indicators, summary in chat | (WebSocket) |
 
 **Key principle:** The agent never touches the filesystem directly. It *requests* operations via JSON-RPC; the daemon *executes* them. The permission gate sits between intent and execution, giving the user veto power from any paired device.
+
+## SDK Features Not Yet Adopted
+
+Available in `coder/acp-go-sdk v0.13.5` (Go) and/or `@agentclientprotocol/sdk` (TypeScript) but not wired into the daemon. See `docs/plans/acp-spec-compliance.md` Priority 4 for adoption plan and rationale.
+
+| Feature | SDK Support | Priority | Notes |
+|---------|------------|----------|-------|
+| Audio blocks | `acp.AudioBlock()` | Future | No use case |
+| Session list | `Agent.ListSessions()` (stable v0.11.7) | Near-term | Reconcile after restart |
+| Elicitation | Unstable methods | Future | v2 draft |
+| NES | Unstable methods | Future | Inline completions |
+| MCP-over-ACP | Unstable methods | Future | Needs MCP config UI |
+| Provider mgmt | Unstable methods | Future | Dynamic provider config |
+| Tool content helpers | `ToolContent`, `ToolDiffContent`, `ToolTerminalRef` | Near-term | Simplify transport.go |
+| Explicit validation | `Validate()` on requests | Near-term | Catch malformed requests |
+| AdditionalDirectories | v0.13.5 | Future | Multi-root workspaces |
+| Session fork/resume/close | `SessionCapabilities` | Future | Agent-advertised |
+| TypeScript SDK | `@agentclientprotocol/sdk` | Near-term | Replace hand-rolled frontend types |
+| ACP-inspector | Community tool | Future | Protocol validation testing |

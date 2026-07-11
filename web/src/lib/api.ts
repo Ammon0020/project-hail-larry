@@ -37,6 +37,17 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 
 // ---- Types matching the Go structs ----
 
+/** The user's current text selection in the editor, reported to the backend
+ *  so the ACP prompt pipeline can send it as a resource block. Path is
+ *  relative to the workspace root; startLine/endLine are 1-based and
+ *  inclusive. An empty/undefined Text clears the selection. */
+export interface EditorSelection {
+  path: string
+  startLine: number
+  endLine: number
+  text: string
+}
+
 export interface WorkspaceInfo {
   id: string
   path: string
@@ -204,10 +215,15 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
-  reportSessionContext: (sessionId: string, openFiles: string[], recentEdits: string[]) =>
+  reportSessionContext: (
+    sessionId: string,
+    openFiles: string[],
+    recentEdits: string[],
+    selection?: EditorSelection,
+  ) =>
     apiFetch<{ status: string }>(`/sessions/${sessionId}/context`, {
       method: 'POST',
-      body: JSON.stringify({ openFiles, recentEdits }),
+      body: JSON.stringify({ openFiles, recentEdits, selection }),
     }),
   sendPrompt: (sessionId: string, content: string, attachments?: Attachment[]) =>
     apiFetch<{ status: string }>(`/sessions/${sessionId}/prompt`, {
@@ -243,6 +259,33 @@ export const api = {
     apiFetch<{ status: string }>(`/sessions/${sessionId}`, {
       method: 'DELETE',
     }),
+
+  /** Exports a conversation as a markdown transcript and triggers a browser
+   *  download. Uses `fetch` directly (not `apiFetch`) because the response is
+   *  a text/markdown blob, not JSON — `apiFetch` forces `application/json`
+   *  and parses the body as JSON, which would corrupt the markdown. Mirrors
+   *  `apiFetch`'s same-origin base URL and error handling. The download
+   *  filename is taken from the Content-Disposition header the server sets,
+   *  falling back to `session-<id>.md` when the header is absent. */
+  exportSession: async (sessionId: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/export`)
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string }
+      throw new Error(body.error || `HTTP ${res.status}`)
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    // Use the filename from Content-Disposition if available, otherwise
+    // generate one. The server always sets the header, so the fallback is
+    // defensive.
+    const cd = res.headers.get('Content-Disposition')
+    const match = cd?.match(/filename="?(.+?)"?$/)
+    a.download = match?.[1] ?? `session-${sessionId}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  },
 
   // Pairing
   initiatePairing: (host: string, port: number) =>

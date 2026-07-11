@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -105,5 +106,69 @@ func TestRunAsync(t *testing.T) {
 	// Verify we got at least one stdout chunk via the callback.
 	if len(stdoutChunks) == 0 {
 		t.Error("expected at least one stdout chunk from callback")
+	}
+}
+
+// TestRunAsyncArgsEnv verifies that env variables supplied via WithEnv are
+// visible to the spawned process and take precedence over the inherited
+// environment.
+func TestRunAsyncArgsEnv(t *testing.T) {
+	dir := t.TempDir()
+
+	// Overlay a custom var on top of the inherited environment so the process
+	// still has PATH etc.
+	env := MergeEnv(os.Environ(), []string{"ACP_TEST_VAR=from-agent"})
+
+	executor := NewExecutor(dir).WithEnv(env)
+
+	var command string
+	if runtime.GOOS == "windows" {
+		command = "cmd"
+	} else {
+		command = "sh"
+	}
+	var args []string
+	if runtime.GOOS == "windows" {
+		args = []string{"/C", "echo %ACP_TEST_VAR%"}
+	} else {
+		args = []string{"-c", "printf %s \"$ACP_TEST_VAR\""}
+	}
+
+	result, err := executor.RunAsyncArgs(context.Background(), command, args, nil, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("exit code %d: %s", result.ExitCode, result.Stderr)
+	}
+	if got := strings.TrimSpace(result.Stdout); got != "from-agent" {
+		t.Errorf("expected ACP_TEST_VAR=from-agent in subprocess env, got stdout %q", result.Stdout)
+	}
+}
+
+// TestMergeEnv verifies that MergeEnv overlays extra on base with extra winning
+// for duplicate keys, and preserves order for new keys.
+func TestMergeEnv(t *testing.T) {
+	base := []string{"PATH=/usr/bin", "HOME=/home/user", "EDITOR=vi"}
+	extra := []string{"EDITOR=nano", "FOO=bar"}
+
+	got := MergeEnv(base, extra)
+
+	want := []string{"PATH=/usr/bin", "HOME=/home/user", "EDITOR=nano", "FOO=bar"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("index %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestMergeEnvEmptyBase verifies that merging onto an empty base just yields extra.
+func TestMergeEnvEmptyBase(t *testing.T) {
+	got := MergeEnv(nil, []string{"A=1", "B=2"})
+	if len(got) != 2 || got[0] != "A=1" || got[1] != "B=2" {
+		t.Errorf("got %v, want [A=1 B=2]", got)
 	}
 }

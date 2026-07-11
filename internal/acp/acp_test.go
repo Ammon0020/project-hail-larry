@@ -301,3 +301,74 @@ func TestResolveCwd(t *testing.T) {
 		})
 	}
 }
+
+// TestEnvToSlice verifies that agent-supplied ACP EnvVariable entries are
+// converted into the "KEY=VALUE" slice format expected by exec.Cmd.Env, and
+// that entries with empty names are dropped.
+func TestEnvToSlice(t *testing.T) {
+	vars := []acpsdk.EnvVariable{
+		{Name: "PATH", Value: "/usr/local/bin:/usr/bin"},
+		{Name: "API_KEY", Value: "secret"},
+		{Name: "", Value: "dropped"},
+		{Name: "EMPTY", Value: ""},
+	}
+	got := envToSlice(vars)
+	want := []string{
+		"PATH=/usr/local/bin:/usr/bin",
+		"API_KEY=secret",
+		"EMPTY=",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("index %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestCreateTerminalEnvPassesThrough verifies that env variables supplied in a
+// CreateTerminalRequest are visible to the spawned subprocess (i.e. they are
+// not silently dropped in favor of the daemon environment).
+func TestCreateTerminalEnvPassesThrough(t *testing.T) {
+	dir := t.TempDir()
+	c := &acpClientImpl{
+		workspacePath: dir,
+		sessionID:     "test-session",
+		terminals:     make(map[string]*terminalEntry),
+	}
+
+	// Use a marker var name unlikely to collide with the daemon environment.
+	const marker = "ACP_TEST_ENV_PASS_THROUGH"
+	t.Setenv(marker, "") // ensure clean slate in this test process
+
+	var command string
+	var args []string
+	if runtime.GOOS == "windows" {
+		command = "cmd"
+		args = []string{"/C", "echo %" + marker + "%"}
+	} else {
+		command = "sh"
+		args = []string{"-c", "printf %s \"$" + marker + "\""}
+	}
+
+	resp, err := c.CreateTerminal(context.Background(), acpsdk.CreateTerminalRequest{
+		Command: command,
+		Args:    args,
+		Env:     []acpsdk.EnvVariable{{Name: marker, Value: "honored"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTerminal: %v", err)
+	}
+
+	_, err = c.WaitForTerminalExit(context.Background(), acpsdk.WaitForTerminalExitRequest{TerminalId: resp.TerminalId})
+	if err != nil {
+		t.Fatalf("WaitForTerminalExit: %v", err)
+	}
+
+	out, _, _ := c.getTerminal(resp.TerminalId).snapshot()
+	if got := strings.TrimSpace(out); got != "honored" {
+		t.Errorf("expected subprocess to see %s=honored, got output %q", marker, got)
+	}
+}

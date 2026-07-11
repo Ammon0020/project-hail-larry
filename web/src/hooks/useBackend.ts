@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential, type PendingPermission, type UploadResult } from '@/lib/api'
+import { api, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential, type PendingPermission, type UploadResult, type EditorSelection } from '@/lib/api'
 import type { Attachment } from '@/types'
 
 /**
@@ -449,13 +449,19 @@ export function useBackend() {
    * Reports the current open files and recent edits to the backend so the
    * context middleware can inject them into the next agent prompt. Debounced
    * by ~1s to coalesce rapid tab switches and keystroke-driven unsaved-state
-   * changes into a single request.
+   * changes into a single request. The optional selection is the user's
+   * current editor selection (sent as a resource block by the backend).
    */
-  function reportContext(sessionId: string, openFiles: string[], recentEdits: string[]) {
+  function reportContext(
+    sessionId: string,
+    openFiles: string[],
+    recentEdits: string[],
+    selection?: EditorSelection,
+  ) {
     if (reportContextTimerRef.current) clearTimeout(reportContextTimerRef.current)
     reportContextTimerRef.current = setTimeout(async () => {
       try {
-        await api.reportSessionContext(sessionId, openFiles, recentEdits)
+        await api.reportSessionContext(sessionId, openFiles, recentEdits, selection)
       } catch {
         // Non-fatal — context reporting is best-effort.
       }
@@ -469,6 +475,13 @@ export function useBackend() {
     // only shrinks the list, but route it through commitEvents anyway so every
     // event-log mutation goes through the single capped path.
     commitEvents(eventsRef.current.filter((e) => e.sessionId !== sessionId))
+  }
+
+  /** Exports a conversation as a markdown transcript. The backend renders the
+   *  full event history into a readable transcript and the api client triggers
+   *  a browser download of the resulting text/markdown blob. */
+  async function exportSession(sessionId: string) {
+    await api.exportSession(sessionId)
   }
 
   // ---- Pairing actions ----
@@ -516,6 +529,7 @@ export function useBackend() {
     renameSession,
     rebindSession,
     deleteSession,
+    exportSession,
     reportContext,
     verifyPasscode,
     revokeDevice,

@@ -728,3 +728,167 @@ func TestCleanupStaleKeepsFreshRequest(t *testing.T) {
 	// Resolve so the Request goroutine exits cleanly.
 	_ = m.Respond(context.Background(), pending[0].ID, interfaces.PermissionDeny)
 }
+
+// TestPolicyRejectAlwaysAutoDenies verifies that a reject_always decision for a
+// (session, tool, target) combination auto-denies a subsequent identical request
+// without blocking or invoking the callback. Mirrors the allow_always
+// auto-resolve path but for the deny side.
+func TestPolicyRejectAlwaysAutoDenies(t *testing.T) {
+	m := NewManager()
+
+	// Track callback invocations — the second request must NOT trigger it.
+	callbackCount := 0
+	m.SetCallback(func(_ interfaces.PermissionRequest) {
+		callbackCount++
+	})
+
+	req := interfaces.PermissionRequest{
+		SessionID: "sess-reject-always",
+		Tool:      "edit_file",
+		Target:    "main.go",
+		Options:   []interfaces.PermissionDecision{PermissionRejectAlways, interfaces.PermissionDeny},
+	}
+
+	// First request blocks and is resolved with reject_always.
+	if d := resolveFirstRequest(t, m, req, PermissionRejectAlways); d != PermissionRejectAlways {
+		t.Fatalf("first request: expected reject_always, got %s", d)
+	}
+	if callbackCount != 1 {
+		t.Fatalf("expected callback invoked once after first request, got %d", callbackCount)
+	}
+
+	// Second identical request must auto-deny immediately (no blocking).
+	done := make(chan interfaces.PermissionDecision, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		d, err := m.Request(context.Background(), req)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		done <- d
+	}()
+
+	select {
+	case d := <-done:
+		if d != interfaces.PermissionDeny {
+			t.Errorf("expected auto-denied request to return PermissionDeny, got %s", d)
+		}
+	case err := <-errCh:
+		t.Fatalf("second request error: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("second request did not auto-deny (blocked)")
+	}
+
+	if callbackCount != 1 {
+		t.Errorf("expected callback still invoked once (not for auto-deny), got %d", callbackCount)
+	}
+
+	// The auto-deny must be recorded in the audit log.
+	log := m.GetAuditLog()
+	if len(log) != 2 {
+		t.Fatalf("expected 2 audit entries (seed + auto-deny), got %d", len(log))
+	}
+	if log[1].Decision != string(interfaces.PermissionDeny) {
+		t.Errorf("expected auto-deny audit decision 'deny', got %s", log[1].Decision)
+	}
+}
+
+// TestClearSessionClearsDenyCache verifies that ClearSession drops cached
+// reject_always decisions for a session so subsequent requests block again
+// (re-prompt the user) instead of auto-denying.
+func TestClearSessionClearsDenyCache(t *testing.T) {
+	m := NewManager()
+
+	req := interfaces.PermissionRequest{
+		SessionID: "sess-clear-deny",
+		Tool:      "edit_file",
+		Target:    "main.go",
+		Options:   []interfaces.PermissionDecision{PermissionRejectAlways, interfaces.PermissionDeny},
+	}
+
+	// Seed the deny cache.
+	resolveFirstRequest(t, m, req, PermissionRejectAlways)
+
+	// Confirm it auto-denies.
+	done := make(chan interfaces.PermissionDecision, 1)
+	go func() {
+		d, _ := m.Request(context.Background(), req)
+		done <- d
+	}()
+	select {
+	case d := <-done:
+		if d != interfaces.PermissionDeny {
+			t.Fatalf("expected auto-deny before clear, got %s", d)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected auto-deny before clear")
+	}
+
+	// Clear the session's deny cache.
+	m.ClearSession("sess-clear-deny")
+
+	// Now the request must block again (re-prompt).
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := m.Request(ctx, req)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected request to block after ClearSession, but it auto-denied")
+	}
+	if elapsed < 80*time.Millisecond {
+		t.Errorf("expected request to block ~100ms after clear, returned after %v", elapsed)
+	}
+
+	// Clean up the pending request so the goroutine exits.
+	pending := m.GetPending()
+	if len(pending) == 1 {
+		_ = m.Respond(context.Background(), pending[0].ID, interfaces.PermissionDeny)
+	}
+}
+
+// TestRejectAlwaysTargetScoped verifies that a reject_always for one target
+// does NOT auto-deny a request for a different target in the same session. The
+// deny cache is keyed by (session, tool, target), matching the allow cache.
+func TestRejectAlwaysTargetScoped(t *testing.T) {
+	m := NewManager()
+
+	first := interfaces.PermissionRequest{
+		SessionID: "sess-reject-scope",
+		Tool:      "edit_file",
+		Target:    "a.go",
+		Options:   []interfaces.PermissionDecision{PermissionRejectAlways, interfaces.PermissionDeny},
+	}
+	if d := resolveFirstRequest(t, m, first, PermissionRejectAlways); d != PermissionRejectAlways {
+		t.Fatalf("first request: expected reject_always, got %s", d)
+	}
+
+	// A different target in the same session must NOT auto-deny — it has a
+	// different policy key.
+	second := interfaces.PermissionRequest{
+		SessionID: "sess-reject-scope",
+		Tool:      "edit_file",
+		Target:    "b.go",
+		Options:   []interfaces.PermissionDecision{PermissionRejectAlways, interfaces.PermissionDeny},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := m.Request(ctx, second)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected different target to block (not auto-denied), but it returned without error")
+	}
+	if elapsed < 80*time.Millisecond {
+		t.Errorf("expected different target to block ~100ms, returned after %v", elapsed)
+	}
+
+	// Clean up the pending request so the goroutine exits.
+	pending := m.GetPending()
+	if len(pending) == 1 {
+		_ = m.Respond(context.Background(), pending[0].ID, interfaces.PermissionDeny)
+	}
+}

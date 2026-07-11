@@ -456,6 +456,9 @@ func (t *Transport) Start(ctx context.Context, command string, args []string, wo
 // agent's capabilities and info.
 func (t *Transport) Initialize(ctx context.Context) (acp.InitializeResponse, error) {
 	return t.conn.Initialize(ctx, acp.InitializeRequest{
+		// Pin the protocol version to the SDK-supported v1 value instead of
+		// relying on the zero default.
+		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientInfo: &acp.Implementation{
 			Name:    "LocalAgentInterface",
 			Version: "1.0",
@@ -519,18 +522,62 @@ func (t *Transport) DeleteSession(ctx context.Context, acpSessionID string) erro
 }
 
 // Prompt sends a user prompt containing content to the given ACP session.
-// Attachments are translated to ACP content blocks based on the agent's
-// advertised prompt capabilities: when the agent supports images, each
-// attachment is sent as an inline ImageBlock (with a URI hint); otherwise it
-// is sent as a ResourceLinkBlock plus a text instruction so non-vision agents
-// know to read the file from disk. File read errors fall back to the
-// resource-link path rather than failing the whole prompt.
-func (t *Transport) Prompt(ctx context.Context, sessionID, content string, attachments []interfaces.Attachment) error {
-	blocks := make([]acp.ContentBlock, 0, 1+len(attachments)*2)
+// Structured context resources are translated to ACP content blocks based on
+// the agent's advertised prompt capabilities: when the agent supports
+// embeddedContext, each resource is sent as an inline ResourceBlock (uri,
+// mimeType, text); otherwise it is sent as a ResourceLinkBlock (always
+// supported per spec) plus a TextBlock folding the resource text in, so
+// non-embeddedContext agents still see the content. Attachments are translated
+// as before based on the Image capability. File read errors fall back to the
+// resource-link path rather than failing the whole prompt. Returns the agent's
+// StopReason (added for ACP spec item 1.2 readiness).
+func (t *Transport) Prompt(ctx context.Context, sessionID, content string, resources []ContextResource, attachments []interfaces.Attachment) (acp.StopReason, error) {
+	blocks := buildPromptBlocks(t.promptCaps, content, resources, attachments)
+
+	resp, err := t.conn.Prompt(ctx, acp.PromptRequest{
+		SessionId: acp.SessionId(sessionID),
+		Prompt:    blocks,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.StopReason, nil
+}
+
+// buildPromptBlocks constructs the ordered []acp.ContentBlock payload for a
+// prompt turn. It is extracted from Transport.Prompt so the capability-gated
+// block selection (embeddedContext vs. fallback, image vs. resource link) can
+// be unit-tested without a live ACP connection.
+//
+// Block order: [user text] [resources...] [attachments...]. Each resource
+// becomes either one ResourceBlock (embeddedContext) or a ResourceLinkBlock +
+// TextBlock pair (fallback). Each attachment becomes either one ImageBlock
+// (image capability, file readable) or a ResourceLinkBlock + TextBlock pair.
+func buildPromptBlocks(caps acp.PromptCapabilities, content string, resources []ContextResource, attachments []interfaces.Attachment) []acp.ContentBlock {
+	blocks := make([]acp.ContentBlock, 0, 1+len(resources)+len(attachments)*2)
 	blocks = append(blocks, acp.TextBlock(content))
 
+	for _, r := range resources {
+		// Safety net: strip any null bytes from resource text. Binary
+		// content would cause "embedded null byte" errors in JSON-RPC.
+		text := strings.ReplaceAll(r.Text, "\x00", "")
+		if caps.EmbeddedContext {
+			blocks = append(blocks, acp.ResourceBlock(acp.EmbeddedResourceResource{
+				TextResourceContents: &acp.TextResourceContents{
+					Uri:      r.URI,
+					MimeType: acp.Ptr(r.MimeType),
+					Text:     text,
+				},
+			}))
+		} else {
+			// Fallback: resource link (always supported) + fold text into a text block.
+			blocks = append(blocks, acp.ResourceLinkBlock(r.Name, r.URI))
+			blocks = append(blocks, acp.TextBlock(text))
+		}
+	}
+
 	for _, att := range attachments {
-		if t.promptCaps.Image {
+		if caps.Image {
 			data, err := os.ReadFile(att.Path)
 			if err != nil {
 				// Fall back to resource link + text hint for this attachment.
@@ -553,11 +600,7 @@ func (t *Transport) Prompt(ctx context.Context, sessionID, content string, attac
 		}
 	}
 
-	_, err := t.conn.Prompt(ctx, acp.PromptRequest{
-		SessionId: acp.SessionId(sessionID),
-		Prompt:    blocks,
-	})
-	return err
+	return blocks
 }
 
 // Cancel sends a cancel notification to the given ACP session, requesting the

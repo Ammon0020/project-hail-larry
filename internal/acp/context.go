@@ -60,6 +60,30 @@ type PromptMiddleware interface {
 	BeforePrompt(ctx context.Context, pc *PromptContext) (PromptAction, string)
 }
 
+// ContextResource is a structured piece of injected context that the transport
+// renders as an ACP resource ContentBlock (uri, mimeType, text) when the agent
+// advertises the embeddedContext capability, or folds into text otherwise.
+type ContextResource struct {
+	URI      string
+	MimeType string
+	Text     string
+	Name     string
+}
+
+// PromptResult is the combined output of the pipeline: free-form injected text
+// plus structured resource blocks.
+type PromptResult struct {
+	Text      string
+	Resources []ContextResource
+}
+
+// ResourceMiddleware is optionally implemented by a PromptMiddleware that
+// contributes structured resource blocks. The pipeline type-asserts each
+// middleware for it.
+type ResourceMiddleware interface {
+	BeforePromptResources(ctx context.Context, pc *PromptContext) []ContextResource
+}
+
 // PromptPipeline runs an ordered list of PromptMiddleware stages before each
 // prompt, concatenating any injected context with a visual separator.
 //
@@ -84,12 +108,15 @@ func NewPromptPipeline(middlewares ...PromptMiddleware) *PromptPipeline {
 }
 
 // RunBeforePrompt runs every middleware in order, concatenating injected
-// messages with the "\n\n---\n\n" separator. It returns ActionInject with the
-// combined text if any middleware injected content, otherwise ActionContinue.
+// messages with the "\n\n---\n\n" separator. It returns ActionInject with a
+// PromptResult whose Text is the combined injected text and whose Resources is
+// the concatenated structured resource blocks from any middlewares that
+// implement ResourceMiddleware. If no middleware injected text or resources it
+// returns ActionContinue with an empty PromptResult.
 //
 // After a successful run the per-session prompt counter is bumped, so the next
 // call for the same session observes an incremented PromptCount.
-func (p *PromptPipeline) RunBeforePrompt(ctx context.Context, pc *PromptContext) (PromptAction, string) {
+func (p *PromptPipeline) RunBeforePrompt(ctx context.Context, pc *PromptContext) (PromptAction, PromptResult) {
 	// Populate the prompt count from the internal counter so middlewares see a
 	// consistent value even if the caller did not set it.
 	p.mu.Lock()
@@ -97,12 +124,14 @@ func (p *PromptPipeline) RunBeforePrompt(ctx context.Context, pc *PromptContext)
 	p.mu.Unlock()
 
 	var parts []string
-	injected := false
+	var resources []ContextResource
 	for _, m := range p.middlewares {
 		action, msg := m.BeforePrompt(ctx, pc)
 		if action == ActionInject && msg != "" {
 			parts = append(parts, msg)
-			injected = true
+		}
+		if rm, ok := m.(ResourceMiddleware); ok {
+			resources = append(resources, rm.BeforePromptResources(ctx, pc)...)
 		}
 	}
 
@@ -112,10 +141,13 @@ func (p *PromptPipeline) RunBeforePrompt(ctx context.Context, pc *PromptContext)
 	p.counts[pc.SessionID]++
 	p.mu.Unlock()
 
-	if !injected {
-		return ActionContinue, ""
+	if len(parts) == 0 && len(resources) == 0 {
+		return ActionContinue, PromptResult{}
 	}
-	return ActionInject, strings.Join(parts, "\n\n---\n\n")
+	return ActionInject, PromptResult{
+		Text:      strings.Join(parts, "\n\n---\n\n"),
+		Resources: resources,
+	}
 }
 
 // Reset clears the per-session prompt counter so the next prompt for the given
@@ -163,29 +195,66 @@ func (m *FirstPromptContextMiddleware) messages() *SystemMessages {
 	return m.Messages
 }
 
-// BeforePrompt implements PromptMiddleware. It injects only when
-// pc.PromptCount == 0.
-func (m *FirstPromptContextMiddleware) BeforePrompt(ctx context.Context, pc *PromptContext) (PromptAction, string) {
+// BeforePrompt implements PromptMiddleware. The workspace bundle is now emitted
+// as structured resources via BeforePromptResources (so the transport can send
+// it as ACP resource ContentBlocks when the agent advertises embeddedContext,
+// or fold it into text otherwise). BeforePrompt therefore returns
+// ActionContinue with no text; the transport's text fallback preserves the old
+// behavior for agents without EmbeddedContext.
+func (m *FirstPromptContextMiddleware) BeforePrompt(_ context.Context, _ *PromptContext) (PromptAction, string) {
+	return ActionContinue, ""
+}
+
+// BeforePromptResources implements ResourceMiddleware. It emits the workspace
+// context bundle (header + file tree + git status) as a single
+// context://workspace resource and AGENTS.md as its own file:// resource, but
+// only on the first prompt of a session (PromptCount == 0).
+func (m *FirstPromptContextMiddleware) BeforePromptResources(ctx context.Context, pc *PromptContext) []ContextResource {
 	if pc.PromptCount != 0 {
-		return ActionContinue, ""
+		return nil
 	}
 
 	sm := m.messages()
+
+	// Workspace bundle: header + file tree + git status (NOT AGENTS.md, which
+	// gets its own resource below so the agent can address it by file URI).
 	var b strings.Builder
 	m.writeHeader(&b, pc, sm)
 	m.writeFileTree(ctx, &b, pc, sm)
 	m.writeGitStatus(&b, pc, sm)
-	m.writeAgentsMD(&b, pc, sm)
+	bundle := strings.TrimSpace(b.String())
 
-	out := strings.TrimSpace(b.String())
-	if out == "" {
-		return ActionContinue, ""
+	var resources []ContextResource
+	if bundle != "" {
+		if len(bundle) > sm.MaxContextBytes {
+			bundle = bundle[:sm.MaxContextBytes]
+		}
+		resources = append(resources, ContextResource{
+			URI:      "context://workspace",
+			MimeType: "text/markdown",
+			Name:     "Workspace Context",
+			Text:     bundle,
+		})
 	}
-	// Enforce the global size cap as a final safety net.
-	if len(out) > sm.MaxContextBytes {
-		out = out[:sm.MaxContextBytes]
+
+	// AGENTS.md as its own resource with a real file URI.
+	if pc.WorkspacePath != "" {
+		path := filepath.Join(pc.WorkspacePath, "AGENTS.md")
+		if data, err := os.ReadFile(path); err == nil { //nolint:gosec // path is built from the registered workspace root.
+			text := string(data)
+			if len(text) > sm.MaxContextBytes {
+				text = text[:sm.MaxContextBytes]
+			}
+			resources = append(resources, ContextResource{
+				URI:      "file://" + filepath.ToSlash(path),
+				MimeType: "text/markdown",
+				Name:     "AGENTS.md",
+				Text:     text,
+			})
+		}
 	}
-	return ActionInject, out
+
+	return resources
 }
 
 // writeHeader emits the workspace root path and OS/platform string.
@@ -248,19 +317,6 @@ func (m *FirstPromptContextMiddleware) writeGitStatus(b *strings.Builder, pc *Pr
 	if logOut != "" {
 		fmt.Fprintf(b, "\nRecent commits:\n```\n%s```\n", strings.TrimSpace(logOut))
 	}
-}
-
-// writeAgentsMD appends the AGENTS.md content if present at the workspace root.
-func (m *FirstPromptContextMiddleware) writeAgentsMD(b *strings.Builder, pc *PromptContext, sm *SystemMessages) {
-	if pc.WorkspacePath == "" {
-		return
-	}
-	path := filepath.Join(pc.WorkspacePath, "AGENTS.md")
-	data, err := os.ReadFile(path) //nolint:gosec // path is built from the registered workspace root.
-	if err != nil {
-		return
-	}
-	fmt.Fprintf(b, "\n%s\n\n%s\n", sm.AgentsMdHeader, string(data))
 }
 
 // flattenFileNodes walks the recursive FileNode tree depth-first and returns a

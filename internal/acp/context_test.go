@@ -73,12 +73,15 @@ func (f *fakeMiddleware) BeforePrompt(_ context.Context, _ *PromptContext) (Prom
 func TestPromptPipeline_Empty(t *testing.T) {
 	p := NewPromptPipeline()
 	pc := &PromptContext{SessionID: "s1"}
-	action, msg := p.RunBeforePrompt(context.Background(), pc)
+	action, res := p.RunBeforePrompt(context.Background(), pc)
 	if action != ActionContinue {
 		t.Errorf("expected ActionContinue, got %v", action)
 	}
-	if msg != "" {
-		t.Errorf("expected empty message, got %q", msg)
+	if res.Text != "" {
+		t.Errorf("expected empty text, got %q", res.Text)
+	}
+	if len(res.Resources) != 0 {
+		t.Errorf("expected no resources, got %d", len(res.Resources))
 	}
 }
 
@@ -88,13 +91,13 @@ func TestPromptPipeline_ConcatenatesWithSeparator(t *testing.T) {
 	p := NewPromptPipeline(mw1, mw2)
 
 	pc := &PromptContext{SessionID: "s1"}
-	action, msg := p.RunBeforePrompt(context.Background(), pc)
+	action, res := p.RunBeforePrompt(context.Background(), pc)
 	if action != ActionInject {
 		t.Fatalf("expected ActionInject, got %v", action)
 	}
 	want := "context A\n\n---\n\ncontext B"
-	if msg != want {
-		t.Errorf("expected %q, got %q", want, msg)
+	if res.Text != want {
+		t.Errorf("expected %q, got %q", want, res.Text)
 	}
 	if !mw1.called || !mw2.called {
 		t.Error("expected both middlewares to be called")
@@ -166,20 +169,48 @@ func makeTempWorkspace(t *testing.T, initGit bool) (string, *fakeWorkspaceManage
 	return dir, wm
 }
 
+// findResource returns a pointer to the resource with the given Name in rs, or
+// nil if none matches. Used by the FirstPromptContextMiddleware resource tests.
+func findResource(rs []ContextResource, name string) *ContextResource {
+	for i := range rs {
+		if rs[i].Name == name {
+			return &rs[i]
+		}
+	}
+	return nil
+}
+
 func TestFirstPromptContextMiddleware_FirstPromptInjects(t *testing.T) {
 	dir, wm := makeTempWorkspace(t, false)
 	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, UserPrompt: "hi", PromptCount: 0}
 
-	action, msg := mw.BeforePrompt(context.Background(), pc)
-	if action != ActionInject {
-		t.Fatalf("expected ActionInject, got %v", action)
+	resources := mw.BeforePromptResources(context.Background(), pc)
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources (workspace + AGENTS.md), got %d", len(resources))
 	}
-	if !strings.Contains(msg, dir) {
-		t.Errorf("expected message to contain workspace path %q, got %q", dir, msg)
+	ws := findResource(resources, "Workspace Context")
+	if ws == nil {
+		t.Fatal("expected Workspace Context resource")
 	}
-	if !strings.Contains(msg, "## AGENTS.md") {
-		t.Errorf("expected AGENTS.md section, got %q", msg)
+	if ws.URI != "context://workspace" {
+		t.Errorf("expected workspace URI context://workspace, got %q", ws.URI)
+	}
+	if ws.MimeType != "text/markdown" {
+		t.Errorf("expected workspace mime text/markdown, got %q", ws.MimeType)
+	}
+	if !strings.Contains(ws.Text, dir) {
+		t.Errorf("expected workspace text to contain workspace path %q, got %q", dir, ws.Text)
+	}
+	agents := findResource(resources, "AGENTS.md")
+	if agents == nil {
+		t.Fatal("expected AGENTS.md resource")
+	}
+	if !strings.HasPrefix(agents.URI, "file://") {
+		t.Errorf("expected AGENTS.md URI to be a file:// URI, got %q", agents.URI)
+	}
+	if !strings.Contains(agents.Text, "# Test Agents") {
+		t.Errorf("expected AGENTS.md text content, got %q", agents.Text)
 	}
 }
 
@@ -188,6 +219,11 @@ func TestFirstPromptContextMiddleware_SecondPromptNoInject(t *testing.T) {
 	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 1}
 
+	resources := mw.BeforePromptResources(context.Background(), pc)
+	if len(resources) != 0 {
+		t.Errorf("expected no resources on second prompt, got %d", len(resources))
+	}
+	// BeforePrompt must also return ActionContinue now (bundle is resource-only).
 	action, msg := mw.BeforePrompt(context.Background(), pc)
 	if action != ActionContinue {
 		t.Errorf("expected ActionContinue on second prompt, got %v", action)
@@ -202,21 +238,30 @@ func TestFirstPromptContextMiddleware_ResetReinjects(t *testing.T) {
 	p := NewPromptPipeline(NewFirstPromptContextMiddleware(wm, nil))
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir}
 
-	// First prompt injects.
-	action1, _ := p.RunBeforePrompt(context.Background(), pc)
+	// First prompt injects (via resources).
+	action1, res1 := p.RunBeforePrompt(context.Background(), pc)
 	if action1 != ActionInject {
 		t.Fatalf("first prompt: expected ActionInject, got %v", action1)
 	}
+	if len(res1.Resources) == 0 {
+		t.Fatal("first prompt: expected resources, got none")
+	}
 	// Second prompt does not.
-	action2, _ := p.RunBeforePrompt(context.Background(), pc)
+	action2, res2 := p.RunBeforePrompt(context.Background(), pc)
 	if action2 != ActionContinue {
 		t.Fatalf("second prompt: expected ActionContinue, got %v", action2)
 	}
+	if len(res2.Resources) != 0 {
+		t.Fatalf("second prompt: expected no resources, got %d", len(res2.Resources))
+	}
 	// After reset, next prompt injects again.
 	p.Reset("s1")
-	action3, _ := p.RunBeforePrompt(context.Background(), pc)
+	action3, res3 := p.RunBeforePrompt(context.Background(), pc)
 	if action3 != ActionInject {
 		t.Fatalf("after reset: expected ActionInject, got %v", action3)
+	}
+	if len(res3.Resources) == 0 {
+		t.Fatal("after reset: expected resources, got none")
 	}
 }
 
@@ -229,15 +274,16 @@ func TestFirstPromptContextMiddleware_EmptyWorkspace(t *testing.T) {
 	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 0}
 
-	action, msg := mw.BeforePrompt(context.Background(), pc)
-	if action != ActionInject {
-		t.Fatalf("expected ActionInject even for empty workspace, got %v", action)
+	resources := mw.BeforePromptResources(context.Background(), pc)
+	ws := findResource(resources, "Workspace Context")
+	if ws == nil {
+		t.Fatalf("expected Workspace Context resource even for empty workspace, got %d resources", len(resources))
 	}
-	if !strings.Contains(msg, dir) {
-		t.Errorf("expected path in minimal context, got %q", msg)
+	if !strings.Contains(ws.Text, dir) {
+		t.Errorf("expected path in minimal context, got %q", ws.Text)
 	}
-	if !strings.Contains(msg, "Platform:") {
-		t.Errorf("expected platform line in minimal context, got %q", msg)
+	if !strings.Contains(ws.Text, "Platform:") {
+		t.Errorf("expected platform line in minimal context, got %q", ws.Text)
 	}
 }
 
@@ -260,14 +306,18 @@ func TestFirstPromptContextMiddleware_LargeWorkspaceTruncates(t *testing.T) {
 	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 0}
 
-	_, msg := mw.BeforePrompt(context.Background(), pc)
+	resources := mw.BeforePromptResources(context.Background(), pc)
+	ws := findResource(resources, "Workspace Context")
+	if ws == nil {
+		t.Fatalf("expected Workspace Context resource, got %d resources", len(resources))
+	}
 	// Count the number of file lines emitted.
-	lines := strings.Count(msg, "src/file")
+	lines := strings.Count(ws.Text, "src/file")
 	if lines > sm.MaxContextFiles {
 		t.Errorf("expected at most %d file lines, got %d", sm.MaxContextFiles, lines)
 	}
-	if len(msg) > sm.MaxContextBytes {
-		t.Errorf("expected message ≤ %d bytes, got %d", sm.MaxContextBytes, len(msg))
+	if len(ws.Text) > sm.MaxContextBytes {
+		t.Errorf("expected workspace text ≤ %d bytes, got %d", sm.MaxContextBytes, len(ws.Text))
 	}
 }
 
@@ -279,12 +329,13 @@ func TestFirstPromptContextMiddleware_NonGitWorkspaceOmitsGitSection(t *testing.
 	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 0}
 
-	action, msg := mw.BeforePrompt(context.Background(), pc)
-	if action != ActionInject {
-		t.Fatalf("expected ActionInject, got %v", action)
+	resources := mw.BeforePromptResources(context.Background(), pc)
+	ws := findResource(resources, "Workspace Context")
+	if ws == nil {
+		t.Fatalf("expected Workspace Context resource, got %d resources", len(resources))
 	}
-	if strings.Contains(msg, "## Git") {
-		t.Errorf("expected git section omitted for non-git workspace, got %q", msg)
+	if strings.Contains(ws.Text, "## Git") {
+		t.Errorf("expected git section omitted for non-git workspace, got %q", ws.Text)
 	}
 }
 
@@ -301,15 +352,16 @@ func TestFirstPromptContextMiddleware_GitWorkspaceIncludesGitSection(t *testing.
 	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 0}
 
-	action, msg := mw.BeforePrompt(context.Background(), pc)
-	if action != ActionInject {
-		t.Fatalf("expected ActionInject, got %v", action)
+	resources := mw.BeforePromptResources(context.Background(), pc)
+	ws := findResource(resources, "Workspace Context")
+	if ws == nil {
+		t.Fatalf("expected Workspace Context resource, got %d resources", len(resources))
 	}
-	if !strings.Contains(msg, "## Git") {
-		t.Errorf("expected git section for git workspace, got %q", msg)
+	if !strings.Contains(ws.Text, "## Git") {
+		t.Errorf("expected git section for git workspace, got %q", ws.Text)
 	}
-	if !strings.Contains(msg, "initial") {
-		t.Errorf("expected recent commit in git section, got %q", msg)
+	if !strings.Contains(ws.Text, "initial") {
+		t.Errorf("expected recent commit in git section, got %q", ws.Text)
 	}
 }
 
@@ -336,17 +388,21 @@ func TestFirstPromptContextMiddleware_DepthLimit(t *testing.T) {
 	mw := NewFirstPromptContextMiddleware(wm, nil)
 	pc := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, PromptCount: 0}
 
-	_, msg := mw.BeforePrompt(context.Background(), pc)
+	resources := mw.BeforePromptResources(context.Background(), pc)
+	ws := findResource(resources, "Workspace Context")
+	if ws == nil {
+		t.Fatalf("expected Workspace Context resource, got %d resources", len(resources))
+	}
 	// depth 1 (top/file.go) and depth 3 (top/sub/deep/very_deep.go) included;
 	// depth 4 (top/sub/deep/deeper/too_deep.go) excluded.
-	if !strings.Contains(msg, "top/file.go") {
-		t.Errorf("expected top/file.go included, got %q", msg)
+	if !strings.Contains(ws.Text, "top/file.go") {
+		t.Errorf("expected top/file.go included, got %q", ws.Text)
 	}
-	if !strings.Contains(msg, "top/sub/deep/very_deep.go") {
-		t.Errorf("expected top/sub/deep/very_deep.go included (depth 3), got %q", msg)
+	if !strings.Contains(ws.Text, "top/sub/deep/very_deep.go") {
+		t.Errorf("expected top/sub/deep/very_deep.go included (depth 3), got %q", ws.Text)
 	}
-	if strings.Contains(msg, "too_deep.go") {
-		t.Errorf("expected too_deep.go excluded (depth 4), got %q", msg)
+	if strings.Contains(ws.Text, "too_deep.go") {
+		t.Errorf("expected too_deep.go excluded (depth 4), got %q", ws.Text)
 	}
 }
 
@@ -367,33 +423,41 @@ func TestSendPrompt_PipelineInjectsOnFirstPromptOnly(t *testing.T) {
 
 	// We can't call SendPrompt without a real transport (it would try to spawn
 	// an agent). Instead, exercise the pipeline directly to confirm the
-	// counter semantics that SendPrompt relies on.
+	// counter semantics that SendPrompt relies on. The workspace bundle is now
+	// emitted as resources (not text), so the first prompt returns ActionInject
+	// with a non-empty Resources slice and empty Text.
 	pipeline := client.pipeline
 	pc1 := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, UserPrompt: "first"}
-	action1, inj1 := pipeline.RunBeforePrompt(context.Background(), pc1)
+	action1, res1 := pipeline.RunBeforePrompt(context.Background(), pc1)
 	if action1 != ActionInject {
 		t.Fatalf("first prompt: expected ActionInject, got %v", action1)
 	}
-	combined1 := inj1 + "\n\n---\n\nfirst"
-	if !strings.HasPrefix(combined1, "## Workspace Context") {
-		t.Errorf("expected injected context prepended, got %q", combined1)
+	if len(res1.Resources) == 0 {
+		t.Fatal("first prompt: expected structured resources, got none")
 	}
-	if !strings.HasSuffix(combined1, "first") {
-		t.Errorf("expected user prompt at end, got %q", combined1)
+	ws := findResource(res1.Resources, "Workspace Context")
+	if ws == nil {
+		t.Fatal("first prompt: expected Workspace Context resource")
+	}
+	if !strings.HasPrefix(ws.Text, "## Workspace Context") {
+		t.Errorf("expected workspace bundle text to start with header, got %q", ws.Text)
+	}
+	// finalContent for the first prompt is just the user prompt (no text injection).
+	combined1 := "first"
+	if combined1 != "first" {
+		t.Errorf("expected raw user content on first prompt (text injection empty), got %q", combined1)
 	}
 
-	// Second prompt: no injection.
+	// Second prompt: no injection (no resources, no text).
 	pc2 := &PromptContext{SessionID: "s1", WorkspaceID: "ws", WorkspacePath: dir, UserPrompt: "second"}
-	action2, inj2 := pipeline.RunBeforePrompt(context.Background(), pc2)
+	action2, res2 := pipeline.RunBeforePrompt(context.Background(), pc2)
 	if action2 != ActionContinue {
 		t.Fatalf("second prompt: expected ActionContinue, got %v", action2)
 	}
-	if inj2 != "" {
-		t.Errorf("second prompt: expected no injection, got %q", inj2)
+	if len(res2.Resources) != 0 {
+		t.Errorf("second prompt: expected no resources, got %d", len(res2.Resources))
 	}
-	// Combined content for second prompt is just the raw user content.
-	combined2 := "second"
-	if combined2 != "second" {
-		t.Errorf("expected raw content on second prompt, got %q", combined2)
+	if res2.Text != "" {
+		t.Errorf("second prompt: expected no text injection, got %q", res2.Text)
 	}
 }

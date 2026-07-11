@@ -15,8 +15,11 @@ package acp
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/adama/local-agent/internal/interfaces"
 )
 
 // OpenFilesProvider supplies the currently open and recently edited file paths
@@ -150,4 +153,136 @@ func capPaths(paths []string, n int) []string {
 		return paths
 	}
 	return paths[:n]
+}
+
+// OpenFilesResourceMiddleware sends open file contents and the current editor
+// selection as structured resource blocks with every prompt. Unlike the
+// text-only OpenFilesMiddleware (which sends a path list), this reads each
+// file's content via the WorkspaceManager and emits it as a ContextResource
+// for agents that support embedded context. The text-only middleware still
+// runs alongside it so agents without EmbeddedContext get at least the path
+// list via the transport's text fallback.
+//
+// Resources are capped two ways to keep prompt size bounded:
+//   - MaxOpenFileBytes truncates any single file's content.
+//   - MaxOpenFilesTotalBytes caps the aggregate; once exceeded, remaining
+//     files are skipped.
+//
+// The current editor selection (when it has text) is emitted as its own
+// resource with a fragment URI of the form file://...#L{start}-L{end}.
+type OpenFilesResourceMiddleware struct {
+	Tracker   *OpenFilesTracker
+	Workspace interfaces.WorkspaceManager
+	Messages  *SystemMessages
+}
+
+// NewOpenFilesResourceMiddleware constructs an OpenFilesResourceMiddleware
+// backed by the given tracker, workspace manager, and templates. If messages
+// is nil, DefaultSystemMessages is used.
+func NewOpenFilesResourceMiddleware(tracker *OpenFilesTracker, wm interfaces.WorkspaceManager, messages *SystemMessages) *OpenFilesResourceMiddleware {
+	if messages == nil {
+		messages = DefaultSystemMessages()
+	}
+	return &OpenFilesResourceMiddleware{Tracker: tracker, Workspace: wm, Messages: messages}
+}
+
+// BeforePrompt implements PromptMiddleware. This middleware contributes only
+// structured resources (no free-form text), so it always returns
+// ActionContinue. The pipeline picks up its resources via BeforePromptResources.
+func (m *OpenFilesResourceMiddleware) BeforePrompt(_ context.Context, _ *PromptContext) (PromptAction, string) {
+	return ActionContinue, ""
+}
+
+// BeforePromptResources implements ResourceMiddleware. It reads each open
+// file's content from the workspace and emits a ContextResource per file,
+// plus one resource for the current editor selection when it has text.
+func (m *OpenFilesResourceMiddleware) BeforePromptResources(ctx context.Context, pc *PromptContext) []ContextResource {
+	if m.Tracker == nil || m.Workspace == nil {
+		return nil
+	}
+	sm := m.Messages
+	if sm == nil {
+		sm = DefaultSystemMessages()
+	}
+	paths := capPaths(m.Tracker.OpenFiles(), sm.MaxOpenFiles)
+	if len(paths) == 0 && pc.WorkspaceID == "" {
+		// No open files and (without a workspace) no way to resolve a
+		// selection either — bail out early.
+		return nil
+	}
+
+	var resources []ContextResource
+	total := 0
+	for _, rel := range paths {
+		content, _, err := m.Workspace.ReadFile(ctx, pc.WorkspaceID, rel)
+		if err != nil || content == "" {
+			continue
+		}
+		// Skip binary files — null bytes in content would break JSON-RPC
+		// serialization ("embedded null byte" error from the agent SDK).
+		if strings.ContainsRune(content, 0) {
+			continue
+		}
+		if sm.MaxOpenFileBytes > 0 && len(content) > sm.MaxOpenFileBytes {
+			content = content[:sm.MaxOpenFileBytes]
+		}
+		// Stop adding files once the aggregate cap is exceeded. We still
+		// include the file that pushed us over (so the agent sees at least
+		// one file when only one is open), but skip everything after it.
+		total += len(content)
+		resources = append(resources, ContextResource{
+			URI:      "file://" + filepath.ToSlash(filepath.Join(pc.WorkspacePath, rel)),
+			MimeType: mimeByExt(rel),
+			Name:     rel,
+			Text:     content,
+		})
+		if sm.MaxOpenFilesTotalBytes > 0 && total >= sm.MaxOpenFilesTotalBytes {
+			break
+		}
+	}
+
+	// Append the current editor selection as its own resource when it has
+	// text. The URI carries a #L{start}-L{end} fragment so the agent can
+	// reference the selection range.
+	if sel := m.Tracker.Selection(); sel.Text != "" {
+		uri := "file://" + filepath.ToSlash(filepath.Join(pc.WorkspacePath, sel.Path)) +
+			fmt.Sprintf("#L%d-L%d", sel.StartLine, sel.EndLine)
+		resources = append(resources, ContextResource{
+			URI:      uri,
+			MimeType: mimeByExt(sel.Path),
+			Name:     fmt.Sprintf("%s:%d-%d", sel.Path, sel.StartLine, sel.EndLine),
+			Text:     sel.Text,
+		})
+	}
+
+	return resources
+}
+
+// mimeByExt returns a MIME type for common source file extensions. Unknown
+// extensions default to text/plain. The mapping is intentionally small and
+// focused on the languages the editor highlights.
+func mimeByExt(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".go":
+		return "text/x-go"
+	case ".ts", ".tsx":
+		return "text/typescript"
+	case ".js", ".jsx":
+		return "text/javascript"
+	case ".py":
+		return "text/x-python"
+	case ".md":
+		return "text/markdown"
+	case ".json":
+		return "application/json"
+	case ".yaml", ".yml":
+		return "text/yaml"
+	case ".html":
+		return "text/html"
+	case ".css":
+		return "text/css"
+	default:
+		return "text/plain"
+	}
 }

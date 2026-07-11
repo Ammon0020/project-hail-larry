@@ -12,23 +12,81 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
+	"syscall"
 )
 
-// Result holds the output and exit code of a completed command.
+// Result holds the output and exit status of a completed command.
 type Result struct {
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	ExitCode int    `json:"exitCode"`
+	Stdout   string  `json:"stdout"`
+	Stderr   string  `json:"stderr"`
+	ExitCode int     `json:"exitCode"`
+	Signal   *string `json:"signal,omitempty"`
 }
 
 // Executor runs shell commands within a workspace directory.
 type Executor struct {
 	workspacePath string
+	// env is the full "KEY=VALUE" environment for spawned processes. When nil,
+	// the subprocess inherits the daemon's environment (os.Environ()). When set,
+	// it fully replaces the inherited environment — callers should normally build
+	// it as os.Environ() overlaid with their own vars (see MergeEnv).
+	env []string
 }
 
 // NewExecutor creates a new shell Executor scoped to the given workspace path.
+// The spawned process inherits the daemon environment.
 func NewExecutor(workspacePath string) *Executor {
 	return &Executor{workspacePath: workspacePath}
+}
+
+// WithEnv returns a copy of the executor with the environment set to env. env
+// should be a "KEY=VALUE" slice (typically os.Environ() overlaid with
+// caller-supplied variables via MergeEnv). A nil/empty env clears the
+// inherited environment; pass os.Environ() explicitly to preserve it.
+func (e *Executor) WithEnv(env []string) *Executor {
+	return &Executor{workspacePath: e.workspacePath, env: env}
+}
+
+// MergeEnv overlays extra "KEY=VALUE" entries on top of base, with extra taking
+// precedence for duplicate keys. The base slice is typically os.Environ() and
+// extra is the agent-supplied environment. The returned slice has no duplicate
+// keys.
+func MergeEnv(base, extra []string) []string {
+	seen := make(map[string]int, len(base)+len(extra))
+	merged := make([]string, 0, len(base)+len(extra))
+	// Insert base first, recording the index of each key so later duplicates
+	// (from extra) can replace the existing entry in place.
+	for _, kv := range base {
+		k := envKey(kv)
+		if idx, ok := seen[k]; ok {
+			merged[idx] = kv
+			continue
+		}
+		seen[k] = len(merged)
+		merged = append(merged, kv)
+	}
+	for _, kv := range extra {
+		k := envKey(kv)
+		if idx, ok := seen[k]; ok {
+			merged[idx] = kv
+			continue
+		}
+		seen[k] = len(merged)
+		merged = append(merged, kv)
+	}
+	return merged
+}
+
+// envKey returns the key portion of a "KEY=VALUE" environment string. Strings
+// without '=' are treated as a key with an empty value (matching os/exec
+// behavior, which ignores entries without '=').
+func envKey(kv string) string {
+	for i := 0; i < len(kv); i++ {
+		if kv[i] == '=' {
+			return kv[:i]
+		}
+	}
+	return kv
 }
 
 // Run executes a command in the workspace directory and returns the result.
@@ -41,6 +99,9 @@ func (e *Executor) Run(ctx context.Context, command string) (Result, error) {
 
 	cmd := shellCommand(ctx, command)
 	cmd.Dir = e.workspacePath
+	if e.env != nil {
+		cmd.Env = e.env
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -57,9 +118,10 @@ func (e *Executor) Run(ctx context.Context, command string) (Result, error) {
 	if err != nil {
 		// Try to extract the exit code.
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			// Command ran but exited non-zero — this is a normal failure, not
-			// an infrastructure error, so it is reported via ExitCode only.
+			// Command ran but exited non-zero or was killed by a signal.
+			// Report the exit code and, on Unix, the terminating signal.
 			result.ExitCode = exitErr.ExitCode()
+			result.Signal = exitSignal(exitErr)
 			return result, nil
 		}
 		// Command failed to start or the context was cancelled. Surface the
@@ -83,6 +145,9 @@ func (e *Executor) RunAsync(ctx context.Context, command string, onStdout, onStd
 
 	cmd := shellCommand(ctx, command)
 	cmd.Dir = e.workspacePath
+	if e.env != nil {
+		cmd.Env = e.env
+	}
 
 	// Get pipes for streaming.
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -128,8 +193,9 @@ func (e *Executor) RunAsync(ctx context.Context, command string, onStdout, onStd
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			// Command ran but exited non-zero — report via ExitCode only.
+			// Command ran but exited non-zero or was killed by a signal.
 			result.ExitCode = exitErr.ExitCode()
+			result.Signal = exitSignal(exitErr)
 			return result, nil
 		}
 		// Command failed to start or the context was cancelled. Surface the
@@ -170,6 +236,9 @@ func (e *Executor) RunAsyncArgs(ctx context.Context, command string, args []stri
 
 	cmd := exec.CommandContext(ctx, command, args...) //nolint:gosec // commands are executed only after client permission approval.
 	cmd.Dir = e.workspacePath
+	if e.env != nil {
+		cmd.Env = e.env
+	}
 
 	// Get pipes for streaming.
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -215,8 +284,9 @@ func (e *Executor) RunAsyncArgs(ctx context.Context, command string, args []stri
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			// Command ran but exited non-zero — report via ExitCode only.
+			// Command ran but exited non-zero or was killed by a signal.
 			result.ExitCode = exitErr.ExitCode()
+			result.Signal = exitSignal(exitErr)
 			return result, nil
 		}
 		// Command failed to start or the context was cancelled. Surface the
@@ -228,6 +298,19 @@ func (e *Executor) RunAsyncArgs(ctx context.Context, command string, args []stri
 	}
 
 	return result, nil
+}
+
+// exitSignal extracts the terminating signal from an exec.ExitError, if any.
+func exitSignal(exitErr *exec.ExitError) *string {
+	if exitErr == nil {
+		return nil
+	}
+	ws, ok := exitErr.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() {
+		return nil
+	}
+	s := ws.Signal().String()
+	return &s
 }
 
 // readPipe reads from a pipe, writing to the buffer and calling the callback.

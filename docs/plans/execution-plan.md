@@ -25,9 +25,11 @@
 
 ---
 
-## Work Stream 1 — ACP Session Lifecycle Completion
+## Work Stream 1 — ACP Session Lifecycle Completion  ✅ Done
 
-**Gap:** `session/load` and `session/delete` never called; shutdown kills processes instead of graceful close.
+> **Status: Complete (2026-06-27).** `LoadSession`/`DeleteSession` wrappers exist on `Transport` (`internal/acp/transport.go`), `ACPSessionID` is persisted in `conversations.json`, `startTransportLocked` attempts `LoadSession` when the capability is advertised and falls back to `NewSession`, `CloseSession` calls `DeleteSession` before killing the process, and `CloseAllSessions` is wired into daemon shutdown for graceful close. Tests in `internal/acp/lifecycle_test.go`. The detailed scope below is retained as a design reference.
+
+**Original gap:** `session/load` and `session/delete` never called; shutdown killed processes instead of graceful close.
 
 **Files:**
 - `internal/acp/transport.go` — add `LoadSession(ctx, acpSessionID) (string, error)` and `DeleteSession(ctx, acpSessionID) error` wrappers on `Transport` using `t.conn.LoadSession` / `t.conn.DeleteSession` (verify exact method names against installed `coder/acp-go-sdk@v0.13.5` — use Context7 if unsure).
@@ -51,9 +53,11 @@
 
 ---
 
-## Work Stream 2 — Permission Policy Enforcement
+## Work Stream 2 — Permission Policy Enforcement  ✅ Done
 
-**Gap:** `allow_always` / `allow_session` decisions recorded but never auto-resolve. Every request blocks.
+> **Status: Complete (2026-06-27, with `reject_always` added 2026-07-08).** `allow_always`/`allow_session` auto-resolve from a session-scoped policy map, `reject_always` auto-denies via a deny cache mirroring the allow cache, `ClearSession` drops policies on close, and auto-resolved decisions are recorded in the audit log. Tests in `internal/permissions/permissions_test.go`. The detailed scope below is retained as a design reference.
+
+**Original gap:** `allow_always` / `allow_session` decisions recorded but never auto-resolved; `reject_always` not cached. Every request blocked.
 
 **Files:**
 - `internal/permissions/permissions.go`:
@@ -84,9 +88,11 @@
 
 ---
 
-## Work Stream 3 — Agent Context Provider
+## Work Stream 3 — Agent Context Provider  ✅ Done
 
-**Gap:** Agents get no workspace context on first prompt → excessive shell round-trips for file discovery.
+> **Status: Complete (2026-06-27, extended 2026-07-08).** `internal/acp/context.go` + `providers.go` implement the `PromptPipeline` with `FirstPromptContextMiddleware` (workspace path, OS, file tree, git status, AGENTS.md on first prompt) plus `TimeMiddleware`, `OpenFilesMiddleware`/`OpenFilesResourceMiddleware`, and `RecentEditsMiddleware` (per-prompt). Context is sent as structured `resource` ContentBlocks when the agent advertises `embeddedContext`, with a `resource_link` + text fallback otherwise (ACP spec compliance P1.1/P1.3). Wired in `internal/daemon/daemon.go`. Tests in `internal/acp/context_test.go`. The detailed scope below is retained as a design reference.
+
+**Original gap:** Agents got no workspace context on first prompt → excessive shell round-trips for file discovery.
 
 **Plan source:** `docs/archive/agent-context.md` (DRAFT). Reconciled against codebase:
 - `Transport.Prompt` (`transport.go:367`) sends `[]acp.ContentBlock{acp.TextBlock(content)}`. Context injection = prepend to `content` string (Option A in the draft). Simplest, universal.

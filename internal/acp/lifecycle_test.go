@@ -64,9 +64,9 @@ func (m *mockTransport) DeleteSession(_ context.Context, acpSessionID string) er
 	return m.deleteSessionErr
 }
 
-func (m *mockTransport) Prompt(_ context.Context, _, _ string, _ []interfaces.Attachment) error {
+func (m *mockTransport) Prompt(_ context.Context, _, _ string, _ []ContextResource, _ []interfaces.Attachment) (acpsdk.StopReason, error) {
 	m.promptCalled = true
-	return m.promptErr
+	return "", m.promptErr
 }
 
 func (m *mockTransport) Cancel(_ context.Context, _ string) error {

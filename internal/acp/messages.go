@@ -64,6 +64,14 @@ type SystemMessages struct {
 	// MaxRecentEdits caps the number of recently-edited file paths injected by
 	// RecentEditsMiddleware.
 	MaxRecentEdits int `json:"maxRecentEdits"`
+	// MaxOpenFileBytes caps the byte size of a single open file's content
+	// emitted as a resource block by OpenFilesResourceMiddleware. Files larger
+	// than this are truncated.
+	MaxOpenFileBytes int `json:"maxOpenFileBytes"`
+	// MaxOpenFilesTotalBytes caps the aggregate byte size of all open-file
+	// resource blocks emitted by OpenFilesResourceMiddleware. Once the running
+	// total exceeds this, remaining open files are skipped.
+	MaxOpenFilesTotalBytes int `json:"maxOpenFilesTotalBytes"`
 }
 
 // DefaultSystemMessages returns a SystemMessages populated with the built-in
@@ -84,6 +92,8 @@ func DefaultSystemMessages() *SystemMessages {
 		MaxFileTreeDepth:           3,
 		MaxOpenFiles:               20,
 		MaxRecentEdits:             10,
+		MaxOpenFileBytes:           32 * 1024,
+		MaxOpenFilesTotalBytes:     128 * 1024,
 	}
 }
 
@@ -132,6 +142,18 @@ type OpenFilesTracker struct {
 	mu          sync.RWMutex
 	openFiles   []string
 	recentEdits []string
+	selection   EditorSelection
+}
+
+// EditorSelection captures the user's current text selection in the editor.
+// Path is relative to the workspace root; StartLine/EndLine are 1-based and
+// inclusive. Text is the selected text itself (may be empty when the user has
+// no active selection, in which case the selection is not emitted).
+type EditorSelection struct {
+	Path      string
+	StartLine int
+	EndLine   int
+	Text      string
 }
 
 // NewOpenFilesTracker constructs an empty OpenFilesTracker.
@@ -165,4 +187,19 @@ func (t *OpenFilesTracker) RecentEdits() []string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return append([]string(nil), t.recentEdits...)
+}
+
+// SetSelection replaces the current editor selection. Pass an EditorSelection
+// with an empty Text to clear the selection.
+func (t *OpenFilesTracker) SetSelection(sel EditorSelection) {
+	t.mu.Lock()
+	t.selection = sel
+	t.mu.Unlock()
+}
+
+// Selection returns the current editor selection.
+func (t *OpenFilesTracker) Selection() EditorSelection {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.selection
 }

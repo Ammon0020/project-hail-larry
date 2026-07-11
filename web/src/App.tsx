@@ -9,6 +9,7 @@ import { MobileNav } from '@/components/MobileNav'
 import { MobileSettings } from '@/components/MobileSettings'
 import { SettingsModal } from '@/components/SettingsModal'
 import { useBackend } from '@/hooks/useBackend'
+import type { EditorSelection } from '@/lib/api'
 import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Attachment, SessionStatus, Tab } from '@/types'
 
 /**
@@ -101,6 +102,12 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(
     () => localStorage.getItem('lai:activeTabId') || null,
   )
+
+  // Current editor selection, lifted from EditorPane via the
+  // onSelectionChange callback so it can be reported to the backend alongside
+  // open files (ACP spec item 1.3 — selection sent as a resource block).
+  // undefined means "no active selection".
+  const [editorSelection, setEditorSelection] = useState<EditorSelection | undefined>(undefined)
 
   // Save error — shown as a transient banner so save failures aren't silent
   // (previously only console.error'd, making debugging impossible).
@@ -209,14 +216,16 @@ export default function App() {
   // Report open files and recent (unsaved) edits to the backend so the context
   // middleware can inject them into the next agent prompt. Debounced inside
   // backend.reportContext (~1s) so rapid tab switches don't flood the API.
-  // Skipped when there's no active session or no active workspace.
+  // Skipped when there's no active session or no active workspace. The current
+  // editor selection is included so the backend can emit it as a resource block
+  // (ACP spec item 1.3).
   useEffect(() => {
     if (!activeSessionId || !backend.activeWorkspace) return
     const openFiles = openTabs.map((t) => t.path)
     const recentEdits = openTabs.filter((t) => t.unsaved).map((t) => t.path)
-    backend.reportContext(activeSessionId, openFiles, recentEdits)
+    backend.reportContext(activeSessionId, openFiles, recentEdits, editorSelection)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- backend object is recreated every render; reportContext is debounced internally
-  }, [openTabs, activeSessionId])
+  }, [openTabs, activeSessionId, editorSelection])
 
   useEffect(() => {
     localStorage.setItem('lai:leftPanel', leftPanel)
@@ -552,26 +561,11 @@ export default function App() {
     await backend.sendPrompt(sessionId, content, attachments)
   }
 
-  /** Export a conversation's events as a downloadable JSON file. */
-  const handleExportSession = (sessionId: string) => {
-    const session = backend.sessions.find((s) => s.id === sessionId)
-    const events = (backend.events as AppEvent[]).filter((e) => e.sessionId === sessionId)
-    const payload = {
-      sessionId,
-      name: session?.name ?? sessionId,
-      agentId: session?.agentId,
-      modelId: session?.modelId,
-      exportedAt: new Date().toISOString(),
-      events,
-    }
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    const safeName = (session?.name ?? sessionId).replace(/[^a-z0-9_-]/gi, '_')
-    a.download = `${safeName}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+  /** Export a conversation as a downloadable markdown transcript. The backend
+   *  renders the full event history into a readable transcript; this just
+   *  triggers the download via the api client. */
+  const handleExportSession = async (sessionId: string) => {
+    await backend.exportSession(sessionId)
   }
 
   // ---- Computed values ----
@@ -708,6 +702,7 @@ export default function App() {
         onSave={handleSave}
         onContentChange={handleContentChange}
         onReloadTab={handleReloadTab}
+        onSelectionChange={setEditorSelection}
         scrollToLine={searchResultLine}
       />
 

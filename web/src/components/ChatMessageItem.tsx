@@ -99,6 +99,34 @@ function permissionToolLabel(tool?: string, toolKind?: string): string {
 }
 
 /**
+ * Maps an ACP stop reason to a human-readable label, or returns null when the
+ * reason is a normal completion that should not be surfaced to the user.
+ *
+ * - end_turn / tool_use: normal — hide.
+ * - max_tokens: "hit token limit"
+ * - refusal: "refused"
+ * - cancelled: "cancelled"
+ * - anything else: shown verbatim so unknown reasons are still visible.
+ */
+function stopReasonLabel(stopReason?: string): string | null {
+  const r = (stopReason ?? '').trim()
+  if (!r) return null
+  switch (r) {
+    case 'end_turn':
+    case 'tool_use':
+      return null
+    case 'max_tokens':
+      return 'hit token limit'
+    case 'refusal':
+      return 'refused'
+    case 'cancelled':
+      return 'cancelled'
+    default:
+      return r
+  }
+}
+
+/**
  * Renders a single event from the event stream as a chat message,
  * tool timeline card, permission dialog, plan, or shell card (Blueprint Sec 11).
  *
@@ -330,7 +358,7 @@ export function ChatMessageItem({
       )
     }
 
-    case 'StreamUpdate':
+    case 'StreamUpdate': {
       // Agent thoughts render as a muted, collapsible block.
       if (event.thought) {
         if (!event.content) return null
@@ -347,6 +375,10 @@ export function ChatMessageItem({
         )
       }
       if (!event.content && !event.streaming) return null
+      // Surface non-normal stop reasons (e.g. max_tokens, refusal, cancelled)
+      // subtly below the final assistant message. Normal reasons (end_turn,
+      // tool_use) are hidden by stopReasonLabel.
+      const stopLabel = !event.streaming ? stopReasonLabel(event.stopReason) : null
       return (
         <div className="flex gap-3">
           <div className="w-7 h-7 rounded-lg bg-primary/20 text-primary flex items-center justify-center shrink-0 border border-primary/30">
@@ -361,9 +393,15 @@ export function ChatMessageItem({
                 <span className="inline-block w-1.5 h-4 ml-0.5 bg-primary animate-pulse align-text-bottom" />
               )}
             </div>
+            {stopLabel && (
+              <p className="mt-1 text-[11px] text-muted-foreground italic">
+                · {stopLabel}
+              </p>
+            )}
           </div>
         </div>
       )
+    }
 
     case 'AgentExited':
       // System-level failure — compact centered row, but slightly more

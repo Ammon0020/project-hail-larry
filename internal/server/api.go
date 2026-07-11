@@ -414,6 +414,79 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, info)
 }
 
+// handleExportSession renders a session's event history as a readable markdown
+// transcript (via acp.ExportConversation, with no byte truncation so the full
+// conversation is preserved) and returns it as a text/markdown attachment. The
+// download filename is derived from the session name — sanitized to a safe
+// filename slug — falling back to the session ID when the name is empty.
+//
+// The session is looked up via ACPClient.GetSessionInfo so the handler depends
+// only on the interfaces.SessionInfo projection, mirroring handleGetSession. A
+// missing session yields 404; an EventStore error yields 500.
+func (s *Server) handleExportSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+
+	// Look up the session to get its name for the download filename. A missing
+	// session is a 404 — there is nothing to export.
+	info, err := s.deps.ACPClient.GetSessionInfo(sessionID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	// Render the full transcript with no truncation (maxBytes=0). The event
+	// store is the source of truth; ExportConversation returns "" with a nil
+	// error when the store has no events for the session, which we still serve
+	// as an empty markdown file so the download always succeeds.
+	markdown, err := acp.ExportConversation(r.Context(), s.deps.EventStore, sessionID, 0)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Derive a safe filename from the session name, falling back to the session
+	// ID (then a generic "session") when the name is empty. sanitizeFilename
+	// strips path separators and other characters that are unsafe in download
+	// filenames across operating systems.
+	name := info.Name
+	if name == "" {
+		name = fmt.Sprintf("Session %s", shortSessionID(info.ID))
+	}
+	filename := sanitizeFilename(name)
+	if filename == "" {
+		filename = sessionID
+	}
+	if filename == "" {
+		filename = "session"
+	}
+	filename += ".md"
+
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, markdown)
+}
+
+// sanitizeFilename collapses a session name into a safe filename slug. It
+// keeps alphanumerics, dashes, and underscores, and replaces every other rune
+// (including path separators, control characters, and whitespace) with an
+// underscore. An all-unsafe input yields an empty string, which the caller is
+// expected to fall back from. The result is not length-capped; session names
+// are user-controlled but short, and overly long names are still valid
+// filenames on every supported platform.
+func sanitizeFilename(name string) string {
+	var b strings.Builder
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+			b.WriteRune(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
 // handlePatchSession renames a conversation and/or rebinds it to a different
 // agent/model. Body: { "name"?: string, "agentId"?: string, "modelId"?: string, "maxTransferBytes"?: int }.
 func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
@@ -642,14 +715,19 @@ func (s *Server) handleServeUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSessionContext accepts frontend-reported editor state (currently open
-// files and recently edited files) for a session and updates the
-// OpenFilesTracker so the prompt middleware pipeline can inject it. The
-// session ID is accepted for future per-session tracking but the current
+// files, recently edited files, and the current editor selection) for a session
+// and updates the OpenFilesTracker so the prompt middleware pipeline can inject
+// it. The session ID is accepted for future per-session tracking but the current
 // tracker is process-global. Body:
 //
-//	{ "openFiles": ["path1", ...], "recentEdits": ["path3", ...] }
+//	{
+//	  "openFiles": ["path1", ...],
+//	  "recentEdits": ["path3", ...],
+//	  "selection": { "path": "rel/path", "startLine": 1, "endLine": 3, "text": "..." }
+//	}
 //
-// Both fields are optional; omitted fields leave the tracker unchanged.
+// All fields are optional; omitted fields leave the tracker unchanged. A
+// selection with empty text clears any previously stored selection.
 func (s *Server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	if s.deps == nil || s.deps.OpenFilesTracker == nil {
 		writeError(w, http.StatusServiceUnavailable, "open-files tracking not configured")
@@ -658,6 +736,12 @@ func (s *Server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OpenFiles   []string `json:"openFiles"`
 		RecentEdits []string `json:"recentEdits"`
+		Selection   *struct {
+			Path      string `json:"path"`
+			StartLine int    `json:"startLine"`
+			EndLine   int    `json:"endLine"`
+			Text      string `json:"text"`
+		} `json:"selection"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -668,6 +752,14 @@ func (s *Server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RecentEdits != nil {
 		s.deps.OpenFilesTracker.SetRecentEdits(req.RecentEdits)
+	}
+	if req.Selection != nil {
+		s.deps.OpenFilesTracker.SetSelection(acp.EditorSelection{
+			Path:      req.Selection.Path,
+			StartLine: req.Selection.StartLine,
+			EndLine:   req.Selection.EndLine,
+			Text:      req.Selection.Text,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }

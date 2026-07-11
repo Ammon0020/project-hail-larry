@@ -34,6 +34,7 @@ export function EditorPane({
   onSave,
   onContentChange,
   onReloadTab,
+  onSelectionChange,
   scrollToLine,
 }: {
   tabs: Tab[]
@@ -46,6 +47,10 @@ export function EditorPane({
   /** Reloads a tab's content from disk, discarding local edits. Used by the
    *  "changed on disk" banner's Reload action. */
   onReloadTab?: (id: string) => void
+  /** Reports the user's current text selection to the parent so it can be
+   *  sent to the backend as a resource block (ACP spec item 1.3). Called
+   *  with undefined when the selection is empty (a simple cursor). */
+  onSelectionChange?: (selection: { path: string; startLine: number; endLine: number; text: string } | undefined) => void
   /** When set, scrolls the editor cursor to this 1-based line and scrolls it
    *  into view. Cleared by the parent after the jump is dispatched so a
    *  subsequent click on the same line re-triggers. */
@@ -65,6 +70,15 @@ export function EditorPane({
   useEffect(() => {
     onSaveRef.current = onSave
   }, [onSave])
+
+  // Ref mirror of onSelectionChange so the memoized updateListener extension
+  // always invokes the latest callback without reconfiguring the editor (which
+  // would reset cursor/scroll state). Read only inside the updateListener
+  // callback (an event handler), never during render.
+  const onSelectionChangeRef = useRef(onSelectionChange)
+  useEffect(() => {
+    onSelectionChangeRef.current = onSelectionChange
+  }, [onSelectionChange])
 
   // Hold the CodeMirror EditorView instance so we can imperatively dispatch
   // selection/scroll transactions (e.g. jump-to-line from search results).
@@ -176,7 +190,7 @@ export function EditorPane({
    * closeBrackets, and other conveniences; the extensions below supplement it
    * with the features that make it feel like a real editor.
    */
-  const getExtensions = (lang: string): Extension[] => {
+  const getExtensions = (lang: string, tabPath: string): Extension[] => {
     const exts: Extension[] = [
       ...getLanguageExtension(lang),
 
@@ -215,6 +229,29 @@ export function EditorPane({
 
       // Standard keybindings: default + history + tab-to-indent
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+
+      // Selection listener — reports the current editor selection to the
+      // parent (App) so it can be sent to the backend as a resource block
+      // (ACP spec item 1.3). Uses the ref so the extension can be memoized
+      // without reconfiguring the editor on every parent render. The active
+      // tab's path is captured in the closure (passed via getExtensions) so
+      // the emitted selection carries the file it belongs to.
+      EditorView.updateListener.of((viewUpdate) => {
+        if (!viewUpdate.selectionSet && !viewUpdate.docChanged) return
+        const cb = onSelectionChangeRef.current
+        if (!cb) return
+        const { state } = viewUpdate
+        const sel = state.selection.main
+        if (sel.from === sel.to) {
+          // Empty selection (just a cursor) — clear any prior selection.
+          cb(undefined)
+          return
+        }
+        const startLine = state.doc.lineAt(sel.from).number
+        const endLine = state.doc.lineAt(sel.to).number
+        const text = state.sliceDoc(sel.from, sel.to)
+        cb({ path: tabPath, startLine, endLine, text })
+      }),
     ]
 
     if (wrap) {
@@ -245,11 +282,11 @@ export function EditorPane({
   // The onSaveRef is read only inside the keybinding's run() callback (an event
   // handler), never during render, so it is safe to reference here.
   const extensions = useMemo(
-    // eslint-disable-next-line react-hooks/refs -- ref is only read in the keybinding event handler, not during render
-    () => (activeTab ? getExtensions(activeTab.language) : []),
-    // getExtensions depends on `wrap` and the active tab's language.
+    // eslint-disable-next-line react-hooks/refs -- ref is only read in the keybinding/updateListener event handlers, not during render
+    () => (activeTab ? getExtensions(activeTab.language, activeTab.path) : []),
+    // getExtensions depends on `wrap` and the active tab's language/path.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeTab?.language, wrap, activeTab?.id],
+    [activeTab?.language, activeTab?.path, wrap, activeTab?.id],
   )
 
   return (

@@ -1,7 +1,12 @@
 # Project Status — Local Agent Interface
 
-> Last updated: 2026-07-06. Source of truth for task-level status.
+> Last updated: 2026-07-08. Source of truth for task-level status.
 > See `docs/plans/Blueprint.md` for architecture, `docs/plans/execution-plan.md` for work streams.
+
+## Recent Fixes (2026-07-08)
+
+- **ACP spec compliance (Priority 1 + 2)** — Implemented all 7 items from `docs/plans/acp-spec-compliance.md`. (1.1) Context is now sent as structured `resource` ContentBlocks (uri, mimeType, text) instead of flattened markdown text; the pipeline returns `PromptResult{Text, Resources}` and `Transport.Prompt` builds `acp.ResourceBlock`s when the agent advertises `embeddedContext`, falling back to `ResourceLinkBlock + TextBlock` otherwise. (1.2) The agent's `stopReason` from the `session/prompt` response is captured and included in the final `StreamUpdate` event; the frontend displays non-normal reasons (max_tokens → "hit token limit", refusal → "refused", etc.). (1.3) Open file contents and editor selection are sent as resource blocks with every prompt via `OpenFilesResourceMiddleware`; the frontend reports selection via the existing `POST /api/sessions/{id}/context` endpoint (extended with a `selection` field); per-file (32 KiB) and aggregate (128 KiB) byte caps prevent context blowup. (2.1) `reject_always` auto-deny implemented in the permission manager with a deny cache mirroring the allow cache. (2.2) Terminal `env` variables are overlaid on the daemon environment and passed to subprocesses via `shell.Executor.WithEnv`. (2.3) Terminal signal termination detected via `syscall.WaitStatus` and signal name populated in `TerminalExitStatus.Signal`. (2.4) Protocol version pinned to `acp.ProtocolVersionNumber` (v1) in `InitializeRequest`. Tests in `internal/acp`, `internal/permissions`, `internal/shell`, `internal/server`.
+- **ACP follow-up fixes (2026-07-08)** — (a) `interfaces.ACPClient` completed with the 5 previously-missing methods so the contract matches the implementation. (b) Shell command fallback in `CreateTerminal`: agents that send an unparsed shell string as `params.Command` with empty `params.Args` (e.g. devstral-small) are routed through `sh -c` / `cmd /c`. (c) `GET /api/sessions/{id}/export` now returns a markdown transcript instead of raw JSON. (d) Null-byte sanitization on resource block text to prevent "embedded null byte" JSON-RPC errors when binary files slip into context.
 
 ## Recent Fixes (2026-07-06)
 

@@ -201,6 +201,7 @@ func New(cfg *Config) (*Daemon, error) {
 		acp.NewFirstPromptContextMiddleware(workspaceMgr, systemMessages),
 		acp.NewTimeMiddleware(systemMessages),
 		acp.NewOpenFilesMiddleware(openFilesTracker, systemMessages),
+		acp.NewOpenFilesResourceMiddleware(openFilesTracker, workspaceMgr, systemMessages),
 		acp.NewRecentEditsMiddleware(openFilesTracker, systemMessages),
 		conversationTransfer,
 	))

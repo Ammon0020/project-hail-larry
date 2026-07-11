@@ -17,6 +17,13 @@ import (
 	"github.com/adama/local-agent/internal/interfaces"
 )
 
+// PermissionRejectAlways is the durable counterpart to PermissionDeny: a user
+// who picks "reject always" wants every subsequent matching request auto-denied
+// without re-prompting. Defined here rather than in internal/interfaces to keep
+// the change local to the permissions package (see Fix 2.1). The string value
+// mirrors the ACP option kind so it round-trips through the UI/agent unchanged.
+const PermissionRejectAlways interfaces.PermissionDecision = "reject_always"
+
 // policyKey identifies a permission policy entry by session, tool, and a
 // discriminator that scopes the cached decision. The toolKind field is keyed
 // on the request's Tool title (the human-readable tool name) rather than the
@@ -58,6 +65,7 @@ type Manager struct {
 	mu       sync.Mutex
 	pending  map[string]*pendingRequest
 	policy   map[policyKey]interfaces.PermissionDecision
+	denied   map[policyKey]struct{}
 	auditLog []AuditEntry
 	onReq    func(interfaces.PermissionRequest)
 }
@@ -91,6 +99,7 @@ func NewManager() *Manager {
 	return &Manager{
 		pending:  make(map[string]*pendingRequest),
 		policy:   make(map[policyKey]interfaces.PermissionDecision),
+		denied:   make(map[policyKey]struct{}),
 		auditLog: make([]AuditEntry, 0),
 	}
 }
@@ -132,16 +141,23 @@ func (m *Manager) Request(ctx context.Context, req interfaces.PermissionRequest)
 	// command text for shell tools (see policyKeyFor), so a cached shell
 	// decision only auto-approves the exact same command.
 	//
-	// Note: allow_once and bare deny are NOT auto-resolved. The codebase has
-	// no reject_always constant, so reject-always auto-deny is intentionally
-	// skipped (see docs/plans/execution-plan.md Work Stream 2).
+	// The denied map holds reject_always decisions: a prior "reject always" for
+	// this (session, tool, discriminator) auto-denies without re-prompting,
+	// mirroring the allow cache. allow_once and bare deny/reject_once are NOT
+	// auto-resolved — they are one-shot and always re-prompt.
 	key := policyKeyFor(req)
 	m.mu.Lock()
 	cached, ok := m.policy[key]
-	m.mu.Unlock()
 	if ok && (cached == interfaces.PermissionAllowAlways || cached == interfaces.PermissionAllowSession) {
+		m.mu.Unlock()
 		m.recordAudit(req, cached)
 		return cached, nil
+	}
+	_, denied := m.denied[key]
+	m.mu.Unlock()
+	if denied {
+		m.recordAudit(req, interfaces.PermissionDeny)
+		return interfaces.PermissionDeny, nil
 	}
 
 	respCh := make(chan interfaces.PermissionDecision, 1)
@@ -171,11 +187,19 @@ func (m *Manager) Request(ctx context.Context, req interfaces.PermissionRequest)
 	select {
 	case decision := <-respCh:
 		m.recordAudit(req, decision)
-		// Persist durable allow decisions so subsequent requests for the same
-		// (session, tool, discriminator) auto-resolve without blocking the user.
-		if decision == interfaces.PermissionAllowAlways || decision == interfaces.PermissionAllowSession {
+		// Persist durable decisions so subsequent requests for the same
+		// (session, tool, discriminator) auto-resolve without blocking the
+		// user. allow_always/allow_session seed the allow cache; a
+		// reject_always response seeds the deny cache so matching requests
+		// are auto-denied without re-prompting.
+		switch decision {
+		case interfaces.PermissionAllowAlways, interfaces.PermissionAllowSession:
 			m.mu.Lock()
 			m.policy[key] = decision
+			m.mu.Unlock()
+		case PermissionRejectAlways:
+			m.mu.Lock()
+			m.denied[key] = struct{}{}
 			m.mu.Unlock()
 		}
 		return decision, nil
@@ -285,6 +309,11 @@ func (m *Manager) ClearSession(sessionID string) {
 	for k := range m.policy {
 		if k.sessionID == sessionID {
 			delete(m.policy, k)
+		}
+	}
+	for k := range m.denied {
+		if k.sessionID == sessionID {
+			delete(m.denied, k)
 		}
 	}
 	// Deny pending requests for this session so the agent's RequestPermission

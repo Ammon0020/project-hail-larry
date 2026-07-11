@@ -143,6 +143,10 @@ export interface AppEvent {
   exitCode?: number
   workspaceId?: string
   attachments?: Attachment[]
+  /** ACP stop reason for the final StreamUpdate of a turn (e.g. "end_turn",
+   *  "tool_use", "max_tokens", "refusal", "cancelled"). Empty on intermediate
+   *  chunks. The frontend surfaces non-normal terminations subtly. */
+  stopReason?: string
 }
 
 /** Left panel view options (Blueprint Sec 17 — activity bar). */

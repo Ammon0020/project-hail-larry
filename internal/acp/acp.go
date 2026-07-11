@@ -87,7 +87,7 @@ type transportLike interface {
 	NewSession(ctx context.Context, cwd string) (string, error)
 	LoadSession(ctx context.Context, acpSessionID string) (string, error)
 	DeleteSession(ctx context.Context, acpSessionID string) error
-	Prompt(ctx context.Context, sessionID, content string, attachments []interfaces.Attachment) error
+	Prompt(ctx context.Context, sessionID, content string, resources []ContextResource, attachments []interfaces.Attachment) (acp.StopReason, error)
 	Cancel(ctx context.Context, sessionID string) error
 	Close() error
 	StderrTail() string
@@ -380,10 +380,14 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 	pipeline := c.pipeline
 	c.mu.Unlock()
 
-	// Run the pre-prompt middleware pipeline. If it injects context, prepend it
-	// to the content used for both the PromptSubmitted event and the transport
-	// call so the UI and the agent see the same prompt. The pipeline tracks the
-	// per-session prompt counter internally (bumped on every RunBeforePrompt).
+	// Run the pre-prompt middleware pipeline. If it injects context, prepend any
+	// free-form text to the content used for both the PromptSubmitted event and
+	// the transport call so the UI and the agent see the same prompt, and pass
+	// the structured resources to the transport so it can render them as ACP
+	// resource ContentBlocks (or fold into text for non-embeddedContext agents).
+	// The pipeline tracks the per-session prompt counter internally (bumped on
+	// every RunBeforePrompt).
+	var resources []ContextResource
 	finalContent := content
 	if pipeline != nil {
 		workspacePath := c.resolveWorkspacePath(ctx, session.Workspace)
@@ -393,8 +397,11 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 			WorkspacePath: workspacePath,
 			UserPrompt:    content,
 		}
-		if action, injected := pipeline.RunBeforePrompt(ctx, pc); action == ActionInject && injected != "" {
-			finalContent = injected + "\n\n---\n\n" + content
+		if action, res := pipeline.RunBeforePrompt(ctx, pc); action == ActionInject {
+			resources = res.Resources
+			if res.Text != "" {
+				finalContent = res.Text + "\n\n---\n\n" + content
+			}
 		}
 	}
 
@@ -426,7 +433,8 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 			})
 		}
 
-		if err := session.transport.Prompt(promptCtx, session.ACPSessionID, finalContent, attachments); err != nil {
+		stopReason, err := session.transport.Prompt(promptCtx, session.ACPSessionID, finalContent, resources, attachments)
+		if err != nil {
 			c.mu.Lock()
 			session.Status = "failed"
 			// The transport is likely dead; drop it so the next prompt restarts.
@@ -458,12 +466,13 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 		// and removes the typing cursor.
 		if callbacks != nil {
 			callbacks.OnEvent(interfaces.Event{
-				Type:      interfaces.EventStreamUpdate,
-				SessionID: sessionID,
-				Timestamp: time.Now().UTC(),
-				Role:      "agent",
-				Content:   "",
-				Streaming: false,
+				Type:       interfaces.EventStreamUpdate,
+				SessionID:  sessionID,
+				Timestamp:  time.Now().UTC(),
+				Role:       "agent",
+				Content:    "",
+				Streaming:  false,
+				StopReason: string(stopReason),
 			})
 		}
 

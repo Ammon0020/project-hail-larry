@@ -75,6 +75,11 @@ type Event struct {
 	ToolCallID string    `json:"toolCallId,omitempty"` // ACP tool call ID (for correlation)
 	Thought    bool      `json:"thought,omitempty"`    // true if this is an agent thought chunk
 	ExitCode   *int      `json:"exitCode,omitempty"`   // shell/terminal exit code when finished
+	// StopReason carries the ACP stop reason for the final StreamUpdate of a
+	// turn (e.g. "end_turn", "tool_use", "max_tokens", "refusal", "cancelled").
+	// Empty on intermediate streaming chunks. The frontend uses it to surface
+	// non-normal terminations (e.g. "hit token limit") subtly under the message.
+	StopReason string `json:"stopReason,omitempty"`
 	// WorkspaceID identifies the workspace a file-change event applies to (e.g.
 	// EventFileWritten), so the frontend can refresh the correct file tree.
 	WorkspaceID string `json:"workspaceId,omitempty"`
@@ -170,6 +175,8 @@ type WorkspaceManager interface {
 type AgentInfo struct {
 	ID      string       `json:"id"`
 	Name    string       `json:"name"`
+	Command string       `json:"command"`
+	Args    []string     `json:"args,omitempty"`
 	Models  []AgentModel `json:"models"`
 	Warning string       `json:"warning,omitempty"`
 }
@@ -194,6 +201,10 @@ type SessionInfo struct {
 	UpdatedAt time.Time `json:"updatedAt,omitempty"`
 }
 
+// Session is an alias for SessionInfo, the interface-layer projection of a chat
+// session. ListSessions returns a slice of Sessions.
+type Session = SessionInfo
+
 // ACPCallbacks allows the ACP client to notify the daemon of events.
 // The daemon implements these to persist events and broadcast to clients.
 type ACPCallbacks interface {
@@ -206,6 +217,12 @@ type ACPClient interface {
 	// ListAgents returns registered agent harnesses and their models.
 	ListAgents(ctx context.Context) ([]AgentInfo, error)
 
+	// RegisterAgent adds an agent to the registry.
+	RegisterAgent(agent AgentInfo)
+
+	// RemoveAgent removes an agent from the registry.
+	RemoveAgent(id string)
+
 	// CreateSession starts a new agent session.
 	CreateSession(ctx context.Context, agentID, modelID, workspaceID string) (SessionInfo, error)
 
@@ -213,12 +230,22 @@ type ACPClient interface {
 	// error (e.g. "session not found") when no session matches.
 	GetSessionInfo(sessionID string) (SessionInfo, error)
 
+	// ListSessions returns all conversations, newest activity first.
+	ListSessions() []Session
+
 	// SendPrompt sends a user prompt to the agent and streams responses.
 	// attachments carries metadata for files attached to the prompt (e.g.
 	// uploaded images); they are translated to ACP content blocks by the
 	// transport based on the agent's advertised prompt capabilities.
 	// Responses arrive via ACPCallbacks.OnEvent.
 	SendPrompt(ctx context.Context, sessionID, content string, attachments []Attachment) error
+
+	// RenameSession changes a conversation's display name.
+	RenameSession(sessionID, name string) error
+
+	// RebindSession switches a conversation to a different agent and/or model
+	// while preserving its id and event history.
+	RebindSession(ctx context.Context, sessionID, agentID, modelID string, maxTransferBytes int) (SessionInfo, error)
 
 	// CancelSession interrupts a running session.
 	CancelSession(ctx context.Context, sessionID string) error
