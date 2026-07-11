@@ -670,7 +670,21 @@ export default function App() {
       {/* Activity Bar (far left, icon-only — desktop only) */}
       <ActivityBar
         activePanel={leftPanel}
-        onSwitchPanel={setLeftPanel}
+        // VS Code-style toggle: open when closed, close when clicking the active icon.
+        onSwitchPanel={(id) => {
+          if (leftPanelWidth === 0) {
+            // Sidebar is hidden — open it with the clicked panel.
+            setLeftPanel(id)
+            setLeftPanelWidth(hiddenLeftWidthRef.current ?? 260)
+          } else if (leftPanel === id) {
+            // Sidebar is open and clicking the already-active panel — close it (VS Code toggle).
+            hiddenLeftWidthRef.current = leftPanelWidth
+            setLeftPanelWidth(0)
+          } else {
+            // Sidebar is open and clicking a different panel — just switch.
+            setLeftPanel(id)
+          }
+        }}
         onOpenSettings={() => {
           if (isDesktop) openSettingsTab()
           else setMobileView('settings')
