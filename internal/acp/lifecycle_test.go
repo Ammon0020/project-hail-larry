@@ -17,12 +17,14 @@ import (
 type mockTransport struct {
 	// NewSession
 	newSessionResult string
+	newSessionOpts   []acpsdk.SessionConfigOption
 	newSessionErr    error
 	newSessionCalled bool
 	newSessionCwd    string
 
 	// LoadSession
 	loadSessionResult string
+	loadSessionOpts   []acpsdk.SessionConfigOption
 	loadSessionErr    error
 	loadSessionCalled bool
 	loadSessionID     string
@@ -49,18 +51,29 @@ type mockTransport struct {
 
 	// StderrTail
 	stderrTail string
+
+	// SetSessionConfigOption
+	setConfigOptionCalled bool
+	setConfigOptionArgs   []string // sessionID, configID, value
+	setConfigOptionErr    error
 }
 
-func (m *mockTransport) NewSession(_ context.Context, cwd string) (string, error) {
+func (m *mockTransport) NewSession(_ context.Context, cwd string) (string, []acpsdk.SessionConfigOption, error) {
 	m.newSessionCalled = true
 	m.newSessionCwd = cwd
-	return m.newSessionResult, m.newSessionErr
+	return m.newSessionResult, m.newSessionOpts, m.newSessionErr
 }
 
-func (m *mockTransport) LoadSession(_ context.Context, acpSessionID string) (string, error) {
+func (m *mockTransport) LoadSession(_ context.Context, acpSessionID string) (string, []acpsdk.SessionConfigOption, error) {
 	m.loadSessionCalled = true
 	m.loadSessionID = acpSessionID
-	return m.loadSessionResult, m.loadSessionErr
+	return m.loadSessionResult, m.loadSessionOpts, m.loadSessionErr
+}
+
+func (m *mockTransport) SetSessionConfigOption(_ context.Context, sessionID, configID, value string) error {
+	m.setConfigOptionCalled = true
+	m.setConfigOptionArgs = []string{sessionID, configID, value}
+	return m.setConfigOptionErr
 }
 
 func (m *mockTransport) DeleteSession(_ context.Context, acpSessionID string) error {
@@ -252,7 +265,7 @@ func TestResolveACPSession(t *testing.T) {
 			}
 
 			c := NewClient(nil, nil)
-			gotID, err := c.resolveACPSession(context.Background(), mt, initResp, session, "/ws")
+			gotID, _, err := c.resolveACPSession(context.Background(), mt, initResp, session, "/ws")
 
 			if tc.wantErr {
 				if err == nil {

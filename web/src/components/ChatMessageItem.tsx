@@ -206,6 +206,16 @@ export function ChatMessageItem({
         </div>
       )
 
+    case 'ModelChanged':
+      // System-level indicator — compact, centered, muted metadata row
+      // (same style as ResponseStarted). Shows the model switch without
+      // implying history was reset (unlike ConnectionRestarted).
+      return (
+        <div className="text-xs text-muted-foreground text-center py-1">
+          · {event.content || 'Model switched'}
+        </div>
+      )
+
     case 'ToolStarted':
       return (
         <div className="flex justify-start">

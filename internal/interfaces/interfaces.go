@@ -53,6 +53,11 @@ const (
 	EventAgentExited         EventType = "AgentExited"
 	EventConnectionRestarted EventType = "ConnectionRestarted"
 	EventSessionResumed      EventType = "SessionResumed"
+	// EventModelChanged is emitted when the model is switched on a live
+	// session via ACP session/set_config_option (no restart, history
+	// preserved). Distinct from ConnectionRestarted, which implies the
+	// conversation history was reset/exported.
+	EventModelChanged EventType = "ModelChanged"
 )
 
 // Event is a single entry in the append-only event log.
@@ -246,6 +251,11 @@ type ACPClient interface {
 	// RebindSession switches a conversation to a different agent and/or model
 	// while preserving its id and event history.
 	RebindSession(ctx context.Context, sessionID, agentID, modelID string, maxTransferBytes int) (SessionInfo, error)
+
+	// SwitchModel changes the model on a live session without restarting the
+	// agent process. Uses ACP's session/set_config_option when available;
+	// falls back to RebindSession for agents that don't support it.
+	SwitchModel(ctx context.Context, sessionID, modelID string) error
 
 	// CancelSession interrupts a running session.
 	CancelSession(ctx context.Context, sessionID string) error

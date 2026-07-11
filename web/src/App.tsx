@@ -703,6 +703,7 @@ export default function App() {
         onWorkspaceSelect={backend.selectWorkspace}
         onSearchResultSelect={handleSearchResultSelect}
         style={isDesktop ? { width: leftPanelWidth } : undefined}
+        connected={backend.connected}
       />
 
       {/* Resize handle between left sidebar and editor (desktop only) */}
@@ -801,6 +802,7 @@ export default function App() {
         onRenameSession={(id, name) => backend.renameSession(id, name)}
         onDeleteSession={(id) => backend.deleteSession(id)}
         onRebindSession={(id, agentId, modelId, maxTransferBytes) => backend.rebindSession(id, agentId, modelId, maxTransferBytes)}
+        onSwitchModel={(sessionId, modelId) => backend.switchModel(sessionId, modelId)}
         onExportSession={handleExportSession}
         onUploadFile={(sessionId, file) => backend.uploadFile(sessionId, file)}
         style={isDesktop ? { width: rightPanelWidth } : undefined}

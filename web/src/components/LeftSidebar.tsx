@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { CSSProperties } from 'react'
-import { FolderCode, ChevronsUpDown, Wifi, Files, Search, Check } from 'lucide-react'
+import { FolderCode, ChevronsUpDown, Wifi, WifiOff, Files, Search, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileTree } from './FileTree'
 import { SearchPanel } from './SearchPanel'
@@ -21,6 +21,7 @@ export function LeftSidebar({
   onWorkspaceSelect,
   onSearchResultSelect,
   style,
+  connected = true,
 }: {
   activePanel: LeftPanel
   onSwitchPanel: (panel: LeftPanel) => void
@@ -34,6 +35,8 @@ export function LeftSidebar({
   onSearchResultSelect?: (path: string, lineNumber: number) => void
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
   style?: CSSProperties
+  /** Whether the backend WebSocket is connected. Drives the Online/Offline badge. */
+  connected?: boolean
 }) {
   const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false)
 
@@ -90,8 +93,24 @@ export function LeftSidebar({
           <div className="p-3 border-b border-border shrink-0">
             <div className="flex items-center justify-between mb-2">
               <label className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Workspace</label>
-              <div className="flex items-center gap-1 text-[10px] text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full border border-green-500/20">
-                <Wifi className="w-3 h-3" /> Online
+              <div
+                className={cn(
+                  'flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border',
+                  connected
+                    ? 'text-green-400 bg-green-400/10 border-green-500/20'
+                    : 'text-muted-foreground bg-muted/40 border-border',
+                )}
+                title={connected ? 'Connected to backend' : 'Backend offline — reconnecting…'}
+              >
+                {connected ? (
+                  <>
+                    <Wifi className="w-3 h-3" /> Online
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="w-3 h-3 animate-pulse" /> Offline
+                  </>
+                )}
               </div>
             </div>
             <div className="relative">

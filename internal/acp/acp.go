@@ -81,6 +81,13 @@ type Session struct {
 	UpdatedAt    time.Time `json:"updatedAt"`
 	transport    transportLike
 	ACPSessionID string `json:"acpSessionId,omitempty"`
+	// modelConfigID is the config option ID for the model selector (category
+	// "model"), captured from the agent's NewSession/LoadSession response.
+	// Empty when the agent doesn't advertise a model config option. Used by
+	// SwitchModel to call session/set_config_option without restart. Not
+	// persisted: it is re-derived from the agent's response every time the
+	// transport (re)starts.
+	modelConfigID string
 	// impl holds the acpClientImpl passed to the transport for this session.
 	// It is retained so that CloseSession / closeTransportLocked can cancel
 	// outstanding terminal subprocesses and their goroutines before the
@@ -92,14 +99,15 @@ type Session struct {
 // transport has been started. Defining it as an interface lets tests inject a
 // mock transport without spawning a real agent process. *Transport satisfies it.
 type transportLike interface {
-	NewSession(ctx context.Context, cwd string) (string, error)
-	LoadSession(ctx context.Context, acpSessionID string) (string, error)
+	NewSession(ctx context.Context, cwd string) (string, []acp.SessionConfigOption, error)
+	LoadSession(ctx context.Context, acpSessionID string) (string, []acp.SessionConfigOption, error)
 	ListSessions(ctx context.Context) ([]acp.SessionInfo, error)
 	DeleteSession(ctx context.Context, acpSessionID string) error
 	Prompt(ctx context.Context, sessionID, content string, resources []ContextResource, attachments []interfaces.Attachment) (acp.StopReason, error)
 	Cancel(ctx context.Context, sessionID string) error
 	Close() error
 	StderrTail() string
+	SetSessionConfigOption(ctx context.Context, sessionID, configID, value string) error
 }
 
 // defaultConversationName is the placeholder name used until the first prompt
@@ -400,7 +408,7 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 	// advertised the loadSession capability AND we have a persisted ACP session
 	// ID. On any failure (session gone, capability unsupported, transport error)
 	// we fall back to NewSession and overwrite the persisted ID.
-	acpSessionID, err := c.resolveACPSession(ctx, transport, initResp, session, workspacePath)
+	acpSessionID, configOpts, err := c.resolveACPSession(ctx, transport, initResp, session, workspacePath)
 	if err != nil {
 		_ = transport.Close()
 		return fmt.Errorf("new acp session: %w", err)
@@ -409,6 +417,53 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 	session.transport = transport
 	session.impl = impl
 	session.ACPSessionID = acpSessionID
+
+	// Debug: dump advertised config options to diagnose model detection.
+	// TODO: remove once model config detection is stable.
+	for i, opt := range configOpts {
+		switch {
+		case opt.Select != nil:
+			cat := "<nil>"
+			if opt.Select.Category != nil {
+				cat = string(*opt.Select.Category)
+			}
+			cur := string(opt.Select.CurrentValue)
+			slog.Info("config option (select)",
+				"agent", session.AgentID, "idx", i, "id", string(opt.Select.Id),
+				"name", opt.Select.Name, "category", cat, "currentValue", cur)
+		case opt.Boolean != nil:
+			cat := "<nil>"
+			if opt.Boolean.Category != nil {
+				cat = string(*opt.Boolean.Category)
+			}
+			slog.Info("config option (boolean)",
+				"agent", session.AgentID, "idx", i, "id", string(opt.Boolean.Id),
+				"name", opt.Boolean.Name, "category", cat)
+		default:
+			slog.Info("config option (unknown)", "agent", session.AgentID, "idx", i)
+		}
+	}
+	if len(configOpts) == 0 {
+		slog.Info("no config options advertised", "agent", session.AgentID)
+	}
+
+	session.modelConfigID = findModelConfigID(configOpts, agent.Models)
+	if session.modelConfigID == "" {
+		slog.Info("findModelConfigID returned empty",
+			"agent", session.AgentID, "optsCount", len(configOpts),
+			"knownModels", len(agent.Models))
+	}
+
+	// Apply the user-selected model to the live session if the agent supports
+	// model config options. This fixes a prior bug where the model dropdown
+	// only updated metadata — the agent never received the model selection.
+	// If the agent's current value already matches, the agent is expected to
+	// treat this as a no-op.
+	if session.modelConfigID != "" && session.ModelID != "" {
+		if err := transport.SetSessionConfigOption(ctx, acpSessionID, session.modelConfigID, session.ModelID); err != nil {
+			slog.Warn("applying initial model; agent will use its default", "session", session.ID, "model", session.ModelID, "err", err)
+		}
+	}
 	return nil
 }
 
@@ -432,8 +487,11 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 //
 // The caller must hold c.mu (it reads session fields); the transport methods
 // are called under the lock to keep the load/new decision atomic with the
-// assignment in startTransportLocked.
-func (c *Client) resolveACPSession(ctx context.Context, tr transportLike, initResp acp.InitializeResponse, session *Session, workspacePath string) (string, error) {
+// assignment in startTransportLocked. In addition to the session ID, it
+// returns the agent's advertised session config options (e.g. the model
+// selector) so the caller can capture the model config ID for later
+// session/set_config_option calls.
+func (c *Client) resolveACPSession(ctx context.Context, tr transportLike, initResp acp.InitializeResponse, session *Session, workspacePath string) (string, []acp.SessionConfigOption, error) {
 	persistedID := session.ACPSessionID
 	canLoad := initResp.AgentCapabilities.LoadSession
 	canList := initResp.AgentCapabilities.SessionCapabilities.List != nil
@@ -454,12 +512,93 @@ func (c *Client) resolveACPSession(ctx context.Context, tr transportLike, initRe
 	}
 
 	if persistedID != "" && canLoad {
-		if loadedID, loadErr := tr.LoadSession(ctx, persistedID); loadErr == nil {
-			return loadedID, nil
+		if loadedID, opts, loadErr := tr.LoadSession(ctx, persistedID); loadErr == nil {
+			return loadedID, opts, nil
 		}
 		// Fall through to NewSession on any load error.
 	}
 	return tr.NewSession(ctx, workspacePath)
+}
+
+// findModelConfigID scans the agent's advertised session config options for the
+// model selector and returns its config ID. Returns empty string if no model
+// config option can be identified.
+//
+// The ACP spec makes `category` OPTIONAL and states clients MUST handle missing
+// or unknown categories gracefully. Some agents (e.g. Mistral Vibe) omit
+// `category` on their model selector, so we cannot rely on it alone. We match
+// in priority order:
+//  1. category == "model" (the spec-preferred signal)
+//  2. option Id == "model" (common convention)
+//  3. option Name contains "model" (case-insensitive)
+//  4. the option's CurrentValue or one of its Options values matches a known
+//     model ID from the agent registry (strongest signal when category is
+//     absent and the id/name are generic)
+//
+// knownModels is the registered agent's model list; pass nil to skip the
+// value-match fallback (used in tests).
+func findModelConfigID(opts []acp.SessionConfigOption, knownModels []AgentModel) string {
+	// Build a set of known model IDs for the value-match fallback.
+	known := make(map[string]struct{}, len(knownModels))
+	for _, m := range knownModels {
+		known[m.ID] = struct{}{}
+	}
+
+	// Pass 1: explicit category match (spec-preferred).
+	for _, opt := range opts {
+		if opt.Select == nil || opt.Select.Category == nil {
+			continue
+		}
+		if *opt.Select.Category == acp.SessionConfigOptionCategoryModel {
+			return string(opt.Select.Id)
+		}
+	}
+	// Pass 2: conventional id "model".
+	for _, opt := range opts {
+		if opt.Select == nil {
+			continue
+		}
+		if string(opt.Select.Id) == "model" {
+			return string(opt.Select.Id)
+		}
+	}
+	// Pass 3: name contains "model" (case-insensitive).
+	for _, opt := range opts {
+		if opt.Select == nil {
+			continue
+		}
+		if strings.Contains(strings.ToLower(opt.Select.Name), "model") {
+			return string(opt.Select.Id)
+		}
+	}
+	// Pass 4: current value or any option value matches a known model ID.
+	if len(known) > 0 {
+		for _, opt := range opts {
+			if opt.Select == nil {
+				continue
+			}
+			if _, ok := known[string(opt.Select.CurrentValue)]; ok {
+				return string(opt.Select.Id)
+			}
+			if opt.Select.Options.Ungrouped != nil {
+				for _, v := range *opt.Select.Options.Ungrouped {
+					if _, ok := known[string(v.Value)]; ok {
+						return string(opt.Select.Id)
+					}
+				}
+			}
+			if opt.Select.Options.Grouped != nil {
+				for _, g := range *opt.Select.Options.Grouped {
+					for _, v := range g.Options {
+						if _, ok := known[string(v.Value)]; ok {
+							return string(opt.Select.Id)
+						}
+					}
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // sessionExists reports whether the given ACP session ID appears in the
@@ -860,6 +999,65 @@ func (c *Client) RebindSession(ctx context.Context, sessionID, agentID, modelID 
 	})
 
 	return sessionToInfo(session), nil
+}
+
+// SwitchModel changes the model on a live session without restarting the agent
+// process. Uses ACP's session/set_config_option (category "model") when the
+// agent advertises a model config option. Falls back to RebindSession when the
+// agent doesn't support model config options (older agents) or when the
+// transport is not currently live (e.g. closed on daemon shutdown and not yet
+// restarted) — in the latter case a rebind is safe because there is no in-memory
+// state to preserve.
+//
+// Unlike RebindSession, the live-session path preserves the full conversation
+// context — the agent keeps its in-memory state and just uses the new model for
+// subsequent turns.
+func (c *Client) SwitchModel(ctx context.Context, sessionID, modelID string) error {
+	c.mu.Lock()
+	session, ok := c.sessions[sessionID]
+	if !ok {
+		c.mu.Unlock()
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	// If the agent doesn't advertise a model config option (either we know
+	// from a prior handshake, or the transport isn't live so we can't tell),
+	// fall back to a rebind with the same agent. This preserves the old
+	// behavior for agents that don't support session/set_config_option.
+	if session.modelConfigID == "" || session.transport == nil {
+		agentID := session.AgentID
+		c.mu.Unlock()
+		slog.Info("agent does not support model config option; falling back to rebind", "session", sessionID, "model", modelID)
+		_, err := c.RebindSession(ctx, sessionID, agentID, modelID, 0)
+		return err
+	}
+
+	configID := session.modelConfigID
+	acpSessionID := session.ACPSessionID
+	transport := session.transport
+	session.ModelID = modelID
+	session.UpdatedAt = time.Now().UTC()
+	c.mu.Unlock()
+
+	if err := transport.SetSessionConfigOption(ctx, acpSessionID, configID, modelID); err != nil {
+		return fmt.Errorf("set model config option: %w", err)
+	}
+
+	// Persist the model change to disk so it survives a daemon restart.
+	c.mu.Lock()
+	c.persistLocked()
+	c.mu.Unlock()
+
+	// Emit a lightweight event so the UI knows the model changed. This is
+	// NOT ConnectionRestarted — that implies history was reset, which did
+	// not happen here.
+	c.emit(interfaces.Event{
+		Type:      interfaces.EventModelChanged,
+		SessionID: sessionID,
+		Timestamp: time.Now().UTC(),
+		Content:   fmt.Sprintf("Switched model to %s.", modelID),
+	})
+	return nil
 }
 
 // GetSession returns session info by ID.

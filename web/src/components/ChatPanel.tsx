@@ -60,6 +60,7 @@ export function ChatPanel({
   onRenameSession,
   onDeleteSession,
   onRebindSession,
+  onSwitchModel,
   onExportSession,
   onUploadFile,
   workspaceName,
@@ -87,6 +88,10 @@ export function ChatPanel({
   onRenameSession: (sessionId: string, name: string) => void
   onDeleteSession: (sessionId: string) => void
   onRebindSession: (sessionId: string, agentId: string, modelId: string, maxTransferBytes?: number) => void
+  /** Switches the model on a live session without restarting the agent process
+   *  (preserves conversation history). Used by handleModelChange for model-only
+   *  switches; onRebindSession is still used for agent (harness) switches. */
+  onSwitchModel: (sessionId: string, modelId: string) => void
   onExportSession: (sessionId: string) => void
   /** Uploads a file to a session's upload store. Routed through useBackend so
    *  uploads share the hook's session-recovery semantics instead of bypassing
@@ -345,10 +350,13 @@ export function ChatPanel({
     setPendingAgentId(null)
   }
 
-  /** Switches model; rebinds an active conversation in place. */
+  /** Switches model on a live session without resetting history — routes to
+   *  the backend's SwitchModel (model-only PATCH, no agentId) instead of
+   *  RebindSession. Only the model changes; the agent process keeps its
+   *  in-memory context for subsequent turns. */
   const handleModelChange = (modelId: string) => {
     setStoredModel(modelId)
-    if (activeSessionId) onRebindSession(activeSessionId, effectiveAgentId, modelId)
+    if (activeSessionId) onSwitchModel(activeSessionId, modelId)
   }
 
   const handleSend = async () => {

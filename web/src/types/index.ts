@@ -137,6 +137,7 @@ export type EventType =
   | 'ConnectionRestarted'
   | 'SessionResumed'
   | 'FileChangedOnDisk'
+  | 'ModelChanged'
 
 /** A single event in the immutable event log (Blueprint Sec 11). */
 export interface AppEvent {

@@ -441,6 +441,18 @@ export function useBackend() {
     await loadSessions()
   }
 
+  /**
+   * Switches the model on a live session without restarting the agent process.
+   * Unlike rebindSession, this preserves the full conversation context — the
+   * agent keeps its in-memory state and just uses the new model for subsequent
+   * turns. Sends a model-only PATCH (no agentId) so the backend routes to
+   * SwitchModel instead of RebindSession.
+   */
+  async function switchModel(sessionId: string, modelId: string) {
+    await api.patchSession(sessionId, { modelId })
+    await loadSessions()
+  }
+
   // Debounce timer for reportContext so rapid tab switches / edits don't
   // flood the backend with context updates.
   const reportContextTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -528,6 +540,7 @@ export function useBackend() {
     cancelSession,
     renameSession,
     rebindSession,
+    switchModel,
     deleteSession,
     exportSession,
     reportContext,

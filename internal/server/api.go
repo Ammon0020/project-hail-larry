@@ -509,7 +509,20 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// A rebind requires both agent and model to be specified.
+	// Model-only change: switch the model on the live session without restart.
+	// This preserves the full conversation context (ACP session/set_config_option).
+	// Falls back to RebindSession internally when the agent doesn't advertise a
+	// model config option.
+	if req.AgentID == nil && req.ModelID != nil {
+		if err := s.deps.ACPClient.SwitchModel(r.Context(), sessionID, *req.ModelID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		return
+	}
+
+	// Full rebind (agent + model): requires both to be specified.
 	if req.AgentID != nil && req.ModelID != nil {
 		maxTransfer := 0
 		if req.MaxTransferBytes != nil {

@@ -528,8 +528,11 @@ func (t *Transport) Initialize(ctx context.Context) (acp.InitializeResponse, err
 }
 
 // NewSession asks the agent to create a new ACP session rooted at cwd and
-// returns the new session ID.
-func (t *Transport) NewSession(ctx context.Context, cwd string) (string, error) {
+// returns the new session ID alongside the agent's advertised session config
+// options (e.g. the model selector). The config options let the caller capture
+// the model config ID for later session/set_config_option calls (model
+// switching without restart).
+func (t *Transport) NewSession(ctx context.Context, cwd string) (string, []acp.SessionConfigOption, error) {
 	req := acp.NewSessionRequest{
 		Cwd:        cwd,
 		McpServers: t.mcpServers,
@@ -541,13 +544,13 @@ func (t *Transport) NewSession(ctx context.Context, cwd string) (string, error) 
 		req.McpServers = []acp.McpServer{}
 	}
 	if err := req.Validate(); err != nil {
-		return "", fmt.Errorf("validate new session request: %w", err)
+		return "", nil, fmt.Errorf("validate new session request: %w", err)
 	}
 	result, err := t.conn.NewSession(ctx, req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return string(result.SessionId), nil
+	return string(result.SessionId), result.ConfigOptions, nil
 }
 
 // LoadSession asks the agent to resume a previously-created ACP session by ID.
@@ -555,8 +558,9 @@ func (t *Transport) NewSession(ctx context.Context, cwd string) (string, error) 
 // InitializeResponse; otherwise the agent returns an error and the caller should
 // fall back to NewSession. The workspace cwd captured at Start is re-supplied
 // (the ACP LoadSessionRequest requires it). Returns the loaded ACP session ID
-// (the same value passed in as acpSessionID) on success.
-func (t *Transport) LoadSession(ctx context.Context, acpSessionID string) (string, error) {
+// (the same value passed in as acpSessionID) and the agent's advertised session
+// config options on success.
+func (t *Transport) LoadSession(ctx context.Context, acpSessionID string) (string, []acp.SessionConfigOption, error) {
 	req := acp.LoadSessionRequest{
 		SessionId:  acp.SessionId(acpSessionID),
 		Cwd:        t.cwd,
@@ -568,15 +572,35 @@ func (t *Transport) LoadSession(ctx context.Context, acpSessionID string) (strin
 		req.McpServers = []acp.McpServer{}
 	}
 	if err := req.Validate(); err != nil {
-		return "", fmt.Errorf("validate load session request: %w", err)
+		return "", nil, fmt.Errorf("validate load session request: %w", err)
 	}
-	_, err := t.conn.LoadSession(ctx, req)
+	resp, err := t.conn.LoadSession(ctx, req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	// LoadSession reuses the supplied session ID; echo it back so callers can
 	// treat NewSession and LoadSession uniformly.
-	return acpSessionID, nil
+	return acpSessionID, resp.ConfigOptions, nil
+}
+
+// SetSessionConfigOption changes a session configuration option on a live
+// session without restart. Used for model switching (category "model") — the
+// agent updates its in-memory model selection and applies it to subsequent
+// turns. The configID and value come from the agent's advertised ConfigOptions
+// (returned by NewSession/LoadSession).
+func (t *Transport) SetSessionConfigOption(ctx context.Context, sessionID, configID, value string) error {
+	req := acp.SetSessionConfigOptionRequest{
+		ValueId: &acp.SetSessionConfigOptionValueId{
+			SessionId: acp.SessionId(sessionID),
+			ConfigId:  acp.SessionConfigId(configID),
+			Value:     acp.SessionConfigValueId(value),
+		},
+	}
+	if err := req.Validate(); err != nil {
+		return fmt.Errorf("validate set config option request: %w", err)
+	}
+	_, err := t.conn.SetSessionConfigOption(ctx, req)
+	return err
 }
 
 // DeleteSession asks the agent to delete a previously-created ACP session by ID
