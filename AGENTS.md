@@ -69,7 +69,7 @@ If the quota runs out, use the small subagent. It's still very powerful and can 
   - `golangci-lint` for Go
   - `eslint` for JavaScript/TypeScript
 
-- **Keep `docs/STATUS.md` current.** When you start, modify, or complete a task, update the relevant row in STATUS.md immediately. Mark gaps honestly — "⚠️ Partial" or "⚠️ Stub" over false "✅ Done". Include short notes on what's missing.
+- **Keep `docs/STATUS.md` current.** When you start, modify, or complete a task, update the relevant row in STATUS.md immediately. Mark gaps honestly — "⚠️ Partial" or "⚠️ Stub" over false "✅ Done". Include short notes on what's missing. Compact occasionally. 
 
 ## Agent Hints
 - LLM Memory is limited by context length. Long chats can cause context overflow. Keep terminal output concise and focused where possible by using quiet flags, filtering output, and capping linter output to a few errors at a time.

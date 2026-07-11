@@ -69,13 +69,28 @@ export function ToolExecutionBlock({
         )}
         {output && (
           <>
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-              Output
+            <div
+              className={`text-[10px] uppercase tracking-wide mb-1 ${
+                failed ? 'text-destructive' : 'text-muted-foreground'
+              }`}
+            >
+              {failed ? 'Error' : 'Output'}
             </div>
-            <pre className="font-mono text-xs text-muted-foreground whitespace-pre-wrap break-words">
+            <pre
+              className={`font-mono text-xs whitespace-pre-wrap break-words ${
+                failed ? 'text-destructive' : 'text-muted-foreground'
+              }`}
+            >
               {output}
             </pre>
           </>
+        )}
+        {/* No output but failed — surface a hint so the user isn't left
+            guessing why the tool failed with no details. */}
+        {failed && !output && (
+          <pre className="font-mono text-xs text-destructive whitespace-pre-wrap break-words">
+            Tool failed. The agent did not report error details. If this was a file read, the path may be outside the workspace.
+          </pre>
         )}
       </div>
     </details>

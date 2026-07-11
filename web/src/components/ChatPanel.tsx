@@ -8,6 +8,7 @@ import { ChatComposer } from './ChatComposer'
 import { ConversationView } from './ConversationView'
 import { ChatHistory } from './ChatHistory'
 import { SwitchAgentDialog } from './SwitchAgentDialog'
+import { WorkspaceBar } from './chat/WorkspaceBar'
 import { useAutoscroll } from '@/hooks/useAutoscroll'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import type { AppEvent, Agent, Attachment, Session } from '@/types'
@@ -61,6 +62,7 @@ export function ChatPanel({
   onRebindSession,
   onExportSession,
   onUploadFile,
+  workspaceName,
   style,
 }: {
   events: AppEvent[]
@@ -90,6 +92,8 @@ export function ChatPanel({
    *  uploads share the hook's session-recovery semantics instead of bypassing
    *  it via api.uploadFile directly. */
   onUploadFile: (sessionId: string, file: File) => Promise<UploadResult>
+  /** Active workspace name — surfaced at the bottom of the panel by WorkspaceBar. */
+  workspaceName: string
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
   style?: CSSProperties
 }) {
@@ -486,9 +490,13 @@ export function ChatPanel({
 
   // Smart autoscroll — follows new content only when the user is already
   // near the bottom; otherwise stays put and shows a jump-to-bottom button.
+  // `pendingPermissions` is in the deps because it arrives via a separate
+  // async REST call (loadPendingPermissions) after the PermissionRequested
+  // event — when it lands the permission card grows to show action buttons,
+  // and we need to scroll again so the card isn't cut off at the bottom.
   const { isAtBottom, scrollToBottom } = useAutoscroll(
     scrollContainerRef,
-    [mergedEvents, error],
+    [mergedEvents, error, pendingPermissions],
   )
 
   const handleNewChat = () => {
@@ -546,9 +554,6 @@ export function ChatPanel({
             onSelectSession(openTabIds[openTabIds.length - 1])
           }
         }}
-        mcpServers={mcpServers}
-        onToggleMcpServer={handleToggleMcpServer}
-        mcpTogglingServer={mcpTogglingServer}
       >
         <ChatHistory
           sessions={sessions}
@@ -588,10 +593,11 @@ export function ChatPanel({
       />
 
       <ChatComposer
-        agents={agents}
-        effectiveAgentId={effectiveAgentId}
+        models={currentAgent?.models ?? []}
+        mcpServers={mcpServers}
+        onToggleMcpServer={handleToggleMcpServer}
+        mcpTogglingServer={mcpTogglingServer}
         effectiveModelId={effectiveModelId}
-        onAgentChange={handleAgentChange}
         onModelChange={handleModelChange}
         input={input}
         onInputChange={setInput}
@@ -604,6 +610,14 @@ export function ChatPanel({
         onPickFiles={handlePickFiles}
         uploading={uploading}
         uploadError={uploadError}
+        disabled={sending || agents.length === 0}
+      />
+
+      <WorkspaceBar
+        agents={agents}
+        currentAgentId={effectiveAgentId}
+        onSelectAgent={handleAgentChange}
+        workspaceName={workspaceName}
         disabled={sending || agents.length === 0}
       />
 

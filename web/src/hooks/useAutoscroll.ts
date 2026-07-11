@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 /**
  * Threshold (in px) below which the user is considered "near the bottom".
@@ -70,7 +70,12 @@ export function useAutoscroll<T extends HTMLElement>(
   // bottom. Reading wasNearBottomRef (a ref) avoids setState-in-effect.
   // `deps` is caller-controlled; the effect body reads refs only (no
   // props/state), so a stale closure cannot drop a needed re-run.
-  useEffect(() => {
+  //
+  // useLayoutEffect (not useEffect) so the scroll happens after DOM mutation
+  // but before the browser paints — this guarantees scrollHeight reflects the
+  // new content (e.g. a permission card that just gained its action buttons)
+  // and the user never sees a frame where the view isn't scrolled far enough.
+  useLayoutEffect(() => {
     if (wasNearBottomRef.current) {
       scrollToBottom()
     }

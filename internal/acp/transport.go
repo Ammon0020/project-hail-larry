@@ -89,6 +89,21 @@ func (c *acpClientImpl) SessionUpdate(_ context.Context, params acp.SessionNotif
 		if len(u.ToolCallUpdate.Locations) > 0 {
 			target = u.ToolCallUpdate.Locations[0].Path
 		}
+		content := toolContentSummary(u.ToolCallUpdate.Content)
+		// ACP has no structured error field — agents may stash error text in
+		// RawOutput instead of Content. Fall back to it so failed tools aren't
+		// left with no details.
+		if content == "" && u.ToolCallUpdate.RawOutput != nil {
+			content = rawInputString(u.ToolCallUpdate.RawOutput)
+		}
+		// Last-resort: ACP gives us no error field, and some agents report
+		// status="failed" with empty content. When we can detect the likely
+		// cause on our side (a read outside the workspace boundary), synthesize
+		// a clear message so the user isn't left guessing.
+		if content == "" && status == "failed" && kind == "read" && target != "" &&
+			isOutsideWorkspace(c.workspacePath, target) {
+			content = fmt.Sprintf("Read failed: path %q is outside the workspace root %q.", target, c.workspacePath)
+		}
 		c.callbacks.OnEvent(interfaces.Event{
 			Type:       interfaces.EventToolCompleted,
 			SessionID:  c.sessionID,
@@ -96,7 +111,7 @@ func (c *acpClientImpl) SessionUpdate(_ context.Context, params acp.SessionNotif
 			ToolKind:   kind,
 			Target:     target,
 			Summary:    status,
-			Content:    toolContentSummary(u.ToolCallUpdate.Content),
+			Content:    content,
 		})
 	case u.Plan != nil:
 		c.callbacks.OnEvent(interfaces.Event{
@@ -327,6 +342,24 @@ func toRelativePath(workspacePath, p string) string {
 		return cleaned
 	}
 	return rel
+}
+
+// isOutsideWorkspace reports whether path resolves outside the workspace root.
+// Used to synthesize a clear error message when an agent reports a failed read
+// with no error details and the target is outside the workspace boundary.
+func isOutsideWorkspace(workspacePath, path string) bool {
+	if path == "" {
+		return false
+	}
+	cleaned := filepath.Clean(path)
+	rel, err := filepath.Rel(workspacePath, cleaned)
+	if err != nil {
+		return true
+	}
+	if rel == "." {
+		return false
+	}
+	return strings.HasPrefix(rel, "..") || filepath.IsAbs(rel)
 }
 
 // rawInputString renders an ACP tool call's raw input as a human-readable

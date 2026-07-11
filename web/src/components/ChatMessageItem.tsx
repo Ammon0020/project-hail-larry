@@ -131,7 +131,7 @@ function stopReasonLabel(stopReason?: StopReason): string | null {
 /** User chat bubble — right-aligned, slightly lighter than the app bg, with
  *  a sharper bottom-right corner. `error` variant tints with destructive. */
 const userBubble = cva(
-  'max-w-[85%] break-words rounded-lg rounded-br-sm px-3 py-2 text-sm text-foreground ' +
+  'max-w-[85%] break-words rounded-[18px] rounded-br-[4px] px-3 py-2 text-sm text-foreground ' +
     'prose prose-sm prose-invert max-w-none [&_pre]:bg-tool-call [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:p-2 [&_pre]:text-xs [&_pre]:overflow-x-auto [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_a]:text-primary [&_a]:hover:underline',
   {
     variants: { state: { normal: 'bg-secondary', error: 'bg-destructive/20' } },
@@ -230,7 +230,9 @@ export function ChatMessageItem({
             status={event.summary || 'completed'}
             failed={failed}
             output={event.content}
-            defaultOpen={false}
+            // Auto-expand failed tools so the user sees the error details
+            // (e.g. "path outside workspace") without having to click.
+            defaultOpen={failed}
           />
         </div>
       )
@@ -267,7 +269,8 @@ export function ChatMessageItem({
             status={'exit ' + (event.exitCode ?? '?')}
             failed={event.exitCode !== 0}
             output={event.summary}
-            defaultOpen={false}
+            // Auto-expand failed shell commands so the user sees stderr.
+            defaultOpen={event.exitCode !== 0}
           />
         </div>
       )

@@ -785,6 +785,7 @@ export default function App() {
           workspace: s.workspace,
         }))}
         workspaces={backend.workspaces}
+        workspaceName={backend.activeWorkspace?.name ?? ''}
         visible={showChat}
         connected={backend.connected}
         isDesktop={isDesktop}

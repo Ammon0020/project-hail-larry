@@ -357,12 +357,12 @@ func safeJoin(root, relPath string) (string, error) {
 	// Clean the relative path to remove any redundant components.
 	cleanRel := filepath.Clean(relPath)
 	if filepath.IsAbs(cleanRel) {
-		return "", fmt.Errorf("path traversal detected: %s", relPath)
+		return "", fmt.Errorf("path %q is outside the workspace root %q", relPath, root)
 	}
 	// Reject only a real ".." path component, not a filename like "..foo".
 	for _, part := range strings.Split(filepath.ToSlash(cleanRel), "/") {
 		if part == ".." {
-			return "", fmt.Errorf("path traversal detected: %s", relPath)
+			return "", fmt.Errorf("path %q is outside the workspace root %q", relPath, root)
 		}
 	}
 
@@ -370,7 +370,7 @@ func safeJoin(root, relPath string) (string, error) {
 
 	// Verify the result is still within the workspace root.
 	if !strings.HasPrefix(fullPath, filepath.Clean(root)+string(filepath.Separator)) && fullPath != filepath.Clean(root) {
-		return "", fmt.Errorf("path traversal detected: %s", relPath)
+		return "", fmt.Errorf("path %q is outside the workspace root %q", relPath, root)
 	}
 
 	return fullPath, nil

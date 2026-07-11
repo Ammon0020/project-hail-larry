@@ -1,63 +1,12 @@
-import { type KeyboardEvent } from 'react'
-import { Plus, ArrowUp, Square, X, Loader2 } from 'lucide-react'
+import { type KeyboardEvent, useState } from 'react'
+import { Plus, ArrowUp, Square, X, Loader2, Wrench, Code } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import type { Agent } from '@/types'
-
-// Compact neutral pill styling shared by both selectors (design §3 — drop
-// the old `border-primary/50 text-primary` accent on the model selector).
-const selectorTriggerClass =
-  'shrink-0 bg-background border border-input rounded-full text-xs px-3 py-1.5 ' +
-  'text-muted-foreground hover:text-foreground hover:border-ring/60 h-auto font-medium'
-
-interface CompactSelectProps {
-  value: string
-  onValueChange: (v: string) => void
-  disabled?: boolean
-  /** Used for both the trigger's title and aria-label. */
-  label: string
-  placeholder: string
-  items: { id: string; name: string }[]
-}
-
-/**
- * CompactSelect — the neutral pill-styled Select used by the harness and model
- * pickers in the composer. Extracts the duplicated Select + SelectTrigger +
- * SelectContent boilerplate shared by the two selectors.
- */
-function CompactSelect({
-  value,
-  onValueChange,
-  disabled,
-  label,
-  placeholder,
-  items,
-}: CompactSelectProps) {
-  return (
-    <Select value={value} onValueChange={onValueChange} disabled={disabled}>
-      <SelectTrigger className={selectorTriggerClass} title={label} aria-label={label}>
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        {items.map((item) => (
-          <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  )
-}
+import { McpPopout } from './chat/McpPopout'
 
 interface ChatComposerProps {
-  agents: Agent[]
-  effectiveAgentId: string
+  /** Available models for the current agent (derived in ChatPanel from currentAgent?.models). */
+  models: { id: string; name: string }[]
   effectiveModelId: string
-  onAgentChange: (id: string) => void
   onModelChange: (id: string) => void
   input: string
   onInputChange: (v: string) => void
@@ -71,20 +20,25 @@ interface ChatComposerProps {
   uploading: boolean
   uploadError: string | null
   disabled?: boolean
+  /** MCP servers — moved here from ChatTabBar. */
+  mcpServers: { name: string; enabled: boolean }[]
+  onToggleMcpServer: (name: string, enabled: boolean) => void
+  mcpTogglingServer: string | null
 }
 
 /**
- * Chat input composer — textarea + attach + harness/model selectors + send/stop
- * grouped into one bordered card (design §3). The harness and model selectors
- * moved here from the old header so the "what you're about to send" controls
- * live next to the send button. Both selectors use neutral compact styling
- * (no `border-primary` accent — that cue is redundant inside the composer).
+ * Chat input composer — textarea + attach + Tools (MCP) + profile/model
+ * hitbox selectors + send/stop, grouped into one rounded card (design §3).
+ * The agent selector moved OUT to WorkspaceBar; MCP controls moved IN here.
+ *
+ * Selectors use the "hitbox" pattern: a styled label div overlays a fully
+ * transparent native <select>, so we get native dropdown behavior without
+ * the shadcn Select pill styling. The Tools button toggles an McpPopout
+ * anchored above the button group.
  */
 export function ChatComposer({
-  agents,
-  effectiveAgentId,
+  models,
   effectiveModelId,
-  onAgentChange,
   onModelChange,
   input,
   onInputChange,
@@ -98,8 +52,18 @@ export function ChatComposer({
   uploading,
   uploadError,
   disabled,
+  mcpServers,
+  onToggleMcpServer,
+  mcpTogglingServer,
 }: ChatComposerProps) {
-  const currentAgent = agents.find((a) => a.id === effectiveAgentId)
+  // Tools popout visibility — toggled by the Wrench button, closed by
+  // outside-click/Escape inside McpPopout.
+  const [showMcpPopout, setShowMcpPopout] = useState(false)
+
+  // Profile mode is a local UI placeholder in v1 — no backend wiring yet.
+  const [profile, setProfile] = useState<'Code' | 'Ask' | 'Plan'>('Code')
+
+  const currentModel = models.find((m) => m.id === effectiveModelId)
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -109,7 +73,9 @@ export function ChatComposer({
   }
 
   return (
-    <div className="p-2.5 lg:p-3 shrink-0 border-t border-border/50 pb-20 lg:pb-3">
+    // Outer wrapper — no mobile bottom padding here anymore; that moved to
+    // WorkspaceBar so the bottom-nav layout can own its own spacing.
+    <div className="p-2.5 lg:p-3 shrink-0 border-t border-border/50">
       {/* Pending attachment previews — above the card so the card stays clean. */}
       {pendingPreviews.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
@@ -146,61 +112,114 @@ export function ChatComposer({
         </div>
       )}
 
-      {/* Composer card — textarea on top, thin divider, actions row below. */}
-      <div className="bg-input border border-border rounded-lg p-3 flex flex-col gap-3">
+      {/* Composer card — textarea on top, actions row below. Focus reveals a
+          subtle border (transparent → border). No divider; gap-3 spaces them. */}
+      <div className="bg-input rounded-xl p-3 flex flex-col gap-3 border border-transparent focus-within:border-border transition-colors">
         <textarea
           value={input}
           onChange={(e) => onInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={agents.length === 0 ? 'Configure an agent first...' : 'Message agent...'}
+          placeholder="Type @ to bring in another conversation"
           disabled={disabled}
           rows={2}
           className="w-full bg-transparent border-0 outline-none text-sm text-foreground placeholder:text-muted-foreground resize-none min-h-[2.5rem] disabled:opacity-60 disabled:cursor-not-allowed"
         />
 
-        {/* Thin divider between textarea and actions. */}
-        <div className="border-t border-border/30" />
+        {/* Actions row: [attach|Tools group] [profile] [model] ... [send/stop] */}
+        <div className="flex items-center justify-between">
+          {/* Left controls. */}
+          <div className="flex items-center gap-px">
+            {/* Button group: Plus (attach) + Tools (MCP toggle). The McpPopout
+                is anchored to this relative container. */}
+            <div className="relative flex gap-px mr-1">
+              {/* Plus (attach) — translucent icon button. */}
+              <button
+                onClick={onPickFiles}
+                disabled={uploading || disabled}
+                className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground bg-white/[0.04] hover:bg-white/[0.12] hover:text-foreground transition disabled:opacity-60 disabled:cursor-not-allowed"
+                title="Attach files"
+                aria-label="Attach files"
+              >
+                {uploading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Plus className="w-3.5 h-3.5" strokeWidth={2.5} />
+                )}
+              </button>
 
-        {/* Actions row: [attach] [harness] [model] ... [send/stop] */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onPickFiles}
-            disabled={uploading || disabled}
-            className="p-1.5 rounded-full bg-background border border-input text-muted-foreground hover:text-foreground hover:border-ring/60 transition shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
-            title="Attach image"
-            aria-label="Attach image"
-          >
-            {uploading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Plus className="w-4 h-4" />
-            )}
-          </button>
+              {/* Tools (MCP toggle) — same translucent styling; active state
+                  lifts the background to match the popout-open cue. */}
+              <button
+                onClick={() => setShowMcpPopout((v) => !v)}
+                className={cn(
+                  'w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground bg-white/[0.04] hover:bg-white/[0.12] hover:text-foreground transition',
+                  showMcpPopout && 'bg-white/[0.12] text-foreground',
+                )}
+                title="Select MCP tools"
+                aria-label="MCP tools"
+                aria-expanded={showMcpPopout}
+              >
+                <Wrench className="w-3.5 h-3.5" strokeWidth={2.5} />
+              </button>
 
-          {/* Harness selector — pick agent (Blueprint Sec 5). */}
-          <CompactSelect
-            value={effectiveAgentId}
-            onValueChange={onAgentChange}
-            disabled={disabled}
-            label="Agent harness"
-            placeholder="Agent"
-            items={agents}
-          />
+              {/* MCP popout — absolute-positioned bottom-full left-0 by the
+                  popout itself; rendered inside this relative group. */}
+              {showMcpPopout && (
+                <McpPopout
+                  mcpServers={mcpServers}
+                  onToggle={onToggleMcpServer}
+                  togglingServer={mcpTogglingServer}
+                  onClose={() => setShowMcpPopout(false)}
+                />
+              )}
+            </div>
 
-          {/* Model selector — neutral styling (no primary accent). */}
-          <CompactSelect
-            value={effectiveModelId}
-            onValueChange={onModelChange}
-            disabled={disabled || !currentAgent}
-            label="Model"
-            placeholder="Model"
-            items={currentAgent?.models ?? []}
-          />
+            {/* Profile selector hitbox — local UI placeholder (v1). Native
+                <select> overlaid transparently on a styled label. The label
+                text is hidden on narrow screens (icon-only). */}
+            <div
+              className="relative flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer text-muted-foreground hover:bg-white/[0.04] hover:text-foreground transition-colors"
+              title="Profile context"
+            >
+              <Code className="w-3.5 h-3.5" strokeWidth={2} />
+              <span className="text-[13px] pointer-events-none max-[500px]:hidden">{profile}</span>
+              <select
+                value={profile}
+                onChange={(e) => setProfile(e.target.value as 'Code' | 'Ask' | 'Plan')}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent"
+              >
+                <option value="Code">Code</option>
+                <option value="Ask">Ask</option>
+                <option value="Plan">Plan</option>
+              </select>
+            </div>
 
-          <div className="flex-1" />
+            {/* Model selector hitbox — same pattern, no icon per the mockup. */}
+            <div
+              className="relative flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer text-muted-foreground hover:bg-white/[0.04] hover:text-foreground transition-colors"
+              title="Model"
+            >
+              <span className="text-[13px] pointer-events-none">
+                {currentModel?.name ?? 'Model'}
+              </span>
+              <select
+                value={effectiveModelId}
+                onChange={(e) => onModelChange(e.target.value)}
+                disabled={disabled || models.length === 0}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent disabled:cursor-not-allowed"
+              >
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
 
-          {/* Send / Stop — circular accent button in the actions row (mockup
-              .send-btn). Stop takes the same slot with a destructive style. */}
+          {/* Send / Stop — circular button in the actions row. Idle state is
+              a transparent circle with a muted up-arrow; running state swaps
+              to a destructive Stop button. */}
           {agentRunning ? (
             <button
               onClick={onStop}
@@ -214,21 +233,11 @@ export function ChatComposer({
             <button
               onClick={onSend}
               disabled={!canSend}
-              className={cn(
-                'flex items-center justify-center w-7 h-7 rounded-full transition shrink-0',
-                canSend
-                  ? 'bg-primary hover:bg-primary/90'
-                  : 'bg-muted cursor-not-allowed',
-              )}
+              className="w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:bg-white/[0.06] hover:text-foreground transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
               title="Send message"
               aria-label="Send message"
             >
-              <ArrowUp
-                className={cn(
-                  'w-3.5 h-3.5',
-                  canSend ? 'text-primary-foreground' : 'text-muted-foreground',
-                )}
-              />
+              <ArrowUp className="w-[15px] h-[15px]" strokeWidth={2} />
             </button>
           )}
         </div>
