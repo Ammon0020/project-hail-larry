@@ -136,31 +136,36 @@ function TreeNode({
   )
 }
 
-/** Compute initial expanded set: root-level folders and any nodes with expanded=true. */
-function getInitialExpanded(nodes: FileTreeNode[]): Set<string> {
-  const expanded = new Set<string>()
-  for (const node of nodes) {
-    if (node.type === 'folder') {
-      const nodePath = node.path || node.name
-      // Root-level folders start expanded
-      expanded.add(nodePath)
-      // Also expand children that have expanded=true
-      if (node.children) {
-        collectExpanded(node.children, expanded)
-      }
-    }
-  }
-  return expanded
+/** localStorage key for persisting expanded folder paths per workspace. */
+function expandedStorageKey(workspaceId: string): string {
+  return `lai:tree-expanded:${workspaceId}`
 }
 
-function collectExpanded(nodes: FileTreeNode[], expanded: Set<string>): void {
-  for (const node of nodes) {
-    if (node.type === 'folder' && node.expanded) {
-      expanded.add(node.path || node.name)
-      if (node.children) {
-        collectExpanded(node.children, expanded)
-      }
-    }
+/**
+ * Loads the persisted expanded-folder set from localStorage. Returns an empty
+ * set if nothing is stored (first visit or cleared storage). All folders are
+ * collapsed by default — the user expands what they want, and that choice
+ * survives reloads.
+ */
+function loadExpandedPaths(workspaceId: string | null): Set<string> {
+  if (!workspaceId) return new Set()
+  try {
+    const raw = localStorage.getItem(expandedStorageKey(workspaceId))
+    if (!raw) return new Set()
+    const arr = JSON.parse(raw) as string[]
+    return new Set(Array.isArray(arr) ? arr : [])
+  } catch {
+    return new Set()
+  }
+}
+
+/** Persists the expanded-folder set to localStorage for the given workspace. */
+function saveExpandedPaths(workspaceId: string | null, expanded: Set<string>): void {
+  if (!workspaceId) return
+  try {
+    localStorage.setItem(expandedStorageKey(workspaceId), JSON.stringify([...expanded]))
+  } catch {
+    // Ignore quota / serialization errors — persistence is best-effort.
   }
 }
 
@@ -168,25 +173,26 @@ function collectExpanded(nodes: FileTreeNode[], expanded: Set<string>): void {
 export function FileTree({
   nodes,
   onFileSelect,
+  workspaceId = null,
 }: {
   nodes: FileTreeNode[]
   onFileSelect: (path: string) => void
+  /** Active workspace ID — used to key localStorage persistence of expanded folders. */
+  workspaceId?: string | null
 }) {
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => getInitialExpanded(nodes))
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => loadExpandedPaths(workspaceId))
 
-  // Recompute the expanded set when the tree changes (e.g. workspace switch
-  // rebuilds `nodes` from backend.fileTree). Without this, paths from the
-  // previous workspace linger and root folders that should default to
-  // expanded stay collapsed. Uses the "adjust state during render" pattern
-  // (React docs) instead of setState-in-effect to avoid cascading renders and
-  // the react-hooks/set-state-in-effect rule. A JSON signature guards against
-  // unstable referential identity while still re-running when the tree content
-  // changes.
-  const [prevSignature, setPrevSignature] = useState(() => JSON.stringify(nodes))
-  const currentSignature = JSON.stringify(nodes)
-  if (currentSignature !== prevSignature) {
-    setPrevSignature(currentSignature)
-    setExpandedPaths(getInitialExpanded(nodes))
+  // Recompute the expanded set when the workspace changes (e.g. workspace switch
+  // changes workspaceId). Without this, paths from the previous workspace linger
+  // and folders the user expanded in the new workspace don't appear. Uses the
+  // "adjust state during render" pattern (React docs) instead of setState-in-
+  // effect to avoid cascading renders and the react-hooks/set-state-in-effect
+  // rule. The workspaceId is a stable string, so this only fires on an actual
+  // workspace change, not on every file-tree refresh.
+  const [prevWorkspaceId, setPrevWorkspaceId] = useState(workspaceId)
+  if (workspaceId !== prevWorkspaceId) {
+    setPrevWorkspaceId(workspaceId)
+    setExpandedPaths(loadExpandedPaths(workspaceId))
   }
 
   const handleToggleExpand = (path: string) => {
@@ -197,6 +203,7 @@ export function FileTree({
       } else {
         next.add(path)
       }
+      saveExpandedPaths(workspaceId, next)
       return next
     })
   }

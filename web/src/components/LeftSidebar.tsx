@@ -161,7 +161,7 @@ export function LeftSidebar({
           <div className="px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider shrink-0">
             Explorer
           </div>
-          <FileTree nodes={fileTree} onFileSelect={onFileSelect} />
+          <FileTree nodes={fileTree} onFileSelect={onFileSelect} workspaceId={activeWorkspace?.id ?? null} />
         </>
       )}
 

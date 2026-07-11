@@ -6,10 +6,6 @@ import (
 	acpsdk "github.com/coder/acp-go-sdk"
 )
 
-// modelCategory is a shorthand for the ACP model category constant, used
-// across the findModelConfigID tests.
-var modelCategory = acpsdk.SessionConfigOptionCategoryModel
-
 // makeSelectOpt builds a SessionConfigOption with a Select variant and the
 // given fields. category is nil when cat is empty.
 func makeSelectOpt(id, name, cat, current string, values ...string) acpsdk.SessionConfigOption {

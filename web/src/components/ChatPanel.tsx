@@ -173,6 +173,10 @@ export function ChatPanel({
   }
 
   useEffect(() => {
+    // loadMcpServers is async: setState runs after `await getMcpConfig()`,
+    // so it's not synchronous within this effect body. The disable is needed
+    // because the linter can't see through the function boundary.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadMcpServers()
   }, [])
 

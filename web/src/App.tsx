@@ -6,7 +6,6 @@ import { LeftSidebar } from '@/components/LeftSidebar'
 import { EditorPane } from '@/components/EditorPane'
 import { ChatPanel } from '@/components/ChatPanel'
 import { MobileNav } from '@/components/MobileNav'
-import { MobileSettings } from '@/components/MobileSettings'
 import { useBackend } from '@/hooks/useBackend'
 import type { EditorSelection } from '@/lib/api'
 import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Attachment, SessionStatus, Tab } from '@/types'
@@ -60,7 +59,7 @@ export default function App() {
     () => readValidString('lai:leftPanel', ['files', 'search'] as const, 'files'),
   )
   const [mobileView, setMobileView] = useState<MobileView>(
-    () => readValidString('lai:mobileView', ['explorer', 'editor', 'chat', 'settings'] as const, 'editor'),
+    () => readValidString('lai:mobileView', ['explorer', 'editor', 'chat'] as const, 'editor'),
   )
   const [isDesktop, setIsDesktop] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true,
@@ -301,7 +300,6 @@ export default function App() {
     if (changedPaths.size === 0) return
     // Flag open tabs that have unsaved edits; leave their content untouched.
     // Reconciling editor state with external (websocket) file-change events.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setOpenTabs((prev) =>
       prev.map((t) =>
         changedPaths.has(t.path) && t.unsaved ? { ...t, changedOnDisk: true } : t,
@@ -498,6 +496,7 @@ export default function App() {
     const existing = openTabs.find((t) => t.path === path)
     if (existing) {
       setActiveTabId(existing.id)
+      if (!isDesktop) setMobileView('editor')
       return
     }
     // Load file from backend
@@ -518,6 +517,7 @@ export default function App() {
       }
       setOpenTabs((prev) => [...prev, tab])
       setActiveTabId(path)
+      if (!isDesktop) setMobileView('editor')
     } catch (err) {
       console.error('Failed to open file:', err)
     }
@@ -599,7 +599,6 @@ export default function App() {
   const showLeftSidebar = (isDesktop && !sidebarHidden) || mobileView === 'explorer'
   const showEditor = isDesktop || mobileView === 'editor'
   const showChat = isDesktop || mobileView === 'chat'
-  const showMobileSettings = !isDesktop && mobileView === 'settings'
 
   /**
    * Begins a panel-resize drag. Attaches window-level mousemove/mouseup
@@ -686,8 +685,8 @@ export default function App() {
           }
         }}
         onOpenSettings={() => {
-          if (isDesktop) openSettingsTab()
-          else setMobileView('settings')
+          openSettingsTab()
+          if (!isDesktop) setMobileView('editor')
         }}
       />
 
@@ -808,34 +807,18 @@ export default function App() {
         style={isDesktop ? { width: rightPanelWidth } : undefined}
       />
 
-      {/* Mobile Settings Panel (full-screen overlay) */}
-      <MobileSettings
-        devices={backend.devices.map((d) => ({
-          id: d.id,
-          name: d.name,
-          icon: 'monitor',
-          pairedAt: d.pairedAt,
-        }))}
-        agents={backend.agents}
-        visible={showMobileSettings}
-        onRevokeDevice={(id) => backend.revokeDevice(id)}
-        onAutodetectAgents={async () => {
-          const detected = await backend.autodetectAgents()
-          for (const d of detected) {
-            const existing = backend.agents.find(a => a.id === d.id)
-            if (!existing) {
-              await backend.addAgent(d)
-            } else {
-              await backend.addAgent({ ...existing, models: d.models, command: d.command })
-            }
-          }
-        }}
-      />
-
       </div>
 
       {/* Mobile Bottom Nav (hidden on desktop) */}
-      <MobileNav activeView={mobileView} onSwitchView={setMobileView} />
+      <MobileNav
+        activeView={mobileView}
+        onSwitchView={setMobileView}
+        onOpenSettings={() => {
+          openSettingsTab()
+          setMobileView('editor')
+        }}
+        settingsActive={!isDesktop && mobileView === 'editor' && activeTabId === 'settings'}
+      />
     </div>
   )
 }

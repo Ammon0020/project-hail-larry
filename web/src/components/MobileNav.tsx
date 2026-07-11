@@ -5,14 +5,20 @@ import type { MobileView } from '@/types'
 /**
  * Mobile bottom navigation (Blueprint Sec 17 — mobile layout).
  * One panel at a time: Explorer, Editor, Chat, Settings.
+ * Settings opens the real SettingsPanel in the editor pane (same as desktop),
+ * so it is handled via onOpenSettings rather than a dedicated mobile view.
  * Hidden on desktop (lg breakpoint and up).
  */
 export function MobileNav({
   activeView,
   onSwitchView,
+  onOpenSettings,
+  settingsActive,
 }: {
   activeView: MobileView
   onSwitchView: (view: MobileView) => void
+  onOpenSettings: () => void
+  settingsActive: boolean
 }) {
   const navItems: {
     view: MobileView
@@ -23,7 +29,6 @@ export function MobileNav({
     { view: 'explorer', icon: Files,          label: 'Explorer' },
     { view: 'editor',   icon: Code,           label: 'Editor',   badge: 'w-1.5 h-1.5 bg-primary' },
     { view: 'chat',     icon: MessageSquare,  label: 'Chat',     badge: 'w-2 h-2 bg-primary animate-pulse' },
-    { view: 'settings', icon: Settings,       label: 'Settings' },
   ]
 
   return (
@@ -44,6 +49,16 @@ export function MobileNav({
           <span className="text-[10px] font-medium">{label}</span>
         </button>
       ))}
+      <button
+        onClick={onOpenSettings}
+        className={cn(
+          'flex flex-col items-center justify-center w-16 h-full transition relative',
+          settingsActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
+        )}
+      >
+        <Settings className="w-5 h-5 mb-0.5" />
+        <span className="text-[10px] font-medium">Settings</span>
+      </button>
     </nav>
   )
 }

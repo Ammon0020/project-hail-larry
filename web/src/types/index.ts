@@ -172,7 +172,7 @@ export interface AppEvent {
 export type LeftPanel = 'files' | 'search'
 
 /** Mobile bottom-nav views (Blueprint Sec 17 — mobile layout). */
-export type MobileView = 'explorer' | 'editor' | 'chat' | 'settings'
+export type MobileView = 'explorer' | 'editor' | 'chat'
 
 /** Options for a workspace content search (mirrors Go search.Options). */
 export interface SearchOptions {
