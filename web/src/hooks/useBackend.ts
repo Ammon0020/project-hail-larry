@@ -59,6 +59,68 @@ export function useBackend() {
   const mountedRef = useRef(true)
   // Holds the pending reconnect timer so it can be cleared on unmount.
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // Reconnect attempt counter for exponential backoff. Reset to 0 on every
+  // successful ws.onopen so a long-lived connection doesn't ramp the delay.
+  const reconnectAttemptRef = useRef(0)
+
+  /**
+   * Computes the next reconnect delay using exponential backoff (base 1s,
+   * doubling per attempt, capped at 30s) with ±20% jitter so a fleet of
+   * clients that all dropped at the same instant don't synchronously hammer
+   * the backend on retry (thundering herd).
+   *
+   * Args:
+   *   attempt: The current (pre-increment) reconnect attempt number.
+   *
+   * Returns:
+   *   The delay in milliseconds to wait before the next connectWebSocket call.
+   */
+  function nextReconnectDelay(attempt: number): number {
+    const base = Math.min(30000, 1000 * 2 ** attempt)
+    const jitter = base * 0.2 * (Math.random() * 2 - 1) // ±20%
+    return Math.max(0, Math.round(base + jitter))
+  }
+
+  /**
+   * Schedules a connectWebSocket call after `delay` ms, clearing any prior
+   * pending timer first so overlapping disconnects don't stack multiple
+   * sockets. No-op if the hook is already unmounted.
+   */
+  function scheduleReconnect(delay: number) {
+    if (!mountedRef.current) return
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+    reconnectTimerRef.current = setTimeout(() => connectWebSocket(), delay)
+  }
+
+  /**
+   * Immediate reconnect entry point used by the 'online' and
+   * 'visibilitychange' handlers: clears any pending backoff timer, resets the
+   * attempt counter (the network situation changed, so the backoff ramp no
+   * longer applies), and calls connectWebSocket right away. No-op if the hook
+   * is unmounted or the socket is already OPEN.
+   */
+  function reconnectNow() {
+    if (!mountedRef.current) return
+    const ws = wsRef.current
+    if (ws && ws.readyState === WebSocket.OPEN) return
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = undefined
+    }
+    reconnectAttemptRef.current = 0
+    connectWebSocket()
+  }
+
+  // Stable listeners for network/tab-return triggers. Defined inline so they
+  // can be registered and torn down in the mount effect below.
+  function onOnline() {
+    reconnectNow()
+  }
+  function onVisibility() {
+    // Only act when the tab returns to the foreground — a hidden tab shouldn't
+    // churn reconnect attempts (browsers throttle timers anyway).
+    if (document.visibilityState === 'visible') reconnectNow()
+  }
   useEffect(() => {
     activeWorkspaceRef.current = activeWorkspace
   }, [activeWorkspace])
@@ -97,10 +159,17 @@ export function useBackend() {
     loadSessions()
     loadPendingPermissions()
     connectWebSocket()
+    // Reconnect immediately when the network comes back online or the tab
+    // returns to the foreground — these are strong signals that a dropped
+    // socket can now succeed, so we shouldn't wait out the backoff timer.
+    window.addEventListener('online', onOnline)
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
       // Mark unmounted first so ws.onclose (fired by close()) short-circuits
       // instead of scheduling a reconnect against a torn-down hook.
       mountedRef.current = false
+      window.removeEventListener('online', onOnline)
+      document.removeEventListener('visibilitychange', onVisibility)
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       wsRef.current?.close()
     }
@@ -110,6 +179,15 @@ export function useBackend() {
   // ---- WebSocket connection for real-time events ----
   function connectWebSocket() {
     if (!mountedRef.current) return
+    // Avoid stacking sockets: if a connection is already in flight or live,
+    // bail out. A CONNECTING/OPEN socket means a prior connectWebSocket is
+    // still pending its handshake — opening another would leak a dangling
+    // socket. (A CLOSING socket will fire onclose shortly and schedule the
+    // next attempt via the backoff path, so we don't need to handle it here.)
+    const existing = wsRef.current
+    if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) {
+      return
+    }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     // Attach device credentials as query params so the backend's WebSocket
     // auth checker (sync.Hub.HandleWS) accepts the handshake from remote
@@ -132,6 +210,9 @@ export function useBackend() {
       // the connection time so a subsequent drop can re-arm the banner.
       setReconnecting(false)
       lastConnectedAtRef.current = Date.now()
+      // Reset the backoff ramp — a successful connect means we're back to a
+      // healthy state, so the next drop starts from the 1s base delay again.
+      reconnectAttemptRef.current = 0
       // On (re)connect, re-sync sessions, pending permissions, and catch up
       // on any events missed while the socket was down. loadEvents() is now
       // safe to call here because it MERGES (cursor-based append with ID
@@ -158,10 +239,14 @@ export function useBackend() {
       if (lastConnectedAtRef.current !== null) {
         setReconnecting(true)
       }
-      // Reconnect after 3 seconds (Blueprint Sec 12 — reconnection). Clear any
-      // prior timer so overlapping disconnects don't stack multiple sockets.
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
-      reconnectTimerRef.current = setTimeout(() => connectWebSocket(), 3000)
+      // Exponential backoff with jitter (Blueprint Sec 12 — reconnection).
+      // Delay grows as 1s, 2s, 4s, … capped at 30s, with ±20% jitter so a
+      // fleet of clients that all dropped simultaneously don't retry in
+      // lockstep. scheduleReconnect clears any prior timer so overlapping
+      // disconnects don't stack multiple sockets.
+      const delay = nextReconnectDelay(reconnectAttemptRef.current)
+      reconnectAttemptRef.current += 1
+      scheduleReconnect(delay)
     }
     ws.onerror = () => ws.close()
     ws.onmessage = (msg) => {

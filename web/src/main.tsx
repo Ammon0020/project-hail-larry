@@ -17,3 +17,18 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 )
+
+// Register the offline shell service worker in production only. In dev the
+// Vite dev server (HMR, proxied /api and /ws) must not be intercepted, so we
+// skip registration there entirely. The SW (public/sw.js) caches the SPA
+// shell + hashed bundles so a reload while the LAN daemon is unreachable
+// still renders the last shell (login/pair UI); /api and /ws are never
+// cached. autoUpdate behavior comes from skipWaiting()+clients.claim() in the
+// SW itself, so no client-side update messaging is needed here.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .catch((err) => console.warn('[sw] registration failed:', err))
+  })
+}

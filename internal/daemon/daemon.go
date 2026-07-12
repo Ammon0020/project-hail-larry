@@ -463,6 +463,36 @@ func (d *Daemon) Start(ctx context.Context) error {
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Periodic stale-permission sweep so an agent's blocking Request() unblocks
+	// with Deny after pendingRequestTimeout even when no client calls GetPending
+	// (e.g. all paired devices are offline). Without this, a prompt whose
+	// request context was cancelled while every device was disconnected would
+	// stay pending forever, pinning the agent goroutine until the agent's own
+	// context dies. GetPending still prunes on its own call path; this ticker
+	// closes the reconnection gap. The 60s interval is well under the 5min
+	// pendingRequestTimeout so a sweep always fires within one timeout window.
+	go func() {
+		t := time.NewTicker(60 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				d.permissionMgr.CleanupStale()
+			}
+		}
+	}()
+
+	// Event store retention: prune the oldest events on a schedule so the
+	// SQLite DB doesn't grow unbounded across long-running daemons.
+	// StartPruneTicker runs its own goroutine (using context.Background
+	// internally, since pruning is store-internal maintenance) and returns a
+	// stop function we invoke on shutdown so an in-flight prune can finish
+	// before the store is closed in cleanup().
+	stopPrune := d.eventStore.StartPruneTicker(events.DefaultPruneInterval, events.DefaultPruneMaxRows)
+	defer stopPrune()
+
 	// Resolve the HTTPS port. A configured HTTPSPort wins; 0 means "Port + 1"
 	// so the default dual-stack is 7337 (HTTP) + 7338 (HTTPS) with no extra
 	// config. This is computed even when TLS is disabled so the value is
