@@ -8,7 +8,7 @@ import {
   Circle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { fileIcon } from '@/lib/fileIcon'
+import { FileIcon } from '@/lib/fileIcon'
 import type { FileTreeNode } from '@/types'
 
 /**
@@ -107,7 +107,6 @@ function TreeNode({
   // flex gap that follows it) is reserved so file icons line up with folder
   // icons at the same depth. Without it, files render ~20px left of sibling
   // folders because they lack the chevron glyph.
-  const { icon: Icon } = fileIcon(node.name)
   const kind: RowKind = node.active ? 'active' : 'default'
 
   return (
@@ -116,7 +115,7 @@ function TreeNode({
       onClick={() => onFileSelect(nodePath)}
     >
       <span className={chevronSpacer} aria-hidden />
-      <Icon className="w-4 h-4 shrink-0" />
+      <FileIcon name={node.name} className="w-4 h-4 shrink-0" />
       <span className={labelStyles}>{node.name}</span>
       {node.unsaved && (
         <div title="Unsaved changes" className="shrink-0">

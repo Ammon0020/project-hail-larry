@@ -20,12 +20,12 @@ export default defineConfig([
     },
   },
   {
-    // shadcn/ui primitives intentionally export variant helpers (e.g.
-    // buttonVariants from cva) alongside their components. That is a shared
-    // convention for these vendored building blocks, so the react-refresh
-    // "only export components" rule (a Fast-Refresh ergonomics hint) does not
-    // apply here.
-    files: ['src/components/ui/**/*.{ts,tsx}'],
+    // shadcn/ui primitives and lib utilities intentionally export helpers
+    // (e.g. buttonVariants from cva, fileIcon lookup) alongside components.
+    // That is a shared convention for these vendored building blocks, so the
+    // react-refresh "only export components" rule (a Fast-Refresh ergonomics
+    // hint) does not apply here.
+    files: ['src/components/ui/**/*.{ts,tsx}', 'src/lib/**/*.{ts,tsx}'],
     rules: {
       'react-refresh/only-export-components': 'off',
     },
