@@ -21,6 +21,7 @@ type mockTransport struct {
 	newSessionErr    error
 	newSessionCalled bool
 	newSessionCwd    string
+	newSessionDirs   []string
 
 	// LoadSession
 	loadSessionResult string
@@ -28,6 +29,7 @@ type mockTransport struct {
 	loadSessionErr    error
 	loadSessionCalled bool
 	loadSessionID     string
+	loadSessionDirs   []string
 
 	// DeleteSession
 	deleteSessionCalled bool
@@ -58,15 +60,17 @@ type mockTransport struct {
 	setConfigOptionErr    error
 }
 
-func (m *mockTransport) NewSession(_ context.Context, cwd string) (string, []acpsdk.SessionConfigOption, error) {
+func (m *mockTransport) NewSession(_ context.Context, cwd string, additionalDirs []string) (string, []acpsdk.SessionConfigOption, error) {
 	m.newSessionCalled = true
 	m.newSessionCwd = cwd
+	m.newSessionDirs = append(m.newSessionDirs[:0:0], additionalDirs...)
 	return m.newSessionResult, m.newSessionOpts, m.newSessionErr
 }
 
-func (m *mockTransport) LoadSession(_ context.Context, acpSessionID string) (string, []acpsdk.SessionConfigOption, error) {
+func (m *mockTransport) LoadSession(_ context.Context, acpSessionID string, additionalDirs []string) (string, []acpsdk.SessionConfigOption, error) {
 	m.loadSessionCalled = true
 	m.loadSessionID = acpSessionID
+	m.loadSessionDirs = append(m.loadSessionDirs[:0:0], additionalDirs...)
 	return m.loadSessionResult, m.loadSessionOpts, m.loadSessionErr
 }
 
@@ -104,6 +108,10 @@ func (m *mockTransport) Close() error {
 
 func (m *mockTransport) StderrTail() string {
 	return m.stderrTail
+}
+
+func (m *mockTransport) SupportsEmbeddedContext() bool {
+	return false
 }
 
 // TestResolveACPSession verifies the session/load-vs-session/new decision in
@@ -265,7 +273,7 @@ func TestResolveACPSession(t *testing.T) {
 			}
 
 			c := NewClient(nil, nil)
-			gotID, _, err := c.resolveACPSession(context.Background(), mt, initResp, session, "/ws")
+			gotID, _, err := c.resolveACPSession(context.Background(), mt, initResp, session, "/ws", nil)
 
 			if tc.wantErr {
 				if err == nil {

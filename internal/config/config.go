@@ -23,16 +23,23 @@ type Config struct {
 	// mu guards mutable fields (Workspaces, Agents) and serializes Save so
 	// concurrent HTTP handlers cannot race on slice mutation or interleave
 	// on-disk writes. It is unexported and not persisted.
-	mu                sync.Mutex      `json:"-"`
-	Port              int             `json:"port"`
-	Host              string          `json:"host"`
-	DataDir           string          `json:"dataDir"`
-	DBPath            string          `json:"dbPath"`
-	Workspaces        []string        `json:"workspaces"`
-	Agents            []acp.AgentInfo `json:"agents"`
-	TLSEnabled        bool            `json:"tlsEnabled"`
-	TLSCertDir        string          `json:"tlsCertDir,omitempty"`
-	PairingTTLSeconds int             `json:"pairingTtlSeconds,omitempty"`
+	mu         sync.Mutex      `json:"-"`
+	Port       int             `json:"port"`
+	Host       string          `json:"host"`
+	DataDir    string          `json:"dataDir"`
+	DBPath     string          `json:"dbPath"`
+	Workspaces []string        `json:"workspaces"`
+	Agents     []acp.AgentInfo `json:"agents"`
+	TLSEnabled bool            `json:"tlsEnabled"`
+	TLSCertDir string          `json:"tlsCertDir,omitempty"`
+	// HTTPSPort is the TCP port the HTTPS listener binds to when TLSEnabled is
+	// true (dual HTTP+HTTPS mode). A value of 0 means "Port + 1" at runtime —
+	// e.g. Port=7337 → HTTPS on 7338. Set explicitly to override. HTTP always
+	// listens on Port regardless of this field, so users can pick a scheme by
+	// typing http://IP:Port or https://IP:HTTPSPort in the browser without
+	// restarting the daemon or flipping config.
+	HTTPSPort         int `json:"httpsPort,omitempty"`
+	PairingTTLSeconds int `json:"pairingTtlSeconds,omitempty"`
 	// CredentialInactivityTTLSeconds is the sliding-window inactivity expiry for
 	// paired device credentials. A device that goes this long without a
 	// successful authenticated request must re-pair. Sliding expiry is ON by
@@ -111,11 +118,14 @@ func DefaultOrError() (*Config, error) {
 		Workspaces: []string{},
 		Agents:     []acp.AgentInfo{},
 		// TLSEnabled defaults to true so fresh installs are secure by default —
-		// device Bearer tokens must not travel in cleartext over the LAN. An
-		// existing config file that explicitly sets "tlsEnabled": false is
-		// respected (see Load); an older config file that omits the field
-		// entirely also gets true (secure-by-default upgrade), unless the user
-		// explicitly opts out.
+		// device Bearer tokens must not travel in cleartext over the LAN. When
+		// true the daemon runs in dual HTTP+HTTPS mode: HTTP on Port (cleartext
+		// for LAN home use) AND HTTPS on HTTPSPort (Port+1 by default) for
+		// coffee-shop TLS. An existing config file that explicitly sets
+		// "tlsEnabled": false is respected (see Load) and disables the HTTPS
+		// listener entirely (HTTP only); an older config file that omits the
+		// field entirely also gets true (secure-by-default upgrade), unless
+		// the user explicitly opts out.
 		TLSEnabled:        true,
 		TLSCertDir:        filepath.Join(dataDir, "tls"),
 		PairingTTLSeconds: 300,

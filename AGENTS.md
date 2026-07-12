@@ -40,6 +40,12 @@ web/                     → React 19 + Vite 8 + Tailwind v4 + shadcn/ui
   src/data/              → Mock data
   src/types/             → TypeScript types
 docs/                    → see ## Docs section below
+  plans/                 → Design documents and plans
+  references/            → External references and documentation
+  reviews/               → Security and code reviews
+  specs/                 → Technical specifications
+  known-issues.md        → Known issues and TODOs
+  STATUS.md              → Current project status and recent changes
 ```
 
 ## Architecture Rules
@@ -57,6 +63,10 @@ Task delegation to specialized subagents is a core workflow and saves time. For 
 Note that if commands are rejected in succession on a subagent, it's likely because only certain commands are auto-approved. Subagents should skip them and tell the parent. 
 
 If the quota runs out, use the small subagent. It's still very powerful and can handle most tasks. Trivial will continue to function as well. 
+
+## Agent Hints
+- LLM Memory is limited by context length. Long chats can cause context overflow. Keep terminal output concise and focused where possible by using quiet flags, filtering output, and capping linter output to a few errors at a time.
+- When delegating to subagents, provide clear task boundaries and expected outputs
 
 ## Development Standards
 
@@ -80,10 +90,6 @@ Security is of utmost importance. This daemon serves a browser UI to devices on 
 - **No secrets in logs, configs, or commits.** Device credentials are hashed at rest; never log raw tokens, passcodes, or secrets.
 - **Default to secure:** TLS on by default, bind to 0.0.0.0 only with TLS, reject symlinks in workspace paths, rate-limit unauthenticated endpoints, cap request/response sizes.
 - **When adding new endpoints or file/command surfaces:** Consider the threat model — who can call this (loopback vs. any LAN device vs. any paired device), and what's the worst case if abused.
-
-## Agent Hints
-- LLM Memory is limited by context length. Long chats can cause context overflow. Keep terminal output concise and focused where possible by using quiet flags, filtering output, and capping linter output to a few errors at a time.
-- When delegating to subagents, provide clear task boundaries and expected outputs
 
 ## Tailwind CSS Standards
 

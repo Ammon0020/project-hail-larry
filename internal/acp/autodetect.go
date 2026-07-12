@@ -112,13 +112,14 @@ var knownAgents = []agentSpec{
 		},
 		fileModels: getCursorModelsFromCLI,
 	},
-	// Devin (formerly Windsurf / "chisel") — bundled with Devin Desktop.
-	// ACP mode is the "acp" subcommand, like Cursor's "agent acp".
+	// Devin (formerly Windsurf / "chisel") — on PATH after CLI install, or
+	// bundled with Devin Desktop. ACP mode is the "acp" subcommand.
 	// providers/list is not supported and there is no --list-models flag,
 	// so fallbackModels (sourced from the --model help-text examples) are used.
-	// NOTE: the devin binary is NOT on PATH by default — it lives inside the
-	// Devin Desktop install. searchPaths covers the Devin and legacy Windsurf
-	// bundle locations across Windows, macOS, and Linux.
+	// Devin requires ACP authenticate (browser PKCE) before session/new —
+	// startTransportLocked handles that via selectAgentAuthMethod.
+	// searchPaths cover the Devin/legacy Windsurf bundle locations when PATH
+	// lookup fails.
 	{
 		id:       "devin",
 		name:     "Devin",
@@ -221,8 +222,11 @@ func detectAgent(spec agentSpec) (AgentInfo, bool) {
 	if len(models) == 0 {
 		models = spec.fallbackModels
 		warning = "Using fallback model list"
-		if acpWarning != "" {
-			log.Printf("autodetect: %s — ACP probe failed (%s), no config file, using fallback models", spec.name, acpWarning)
+		// providers/list is unstable and many real agents (Devin, Cursor) return
+		// MethodNotFound. That is expected — not an autodetect failure — so only
+		// log unexpected probe errors, not the common "not supported" path.
+		if acpWarning != "" && !isProvidersListUnsupported(acpWarning) {
+			log.Printf("autodetect: %s — ACP probe failed (%s), using fallback models", spec.name, acpWarning)
 		}
 	} else if acpWarning != "" && len(models) > 0 {
 		// ACP failed but file-based detection succeeded — quiet warning
@@ -304,6 +308,32 @@ func expandWindowsEnv(s string) string {
 	})
 }
 
+// isProvidersListUnsupported reports whether an ACP probe warning indicates the
+// agent simply does not implement the unstable providers/list method. Many real
+// agents (Devin, Cursor Agent) return JSON-RPC -32601 MethodNotFound; that is
+// expected, not a transport failure.
+func isProvidersListUnsupported(warning string) bool {
+	if warning == "" {
+		return false
+	}
+	lower := strings.ToLower(warning)
+	return strings.Contains(lower, "method not found") ||
+		strings.Contains(lower, "providers/list not supported") ||
+		strings.Contains(lower, `"code":-32601`) ||
+		strings.Contains(lower, `"code": -32601`)
+}
+
+// truncateDiag returns s truncated to n runes for log-friendly diagnostics.
+// Agent stderr (especially Devin's) can be multi-kilobyte escaped schema dumps
+// that make startup logs unreadable if dumped whole.
+func truncateDiag(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
 // tryACPProvidersList spawns the agent, performs an ACP Initialize handshake,
 // and queries available models via the unstable providers/list method.
 // Returns nil plus a warning if any step fails.
@@ -334,12 +364,15 @@ func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 	}
 	defer cleanupAutodetectProcess(cmd, stdin)
 
-	// withStderr appends the captured agent stderr tail to a warning when
-	// present, so failure diagnostics explain *why* the probe failed rather
-	// than just naming the failing step. It is only meaningful after the
-	// process has started (earlier failures can't have produced stderr).
+	// withStderr appends a short captured agent stderr tail to a warning when
+	// present. Cap length so noisy agents (Devin dumps escaped schema blobs on
+	// MethodNotFound) cannot flood startup logs. MethodNotFound is rewritten to
+	// a short, stable message.
 	withStderr := func(warning string) string {
-		if tail := strings.TrimSpace(stderrBuf.String()); tail != "" {
+		if isProvidersListUnsupported(warning) {
+			return "providers/list not supported"
+		}
+		if tail := truncateDiag(stderrBuf.String(), 240); tail != "" {
 			return fmt.Sprintf("%s (agent stderr: %s)", warning, tail)
 		}
 		return warning
@@ -349,6 +382,8 @@ func tryACPProvidersList(command string, args []string) ([]AgentModel, string) {
 	// Suppress ACP SDK diagnostic logging (e.g. "connection closed") during probing.
 	client.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	initReq := acp.InitializeRequest{
+		// Pin protocol version for consistent probe behavior across SDK upgrades.
+		ProtocolVersion:    acp.ProtocolVersionNumber,
 		ClientInfo:         &acp.Implementation{Name: "local-agent-autodetect", Version: "1.0"},
 		ClientCapabilities: acp.ClientCapabilities{},
 	}
@@ -520,16 +555,27 @@ func getCursorModelsFromCLI() []AgentModel {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, cmdPath, "--list-models").Output() //nolint:gosec // cmdPath is resolved from the trusted known-agents registry, not user input
+	out, err := exec.CommandContext(ctx, cmdPath, "--list-models").CombinedOutput() //nolint:gosec // cmdPath is resolved from the trusted known-agents registry, not user input
 	if err != nil {
-		log.Printf("autodetect: cursor --list-models failed: %v", err)
+		log.Printf("autodetect: cursor --list-models failed: %v (%s)", err, truncateDiag(string(out), 160))
+		return nil
+	}
+
+	text := string(out)
+	// Cursor prints "No models available for this account." when the CLI is not
+	// logged in or the account has no models. Fall through to hardcoded defaults
+	// quietly (detectAgent will set "Using fallback model list").
+	if strings.Contains(strings.ToLower(text), "no models available") {
 		return nil
 	}
 
 	var models []AgentModel
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "Available models") || strings.HasPrefix(line, "Tip:") {
+		// Strip common ANSI escape noise from the interactive CLI spinner.
+		line = stripANSI(line)
+		if line == "" || strings.HasPrefix(line, "Available models") || strings.HasPrefix(line, "Tip:") ||
+			strings.HasPrefix(line, "Loading models") {
 			continue
 		}
 		// Format: "id - Display Name"
@@ -545,4 +591,32 @@ func getCursorModelsFromCLI() []AgentModel {
 		models = append(models, AgentModel{ID: id, Name: name})
 	}
 	return models
+}
+
+// stripANSI removes common CSI / OSC ANSI escape sequences from s so CLI
+// spinner output does not break "id - name" parsing.
+func stripANSI(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b { // ESC
+			i++
+			if i < len(s) && s[i] == '[' {
+				// CSI ... letter
+				i++
+				for i < len(s) && (s[i] < 'A' || s[i] > 'Z') && (s[i] < 'a' || s[i] > 'z') {
+					i++
+				}
+				if i < len(s) {
+					i++ // consume terminator
+				}
+				continue
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }

@@ -17,6 +17,8 @@ Priority 1 + 2 (all 7 items) are implemented (2026-07-08), along with several fo
 - **Shell command fallback** — Agents that send an unparsed shell string as `params.Command` with empty `params.Args` (e.g. devstral-small) are routed through `sh -c` / `cmd /c` in `CreateTerminal`.
 - **Markdown export endpoint** — `GET /api/sessions/{id}/export` returns a markdown transcript instead of raw JSON.
 - **Null-byte sanitization for resource blocks** — Resource text is stripped of null bytes before sending to prevent "embedded null byte" JSON-RPC errors on binary files.
+- **MCP health UX (2026-07-12)** — Backend `GET /api/mcp/status` already existed; frontend now fetches health on mount / popout open / after toggle. `McpPopout` status dots: green healthy, red unhealthy (with error tooltip), gray disabled. Loading spinner while status is in flight.
+- **P4.5 AdditionalDirectories (2026-07-12)** — Other registered workspaces are passed as `additionalDirectories` on `session/new` and `session/load` when the agent advertises the capability. Client-side multi-root: `ReadTextFile`/`WriteTextFile` resolve absolute paths under any registered workspace; terminal cwd accepts any registered workspace root. Paths outside all registered workspaces still rejected.
 
 ## Priority 1: High Impact
 
@@ -160,11 +162,17 @@ The one practical adoption: typed `AppEvent.stopReason` as a local `StopReason` 
 
 #### 4.5 AdditionalDirectories support
 
+**Status:** ✅ Done (2026-07-12).
+
 **Rationale:** Added in SDK v0.13.5. Lets agents access files outside the primary workspace root (multi-root workspaces, monorepo subprojects).
 
-**Suggested change:** Expose an "additional directories" config per workspace/session; populate `AdditionalDirectories` on `NewSession`/`LoadSession`.
+**What was done:**
+- `collectAdditionalDirsLocked` gathers absolute paths of all registered workspaces except the session primary; capability-gated on `SessionCapabilities.AdditionalDirectories`.
+- `NewSession`/`LoadSession` accept and send `AdditionalDirectories`.
+- Client multi-root: `resolveWorkspaceFile` for read/write, `resolveCwdMulti` for terminals. Paths outside every registered workspace still rejected by `safeJoin`.
+- 28 new tests in `additional_dirs_test.go`. No frontend "extra folders" UI — dirs derived from registered workspaces.
 
-**Affected files:** `internal/acp/transport.go`, `internal/config/`, `internal/server/` (config API).
+**Affected files:** `internal/acp/transport.go`, `internal/acp/acp.go`, `internal/acp/terminal.go`, `internal/acp/additional_dirs_test.go`, `lifecycle_test.go`.
 
 #### 4.6 Session fork / resume / close
 
@@ -214,7 +222,7 @@ The one practical adoption: typed `AppEvent.stopReason` as a local `StopReason` 
 
 ## Implementation Notes
 
-- Priority 1 and Priority 2 are complete (see "Completed" above). The current focus is Priority 4 (SDK feature adoption) — start with the near-term items (4.1–4.4), which are low-risk and isolated.
+- Priority 1, Priority 2, and P4 near-term (4.1–4.5) are complete (see "Completed" above). Remaining Priority 4 future items: session fork/resume/close, elicitation, NES, MCP-over-ACP, provider management, audio, ACP-inspector.
 - 1.1 and 1.3 were interrelated and implemented together (structured-blocks infrastructure first, then open-files middleware on top).
 - Priority 2 items were each small, isolated changes.
 - Run `go test ./internal/acp/...` and `go vet ./...` after each change. Update `docs/STATUS.md` and `docs/reference/acp/responsibilities.md` to reflect implemented items.

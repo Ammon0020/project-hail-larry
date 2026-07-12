@@ -72,6 +72,36 @@ func (c *acpClientImpl) getTerminal(id string) *terminalEntry {
 	return c.terminals[id]
 }
 
+// pathWithinRoot reports whether candidate resolves inside root and returns
+// the cleaned absolute path when it does. The containment check mirrors the
+// safeJoin-style logic used by the workspace manager: the relative path from
+// root to the cleaned candidate must not start with ".." and must not be
+// absolute. An empty candidate is treated as "no path supplied" and reports
+// not-inside so callers can apply their own empty-handling fallback (e.g.
+// resolveCwd falls back to the workspace root).
+//
+// This is the shared primitive used by resolveCwd (single-root terminal cwd
+// validation) and resolveCwdMulti (multi-root validation that accepts a cwd
+// under any registered workspace, matching the ACP additionalDirectories
+// expansion).
+func pathWithinRoot(root, candidate string) (string, bool) {
+	if candidate == "" {
+		return "", false
+	}
+	cleaned := filepath.Clean(candidate)
+	rel, err := filepath.Rel(root, cleaned)
+	if err != nil {
+		return "", false
+	}
+	if rel == "." {
+		return root, true
+	}
+	if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", false
+	}
+	return cleaned, true
+}
+
 // resolveCwd validates an agent-supplied working directory against the workspace
 // root and returns a safe cwd. If candidate is empty or resolves outside the
 // workspace (via a filepath.Rel containment check), the workspace root is used
@@ -85,21 +115,46 @@ func resolveCwd(workspacePath, candidate string) string {
 	if candidate == "" {
 		return workspacePath
 	}
-	cleaned := filepath.Clean(candidate)
-	// An absolute candidate is only accepted if it is inside the workspace.
-	rel, err := filepath.Rel(workspacePath, cleaned)
+	if p, ok := pathWithinRoot(workspacePath, candidate); ok {
+		return p
+	}
+	return workspacePath
+}
+
+// resolveCwdMulti validates an agent-supplied working directory against the
+// session's primary workspace first, then against every other registered
+// workspace. This is the multi-root counterpart to resolveCwd: when the agent
+// has been told (via ACP additionalDirectories) that other workspace roots
+// exist, a terminal Cwd pointing inside one of those roots is legitimate and
+// must be honored rather than collapsed back to the primary root. A candidate
+// that resolves outside every registered workspace still falls back to the
+// primary root, preserving the original escape-prevention guarantee.
+func (c *acpClientImpl) resolveCwdMulti(ctx context.Context, candidate string) string {
+	if candidate == "" {
+		return c.workspacePath
+	}
+	if p, ok := pathWithinRoot(c.workspacePath, candidate); ok {
+		return p
+	}
+	if c.workspaceMgr == nil {
+		return c.workspacePath
+	}
+	wlist, err := c.workspaceMgr.List(ctx)
 	if err != nil {
-		return workspacePath
+		return c.workspacePath
 	}
-	if rel == "." {
-		// Candidate is the workspace root itself.
-		return workspacePath
+	for _, w := range wlist {
+		if w.ID == c.workspaceID {
+			continue
+		}
+		if !filepath.IsAbs(w.Path) {
+			continue
+		}
+		if p, ok := pathWithinRoot(filepath.Clean(w.Path), candidate); ok {
+			return p
+		}
 	}
-	if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
-		// Resolves outside the workspace — fall back to the safe root.
-		return workspacePath
-	}
-	return cleaned
+	return c.workspacePath
 }
 
 // envToSlice converts agent-supplied ACP EnvVariable entries into the "KEY=VALUE"
@@ -137,14 +192,16 @@ func containsShellOperators(s string) bool {
 // retrieval through TerminalOutput / WaitForTerminalExit.
 //
 // The agent may supply a Cwd, but it is validated against the workspace root
-// (see resolveCwd); any path that resolves outside the workspace is rejected
-// and the command runs in the workspace root instead. The resolved cwd is
-// surfaced in the EventShellCommandStarted event so the user can see where the
-// command will execute.
+// (see resolveCwd / resolveCwdMulti); any path that resolves outside every
+// registered workspace is rejected and the command runs in the primary
+// workspace root instead. When the session has additional workspace roots
+// (ACP additionalDirectories), a Cwd inside any of them is honored. The
+// resolved cwd is surfaced in the EventShellCommandStarted event so the user
+// can see where the command will execute.
 func (c *acpClientImpl) CreateTerminal(ctx context.Context, params acp.CreateTerminalRequest) (acp.CreateTerminalResponse, error) {
 	cwd := c.workspacePath
 	if params.Cwd != nil && *params.Cwd != "" {
-		cwd = resolveCwd(c.workspacePath, *params.Cwd)
+		cwd = c.resolveCwdMulti(ctx, *params.Cwd)
 	}
 
 	// Build a human-readable command string for events and the terminal entry.

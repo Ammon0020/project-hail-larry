@@ -7,6 +7,8 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
@@ -65,9 +67,15 @@ type Server struct {
 	certPath   string
 	keyPath    string
 	// httpServer holds the active *http.Server once ListenAndServe (or
-	// ListenAndServeTLS) has been called. It is stored so Shutdown can
-	// gracefully drain in-flight requests during daemon teardown.
+	// ListenDual) has been called. It is stored so Shutdown can gracefully
+	// drain in-flight HTTP requests during daemon teardown.
 	httpServer *http.Server
+	// httpsServer holds the active TLS *http.Server when ListenDual has
+	// started the HTTPS listener. It is nil when running HTTP-only (or when
+	// ListenAndServeTLS was used directly for the single-server TLS path).
+	// Shutdown drains both httpServer and httpsServer so dual-mode teardown
+	// does not leave the TLS listener accepting new connections.
+	httpsServer *http.Server
 }
 
 // New creates a new Server with the given dependencies.
@@ -179,6 +187,7 @@ func (s *Server) apiRoutes() {
 	s.mux.HandleFunc("GET /api/mcp", s.requireAuth(s.handleGetMcp))
 	s.mux.HandleFunc("PUT /api/mcp", s.requireAuth(s.handlePutMcp))
 	s.mux.HandleFunc("PATCH /api/mcp/servers/{name}", s.requireAuth(s.handlePatchMcpServer))
+	s.mux.HandleFunc("GET /api/mcp/status", s.requireAuth(s.handleGetMcpStatus))
 
 	// WebSocket endpoint — auth is enforced inside HandleWS via the hub's
 	// AuthChecker (browsers cannot set headers on the WS handshake, so the
@@ -374,6 +383,9 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 // If TLS is enabled (via SetTLS), it serves over HTTPS using the configured
 // certificate and key paths. The underlying *http.Server is stored on s so
 // that Shutdown can gracefully drain in-flight requests.
+//
+// This is the single-listener path used by HTTP-only tests and the legacy
+// single-TLS path. The daemon uses ListenDual for simultaneous HTTP+HTTPS.
 func (s *Server) ListenAndServe(addr string) error {
 	if s.tlsEnabled {
 		return s.ListenAndServeTLS(addr, s.certPath, s.keyPath)
@@ -394,16 +406,94 @@ func (s *Server) ListenAndServeTLS(addr, certPath, keyPath string) error {
 	return s.httpServer.ListenAndServeTLS(certPath, keyPath)
 }
 
-// Shutdown gracefully shuts down the HTTP server, waiting for in-flight
-// requests to complete or until the context is cancelled. It is safe to call
-// when the server was never started (it returns nil). The daemon calls this
-// during signal-handled teardown before closing the EventStore so that
-// in-flight handlers do not Append to a closed store.
+// ListenDual starts two listeners simultaneously: a cleartext HTTP listener on
+// httpAddr and a TLS HTTPS listener on httpsAddr using the provided cert and
+// key paths. This lets a user pick a scheme by typing http://IP:port or
+// https://IP:httpsPort in the browser without restarting the daemon or
+// flipping config.
+//
+// Both listeners serve the same mux (same handlers, same auth, same WS hub).
+// Each runs in its own goroutine. The first non-nil error returned by either
+// listener is forwarded on the returned channel — except http.ErrServerClosed,
+// which is the normal Shutdown path and is suppressed. A bind failure on
+// either listener is reported (fail-fast): if the HTTPS listener cannot bind,
+// the HTTP listener is shut down and the HTTPS error is returned so the user
+// is not silently left with only cleartext when they requested dual mode.
+//
+// The caller should run this in a goroutine and select on the returned channel
+// (alongside a shutdown context) to detect a listener dying unexpectedly:
+//
+//	errCh := srv.ListenDual(httpAddr, httpsAddr, cert, key)
+//	select {
+//	case err := <-errCh:
+//	    ...
+//	case <-ctx.Done():
+//	    _ = srv.Shutdown(shutdownCtx)
+//	}
+func (s *Server) ListenDual(httpAddr, httpsAddr, certPath, keyPath string) <-chan error {
+	log.Printf("Server listening on http://%s", httpAddr)
+	log.Printf("Server listening on https://%s", httpsAddr)
+
+	s.httpServer = newHTTPServer(httpAddr, s.mux)
+	s.httpsServer = newHTTPServer(httpsAddr, s.mux)
+
+	errCh := make(chan error, 2)
+
+	// HTTP goroutine.
+	go func() {
+		err := s.httpServer.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("http listener %s: %w", httpAddr, err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	// HTTPS goroutine. On bind failure, drain the HTTP listener too so the
+	// caller does not end up with a half-up dual stack when it requested both.
+	go func() {
+		err := s.httpsServer.ListenAndServeTLS(certPath, keyPath)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("https listener %s: %w", httpsAddr, err)
+			// Best-effort: stop the HTTP listener so the daemon returns rather
+			// than hanging on the still-alive HTTP goroutine.
+			shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = s.httpServer.Shutdown(shutCtx)
+			return
+		}
+		errCh <- nil
+	}()
+
+	return errCh
+}
+
+// Shutdown gracefully shuts down the HTTP (and, in dual mode, HTTPS) server,
+// waiting for in-flight requests to complete or until the context is
+// cancelled. It is safe to call when the server was never started (it returns
+// nil). The daemon calls this during signal-handled teardown before closing
+// the EventStore so that in-flight handlers do not Append to a closed store.
+//
+// In dual mode both listeners are drained; the first shutdown error is
+// returned but both are always attempted.
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.httpServer == nil {
-		return nil
+	// Drain both listeners. The first non-nil error is returned, but both are
+	// always attempted so a stuck HTTP shutdown does not skip the HTTPS drain
+	// (and vice versa). firstErr is assigned via a helper to avoid a govet
+	// nilness false-positive on the inline `&& firstErr == nil` check.
+	var firstErr error
+	setFirst := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
-	return s.httpServer.Shutdown(ctx)
+	if s.httpServer != nil {
+		setFirst(s.httpServer.Shutdown(ctx))
+	}
+	if s.httpsServer != nil {
+		setFirst(s.httpsServer.Shutdown(ctx))
+	}
+	return firstErr
 }
 
 // SetTLS enables TLS for the server. When enabled, ListenAndServe will serve

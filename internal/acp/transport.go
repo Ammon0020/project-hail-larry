@@ -383,8 +383,8 @@ func (c *acpClientImpl) ReadTextFile(ctx context.Context, params acp.ReadTextFil
 	if c.workspaceMgr == nil {
 		return acp.ReadTextFileResponse{}, fmt.Errorf("workspace manager not configured")
 	}
-	relPath := toRelativePath(c.workspacePath, params.Path)
-	content, _, _, err := c.workspaceMgr.ReadFile(ctx, c.workspaceID, relPath)
+	workspaceID, relPath := c.resolveWorkspaceFile(ctx, params.Path)
+	content, _, _, err := c.workspaceMgr.ReadFile(ctx, workspaceID, relPath)
 	if err != nil {
 		return acp.ReadTextFileResponse{}, err
 	}
@@ -405,8 +405,8 @@ func (c *acpClientImpl) WriteTextFile(ctx context.Context, params acp.WriteTextF
 	if !ok {
 		return acp.WriteTextFileResponse{}, fmt.Errorf("workspace manager does not support writing")
 	}
-	relPath := toRelativePath(c.workspacePath, params.Path)
-	if _, err := fw.WriteFile(ctx, c.workspaceID, relPath, params.Content, 0); err != nil {
+	workspaceID, relPath := c.resolveWorkspaceFile(ctx, params.Path)
+	if _, err := fw.WriteFile(ctx, workspaceID, relPath, params.Content, 0); err != nil {
 		return acp.WriteTextFileResponse{}, err
 	}
 	// Broadcast a file-written event so the frontend can refresh its file tree
@@ -415,10 +415,67 @@ func (c *acpClientImpl) WriteTextFile(ctx context.Context, params acp.WriteTextF
 	c.emit(interfaces.Event{
 		Type:        interfaces.EventFileWritten,
 		SessionID:   c.sessionID,
-		WorkspaceID: c.workspaceID,
+		WorkspaceID: workspaceID,
 		Target:      relPath,
 	})
 	return acp.WriteTextFileResponse{}, nil
+}
+
+// resolveWorkspaceFile maps an agent-supplied path to a (workspaceID, relPath)
+// pair the workspace manager can act on. It enables multi-root agent sessions:
+// the session's primary workspace is tried first (preserving the pre-multi-root
+// behavior for relative paths and absolute paths inside the primary root), and
+// when an absolute path falls outside the primary root it is matched against
+// the other registered workspaces via workspaceMgr.List. A path that lives
+// under another registered workspace is resolved against that workspace; a
+// path that matches no registered workspace falls back to the primary
+// workspace, where the workspace manager's safeJoin will reject it with a
+// path-traversal error (the desired outcome — agents must not read arbitrary
+// filesystem locations).
+//
+// This is the client-side counterpart to the ACP `additionalDirectories`
+// field: telling the agent extra roots exist is only useful if our own
+// ReadTextFile/WriteTextFile can serve reads/writes against those same roots.
+func (c *acpClientImpl) resolveWorkspaceFile(ctx context.Context, path string) (workspaceID, relPath string) {
+	// Fast path: relative paths and absolute paths inside the primary workspace
+	// resolve exactly as they did before multi-root support.
+	primaryRel := toRelativePath(c.workspacePath, path)
+	if !filepath.IsAbs(filepath.Clean(path)) || !isOutsideWorkspace(c.workspacePath, path) {
+		return c.workspaceID, primaryRel
+	}
+	// Absolute path outside the primary workspace — look for a registered
+	// workspace that contains it. Without a workspace manager we can only
+	// fall back to the primary (which will fail the safeJoin traversal check).
+	if c.workspaceMgr == nil {
+		return c.workspaceID, primaryRel
+	}
+	wlist, listErr := c.workspaceMgr.List(ctx)
+	if listErr != nil {
+		return c.workspaceID, primaryRel
+	}
+	cleaned := filepath.Clean(path)
+	for _, w := range wlist {
+		if w.ID == c.workspaceID {
+			continue
+		}
+		if !filepath.IsAbs(w.Path) {
+			continue
+		}
+		rel, relErr := filepath.Rel(filepath.Clean(w.Path), cleaned)
+		if relErr != nil {
+			continue
+		}
+		if rel == "." {
+			return w.ID, "."
+		}
+		// Containment: rel must not climb out of the root.
+		if !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel) {
+			return w.ID, rel
+		}
+	}
+	// No registered workspace contains the path — fall back to primary so the
+	// workspace manager returns its standard traversal error to the agent.
+	return c.workspaceID, primaryRel
 }
 
 // Terminal methods are implemented in terminal.go.
@@ -463,6 +520,13 @@ func (t *Transport) StderrTail() string {
 		return ""
 	}
 	return t.stderr.String()
+}
+
+// SupportsEmbeddedContext reports whether the agent advertised the
+// embeddedContext prompt capability during Initialize. The value is captured
+// from the InitializeResponse and cached on the transport.
+func (t *Transport) SupportsEmbeddedContext() bool {
+	return t.promptCaps.EmbeddedContext
 }
 
 // Start launches the agent subprocess with the given command and args in
@@ -527,15 +591,39 @@ func (t *Transport) Initialize(ctx context.Context) (acp.InitializeResponse, err
 	return t.conn.Initialize(ctx, req)
 }
 
+// Authenticate calls the ACP authenticate method with the given method ID.
+// Agents that advertise authMethods in Initialize (e.g. Devin's browser PKCE
+// flow) require a successful authenticate before session/new or session/load.
+// methodId must be one of the IDs returned in InitializeResponse.AuthMethods.
+func (t *Transport) Authenticate(ctx context.Context, methodID string) error {
+	if t.conn == nil {
+		return fmt.Errorf("authenticate: transport not started")
+	}
+	req := acp.AuthenticateRequest{MethodId: methodID}
+	if err := req.Validate(); err != nil {
+		return fmt.Errorf("validate authenticate request: %w", err)
+	}
+	_, err := t.conn.Authenticate(ctx, req)
+	return err
+}
+
 // NewSession asks the agent to create a new ACP session rooted at cwd and
 // returns the new session ID alongside the agent's advertised session config
 // options (e.g. the model selector). The config options let the caller capture
 // the model config ID for later session/set_config_option calls (model
 // switching without restart).
-func (t *Transport) NewSession(ctx context.Context, cwd string) (string, []acp.SessionConfigOption, error) {
+//
+// additionalDirs is the list of extra absolute workspace roots to activate for
+// the session (ACP `additionalDirectories`). It expands the agent's filesystem
+// scope without changing cwd, which remains the base for relative paths. The
+// caller is responsible for capability-gating this list: pass nil/empty when
+// the agent did not advertise the additionalDirectories session capability
+// (the field is omitempty, so an empty slice serializes to nothing on the wire).
+func (t *Transport) NewSession(ctx context.Context, cwd string, additionalDirs []string) (string, []acp.SessionConfigOption, error) {
 	req := acp.NewSessionRequest{
-		Cwd:        cwd,
-		McpServers: t.mcpServers,
+		Cwd:                   cwd,
+		McpServers:            t.mcpServers,
+		AdditionalDirectories: additionalDirs,
 	}
 	// The SDK's Validate rejects a nil McpServers slice ("mcpServers is
 	// required"), so normalize nil to an empty slice. SetMcpServers leaves a
@@ -560,11 +648,19 @@ func (t *Transport) NewSession(ctx context.Context, cwd string) (string, []acp.S
 // (the ACP LoadSessionRequest requires it). Returns the loaded ACP session ID
 // (the same value passed in as acpSessionID) and the agent's advertised session
 // config options on success.
-func (t *Transport) LoadSession(ctx context.Context, acpSessionID string) (string, []acp.SessionConfigOption, error) {
+//
+// additionalDirs is the list of extra absolute workspace roots to activate for
+// the resumed session (ACP `additionalDirectories`). Per the spec the supplied
+// list is the complete resulting additional-root list for the loaded session and
+// may differ from any previously used list as long as cwd matches. The caller
+// capability-gates this list (pass nil/empty when unsupported); the field is
+// omitempty so an empty slice is not sent on the wire.
+func (t *Transport) LoadSession(ctx context.Context, acpSessionID string, additionalDirs []string) (string, []acp.SessionConfigOption, error) {
 	req := acp.LoadSessionRequest{
-		SessionId:  acp.SessionId(acpSessionID),
-		Cwd:        t.cwd,
-		McpServers: t.mcpServers,
+		SessionId:             acp.SessionId(acpSessionID),
+		Cwd:                   t.cwd,
+		McpServers:            t.mcpServers,
+		AdditionalDirectories: additionalDirs,
 	}
 	// The SDK's Validate rejects a nil McpServers slice ("mcpServers is
 	// required"), so normalize nil to an empty slice.

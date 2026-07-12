@@ -284,13 +284,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ openFiles, recentEdits, selection }),
     }),
-  sendPrompt: (sessionId: string, content: string, attachments?: Attachment[]) =>
+  sendPrompt: (sessionId: string, content: string, attachments?: Attachment[], profile?: string) =>
     apiFetch<{ status: string }>(`/sessions/${sessionId}/prompt`, {
       method: 'POST',
       body: JSON.stringify(
         attachments && attachments.length > 0
-          ? { content, attachments }
-          : { content },
+          ? { content, attachments, ...(profile ? { profile } : {}) }
+          : { content, ...(profile ? { profile } : {}) },
       ),
     }),
   /** Uploads an image file via multipart/form-data. Uses `fetch` directly
@@ -417,4 +417,20 @@ export async function patchMcpServer(name: string, enabled: boolean): Promise<vo
     method: 'PATCH',
     body: JSON.stringify({ enabled }),
   })
+}
+
+// ---- MCP health status ----
+
+/** Health status of a single MCP server, returned by GET /api/mcp/status. */
+export interface McpServerStatus {
+  name: string
+  enabled: boolean
+  status: 'healthy' | 'unhealthy' | 'disabled' | 'unknown'
+  error?: string
+}
+
+/** GET /api/mcp/status — on-demand health check of all configured MCP servers.
+ *  Called when the McpPopout opens. */
+export async function getMcpStatus(): Promise<McpServerStatus[]> {
+  return apiFetch<McpServerStatus[]>('/mcp/status')
 }

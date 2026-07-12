@@ -290,6 +290,11 @@ type ACPClient interface {
 
 	// CloseSession closes a session.
 	CloseSession(ctx context.Context, sessionID string) error
+
+	// SetSessionProfile sets the user's selected profile (Code/Ask/Plan) for a
+	// session. The profile middleware reads this before each prompt and injects
+	// the corresponding system instructions.
+	SetSessionProfile(sessionID, profile string)
 }
 
 // ----------------------------------------------------------------------------

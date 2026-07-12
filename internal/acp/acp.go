@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +51,9 @@ type Client struct {
 	// the agent on session/new and session/load. When empty, no MCP servers are
 	// passed (the pre-MCP-config behavior).
 	mcpConfigPath string
+	// profileMiddleware holds the profile mode middleware so the REST handler
+	// can call SetProfile before each prompt. Nil until wired by the daemon.
+	profileMiddleware *ProfileMiddleware
 }
 
 // AgentInfo describes a registered agent harness.
@@ -123,8 +127,8 @@ type Session struct {
 // transport has been started. Defining it as an interface lets tests inject a
 // mock transport without spawning a real agent process. *Transport satisfies it.
 type transportLike interface {
-	NewSession(ctx context.Context, cwd string) (string, []acp.SessionConfigOption, error)
-	LoadSession(ctx context.Context, acpSessionID string) (string, []acp.SessionConfigOption, error)
+	NewSession(ctx context.Context, cwd string, additionalDirs []string) (string, []acp.SessionConfigOption, error)
+	LoadSession(ctx context.Context, acpSessionID string, additionalDirs []string) (string, []acp.SessionConfigOption, error)
 	ListSessions(ctx context.Context) ([]acp.SessionInfo, error)
 	DeleteSession(ctx context.Context, acpSessionID string) error
 	Prompt(ctx context.Context, sessionID, content string, resources []ContextResource, attachments []interfaces.Attachment) (acp.StopReason, error)
@@ -132,6 +136,9 @@ type transportLike interface {
 	Close() error
 	StderrTail() string
 	SetSessionConfigOption(ctx context.Context, sessionID, configID, value string) error
+	// SupportsEmbeddedContext reports whether the agent advertised the
+	// embeddedContext prompt capability during Initialize.
+	SupportsEmbeddedContext() bool
 }
 
 // defaultConversationName is the placeholder name used until the first prompt
@@ -217,6 +224,27 @@ func (c *Client) SetMcpConfigPath(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.mcpConfigPath = path
+}
+
+// SetProfileMiddleware installs the profile middleware so the REST handler can
+// set per-session profiles via SetSessionProfile. Called by the daemon during
+// initialization.
+func (c *Client) SetProfileMiddleware(m *ProfileMiddleware) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.profileMiddleware = m
+}
+
+// SetSessionProfile sets the user's selected profile (Code/Ask/Plan) for a
+// session. The profile middleware reads this before each prompt and injects
+// the corresponding system instructions.
+func (c *Client) SetSessionProfile(sessionID, profile string) {
+	c.mu.Lock()
+	pm := c.profileMiddleware
+	c.mu.Unlock()
+	if pm != nil {
+		pm.SetProfile(sessionID, profile)
+	}
 }
 
 // loadMcpServersLocked reads mcp.json and returns the enabled, capability-
@@ -357,6 +385,49 @@ func (c *Client) resolveWorkspacePath(ctx context.Context, workspaceID string) s
 	return workspaceID
 }
 
+// collectAdditionalDirsLocked returns the absolute paths of every registered
+// workspace except the session's primary workspace, suitable for passing as the
+// ACP `additionalDirectories` field on session/new and session/load. The
+// primary workspace is excluded both by ID (primaryID) and by path
+// (primaryPath, after filepath.Clean) so a workspace registered twice or
+// resolved via a different ID is still skipped. Non-absolute paths and
+// duplicates of the primary are skipped; the resulting slice has no ordering
+// guarantees beyond what workspaceMgr.List provides (currently sorted by name).
+//
+// The caller must hold c.mu (this reads c.workspaceMgr, which is immutable after
+// construction but the lock is held by startTransportLocked for consistency with
+// the surrounding workspace-path resolution).
+func (c *Client) collectAdditionalDirsLocked(ctx context.Context, primaryID, primaryPath string) []string {
+	if c.workspaceMgr == nil {
+		return nil
+	}
+	wlist, err := c.workspaceMgr.List(ctx)
+	if err != nil {
+		return nil
+	}
+	primaryClean := filepath.Clean(primaryPath)
+	seen := make(map[string]bool, len(wlist))
+	out := make([]string, 0, len(wlist))
+	for _, w := range wlist {
+		if w.ID == primaryID {
+			continue
+		}
+		if !filepath.IsAbs(w.Path) {
+			continue
+		}
+		cleaned := filepath.Clean(w.Path)
+		if cleaned == primaryClean {
+			continue
+		}
+		if seen[cleaned] {
+			continue
+		}
+		seen[cleaned] = true
+		out = append(out, cleaned)
+	}
+	return out
+}
+
 // startTransportLocked spawns the agent process for a session and performs the
 // ACP handshake (Initialize + NewSession). The caller must hold c.mu. It is used
 // both on initial creation and to lazily (re)start a session loaded from disk or
@@ -412,6 +483,23 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 	// build capability-gated content blocks (inline images vs. resource links).
 	transport.promptCaps = initResp.AgentCapabilities.PromptCapabilities
 
+	// Authenticate before opening a session when the agent requires it.
+	// Devin (and similar hosts) advertise authMethods and reject
+	// session/new with "ACP host has not authenticated" until the client
+	// completes authenticate. Prefer an agent-handled method (browser
+	// PKCE, etc.); skip env_var/terminal methods here — those need UI
+	// credential collection that is not yet wired.
+	if methodID := selectAgentAuthMethod(initResp.AuthMethods); methodID != "" {
+		if authErr := transport.Authenticate(ctx, methodID); authErr != nil {
+			stderr := transport.StderrTail()
+			_ = transport.Close()
+			if strings.TrimSpace(stderr) != "" {
+				return fmt.Errorf("authenticate agent (%s): %w (agent stderr: %s)", methodID, authErr, strings.TrimSpace(stderr))
+			}
+			return fmt.Errorf("authenticate agent (%s): %w", methodID, authErr)
+		}
+	}
+
 	// Load MCP server config and filter it against the agent's advertised
 	// McpCapabilities before any session RPC. A missing config file is not an
 	// error (no servers configured); a parse error is logged and treated as
@@ -432,7 +520,19 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 	// advertised the loadSession capability AND we have a persisted ACP session
 	// ID. On any failure (session gone, capability unsupported, transport error)
 	// we fall back to NewSession and overwrite the persisted ID.
-	acpSessionID, configOpts, err := c.resolveACPSession(ctx, transport, initResp, session, workspacePath)
+	//
+	// Build the ACP `additionalDirectories` list from every registered
+	// workspace except the session's primary cwd, so multi-root / monorepo
+	// agents can see files outside the primary workspace. The list is
+	// capability-gated: when the agent did not advertise the
+	// additionalDirectories session capability we pass nil (the field is
+	// omitempty, so nothing extra is sent on the wire and we avoid sending
+	// multi-root hints to agents that won't understand them).
+	var additionalDirs []string
+	if initResp.AgentCapabilities.SessionCapabilities.AdditionalDirectories != nil {
+		additionalDirs = c.collectAdditionalDirsLocked(ctx, session.Workspace, workspacePath)
+	}
+	acpSessionID, configOpts, err := c.resolveACPSession(ctx, transport, initResp, session, workspacePath, additionalDirs)
 	if err != nil {
 		_ = transport.Close()
 		return fmt.Errorf("new acp session: %w", err)
@@ -486,7 +586,12 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 // returns the agent's advertised session config options (e.g. the model
 // selector) so the caller can capture the model config ID for later
 // session/set_config_option calls.
-func (c *Client) resolveACPSession(ctx context.Context, tr transportLike, initResp acp.InitializeResponse, session *Session, workspacePath string) (string, []acp.SessionConfigOption, error) {
+//
+// additionalDirs is forwarded verbatim to NewSession/LoadSession as the ACP
+// `additionalDirectories` field. The caller is responsible for capability-
+// gating the list (pass nil when the agent did not advertise the
+// additionalDirectories session capability).
+func (c *Client) resolveACPSession(ctx context.Context, tr transportLike, initResp acp.InitializeResponse, session *Session, workspacePath string, additionalDirs []string) (string, []acp.SessionConfigOption, error) {
 	persistedID := session.ACPSessionID
 	canLoad := initResp.AgentCapabilities.LoadSession
 	canList := initResp.AgentCapabilities.SessionCapabilities.List != nil
@@ -499,7 +604,7 @@ func (c *Client) resolveACPSession(ctx context.Context, tr transportLike, initRe
 	if persistedID != "" && canLoad && canList {
 		if sessions, err := tr.ListSessions(ctx); err == nil {
 			if !sessionExists(sessions, persistedID) {
-				return tr.NewSession(ctx, workspacePath)
+				return tr.NewSession(ctx, workspacePath, additionalDirs)
 			}
 			// Session confirmed present — attempt LoadSession below.
 		}
@@ -507,12 +612,12 @@ func (c *Client) resolveACPSession(ctx context.Context, tr transportLike, initRe
 	}
 
 	if persistedID != "" && canLoad {
-		if loadedID, opts, loadErr := tr.LoadSession(ctx, persistedID); loadErr == nil {
+		if loadedID, opts, loadErr := tr.LoadSession(ctx, persistedID, additionalDirs); loadErr == nil {
 			return loadedID, opts, nil
 		}
 		// Fall through to NewSession on any load error.
 	}
-	return tr.NewSession(ctx, workspacePath)
+	return tr.NewSession(ctx, workspacePath, additionalDirs)
 }
 
 // findModelConfigID scans the agent's advertised session config options for the
@@ -649,11 +754,19 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 	finalContent := content
 	if pipeline != nil {
 		workspacePath := c.resolveWorkspacePath(ctx, session.Workspace)
+		// Populate EmbeddedContext from the agent's advertised prompt
+		// capabilities so middlewares can dynamically choose between
+		// structured resource blocks and text injection.
+		embeddedCtx := false
+		if session.transport != nil {
+			embeddedCtx = session.transport.SupportsEmbeddedContext()
+		}
 		pc := &PromptContext{
-			SessionID:     sessionID,
-			WorkspaceID:   session.Workspace,
-			WorkspacePath: workspacePath,
-			UserPrompt:    content,
+			SessionID:       sessionID,
+			WorkspaceID:     session.Workspace,
+			WorkspacePath:   workspacePath,
+			UserPrompt:      content,
+			EmbeddedContext: embeddedCtx,
 		}
 		if action, res := pipeline.RunBeforePrompt(ctx, pc); action == ActionInject {
 			resources = res.Resources
@@ -1126,6 +1239,22 @@ func (c *Client) ListSessions() []Session {
 }
 
 // generateSessionID generates a unique session ID using crypto/rand.
+
+// selectAgentAuthMethod returns the ID of the first agent-handled auth method
+// advertised in the Initialize response. Agent methods (browser PKCE, device
+// code, etc.) are ones the agent can complete without the client collecting
+// secrets. Env-var and terminal methods need interactive credential input that
+// is not yet wired into the UI, so they are skipped. Returns "" when no
+// suitable method is available (including when the agent requires no auth).
+func selectAgentAuthMethod(methods []acp.AuthMethod) string {
+	for _, m := range methods {
+		if m.Agent != nil && m.Agent.Id != "" {
+			return m.Agent.Id
+		}
+	}
+	return ""
+}
+
 func generateSessionID() (string, error) {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {

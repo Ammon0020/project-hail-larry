@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Exec(git)",
+      "Exec(go build)",
+      "Exec(go test)",
+      "Exec(go vet)",
+      "Exec(go doc)",
+      "Exec(go env)",
+      "Exec(go list)",
+      "Exec(go get)",
+      "Exec(go mod)",
+      "Exec(gofmt)",
+      "Exec(golangci-lint run)",
+      "Exec(golangci-lint)",
+      "Exec(make lint)",
+      "Exec(npm run)",
+      "Exec(npm install)",
+      "Exec(npm list)",
+      "Exec(npx eslint)",
+      "Exec(npx tsc)",
+      "Exec(./build.sh)",
+      "Exec(./build.ps1)"
+    ],
+    "deny": [
+      "Exec(sudo)",
+      "Exec(rm -rf /)",
+      "Exec(rm -rf ~)",
+      "Exec(rm -rf $HOME)",
+      "Exec(:(){ :|:& };:)",
+      "Exec(mkfs)",
+      "Exec(dd if=/dev/zero of=/dev/sda)",
+      "Exec(git push --force)",
+      "Exec(git push -f)",
+      "Write(.env*)",
+      "Write(*.lock)",
+      "Write(.git/**)"
+    ]
+  }
+}

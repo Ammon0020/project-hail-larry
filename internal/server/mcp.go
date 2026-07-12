@@ -185,3 +185,33 @@ func (s *Server) mcpConfigPath() string {
 	}
 	return s.deps.McpConfigPath
 }
+
+// handleGetMcpStatus performs on-demand health checks for all configured MCP
+// servers and returns a JSON array of their statuses. stdio servers are checked
+// via exec.LookPath (binary exists?); http/sse servers via TCP dial. Disabled
+// servers are reported as "disabled" without performing any check.
+//
+// This is called by the frontend when the MCP popout opens — there is no
+// background health-check ticker, keeping the daemon lightweight.
+func (s *Server) handleGetMcpStatus(w http.ResponseWriter, _ *http.Request) {
+	path := s.mcpConfigPath()
+	if path == "" {
+		writeError(w, http.StatusServiceUnavailable, "mcp config not configured")
+		return
+	}
+
+	f, err := mcp.Load(path)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load mcp config: "+err.Error())
+		return
+	}
+
+	statuses := mcp.CheckHealth(f, 0)
+
+	// Return an empty array instead of null when no servers are configured.
+	if statuses == nil {
+		statuses = []mcp.ServerStatus{}
+	}
+
+	writeJSON(w, http.StatusOK, statuses)
+}

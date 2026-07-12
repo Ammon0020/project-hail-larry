@@ -53,6 +53,19 @@ type SystemMessages struct {
 	// ConversationTransferHeader is the header for a transferred-conversation
 	// summary. Supports the {agentName} placeholder.
 	ConversationTransferHeader string `json:"conversationTransferHeader"`
+	// ProfileHeader is the header for the active profile section injected by
+	// ProfileMiddleware. Supports the {profile} placeholder.
+	ProfileHeader string `json:"profileHeader"`
+	// ProfileCodeInstructions is the system instruction injected when the user
+	// selects "Code" mode (the default).
+	ProfileCodeInstructions string `json:"profileCodeInstructions"`
+	// ProfileAskInstructions is the system instruction injected when the user
+	// selects "Ask" mode — the agent should answer questions without modifying
+	// files.
+	ProfileAskInstructions string `json:"profileAskInstructions"`
+	// ProfilePlanInstructions is the system instruction injected when the user
+	// selects "Plan" mode — the agent should produce a plan before acting.
+	ProfilePlanInstructions string `json:"profilePlanInstructions"`
 
 	// MaxContextBytes caps the total injected context for a single middleware
 	// section (applied as a final safety net).
@@ -91,6 +104,10 @@ func DefaultSystemMessages() *SystemMessages {
 		OpenFilesHeader:            "## Open Files",
 		RecentEditsHeader:          "## Recently Edited Files",
 		ConversationTransferHeader: "## Previous Conversation (transferred from {agentName})",
+		ProfileHeader:              "## Active Profile: {profile}",
+		ProfileCodeInstructions:    "You are in CODE mode (default). Write code, edit files, run commands, and implement changes as needed.",
+		ProfileAskInstructions:     "You are in ASK mode. Answer questions, explain concepts, and analyze the codebase. Do NOT modify any files, create new files, or run commands that write to disk. If you believe a code change is needed, describe it in detail but do not execute it.",
+		ProfilePlanInstructions:    "You are in PLAN mode. Before writing any code or running any commands, generate a detailed step-by-step implementation plan. List every file you intend to modify or create, describe each change, and ask for explicit confirmation before proceeding to implementation.",
 		MaxContextBytes:            8 * 1024,
 		MaxContextFiles:            200,
 		MaxFileTreeDepth:           3,

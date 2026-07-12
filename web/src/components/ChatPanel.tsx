@@ -2,7 +2,7 @@ import { useState, useRef, useMemo, useEffect, type ChangeEvent, type CSSPropert
 import { WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UploadResult } from '@/lib/api'
-import { getMcpConfig, patchMcpServer } from '@/lib/api'
+import { getMcpConfig, patchMcpServer, getMcpStatus, type McpServerStatus } from '@/lib/api'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatComposer } from './ChatComposer'
 import { ConversationView } from './ConversationView'
@@ -81,7 +81,7 @@ export function ChatPanel({
   isDesktop: boolean
   pendingPermissions: PendingPermission[]
   activeSessionId: string | null
-  onSendMessage: (sessionId: string, content: string, attachments?: Attachment[]) => Promise<void>
+  onSendMessage: (sessionId: string, content: string, attachments?: Attachment[], profile?: string) => Promise<void>
   onCreateSession: (agentId: string, modelId: string) => Promise<string>
   onPermissionResponse: (requestId: string, decision: string) => void
   onSelectSession: (sessionId: string) => void
@@ -159,6 +159,37 @@ export function ChatPanel({
   const [mcpTogglingServer, setMcpTogglingServer] = useState<string | null>(null)
   const [mcpConfigChanged, setMcpConfigChanged] = useState(false)
 
+  // MCP health status — keyed by server name, fetched on demand from
+  // `GET /api/mcp/status` (see `internal/server/mcp.go` handleGetMcpStatus).
+  // Absent entries cause McpPopout to fall back to enabled-based coloring.
+  const [mcpHealth, setMcpHealth] = useState<Record<string, McpServerStatus>>({})
+  // True while a `getMcpStatus()` refresh is in flight. Drives a small
+  // spinner in the McpPopout header so the user can tell dots may update.
+  const [mcpStatusLoading, setMcpStatusLoading] = useState(false)
+
+  // Mounted guard (#6) — prevents setState after the component unmounts
+  // (e.g. a health fetch resolving after a route change). Combined with the
+  // request-generation counter below, this makes loadMcpStatus race-safe.
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  // Request-generation counter for loadMcpStatus (#3/#4). Each call
+  // increments this; if a newer call has started by the time an older
+  // `getMcpStatus()` resolves, the older response is dropped so a slow
+  // in-flight request can't overwrite a fresher one (e.g. user toggles a
+  // server, then opens the popout again before the first refresh returns).
+  const mcpStatusReqRef = useRef(0)
+
+  // Profile mode state — owned here so it can be passed to both the composer
+  // (for the dropdown) and to onSendMessage (for backend injection).
+  const [profile, setProfile] = useState<'Code' | 'Ask' | 'Plan'>('Code')
+
+
   async function loadMcpServers() {
     try {
       const text = await getMcpConfig()
@@ -175,12 +206,54 @@ export function ChatPanel({
     }
   }
 
+  /**
+   * Refresh MCP health status from `GET /api/mcp/status` and merge results
+   * into the `mcpHealth` map keyed by server name. Safe to call any time —
+   * failures are logged and clear the health map (#7) so stale dots don't
+   * linger, and they never block the toggle flow or leave the popout stuck
+   * in a loading state.
+   *
+   * Race safety (#3/#4/#6): a request-generation counter (`mcpStatusReqRef`)
+   * drops responses from any call superseded by a newer one, and a mounted
+   * guard skips setState entirely after unmount. This prevents a slow
+   * in-flight `getMcpStatus()` from overwriting a fresher result or hitting
+   * an unmounted component.
+   */
+  async function loadMcpStatus() {
+    const reqId = ++mcpStatusReqRef.current
+    setMcpStatusLoading(true)
+    try {
+      const statuses = await getMcpStatus()
+      if (reqId !== mcpStatusReqRef.current) return // stale — a newer call won
+      if (!mountedRef.current) return
+      const next: Record<string, McpServerStatus> = {}
+      for (const s of statuses) next[s.name] = s
+      setMcpHealth(next)
+    } catch (e) {
+      // Don't block the UI if the health check fails — but DO clear the
+      // health map (#7) so we don't keep showing stale dots from a previous
+      // successful fetch. The popout falls back to enabled-based coloring.
+      if (reqId !== mcpStatusReqRef.current) return
+      if (!mountedRef.current) return
+      console.error('Failed to load MCP status:', e)
+      setMcpHealth({})
+    } finally {
+      if (reqId === mcpStatusReqRef.current && mountedRef.current) {
+        setMcpStatusLoading(false)
+      }
+    }
+  }
+
   useEffect(() => {
     // loadMcpServers is async: setState runs after `await getMcpConfig()`,
     // so it's not synchronous within this effect body. The disable is needed
     // because the linter can't see through the function boundary.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadMcpServers()
+    // Health status is refreshed on-demand when the popout opens
+    // (onMcpPopoutOpen → loadMcpStatus), so we don't kick off a mount-time
+    // `getMcpStatus()` here — that would dial every MCP server's health
+    // check on ChatPanel mount even if the user never opens the popout (#10).
   }, [])
 
   const handleToggleMcpServer = async (name: string, enabled: boolean) => {
@@ -188,6 +261,12 @@ export function ChatPanel({
     try {
       await patchMcpServer(name, enabled)
       await loadMcpServers()
+      // Refresh health after a successful toggle so the dot reflects the
+      // new state (e.g. a server just enabled may now report healthy or
+      // unhealthy). Awaited (#8) so the per-row spinner stays visible
+      // through the health refresh — clearing `mcpTogglingServer` only
+      // after the dots have updated avoids a brief flash of stale color.
+      await loadMcpStatus()
       setMcpConfigChanged(true)
     } catch (e) {
       console.error('Failed to toggle MCP server:', e)
@@ -409,6 +488,7 @@ export function ChatPanel({
         sessionId,
         content,
         attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
+        profile,
       )
       setPendingAttachments([])
       setPendingPreviews([])
@@ -628,8 +708,11 @@ export function ChatPanel({
       <ChatComposer
         models={currentAgent?.models ?? []}
         mcpServers={mcpServers}
+        mcpStatusByName={mcpHealth}
+        mcpStatusLoading={mcpStatusLoading}
         onToggleMcpServer={handleToggleMcpServer}
         mcpTogglingServer={mcpTogglingServer}
+        onMcpPopoutOpen={loadMcpStatus}
         effectiveModelId={effectiveModelId}
         onModelChange={handleModelChange}
         input={input}
@@ -644,6 +727,8 @@ export function ChatPanel({
         uploading={uploading}
         uploadError={uploadError}
         disabled={sending || agents.length === 0}
+        profile={profile}
+        onProfileChange={setProfile}
       />
 
       <WorkspaceBar

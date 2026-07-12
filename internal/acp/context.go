@@ -60,6 +60,10 @@ type PromptContext struct {
 	// PromptCount is the zero-based index of this prompt within its session
 	// (0 on the very first prompt, 1 on the second, and so on).
 	PromptCount int
+	// EmbeddedContext is true when the agent advertised the embeddedContext
+	// prompt capability. Middlewares use this to decide whether to emit
+	// structured resource blocks (preferred) or fall back to text injection.
+	EmbeddedContext bool
 }
 
 // PromptMiddleware is a single stage in the pre-prompt pipeline. Each

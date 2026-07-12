@@ -43,13 +43,16 @@ const (
 
 // Config holds daemon configuration loaded from ~/.local-agent/.
 type Config struct {
-	Port              int    `json:"port"`
-	Host              string `json:"host"`
-	DataDir           string `json:"dataDir"`
-	DBPath            string `json:"dbPath"`
-	TLSEnabled        bool   `json:"tlsEnabled"`
-	TLSCertDir        string `json:"tlsCertDir"`
-	PairingTTLSeconds int    `json:"pairingTtlSeconds"`
+	Port       int    `json:"port"`
+	Host       string `json:"host"`
+	DataDir    string `json:"dataDir"`
+	DBPath     string `json:"dbPath"`
+	TLSEnabled bool   `json:"tlsEnabled"`
+	TLSCertDir string `json:"tlsCertDir"`
+	// HTTPSPort is the TCP port for the HTTPS listener in dual HTTP+HTTPS
+	// mode (used when TLSEnabled is true). 0 means "Port + 1" at runtime.
+	HTTPSPort         int `json:"httpsPort,omitempty"`
+	PairingTTLSeconds int `json:"pairingTtlSeconds"`
 	// CredentialInactivityTTLSeconds is the sliding-window inactivity expiry for
 	// paired device credentials, in seconds. > 0 enables sliding expiry (a device
 	// idle this long must re-pair); 0 disables it (credentials never expire). It
@@ -101,11 +104,12 @@ func DefaultConfigOrError() (*Config, error) {
 		Host:    defaultBindHost,
 		DataDir: dataDir,
 		DBPath:  filepath.Join(dataDir, "local-agent.db"),
-		// TLSEnabled defaults to true so device credentials (Bearer tokens) are
-		// never sent in cleartext over the LAN. The self-signed cert generation
-		// (internal/server/tls.go EnsureSelfSignedCert) covers localhost,
-		// 127.0.0.1, and all LAN IPs. Users who want plain HTTP can set
-		// "tlsEnabled": false in ~/.local-agent/config.json.
+		// TLSEnabled defaults to true so the daemon runs in dual HTTP+HTTPS
+		// mode: HTTP on Port (cleartext for LAN home use) and HTTPS on
+		// HTTPSPort (Port+1 by default) for coffee-shop TLS. The self-signed
+		// cert generation (internal/server/tls.go EnsureSelfSignedCert)
+		// covers localhost, 127.0.0.1, and all LAN IPs. Users who want plain
+		// HTTP only can set "tlsEnabled": false in ~/.local-agent/config.json.
 		TLSEnabled:        true,
 		TLSCertDir:        filepath.Join(dataDir, "tls"),
 		PairingTTLSeconds: 300,
@@ -296,11 +300,15 @@ func New(cfg *Config) (*Daemon, error) {
 	// for injection into the first prompt of a session rebound to a new agent.
 	// RebindSession calls SetTransfer on it after exporting the prior history.
 	conversationTransfer := acp.NewConversationTransferMiddleware(systemMessages)
+	// ProfileMiddleware injects Code/Ask/Plan system instructions before each
+	// prompt. It is registered in the pipeline and also wired into the ACP
+	// client so the REST handler can set per-session profiles.
+	profileMiddleware := acp.NewProfileMiddleware(systemMessages)
 	// Inject workspace context (file tree, git status, AGENTS.md) into the
 	// first prompt of each session so agents don't shell out to discover files,
 	// plus per-prompt time/open-files/recent-edits context. The conversation
 	// transfer middleware runs after the first-prompt context so the workspace
-	// bundle comes first, then the transferred conversation.
+	// bundle comes first, then the transferred conversation, then the profile.
 	acpClient.SetPipeline(acp.NewPromptPipeline(
 		acp.NewFirstPromptContextMiddleware(workspaceMgr, systemMessages),
 		acp.NewTimeMiddleware(systemMessages),
@@ -308,7 +316,9 @@ func New(cfg *Config) (*Daemon, error) {
 		acp.NewOpenFilesResourceMiddleware(openFilesTracker, workspaceMgr, systemMessages),
 		acp.NewRecentEditsMiddleware(openFilesTracker, systemMessages),
 		conversationTransfer,
+		profileMiddleware,
 	))
+	acpClient.SetProfileMiddleware(profileMiddleware)
 	// Give the client access to the event store (for conversation export on
 	// rebind) and the transfer middleware (so RebindSession can queue the
 	// exported transcript for the new agent's first prompt).
@@ -453,9 +463,21 @@ func (d *Daemon) Start(ctx context.Context) error {
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// If TLS is enabled, generate (or reuse) a self-signed certificate and
-	// tell the server to serve over HTTPS.
-	scheme := "http"
+	// Resolve the HTTPS port. A configured HTTPSPort wins; 0 means "Port + 1"
+	// so the default dual-stack is 7337 (HTTP) + 7338 (HTTPS) with no extra
+	// config. This is computed even when TLS is disabled so the value is
+	// deterministic for status/logging if the user inspects it later.
+	httpsPort := d.config.HTTPSPort
+	if httpsPort == 0 {
+		httpsPort = d.config.Port + 1
+	}
+	httpsAddr := fmt.Sprintf("%s:%d", d.config.Host, httpsPort)
+
+	// Dual HTTP+HTTPS mode: TLS enabled means the daemon listens on BOTH the
+	// cleartext HTTP port (for LAN home use) and the TLS HTTPS port (for
+	// coffee-shop / untrusted networks). The user picks a scheme by typing
+	// http://IP:port or https://IP:httpsPort — no restart, no config flip.
+	// HTTP-only mode (TLSEnabled false) keeps the legacy single-listener path.
 	if d.config.TLSEnabled {
 		certDir := d.config.TLSCertDir
 		if certDir == "" {
@@ -465,23 +487,44 @@ func (d *Daemon) Start(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("ensure tls cert: %w", err)
 		}
+		// SetTLS stores the cert/key paths so the single-server ListenAndServe
+		// path (used by tests) still works; the daemon uses ListenDual below.
 		d.server.SetTLS(certPath, keyPath)
-		scheme = "https"
-	} else if d.config.Host == "" || d.config.Host == defaultBindHost {
-		// TLS is disabled and the daemon is bound to all interfaces — every
-		// request, including Bearer tokens, travels in cleartext on the LAN.
-		// Warn loudly so a user who flipped tlsEnabled off understands the
-		// exposure. (An empty Host is equivalent to 0.0.0.0 / all interfaces.)
-		log.Printf("WARNING: TLS is disabled and the server is bound to 0.0.0.0 — all traffic including credentials will be sent in cleartext on the network. Set tlsEnabled: true in config or bind to 127.0.0.1.")
+
+		log.Printf("Local Agent Interface daemon started")
+		log.Printf("  HTTP:  http://%s", addr)
+		log.Printf("  HTTPS: https://%s  (self-signed)", httpsAddr)
+		log.Printf("Data directory: %s", d.config.DataDir)
+
+		// Start both listeners. ListenDual returns a channel that receives
+		// the first non-ErrServerClosed error from either listener; a bind
+		// failure on HTTPS tears down HTTP too (fail-fast) so the user is
+		// not silently left with only cleartext when they requested dual.
+		errCh := d.server.ListenDual(addr, httpsAddr, certPath, keyPath)
+		select {
+		case err := <-errCh:
+			d.cleanup()
+			return err
+		case <-ctx.Done():
+			log.Println("Shutting down daemon...")
+			d.cleanup()
+			return nil
+		}
 	}
 
-	// Start HTTP server in a goroutine.
+	// HTTP-only path (TLSEnabled false). Warn loudly when bound to all
+	// interfaces: every request — including Bearer tokens — travels in
+	// cleartext on the LAN, and there is no HTTPS listener to fall back to.
+	if d.config.Host == "" || d.config.Host == defaultBindHost {
+		log.Printf("WARNING: TLS is disabled and the HTTP server is bound to 0.0.0.0 — all traffic including credentials will be sent in cleartext on the network. Set tlsEnabled: true in config or bind to 127.0.0.1.")
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- d.server.ListenAndServe(addr)
 	}()
 
-	log.Printf("Local Agent Interface daemon started on %s://%s", scheme, addr)
+	log.Printf("Local Agent Interface daemon started on http://%s", addr)
 	log.Printf("Data directory: %s", d.config.DataDir)
 
 	select {

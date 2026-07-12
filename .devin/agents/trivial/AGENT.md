@@ -1,6 +1,6 @@
 ---
 name: trivial
-description: Lowest difficulty tier. Quick tasks, small fixes, and targeted lookups. Uses a fast, inexpensive model.
+description: Lowest difficulty tier. Quick tasks, small fixes, and targeted lookups. E.g. "Is this feature implemented?". Uses a fast, inexpensive model.
 model: swe-1-7
 ---
 

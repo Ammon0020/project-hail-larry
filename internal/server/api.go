@@ -859,6 +859,7 @@ func (s *Server) handleSendPrompt(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
 	var req struct {
 		Content     string `json:"content"`
+		Profile     string `json:"profile"` // "Code" | "Ask" | "Plan" (optional, defaults to Code)
 		Attachments []struct {
 			ID       string `json:"id"`
 			Name     string `json:"name"`
@@ -874,6 +875,12 @@ func (s *Server) handleSendPrompt(w http.ResponseWriter, r *http.Request) {
 	if content == "" {
 		writeError(w, http.StatusBadRequest, "prompt content is required")
 		return
+	}
+
+	// Set the user's selected profile mode before sending the prompt so the
+	// profile middleware injects the corresponding system instructions.
+	if req.Profile != "" {
+		s.deps.ACPClient.SetSessionProfile(sessionID, req.Profile)
 	}
 
 	// Resolve each attachment ID to an on-disk path via the uploads manager so

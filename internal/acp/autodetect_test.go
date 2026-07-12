@@ -376,3 +376,39 @@ func TestCodexAutodetectNoTUIFallback(t *testing.T) {
 	}
 	t.Logf("correct: codex agent detected with Command=%q", codexAgent.Command)
 }
+
+func TestIsProvidersListUnsupported(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{`providers/list failed: {"code":-32601,"message":"Method not found"}`, true},
+		{"providers/list not supported", true},
+		{"initialize failed: peer disconnected", false},
+		{"METHOD NOT FOUND", true},
+	}
+	for _, tc := range cases {
+		if got := isProvidersListUnsupported(tc.in); got != tc.want {
+			t.Errorf("isProvidersListUnsupported(%q)=%v want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestTruncateDiag(t *testing.T) {
+	if got := truncateDiag("  hello  ", 100); got != "hello" {
+		t.Errorf("truncateDiag trim = %q", got)
+	}
+	long := strings.Repeat("a", 50)
+	got := truncateDiag(long, 10)
+	if !strings.HasPrefix(got, "aaaaaaaaaa") || !strings.HasSuffix(got, "…") {
+		t.Errorf("truncateDiag long = %q", got)
+	}
+}
+
+func TestStripANSI(t *testing.T) {
+	in := "\x1b[2K\x1b[Gauto - Auto"
+	if got := stripANSI(in); got != "auto - Auto" {
+		t.Errorf("stripANSI = %q", got)
+	}
+}

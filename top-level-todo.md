@@ -1,0 +1,2 @@
+- [x] Devin CLI ACP (`devin acp`) — authenticate before session/new; quiet providers/list MethodNotFound (2026-07-12)
+- [x] MCP health check — backend + UI status dots (healthy/unhealthy/disabled) in Tools popout (2026-07-12)

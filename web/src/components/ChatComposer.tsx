@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useState, useRef, useEffect } from 'react'
+import { type KeyboardEvent, useState, useRef, useEffect, useCallback } from 'react'
 import { Plus, ArrowUp, Square, X, Loader2, Wrench, Code } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { McpPopout } from './chat/McpPopout'
@@ -22,8 +22,25 @@ interface ChatComposerProps {
   disabled?: boolean
   /** MCP servers — moved here from ChatTabBar. */
   mcpServers: { name: string; enabled: boolean }[]
+  /**
+   * Optional health status keyed by server name (from `GET /api/mcp/status`).
+   * Forwarded to McpPopout to drive status dot colors; absent entries fall
+   * back to enabled-based coloring.
+   */
+  mcpStatusByName?: Record<string, { status: 'healthy' | 'unhealthy' | 'disabled' | 'unknown'; error?: string }>
+  /** True while a health refresh is in flight — shows a spinner in the popout header. */
+  mcpStatusLoading?: boolean
   onToggleMcpServer: (name: string, enabled: boolean) => void
   mcpTogglingServer: string | null
+  /**
+   * Fired when the user opens the MCP popout (false → true transition) so
+   * ChatPanel can refresh health status on demand. Not fired on close.
+   */
+  onMcpPopoutOpen?: () => void
+  /** Active profile mode (Code / Ask / Plan). */
+  profile: 'Code' | 'Ask' | 'Plan'
+  /** Callback when the user changes the profile mode. */
+  onProfileChange: (profile: 'Code' | 'Ask' | 'Plan') => void
 }
 
 /**
@@ -53,15 +70,24 @@ export function ChatComposer({
   uploadError,
   disabled,
   mcpServers,
+  mcpStatusByName,
+  mcpStatusLoading,
   onToggleMcpServer,
   mcpTogglingServer,
+  onMcpPopoutOpen,
+  profile,
+  onProfileChange,
 }: ChatComposerProps) {
   // Tools popout visibility — toggled by the Wrench button, closed by
   // outside-click/Escape inside McpPopout.
   const [showMcpPopout, setShowMcpPopout] = useState(false)
 
-  // Profile mode is a local UI placeholder in v1 — no backend wiring yet.
-  const [profile, setProfile] = useState<'Code' | 'Ask' | 'Plan'>('Code')
+  // Stable close handler for McpPopout (#11). Keeping the identity stable
+  // avoids re-subscribing the outside-click/Escape listeners on every render
+  // of ChatComposer (which would otherwise happen with an inline arrow).
+  const handleMcpPopoutClose = useCallback(() => {
+    setShowMcpPopout(false)
+  }, [])
 
   const currentModel = models.find((m) => m.id === effectiveModelId)
 
@@ -158,9 +184,21 @@ export function ChatComposer({
               </button>
 
               {/* Tools (MCP toggle) — same translucent styling; active state
-                  lifts the background to match the popout-open cue. */}
+                  lifts the background to match the popout-open cue.
+                  `data-mcp-toggle` marks this button so McpPopout's
+                  outside-click handler can ignore mousedowns on it (#1) —
+                  otherwise the mousedown closes the popout and the
+                  subsequent click reopens it, making the button unable to
+                  close the popout. The onClick only fires onMcpPopoutOpen
+                  on the false→true (opening) transition. */}
               <button
-                onClick={() => setShowMcpPopout((v) => !v)}
+                data-mcp-toggle
+                onClick={() =>
+                  setShowMcpPopout((v) => {
+                    if (!v) onMcpPopoutOpen?.()
+                    return !v
+                  })
+                }
                 className={cn(
                   'w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground bg-white/[0.04] hover:bg-white/[0.12] hover:text-foreground transition',
                   showMcpPopout && 'bg-white/[0.12] text-foreground',
@@ -177,9 +215,11 @@ export function ChatComposer({
               {showMcpPopout && (
                 <McpPopout
                   mcpServers={mcpServers}
+                  statusByName={mcpStatusByName}
+                  statusLoading={mcpStatusLoading}
                   onToggle={onToggleMcpServer}
                   togglingServer={mcpTogglingServer}
-                  onClose={() => setShowMcpPopout(false)}
+                  onClose={handleMcpPopoutClose}
                 />
               )}
             </div>
@@ -195,7 +235,7 @@ export function ChatComposer({
               <span className="text-[13px] pointer-events-none max-[500px]:hidden">{profile}</span>
               <select
                 value={profile}
-                onChange={(e) => setProfile(e.target.value as 'Code' | 'Ask' | 'Plan')}
+                onChange={(e) => onProfileChange(e.target.value as 'Code' | 'Ask' | 'Plan')}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent"
               >
                 <option value="Code">Code</option>

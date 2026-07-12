@@ -66,14 +66,14 @@ Available in `coder/acp-go-sdk v0.13.5` (Go) and/or `@agentclientprotocol/sdk` (
 | Feature | SDK Support | Priority | Notes |
 |---------|------------|----------|-------|
 | Audio blocks | `acp.AudioBlock()` | Future | No use case |
-| Session list | `Agent.ListSessions()` (stable v0.11.7) | Near-term | Reconcile after restart |
-| Elicitation | Unstable methods | Future | v2 draft |
+| Session list | `Agent.ListSessions()` (stable v0.11.7) | ✅ Done | Reconcile after restart (P4.4) |
+| Elicitation | Unstable methods | Future | v2 draft — high interest once stable |
 | NES | Unstable methods | Future | Inline completions |
-| MCP-over-ACP | Unstable methods | Future | Needs MCP config UI |
-| Provider mgmt | Unstable methods | Future | Dynamic provider config |
-| Tool content helpers | `ToolContent`, `ToolDiffContent`, `ToolTerminalRef` | Near-term | Simplify transport.go |
-| Explicit validation | `Validate()` on requests | Near-term | Catch malformed requests |
-| AdditionalDirectories | v0.13.5 | Future | Multi-root workspaces |
+| MCP-over-ACP | Unstable methods | Future | Preferred long-term: let harness manage MCP; config UI already exists |
+| Provider mgmt | Unstable methods | Future | High priority: shift custom agent/model registry toward standard |
+| Tool content helpers | `ToolContent`, `ToolDiffContent`, `ToolTerminalRef` | ✅ N/A | Agent-side only; we are the client |
+| Explicit validation | `Validate()` on requests | ✅ Done | All constructed requests (P4.2) |
+| AdditionalDirectories | v0.13.5 | ✅ Done | Multi-root via registered workspaces (P4.5) |
 | Session fork/resume/close | `SessionCapabilities` | Future | Agent-advertised |
-| TypeScript SDK | `@agentclientprotocol/sdk` | Near-term | Replace hand-rolled frontend types |
+| TypeScript SDK | `@agentclientprotocol/sdk` | ✅ Scoped | Local `StopReason` union only; UI uses app view-models |
 | ACP-inspector | Community tool | Future | Protocol validation testing |
