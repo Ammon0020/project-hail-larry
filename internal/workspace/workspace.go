@@ -348,7 +348,7 @@ var binaryPreviewExts = map[string]bool{
 	"mp3": true, "wav": true, "oga": true, "ogg": true, "flac": true,
 	"m4a": true, "aac": true, "opus": true,
 	// 3D models (binary formats)
-	"stl": true, "glb": true, "ply": true,
+	"stl": true, "glb": true, "ply": true, "step": true, "stp": true,
 }
 
 // textPreviewExts lists extensions for files that have a visual preview in

@@ -120,8 +120,8 @@ export function TabBar({
                   <SettingsIcon className="w-3.5 h-3.5 text-muted-foreground" />
                 ) : (
                   (() => {
-                    const { icon: Icon, color } = fileIcon(tab.name)
-                    return <Icon className={cn('w-3.5 h-3.5', color)} />
+                    const { icon: Icon } = fileIcon(tab.name)
+                    return <Icon className="w-3.5 h-3.5" />
                   })()
                 )}
                 <span className="max-w-[120px] truncate">{tab.name}</span>

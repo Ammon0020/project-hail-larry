@@ -107,7 +107,7 @@ function TreeNode({
   // flex gap that follows it) is reserved so file icons line up with folder
   // icons at the same depth. Without it, files render ~20px left of sibling
   // folders because they lack the chevron glyph.
-  const { icon: Icon, color } = fileIcon(node.name)
+  const { icon: Icon } = fileIcon(node.name)
   const kind: RowKind = node.active ? 'active' : 'default'
 
   return (
@@ -116,7 +116,7 @@ function TreeNode({
       onClick={() => onFileSelect(nodePath)}
     >
       <span className={chevronSpacer} aria-hidden />
-      <Icon className={cn('w-4 h-4 shrink-0', color)} />
+      <Icon className="w-4 h-4 shrink-0" />
       <span className={labelStyles}>{node.name}</span>
       {node.unsaved && (
         <div title="Unsaved changes" className="shrink-0">
