@@ -66,9 +66,51 @@ func newRootCommand() *cobra.Command {
 		newDevicesCommand(),
 		newRevokeCommand(),
 		newLogsCommand(),
+		newInstallServiceCommand(),
+		newUninstallServiceCommand(),
 	)
 
 	return rootCmd
+}
+
+// newInstallServiceCommand registers the daemon as a system service that
+// starts on boot. The --user flag (default true) installs a per-user service
+// (systemd user unit / launchd LaunchAgent / Windows Run-key) rather than a
+// system-wide service, which would require root/admin privileges.
+func newInstallServiceCommand() *cobra.Command {
+	var user bool
+	cmd := &cobra.Command{
+		Use:   "install-service",
+		Short: "Register the daemon as a system service that starts on boot",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := installService(user); err != nil {
+				return err
+			}
+			return writeln(cmd.OutOrStdout(), "Service installed.")
+		},
+	}
+	cmd.Flags().BoolVar(&user, "user", true, "install as a user service (not system-wide)")
+	return cmd
+}
+
+// newUninstallServiceCommand removes the system service previously registered
+// by install-service.
+func newUninstallServiceCommand() *cobra.Command {
+	var user bool
+	cmd := &cobra.Command{
+		Use:   "uninstall-service",
+		Short: "Remove the system service registered by install-service",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := uninstallService(user); err != nil {
+				return err
+			}
+			return writeln(cmd.OutOrStdout(), "Service uninstalled.")
+		},
+	}
+	cmd.Flags().BoolVar(&user, "user", true, "uninstall the user service (not system-wide)")
+	return cmd
 }
 
 func newStartCommand() *cobra.Command {
