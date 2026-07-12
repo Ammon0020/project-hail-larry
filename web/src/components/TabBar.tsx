@@ -156,7 +156,7 @@ export function TabBar({
       
       {/* Editor Actions */}
       {showEditorActions && activeTab && activeTab.kind !== 'settings' && (
-        <div className="flex gap-1.5 px-3 py-1 @xl:py-0 @xl:pl-1.5 items-center shrink-0 border-t border-border @xl:border-t-0 bg-panel @xl:bg-transparent">
+        <div className="flex gap-1.5 px-3 py-1 @xl:py-0 @xl:pl-1.5 items-center justify-end w-full @xl:w-auto shrink-0 border-t border-border @xl:border-t-0 bg-panel @xl:bg-transparent">
           {onToggleWrap && (
             <button
               type="button"
