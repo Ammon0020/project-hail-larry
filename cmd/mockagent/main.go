@@ -25,6 +25,9 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 )
 
+// osWindows is the runtime.GOOS value for Windows, used by platform branches.
+const osWindows = "windows"
+
 // mockAgent implements the acp.Agent interface.
 // It streams canned responses, runs real shell commands, and reports
 // tool call results to exercise the full ACP pipeline.
@@ -81,7 +84,7 @@ func (a *mockAgent) Prompt(ctx context.Context, req acp.PromptRequest) (acp.Prom
 
 	// 2. Start a tool call — list directory contents
 	listCmd := "ls"
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == osWindows {
 		listCmd = "dir"
 	}
 	_ = a.conn.SessionUpdate(ctx, acp.SessionNotification{
@@ -109,7 +112,7 @@ func (a *mockAgent) Prompt(ctx context.Context, req acp.PromptRequest) (acp.Prom
 
 	// 4. Run `pwd` as another tool call
 	pwdCmd := "pwd"
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == osWindows {
 		pwdCmd = "cd"
 	}
 	_ = a.conn.SessionUpdate(ctx, acp.SessionNotification{
@@ -181,7 +184,7 @@ func streamText(ctx context.Context, conn *acp.AgentSideConnection, sid acp.Sess
 func runShellCommand(ctx context.Context, cmd string) string {
 	var out []byte
 	var err error
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == osWindows {
 		out, err = exec.CommandContext(ctx, "cmd", "/c", cmd).Output() //nolint:gosec // cmd is a hardcoded internal mock command (ls/dir/pwd/cd), not user input.
 	} else {
 		out, err = exec.CommandContext(ctx, "sh", "-c", cmd).Output() //nolint:gosec // cmd is a hardcoded internal mock command (ls/dir/pwd/cd), not user input.

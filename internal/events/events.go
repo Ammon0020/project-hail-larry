@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/adama/local-agent/internal/interfaces"
@@ -64,6 +65,15 @@ func New(dbPath string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("set busy_timeout: %w", err)
 	}
+
+	// Enable incremental auto-vacuum so that pruning old events can actually
+	// return pages to the OS. auto_vacuum must be set before any tables are
+	// created; on an existing database where it was already set it is a no-op,
+	// and on one where it was OFF it cannot be changed to INCREMENTAL without
+	// VACUUM — we issue it best-effort and ignore the result so a legacy DB
+	// still loads. After pruning we run `PRAGMA incremental_vacuum` to reclaim
+	// the freed pages without the cost of a full VACUUM.
+	_, _ = db.Exec("PRAGMA auto_vacuum = INCREMENTAL")
 
 	// Create the events table if it doesn't exist.
 	schema := `
@@ -248,4 +258,146 @@ func scanEvents(rows *sql.Rows) ([]interfaces.Event, error) {
 	}
 
 	return events, rows.Err()
+}
+
+// ----------------------------------------------------------------------------
+// Retention / pruning (Finding 8.3)
+//
+// The events table is append-only, so without pruning it grows without bound.
+// Prune(maxRows) keeps only the most recent maxRows events; PruneOlderThan
+// drops events older than a duration. StartPruneTicker runs Prune on a
+// schedule in a background goroutine and returns a stop function.
+//
+// After a prune that actually removed rows we run `PRAGMA incremental_vacuum`
+// to return freed pages to the OS. This requires auto_vacuum = INCREMENTAL,
+// which we set (best-effort) during initialization. A full VACUUM would also
+// reclaim space but locks the database and rewrites the whole file, so we
+// avoid it on the hot path.
+// ----------------------------------------------------------------------------
+
+// DefaultPruneMaxRows is the default maximum number of events retained by
+// StartPruneTicker when the caller does not override it.
+const DefaultPruneMaxRows = 100000
+
+// DefaultPruneInterval is the default interval between automatic prune passes
+// started by StartPruneTicker when the caller does not override it.
+const DefaultPruneInterval = time.Hour
+
+// Prune deletes the oldest events so that at most maxRows rows remain. If the
+// table already has maxRows or fewer rows it is a no-op. Returns the number of
+// rows deleted. A non-positive maxRows is treated as an error rather than
+// silently truncating the whole table.
+func (s *Store) Prune(maxRows int) (int64, error) {
+	if maxRows <= 0 {
+		return 0, fmt.Errorf("events: Prune requires maxRows > 0, got %d", maxRows)
+	}
+
+	// Keep the newest maxRows events by id and delete the rest. The subquery
+	// is the exact form requested in the finding; SQLite handles the NOT IN
+	// against the primary key efficiently.
+	res, err := s.db.Exec(
+		"DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT ?)",
+		maxRows,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("events: prune by row count: %w", err)
+	}
+
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("events: prune rows affected: %w", err)
+	}
+
+	if deleted > 0 {
+		if err := s.incrementalVacuum(); err != nil {
+			// Vacuum failure is non-fatal — the rows are already gone, we
+			// just couldn't hand pages back to the OS yet. Log via the error
+			// chain so callers can observe it.
+			return deleted, fmt.Errorf("events: prune succeeded but vacuum failed: %w", err)
+		}
+	}
+	return deleted, nil
+}
+
+// PruneOlderThan deletes events whose timestamp is older than maxAge measured
+// from now (UTC). Returns the number of rows deleted. A non-positive maxAge is
+// treated as an error rather than silently deleting everything.
+func (s *Store) PruneOlderThan(maxAge time.Duration) (int64, error) {
+	if maxAge <= 0 {
+		return 0, fmt.Errorf("events: PruneOlderThan requires maxAge > 0, got %s", maxAge)
+	}
+
+	cutoff := time.Now().UTC().Add(-maxAge)
+	res, err := s.db.Exec(
+		"DELETE FROM events WHERE timestamp < ?",
+		cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("events: prune by age: %w", err)
+	}
+
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("events: prune by age rows affected: %w", err)
+	}
+
+	if deleted > 0 {
+		if err := s.incrementalVacuum(); err != nil {
+			return deleted, fmt.Errorf("events: prune by age succeeded but vacuum failed: %w", err)
+		}
+	}
+	return deleted, nil
+}
+
+// incrementalVacuum reclaims freed pages after a prune when auto_vacuum is
+// INCREMENTAL. It is a no-op (returns nil) if auto_vacuum is not enabled, so
+// it is safe to call on legacy databases that predate the schema change.
+func (s *Store) incrementalVacuum() error {
+	// PRAGMA incremental_vacuum with no argument reclaims all available pages.
+	// On a database without incremental auto_vacuum this is a harmless no-op.
+	if _, err := s.db.Exec("PRAGMA incremental_vacuum"); err != nil {
+		return fmt.Errorf("incremental_vacuum: %w", err)
+	}
+	return nil
+}
+
+// StartPruneTicker launches a background goroutine that calls Prune(maxRows)
+// every interval, returning a stop function that halts the goroutine and
+// waits for any in-flight prune to finish. The stop function is safe to call
+// multiple times.
+//
+// Use DefaultPruneInterval and DefaultPruneMaxRows for sensible production
+// defaults (1 hour / 100000 events). The goroutine uses context.Background
+// because pruning is a store-internal maintenance task that should outlive
+// any single request's context.
+func (s *Store) StartPruneTicker(interval time.Duration, maxRows int) func() {
+	if interval <= 0 {
+		interval = DefaultPruneInterval
+	}
+	if maxRows <= 0 {
+		maxRows = DefaultPruneMaxRows
+	}
+
+	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
+	var once sync.Once
+
+	go func() {
+		for {
+			select {
+			case <-done:
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				// Best-effort: a prune error here is not actionable from the
+				// caller's context, so we ignore it. The next tick retries.
+				_, _ = s.Prune(maxRows)
+			}
+		}
+	}()
+
+	stop := func() {
+		once.Do(func() { close(done) })
+	}
+	return stop
 }

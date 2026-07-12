@@ -22,6 +22,17 @@ import (
 	"github.com/adama/local-agent/internal/interfaces"
 )
 
+// MIME types for the open-file context resources. Centralised so the producer
+// (mimeByExt) and consumers/tests reference the same literals.
+const (
+	mimeTextGo         = "text/x-go"
+	mimeTextTypeScript = "text/typescript"
+	mimeTextJavaScript = "text/javascript"
+	mimeTextMarkdown   = "text/markdown"
+	mimeTextYAML       = "text/yaml"
+	mimeTextPlain      = "text/plain"
+)
+
 // OpenFilesProvider supplies the currently open and recently edited file paths
 // (relative to the workspace root) reported by the frontend. Implementations
 // must be safe for concurrent use since the pipeline may run from multiple
@@ -265,24 +276,24 @@ func mimeByExt(path string) string {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".go":
-		return "text/x-go"
+		return mimeTextGo
 	case ".ts", ".tsx":
-		return "text/typescript"
+		return mimeTextTypeScript
 	case ".js", ".jsx":
-		return "text/javascript"
+		return mimeTextJavaScript
 	case ".py":
 		return "text/x-python"
 	case ".md":
-		return "text/markdown"
+		return mimeTextMarkdown
 	case ".json":
 		return "application/json"
 	case ".yaml", ".yml":
-		return "text/yaml"
+		return mimeTextYAML
 	case ".html":
 		return "text/html"
 	case ".css":
 		return "text/css"
 	default:
-		return "text/plain"
+		return mimeTextPlain
 	}
 }

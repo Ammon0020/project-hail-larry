@@ -68,6 +68,30 @@ type AgentModel struct {
 	Name string `json:"name"`
 }
 
+// Session lifecycle statuses. These string values are part of the persisted
+// JSON shape (Session.Status) and the wire format sent to the UI, so they must
+// remain stable.
+const (
+	statusCreated     = "created"
+	statusRunning     = "running"
+	statusIdle        = "idle"
+	statusFailed      = "failed"
+	statusCompleted   = "completed"
+	statusInterrupted = "interrupted"
+)
+
+// Role values for chat messages and events.
+const (
+	roleUser  = "user"
+	roleAgent = "agent"
+)
+
+// modelConfigCategory is the ACP config-option category used to select a model.
+const modelConfigCategory = "model"
+
+// osWindows is the runtime.GOOS value for Windows, used by platform branches.
+const osWindows = "windows"
+
 // Session represents a conversation with an agent. It persists across daemon
 // restarts (metadata only); the live ACP transport is (re)started lazily.
 type Session struct {
@@ -295,7 +319,7 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 		AgentID:   agentID,
 		ModelID:   modelID,
 		Workspace: workspaceID,
-		Status:    "created",
+		Status:    statusCreated,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -418,35 +442,6 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 	session.impl = impl
 	session.ACPSessionID = acpSessionID
 
-	// Debug: dump advertised config options to diagnose model detection.
-	// TODO: remove once model config detection is stable.
-	for i, opt := range configOpts {
-		switch {
-		case opt.Select != nil:
-			cat := "<nil>"
-			if opt.Select.Category != nil {
-				cat = string(*opt.Select.Category)
-			}
-			cur := string(opt.Select.CurrentValue)
-			slog.Info("config option (select)",
-				"agent", session.AgentID, "idx", i, "id", string(opt.Select.Id),
-				"name", opt.Select.Name, "category", cat, "currentValue", cur)
-		case opt.Boolean != nil:
-			cat := "<nil>"
-			if opt.Boolean.Category != nil {
-				cat = string(*opt.Boolean.Category)
-			}
-			slog.Info("config option (boolean)",
-				"agent", session.AgentID, "idx", i, "id", string(opt.Boolean.Id),
-				"name", opt.Boolean.Name, "category", cat)
-		default:
-			slog.Info("config option (unknown)", "agent", session.AgentID, "idx", i)
-		}
-	}
-	if len(configOpts) == 0 {
-		slog.Info("no config options advertised", "agent", session.AgentID)
-	}
-
 	session.modelConfigID = findModelConfigID(configOpts, agent.Models)
 	if session.modelConfigID == "" {
 		slog.Info("findModelConfigID returned empty",
@@ -558,7 +553,7 @@ func findModelConfigID(opts []acp.SessionConfigOption, knownModels []AgentModel)
 		if opt.Select == nil {
 			continue
 		}
-		if string(opt.Select.Id) == "model" {
+		if string(opt.Select.Id) == modelConfigCategory {
 			return string(opt.Select.Id)
 		}
 	}
@@ -632,7 +627,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 		}
 	}
 
-	session.Status = "running"
+	session.Status = statusRunning
 	session.UpdatedAt = time.Now().UTC()
 	// Auto-title the conversation from the first user prompt.
 	if session.Name == "" || session.Name == defaultConversationName {
@@ -673,7 +668,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 			Type:        interfaces.EventPromptSubmitted,
 			SessionID:   sessionID,
 			Timestamp:   time.Now().UTC(),
-			Role:        "user",
+			Role:        roleUser,
 			Content:     finalContent,
 			Attachments: attachments,
 		})
@@ -699,7 +694,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 		stopReason, err := session.transport.Prompt(promptCtx, session.ACPSessionID, finalContent, resources, attachments)
 		if err != nil {
 			c.mu.Lock()
-			session.Status = "failed"
+			session.Status = statusFailed
 			// The transport is likely dead; drop it so the next prompt restarts.
 			tail := ""
 			if session.transport != nil {
@@ -732,7 +727,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 				Type:       interfaces.EventStreamUpdate,
 				SessionID:  sessionID,
 				Timestamp:  time.Now().UTC(),
-				Role:       "agent",
+				Role:       roleAgent,
 				Content:    "",
 				Streaming:  false,
 				StopReason: string(stopReason),
@@ -740,8 +735,8 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 		}
 
 		c.mu.Lock()
-		if session.Status == "running" {
-			session.Status = "completed"
+		if session.Status == statusRunning {
+			session.Status = statusCompleted
 		}
 		c.mu.Unlock()
 	}()
@@ -759,7 +754,7 @@ func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	session.Status = "interrupted"
+	session.Status = statusInterrupted
 	session.UpdatedAt = time.Now().UTC()
 
 	// Send an ACP cancel notification to stop the current turn but keep the
@@ -863,7 +858,7 @@ func (c *Client) closeTransportLocked(ctx context.Context, sessionID string) err
 	// Mark idle so the UI does not show the session as "running" after restart.
 	// LoadConversations also resets status to "idle", but setting it here keeps
 	// the on-disk file consistent in case the daemon is inspected post-shutdown.
-	session.Status = "idle"
+	session.Status = statusIdle
 	session.UpdatedAt = time.Now().UTC()
 	return nil
 }
@@ -974,7 +969,7 @@ func (c *Client) RebindSession(ctx context.Context, sessionID, agentID, modelID 
 
 	session.AgentID = agentID
 	session.ModelID = modelID
-	session.Status = "idle"
+	session.Status = statusIdle
 	session.UpdatedAt = time.Now().UTC()
 	c.persistLocked()
 

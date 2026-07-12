@@ -7,22 +7,88 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/interfaces"
 	"github.com/adama/local-agent/internal/search"
 	"github.com/adama/local-agent/internal/uploads"
+	"golang.org/x/time/rate"
 )
 
 // ----------------------------------------------------------------------------
 // Pairing Handlers (Blueprint Sec 19)
 // ----------------------------------------------------------------------------
 
+// Pairing rate limiting (Finding 8.1).
+//
+// The pairing endpoints (/api/pair/initiate, /api/pair/verify-passcode,
+// /api/pair/verify-token) are unauthenticated by design — a device must be
+// able to pair before it has a credential. Each initiate call mints a QR PNG
+// on disk and an in-memory session, so an unauthenticated LAN attacker can
+// exhaust disk/inodes by hammering the endpoint. To mitigate this we apply a
+// per-IP token-bucket rate limit using golang.org/x/time/rate.
+//
+// pairRateLimitPerMinute is the maximum number of pairing requests allowed per
+// client IP per minute. The bucket is refilled continuously, so a client may
+// briefly burst up to pairRateBurst requests and then sustain
+// pairRateLimitPerMinute/60 requests per second.
+//
+// The limiter map is package-level (the Server struct lives in server.go and
+// this file owns the pairing handlers). A mutex guards concurrent access; the
+// map grows lazily and is never pruned, which is acceptable for a LAN-facing
+// daemon with a small attacker surface — the entries are tiny (a few dozen
+// bytes each) and bounded by the number of distinct client IPs.
+const (
+	pairRateLimitPerMinute = 5
+	pairRateBurst          = 5
+)
+
+var (
+	pairLimiters   = make(map[string]*rate.Limiter)
+	pairLimitersMu sync.Mutex
+)
+
+// getPairLimiter returns the per-IP rate limiter for pairing endpoints,
+// creating one on first use. Each limiter allows pairRateBurst requests in an
+// initial burst and then refills at pairRateLimitPerMinute requests per minute.
+func getPairLimiter(ip string) *rate.Limiter {
+	pairLimitersMu.Lock()
+	defer pairLimitersMu.Unlock()
+	lim, ok := pairLimiters[ip]
+	if !ok {
+		// rate.NewLimiter takes events-per-second and burst. Convert the
+		// per-minute limit to per-second (5/min => 1/12s).
+		lim = rate.NewLimiter(rate.Every(time.Minute/pairRateLimitPerMinute), pairRateBurst)
+		pairLimiters[ip] = lim
+	}
+	return lim
+}
+
+// allowPairRequest reports whether the client behind r is still within the
+// pairing rate limit. It extracts the client IP from RemoteAddr (the host
+// portion of "host:port") and consults the per-IP limiter without blocking.
+func allowPairRequest(r *http.Request) bool {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		// RemoteAddr had no port; treat the whole string as the host.
+		ip = r.RemoteAddr
+	}
+	return getPairLimiter(ip).Allow()
+}
+
 // handlePairInitiate creates a new pairing session with QR code and mnemonic.
 func (s *Server) handlePairInitiate(w http.ResponseWriter, r *http.Request) {
+	if !allowPairRequest(r) {
+		writeError(w, http.StatusTooManyRequests, "pairing rate limit exceeded, try again later")
+		return
+	}
+
 	var req struct {
 		Host string `json:"host"`
 		Port int    `json:"port"`
@@ -43,7 +109,7 @@ func (s *Server) handlePairInitiate(w http.ResponseWriter, r *http.Request) {
 	// address for another device, so map the wildcard to localhost using the
 	// same convention the CLI uses (cmd/app pairingHost).
 	if req.Host == "" {
-		req.Host = "localhost"
+		req.Host = localhost
 		if s.deps.Config != nil && s.deps.Config.Host != "" && s.deps.Config.Host != "0.0.0.0" {
 			req.Host = s.deps.Config.Host
 		}
@@ -67,6 +133,11 @@ func (s *Server) handlePairInitiate(w http.ResponseWriter, r *http.Request) {
 
 // handlePairVerifyPasscode verifies a mnemonic passcode and issues a device credential.
 func (s *Server) handlePairVerifyPasscode(w http.ResponseWriter, r *http.Request) {
+	if !allowPairRequest(r) {
+		writeError(w, http.StatusTooManyRequests, "pairing rate limit exceeded, try again later")
+		return
+	}
+
 	var req struct {
 		Passcode   string `json:"passcode"`
 		DeviceName string `json:"deviceName"`
@@ -87,6 +158,11 @@ func (s *Server) handlePairVerifyPasscode(w http.ResponseWriter, r *http.Request
 
 // handlePairVerifyToken verifies a QR token and issues a device credential.
 func (s *Server) handlePairVerifyToken(w http.ResponseWriter, r *http.Request) {
+	if !allowPairRequest(r) {
+		writeError(w, http.StatusTooManyRequests, "pairing rate limit exceeded, try again later")
+		return
+	}
+
 	var req struct {
 		Token      string `json:"token"`
 		DeviceName string `json:"deviceName"`
@@ -118,7 +194,7 @@ func (s *Server) handleRevokeDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "revoked"})
 }
 
 // ----------------------------------------------------------------------------
@@ -312,13 +388,24 @@ func (s *Server) handleGetSessionEvents(w http.ResponseWriter, r *http.Request) 
 // parseEventParams extracts the after cursor and limit from query params,
 // applying a default limit of 1000 when unset or zero. The higher default
 // avoids truncating long streaming responses (250+ events are common with
-// mistral-vibe). Callers may still request fewer events via ?limit=N, and
-// there is no upper cap so arbitrarily large responses can be fetched.
+// mistral-vibe). Callers may still request fewer events via ?limit=N.
+//
+// The limit is capped at maxEventLimit (10000) to prevent a client from
+// requesting an unbounded result set (e.g. ?limit=999999999) which would
+// force the event store to materialize and the server to serialize a huge
+// response. A requested limit above the cap is silently lowered to the cap
+// rather than rejected, so legitimate callers that ask for "all" still get a
+// large-but-bounded page.
+const maxEventLimit = 10000
+
 func parseEventParams(r *http.Request) (afterID int64, limit int) {
 	afterID, _ = strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit == 0 {
 		limit = 1000
+	}
+	if limit > maxEventLimit {
+		limit = maxEventLimit
 	}
 	return afterID, limit
 }
@@ -362,7 +449,7 @@ func (s *Server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deps.ACPClient.RemoveAgent(id)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "deleted"})
 }
 
 // handleAutodetectAgents triggers manual autodetection.
@@ -518,7 +605,7 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		writeJSON(w, http.StatusOK, map[string]string{statusKey: statusUpdated})
 		return
 	}
 
@@ -534,7 +621,7 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: statusUpdated})
 }
 
 // handleCreateSession creates a new agent session.
@@ -612,7 +699,7 @@ func (s *Server) handleSendPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "sent"})
 }
 
 // handleCancelSession cancels a running session.
@@ -629,7 +716,7 @@ func (s *Server) handleCancelSession(w http.ResponseWriter, r *http.Request) {
 		SessionID: sessionID,
 	})
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "cancelled"})
 }
 
 // handleCloseSession closes a session.
@@ -648,7 +735,7 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 		_ = s.deps.Uploads.RemoveSession(sessionID)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "closed"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "closed"})
 }
 
 // handleUpload accepts a multipart file upload for a session, validates it via
@@ -774,7 +861,7 @@ func (s *Server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 			Text:      req.Selection.Text,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: statusUpdated})
 }
 
 // ----------------------------------------------------------------------------
@@ -828,7 +915,7 @@ func (s *Server) handleRespondPermission(w http.ResponseWriter, r *http.Request)
 		RequestID: requestID,
 	})
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "responded"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "responded"})
 }
 
 // isDenyDecision reports whether the chosen decision represents a denial, using

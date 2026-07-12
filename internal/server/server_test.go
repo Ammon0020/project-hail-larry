@@ -14,6 +14,7 @@ import (
 	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/events"
 	"github.com/adama/local-agent/internal/interfaces"
+	"github.com/adama/local-agent/internal/pairing"
 )
 
 // TestHealthCheck verifies the /health endpoint returns 200 OK with JSON.
@@ -362,5 +363,180 @@ func TestHandleSessionContext_Selection(t *testing.T) {
 	sel3 := tracker.Selection()
 	if sel3.Text != "" {
 		t.Errorf("expected cleared selection, got %+v", sel3)
+	}
+}
+
+// TestIsMutatingMethod verifies the CSRF-relevant method classification used
+// by the loopback auth-bypass CSRF check. Only state-changing methods are
+// mutating; read-only methods are exempt.
+func TestIsMutatingMethod(t *testing.T) {
+	mutating := []string{
+		http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
+	}
+	for _, m := range mutating {
+		if !isMutatingMethod(m) {
+			t.Errorf("isMutatingMethod(%q) = false, want true", m)
+		}
+	}
+	readOnly := []string{http.MethodGet, http.MethodHead, http.MethodOptions}
+	for _, m := range readOnly {
+		if isMutatingMethod(m) {
+			t.Errorf("isMutatingMethod(%q) = true, want false", m)
+		}
+	}
+}
+
+// TestLoopbackOriginAllowed verifies the Origin validation that gates mutating
+// requests on the loopback auth bypass. A non-browser client (no Origin) is
+// allowed; a loopback Origin (localhost / 127.0.0.1 / ::1 on any port) is
+// allowed; a cross-origin Origin from a malicious website is rejected.
+func TestLoopbackOriginAllowed(t *testing.T) {
+	cases := []struct {
+		name   string
+		origin string
+		want   bool
+	}{
+		{"no origin (non-browser CLI)", "", true},
+		{"localhost any port", "http://localhost:7337", true},
+		{"localhost no port", "http://localhost", true},
+		{"127.0.0.1 any port", "http://127.0.0.1:7337", true},
+		{"ipv6 loopback", "http://[::1]:7337", true},
+		{"cross-origin attacker", "http://evil.com", false},
+		{"cross-origin attacker subdomain", "http://localhost.evil.com", false},
+		{"malformed origin", "://bad", false},
+		{"null origin", "null", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/sessions", nil)
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			if got := loopbackOriginAllowed(req); got != tc.want {
+				t.Errorf("loopbackOriginAllowed() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// newLoopbackRequest builds an httptest request that the server treats as
+// loopback (RemoteAddr = 127.0.0.1) so requireAuth's loopback branch is
+// exercised. httptest.NewRequest defaults RemoteAddr to a non-loopback
+// address, so it must be overridden explicitly.
+func newLoopbackRequest(method, target string, body interface{}) *http.Request {
+	var r *http.Request
+	if body != nil {
+		r = httptest.NewRequest(method, target, strings.NewReader(body.(string)))
+	} else {
+		r = httptest.NewRequest(method, target, nil)
+	}
+	r.RemoteAddr = "127.0.0.1:1234"
+	return r
+}
+
+// TestRequireAuthLoopbackCSRF verifies the CSRF defense on the loopback auth
+// bypass: a cross-origin mutating request from a malicious website (carrying
+// the attacker's Origin) is rejected with 403, while the host browser
+// (loopback Origin) and non-browser CLI clients (no Origin) are allowed.
+// Read-only GET requests are exempt regardless of Origin.
+func TestRequireAuthLoopbackCSRF(t *testing.T) {
+	// A real pairing manager is required so requireAuth reaches its loopback
+	// branch (PairingMgr != nil). The credential store lives in a temp dir.
+	pm := pairing.NewManager(t.TempDir())
+
+	called := false
+	handler := func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+	srv := &Server{deps: &Deps{PairingMgr: pm}}
+	wrapped := srv.requireAuth(handler)
+
+	// Cross-origin POST from a malicious website -> 403, handler not called.
+	called = false
+	req := newLoopbackRequest(http.MethodPost, "/api/sessions", `{}`)
+	req.Header.Set("Origin", "http://evil.com")
+	rec := httptest.NewRecorder()
+	wrapped(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("cross-origin POST: expected 403, got %d", rec.Code)
+	}
+	if called {
+		t.Error("cross-origin POST: handler should not be called")
+	}
+
+	// Host browser POST (loopback Origin) -> allowed, handler called.
+	called = false
+	req = newLoopbackRequest(http.MethodPost, "/api/sessions", `{}`)
+	req.Header.Set("Origin", "http://localhost:7337")
+	rec = httptest.NewRecorder()
+	wrapped(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("loopback-origin POST: expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if !called {
+		t.Error("loopback-origin POST: handler should be called")
+	}
+
+	// Non-browser CLI POST (no Origin) -> allowed, handler called.
+	called = false
+	req = newLoopbackRequest(http.MethodPost, "/api/sessions", `{}`)
+	rec = httptest.NewRecorder()
+	wrapped(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("no-origin POST (CLI): expected 200, got %d", rec.Code)
+	}
+	if !called {
+		t.Error("no-origin POST (CLI): handler should be called")
+	}
+
+	// Cross-origin GET -> exempt (read-only), handler called.
+	called = false
+	req = newLoopbackRequest(http.MethodGet, "/api/sessions", nil)
+	req.Header.Set("Origin", "http://evil.com")
+	rec = httptest.NewRecorder()
+	wrapped(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("cross-origin GET: expected 200 (read-only exempt), got %d", rec.Code)
+	}
+	if !called {
+		t.Error("cross-origin GET: handler should be called (read-only exempt)")
+	}
+
+	// Cross-origin DELETE -> 403 (mutating).
+	called = false
+	req = newLoopbackRequest(http.MethodDelete, "/api/sessions/sess-1", nil)
+	req.Header.Set("Origin", "http://evil.com")
+	rec = httptest.NewRecorder()
+	wrapped(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("cross-origin DELETE: expected 403, got %d", rec.Code)
+	}
+	if called {
+		t.Error("cross-origin DELETE: handler should not be called")
+	}
+}
+
+// TestRequireAuthLoopbackBypassStillWorksForGET verifies that the CSRF check
+// did not regress the existing loopback auth bypass for read-only requests:
+// a loopback GET without any credential or Origin still reaches the handler.
+func TestRequireAuthLoopbackBypassStillWorksForGET(t *testing.T) {
+	pm := pairing.NewManager(t.TempDir())
+	called := false
+	handler := func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+	srv := &Server{deps: &Deps{PairingMgr: pm}}
+	wrapped := srv.requireAuth(handler)
+
+	req := newLoopbackRequest(http.MethodGet, "/api/devices", nil)
+	rec := httptest.NewRecorder()
+	wrapped(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !called {
+		t.Error("loopback GET: handler should be called")
 	}
 }

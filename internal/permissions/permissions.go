@@ -201,6 +201,9 @@ func (m *Manager) Request(ctx context.Context, req interfaces.PermissionRequest)
 			m.mu.Lock()
 			m.denied[key] = struct{}{}
 			m.mu.Unlock()
+		default:
+			// allow_once and deny are one-off decisions that don't seed a
+			// durable policy cache, so there's nothing to persist here.
 		}
 		return decision, nil
 	case <-ctx.Done():

@@ -33,6 +33,13 @@ const (
 	// CurrentVersion is the on-disk envelope version this build understands.
 	// Bump (and add a migration) when the envelope shape changes.
 	CurrentVersion = 1
+
+	// MCP transport type identifiers (ServerConfig.Type values and the
+	// corresponding ACP wire-shape tags). Centralised so the case branches in
+	// ToACP and the capability filter stay in sync.
+	transportTypeHTTP  = "http"
+	transportTypeSSE   = "sse"
+	transportTypeStdio = "stdio"
 )
 
 // ServerConfig is our on-disk representation of one MCP server entry. It is a
@@ -236,21 +243,21 @@ func ToACP(name string, cfg ServerConfig) (acp.McpServer, error) {
 			},
 		}, nil
 
-	case "http":
+	case transportTypeHTTP:
 		return acp.McpServer{
 			Http: &acp.McpServerHttpInline{
 				Name:    name,
-				Type:    "http",
+				Type:    transportTypeHTTP,
 				Url:     expandEnv(cfg.URL),
 				Headers: headersToACP(cfg.Headers),
 			},
 		}, nil
 
-	case "sse":
+	case transportTypeSSE:
 		return acp.McpServer{
 			Sse: &acp.McpServerSseInline{
 				Name:    name,
-				Type:    "sse",
+				Type:    transportTypeSSE,
 				Url:     expandEnv(cfg.URL),
 				Headers: headersToACP(cfg.Headers),
 			},
@@ -303,15 +310,15 @@ func ToACPSlice(f *File, caps acp.McpCapabilities) ([]acp.McpServer, error) {
 	for _, name := range names {
 		cfg := enabled[name]
 		switch strings.ToLower(cfg.Type) {
-		case "http":
+		case transportTypeHTTP:
 			if !caps.Http {
 				continue
 			}
-		case "sse":
+		case transportTypeSSE:
 			if !caps.Sse {
 				continue
 			}
-		case "", "stdio":
+		case "", transportTypeStdio:
 			// Always supported per ACP spec.
 		default:
 			return nil, fmt.Errorf("mcp server %q: unknown type %q", name, cfg.Type)

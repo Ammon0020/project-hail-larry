@@ -8,12 +8,16 @@ package shell
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
 	"sync"
 	"syscall"
 )
+
+// osWindows is the runtime.GOOS value for Windows, used by platform branches.
+const osWindows = "windows"
 
 // Result holds the output and exit status of a completed command.
 type Result struct {
@@ -117,7 +121,8 @@ func (e *Executor) Run(ctx context.Context, command string) (Result, error) {
 
 	if err != nil {
 		// Try to extract the exit code.
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			// Command ran but exited non-zero or was killed by a signal.
 			// Report the exit code and, on Unix, the terminating signal.
 			result.ExitCode = exitErr.ExitCode()
@@ -192,7 +197,8 @@ func (e *Executor) RunAsync(ctx context.Context, command string, onStdout, onStd
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			// Command ran but exited non-zero or was killed by a signal.
 			result.ExitCode = exitErr.ExitCode()
 			result.Signal = exitSignal(exitErr)
@@ -211,7 +217,7 @@ func (e *Executor) RunAsync(ctx context.Context, command string, onStdout, onStd
 
 // shellCommand builds the OS-specific shell invocation for an approved command.
 func shellCommand(ctx context.Context, command string) *exec.Cmd {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == osWindows {
 		return exec.CommandContext(ctx, "cmd", "/C", command) //nolint:gosec // commands are executed only after client permission approval.
 	}
 	return exec.CommandContext(ctx, "sh", "-c", command) //nolint:gosec // commands are executed only after client permission approval.
@@ -283,7 +289,8 @@ func (e *Executor) RunAsyncArgs(ctx context.Context, command string, args []stri
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			// Command ran but exited non-zero or was killed by a signal.
 			result.ExitCode = exitErr.ExitCode()
 			result.Signal = exitSignal(exitErr)

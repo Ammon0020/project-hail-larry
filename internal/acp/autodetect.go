@@ -40,16 +40,39 @@ type agentSpec struct {
 	fileModels func() []AgentModel
 }
 
+// Agent IDs, names, and model IDs referenced by the autodetect registry.
+// Hoisting these into constants keeps the spec table and its callers in sync
+// and avoids magic-string drift.
+const (
+	agentIDCodex          = "codex"
+	agentNameClaudeCode   = "Claude Code"
+	agentNameMistralLarge = "Mistral Large"
+	modelIDGPT4o          = "gpt-4o"
+	modelIDClaudeSonnet4  = "claude-sonnet-4"
+)
+
+// cursorAgentCommands are the launch commands for the Cursor agent, reused by
+// detectAgent and getCursorModelsFromCLI so the two stay in sync.
+var cursorAgentCommands = []string{"agent", "cursor-agent"} //nolint:goconst // "agent" is the Cursor CLI binary name, not the chat role.
+
+// vibeCommands are the launch commands for the Mistral Vibe agent.
+var vibeCommands = []string{vibeACPCommand, vibeCommand}
+
+const (
+	vibeACPCommand = "vibe-acp"
+	vibeCommand    = "vibe"
+)
+
 // knownAgents is the registry of agents we autodetect.
 var knownAgents = []agentSpec{
 	{
 		id:             "claude-code",
-		name:           "Claude Code",
+		name:           agentNameClaudeCode,
 		commands:       []string{"claude"},
 		fallbackModels: []AgentModel{{ID: "claude-3-5-sonnet-20240620", Name: "Claude 3.5 Sonnet"}, {ID: "claude-3-opus-20240229", Name: "Claude 3 Opus"}},
 	},
 	{
-		id:   "codex",
+		id:   agentIDCodex,
 		name: "Codex CLI",
 		// Only the dedicated ACP adapter ("codex-acp") speaks ACP over stdio.
 		// The bare "codex" command is the OpenAI Codex CLI — an interactive TUI
@@ -62,13 +85,13 @@ var knownAgents = []agentSpec{
 		// the "codex-acp" binary. Do NOT add "codex" as a fallback — it can
 		// never work as an ACP agent.
 		commands:       []string{"codex-acp"},
-		fallbackModels: []AgentModel{{ID: "gpt-4o", Name: "GPT-4o"}, {ID: "gpt-4-turbo", Name: "GPT-4 Turbo"}},
+		fallbackModels: []AgentModel{{ID: modelIDGPT4o, Name: "GPT-4o"}, {ID: "gpt-4-turbo", Name: "GPT-4 Turbo"}},
 		fileModels:     getCodexModelsFromFile,
 	},
 	{
 		id:       "cursor",
 		name:     "Cursor Agent",
-		commands: []string{"agent", "cursor-agent"},
+		commands: cursorAgentCommands,
 		args:     []string{"acp"},
 		// The cursor.com/install CLI adds these to PATH, but if the daemon was
 		// started before the install (or PATH wasn't refreshed), LookPath fails.
@@ -111,19 +134,42 @@ var knownAgents = []agentSpec{
 			`/Applications/Windsurf.app/Contents/Resources/app/extensions/windsurf/devin/bin`, // macOS
 		},
 		fallbackModels: []AgentModel{
-			{ID: "claude-sonnet-4", Name: "Claude Sonnet 4"},
+			{ID: modelIDClaudeSonnet4, Name: "Claude Sonnet 4"},
 			{ID: "claude-opus-4.6", Name: "Claude Opus 4.6"},
 			{ID: "opus", Name: "Opus"},
-			{ID: "codex", Name: "Codex"},
+			{ID: "codex", Name: "Codex"}, //nolint:goconst // "codex" is a Devin model ID that coincidentally equals the codex agent ID.
 		},
 	},
 	{
 		id:             "mistral-vibe",
 		name:           "Mistral Vibe",
-		commands:       []string{"vibe-acp", "vibe"}, // prefer ACP bridge
-		fallbackModels: []AgentModel{{ID: "mistral-large-latest", Name: "Mistral Large"}, {ID: "mistral-small-latest", Name: "Mistral Small"}},
+		commands:       vibeCommands, // prefer ACP bridge
+		fallbackModels: []AgentModel{{ID: "mistral-large-latest", Name: agentNameMistralLarge}, {ID: "mistral-small-latest", Name: "Mistral Small"}},
 		fileModels:     getVibeModelsFromFile,
 	},
+}
+
+// ValidCommandsForAgent returns the list of command names (bare binaries, e.g.
+// "codex-acp", "claude") that are considered valid launch commands for the
+// known agent with the given ID. It returns nil when the ID does not match any
+// registered agent spec, so callers can distinguish "unknown / user-defined
+// agent" (no validation applies) from "known agent with no valid commands"
+// (which should never happen).
+//
+// Callers use this to validate persisted agent entries: a configured command
+// is acceptable if it equals one of the returned names or is a filesystem path
+// whose base name equals one of them (e.g. "/usr/local/bin/codex-acp" matches
+// "codex-acp"). This lets the daemon prune stale entries that point at a
+// binary the spec no longer considers a valid ACP transport — for example, a
+// persisted "codex" entry whose command is the bare "codex" TUI rather than
+// the "codex-acp" adapter.
+func ValidCommandsForAgent(id string) []string {
+	for _, spec := range knownAgents {
+		if spec.id == id {
+			return append([]string(nil), spec.commands...)
+		}
+	}
+	return nil
 }
 
 // Autodetect searches the system PATH for known agent executables
@@ -213,7 +259,7 @@ func findFirstCommand(commands, searchPaths []string) string {
 		}
 		for _, cmd := range commands {
 			candidates := []string{cmd}
-			if runtime.GOOS == "windows" {
+			if runtime.GOOS == osWindows {
 				candidates = append(candidates, cmd+".exe", cmd+".cmd")
 			}
 			for _, c := range candidates {
@@ -461,7 +507,7 @@ func getCursorModelsFromCLI() []AgentModel {
 	// CLI install directory. This ensures model discovery works even when the
 	// daemon was started before the Cursor CLI installer added it to PATH.
 	cmdPath := findFirstCommand(
-		[]string{"agent", "cursor-agent"},
+		cursorAgentCommands,
 		[]string{
 			"%LOCALAPPDATA%/cursor-agent",
 			"~/.local/bin",

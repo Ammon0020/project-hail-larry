@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 	"time"
@@ -28,6 +29,15 @@ import (
 
 //go:embed all:dist
 var frontendFS embed.FS
+
+// Shared constants for the server package. localhost is the loopback hostname
+// used by host checks and TLS SANs; statusKey/statusUpdated are JSON keys in
+// the generic status response envelope written by several API handlers.
+const (
+	localhost     = "localhost"
+	statusKey     = "status"
+	statusUpdated = "updated"
+)
 
 // Deps holds all the manager dependencies the server needs.
 type Deps struct {
@@ -193,6 +203,17 @@ func (s *Server) apiRoutes() {
 // credentials. Remote (LAN) devices still must authenticate. This keeps the
 // frontend working before it is updated to send credentials, and preserves
 // security for non-loopback callers once it is.
+//
+// CSRF defense for the loopback bypass: a malicious website opened in the host
+// browser can issue cross-origin POST/PUT/PATCH/DELETE requests to
+// http://localhost:<port>/api/... that the browser sends with the attacker's
+// Origin. Browsers always set Origin on such requests, so for mutating methods
+// on loopback we require the Origin — when present — to be a loopback origin
+// (localhost / 127.0.0.1 / ::1). Non-browser clients (the CLI, curl) typically
+// omit Origin and are still allowed, since they are not CSRF vectors.
+// Read-only GET/HEAD/OPTIONS requests are exempt: the browser same-origin
+// policy already hides cross-origin response bodies, and the CLI issues GETs
+// without Origin.
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.deps == nil || s.deps.PairingMgr == nil {
@@ -200,6 +221,10 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if isLoopback(r) {
+			if isMutatingMethod(r.Method) && !loopbackOriginAllowed(r) {
+				writeError(w, http.StatusForbidden, "cross-origin request not allowed")
+				return
+			}
 			next(w, r)
 			return
 		}
@@ -209,6 +234,38 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// isMutatingMethod reports whether the HTTP method can change server state.
+// GET/HEAD/OPTIONS are read-only; POST/PUT/PATCH/DELETE are mutating and are
+// the CSRF-relevant methods for the loopback auth bypass.
+func isMutatingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	}
+	return false
+}
+
+// loopbackOriginAllowed validates the Origin header on a loopback request as a
+// CSRF defense. It returns true when the request is not browser-initiated (no
+// Origin header — e.g. the CLI or curl, which are not CSRF vectors) OR when
+// the Origin is a loopback origin (localhost, 127.0.0.1, or ::1 on any port),
+// which is what the host browser uses. A cross-origin request from a malicious
+// website carries the attacker's Origin and is rejected. The Origin host is
+// compared (port-stripped) so any local port is accepted.
+func loopbackOriginAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// Non-browser client (no Origin). Not a CSRF vector — allow.
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := u.Hostname()
+	return host == "127.0.0.1" || host == "::1" || host == localhost
 }
 
 // isLoopback reports whether the request originated from a loopback address
@@ -222,7 +279,7 @@ func isLoopback(r *http.Request) bool {
 		// RemoteAddr had no port; treat the whole string as the host.
 		host = r.RemoteAddr
 	}
-	return host == "127.0.0.1" || host == "::1" || host == "localhost"
+	return host == "127.0.0.1" || host == "::1" || host == localhost
 }
 
 // authenticate extracts the device credential from the request and validates
@@ -255,7 +312,7 @@ func extractCredential(r *http.Request) (deviceID, secret string) {
 
 // handleHealth responds with a simple JSON health check.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: "ok"})
 }
 
 // serveFrontend sets up the embedded React build as static files.

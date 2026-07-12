@@ -22,6 +22,11 @@ linters:
     - unconvert # redundant type conversions
     - unparam # unused function parameters
     - unused # unused code
+    - errorlint # %v vs %w in error formatting, unwrapped errors
+    - nilnil # functions returning both nil value and nil error
+    - goconst # repeated strings that could be constants
+    - exhaustive # non-exhaustive switch on enums
+    - usestdlibvars # string literals that should be stdlib consts (e.g. "GET" vs http.MethodGet)
 
   settings:
     govet:
@@ -43,6 +48,13 @@ linters:
     errcheck:
       check-type-assertions: true
       check-blank: false
+
+    exhaustive:
+      default-signifies-exhaustive: true
+
+    goconst:
+      min-len: 3
+      min-occurrences: 3
 
     revive:
       severity: warning
@@ -69,10 +81,14 @@ linters:
   exclusions:
     rules:
       # Test files: relax errcheck and gosec (common to ignore errors in test setup).
+      # goconst is also relaxed for tests since repeated strings there are
+      # typically fixture data (IDs, model names, status values) that don't
+      # benefit from being hoisted into constants.
       - path: '(.+)_test\.go'
         linters:
           - errcheck
           - gosec
+          - goconst
 
       # Deprecated websocket library (nhooyr.io/websocket → coder.com/websocket migration deferred).
       - path: 'internal/sync/sync\.go'

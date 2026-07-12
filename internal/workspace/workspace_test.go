@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -192,6 +193,178 @@ func TestReadFileTraversal(t *testing.T) {
 	_, _, err := m.ReadFile(ctx, ws.ID, "../../../etc/passwd")
 	if err == nil {
 		t.Error("expected error for path traversal")
+	}
+}
+
+// TestReadFileSymlinkEscape verifies that reading through a symlink that
+// points outside the workspace is blocked (Finding 2.1). An agent could create
+// such a symlink via an approved shell command (`ln -s /etc/passwd ./passwd`)
+// and then attempt to read it through the API to escape the workspace boundary.
+func TestReadFileSymlinkEscape(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := createTestDir(t)
+
+	ws, _ := m.Register(ctx, dir)
+
+	// Create a target file outside the workspace and a symlink inside pointing
+	// at it.
+	outside := t.TempDir()
+	target := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(target, []byte("secret"), 0644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	link := filepath.Join(dir, "link.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if _, _, err := m.ReadFile(ctx, ws.ID, "link.txt"); err == nil {
+		t.Error("expected error when reading through a symlink escaping the workspace")
+	}
+}
+
+// TestReadFileSymlinkInsideWorkspace verifies that even a symlink whose target
+// is inside the workspace is rejected — the policy is "no symlinks at all" for
+// workspace file access, since allowing them would let an agent pivot through
+// links they created.
+func TestReadFileSymlinkInsideWorkspace(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := createTestDir(t)
+
+	ws, _ := m.Register(ctx, dir)
+
+	// Symlink inside the workspace pointing at another file inside the workspace.
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(filepath.Join(dir, "package.json"), link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if _, _, err := m.ReadFile(ctx, ws.ID, "link.json"); err == nil {
+		t.Error("expected error when reading through an in-workspace symlink")
+	}
+}
+
+// TestWriteFileSymlinkEscape verifies that writing through a symlink that
+// points outside the workspace is blocked (Finding 2.1, write path).
+func TestWriteFileSymlinkEscape(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := createTestDir(t)
+
+	ws, _ := m.Register(ctx, dir)
+
+	outside := t.TempDir()
+	target := filepath.Join(outside, "pwned.txt")
+	if err := os.WriteFile(target, []byte("orig"), 0644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	link := filepath.Join(dir, "pwned.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if _, err := m.WriteFile(ctx, ws.ID, "pwned.txt", "escaped", 0); err == nil {
+		t.Error("expected error when writing through a symlink escaping the workspace")
+	}
+
+	// Confirm the out-of-workspace target was NOT modified.
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(got) != "orig" {
+		t.Errorf("out-of-workspace target was modified through symlink: got %q", got)
+	}
+}
+
+// TestWriteFileSymlinkParentEscape verifies that a symlinked parent directory
+// cannot be used to escape the workspace on a write to a not-yet-existing path.
+func TestWriteFileSymlinkParentEscape(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := createTestDir(t)
+
+	ws, _ := m.Register(ctx, dir)
+
+	outside := t.TempDir()
+	// `ln -s <outside> ./etc` then write `./etc/passwd`.
+	linkDir := filepath.Join(dir, "etc")
+	if err := os.Symlink(outside, linkDir); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if _, err := m.WriteFile(ctx, ws.ID, "etc/passwd", "escaped", 0); err == nil {
+		t.Error("expected error when writing through a symlinked parent escaping the workspace")
+	}
+
+	// Confirm nothing was written outside the workspace.
+	if _, err := os.Stat(filepath.Join(outside, "passwd")); !os.IsNotExist(err) {
+		t.Errorf("out-of-workspace file was created through symlinked parent: %v", err)
+	}
+}
+
+// TestReadFileSizeLimit verifies that reading a file larger than maxReadFileSize
+// is rejected without loading the content (Finding 4.2).
+func TestReadFileSizeLimit(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	ws, err := m.Register(ctx, dir)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Create a file just over the cap. We write a sparse file to avoid actually
+	// allocating maxReadFileSize+1 bytes on disk during the test.
+	bigPath := filepath.Join(dir, "big.bin")
+	f, err := os.Create(bigPath)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Seek to (maxReadFileSize) and write one byte beyond the cap.
+	if _, err := f.Seek(maxReadFileSize, 0); err != nil {
+		t.Fatalf("seek: %v", err)
+	}
+	if _, err := f.Write([]byte("x")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if _, _, err := m.ReadFile(ctx, ws.ID, "big.bin"); err == nil {
+		t.Error("expected error for file exceeding maxReadFileSize")
+	} else if !strings.Contains(err.Error(), "too large") {
+		t.Errorf("expected 'too large' error, got: %v", err)
+	}
+}
+
+// TestReadFileUnderSizeLimit verifies that a file just under the cap reads fine.
+func TestReadFileUnderSizeLimit(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	ws, err := m.Register(ctx, dir)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Create a small file and confirm it reads normally.
+	smallPath := filepath.Join(dir, "small.txt")
+	if writeErr := os.WriteFile(smallPath, []byte("hello"), 0644); writeErr != nil {
+		t.Fatalf("write: %v", writeErr)
+	}
+
+	content, _, err := m.ReadFile(ctx, ws.ID, "small.txt")
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if content != "hello" {
+		t.Errorf("expected 'hello', got %q", content)
 	}
 }
 

@@ -39,7 +39,7 @@ func (c *acpClientImpl) emitStreamUpdate(content string, thought bool) {
 	c.emit(interfaces.Event{
 		Type:      interfaces.EventStreamUpdate,
 		SessionID: c.sessionID,
-		Role:      "agent",
+		Role:      roleAgent,
 		Content:   content,
 		Streaming: true,
 		Thought:   thought,

@@ -73,10 +73,14 @@ func EnsureSelfSignedCert(certDir, host string) (certPath, keyPath string, err e
 			Organization: []string{"Local Agent Interface"},
 			CommonName:   "local-agent",
 		},
-		NotBefore:             time.Now().Add(-time.Minute),
-		NotAfter:              time.Now().Add(certValidity),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		NotBefore: time.Now().Add(-time.Minute),
+		NotAfter:  time.Now().Add(certValidity),
+		// KeyUsage is DigitalSignature only — the private key is ECDSA P-256,
+		// which cannot perform key encipherment (that bit is only meaningful for
+		// RSA key exchange). ExtKeyUsage is restricted to ServerAuth since this
+		// cert authenticates the daemon's HTTPS server; ClientAuth is unused.
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		DNSNames:              dnsNames,
 		IPAddresses:           ipAddrs,
@@ -114,7 +118,7 @@ func EnsureSelfSignedCert(certDir, host string) (certPath, keyPath string, err e
 // network interfaces. If host is non-empty and not "0.0.0.0", it is added
 // as a DNS name as well (useful when a hostname is configured).
 func buildSANs(host string) (dnsNames []string, ipAddrs []net.IP) {
-	dnsNames = []string{"localhost"}
+	dnsNames = []string{localhost}
 	ipAddrs = []net.IP{net.ParseIP("127.0.0.1")}
 
 	// Add the configured host as a DNS name if it is meaningful.

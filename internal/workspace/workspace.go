@@ -164,6 +164,12 @@ func (m *Manager) Remove(_ context.Context, id string) error {
 	return nil
 }
 
+// maxReadFileSize caps the number of bytes ReadFile will read from disk before
+// returning the content. Without a cap, a multi-gigabyte file could be loaded
+// into memory by os.ReadFile and OOM the daemon. 50 MiB is large enough for any
+// realistic source file yet small enough to bound memory use per request.
+const maxReadFileSize = 50 * 1024 * 1024
+
 // ReadFile returns the content of a file and its current revision.
 // The revision is a content hash (the leading 48 bits of the SHA-256 of the
 // file content), used for optimistic locking. Unlike filesystem ModTime, a
@@ -193,6 +199,20 @@ func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (stri
 	fullPath, err := safeJoin(wsPath, relPath)
 	if err != nil {
 		return "", 0, err
+	}
+
+	// Bound the read size so a multi-GB file cannot OOM the daemon. Lstat is
+	// used (not Stat) so that the size check operates on the link entry itself
+	// rather than the target — but safeJoin has already rejected symlinks, so
+	// in practice the entry is always a regular file or directory. A directory
+	// here will fail the subsequent os.ReadFile with a "is a directory" error,
+	// which is the desired behavior.
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return "", 0, fmt.Errorf("stat file: %w", err)
+	}
+	if info.Size() > maxReadFileSize {
+		return "", 0, fmt.Errorf("file too large (max %d bytes, file is %d bytes)", maxReadFileSize, info.Size())
 	}
 
 	content, err := os.ReadFile(fullPath) //nolint:gosec // fullPath is constrained by safeJoin to the registered workspace root.
@@ -323,14 +343,14 @@ func buildFileTree(root, relPath string, depth int, nodeCount *int) ([]interface
 		}
 
 		if entry.IsDir() {
-			node.Type = "folder"
+			node.Type = interfaces.FileNodeTypeFolder
 			children, err := buildFileTree(root, childRelPath, depth+1, nodeCount)
 			if err != nil {
 				return nil, err
 			}
 			node.Children = children
 		} else {
-			node.Type = "file"
+			node.Type = interfaces.FileNodeTypeFile
 		}
 
 		nodes = append(nodes, node)
@@ -339,7 +359,7 @@ func buildFileTree(root, relPath string, depth int, nodeCount *int) ([]interface
 	// Sort: directories first, then files, both alphabetically.
 	sort.Slice(nodes, func(i, j int) bool {
 		if nodes[i].Type != nodes[j].Type {
-			return nodes[i].Type == "folder"
+			return nodes[i].Type == interfaces.FileNodeTypeFolder
 		}
 		return nodes[i].Name < nodes[j].Name
 	})
@@ -353,6 +373,15 @@ func buildFileTree(root, relPath string, depth int, nodeCount *int) ([]interface
 // final containment check (result must stay within root) is the real safety
 // net; the component check avoids false-rejecting legitimate filenames such as
 // "..foo" that merely begin with the characters "..".
+//
+// In addition to lexical traversal checks, safeJoin resolves symlinks on the
+// joined path (and, when the final path doesn't yet exist, on its parent
+// directory) and re-validates that the resolved path still stays within the
+// workspace root. This prevents an agent from creating a symlink via an
+// approved shell command (e.g. `ln -s /etc/passwd ./passwd`) and then reading
+// or writing through it via the API to escape the workspace boundary.
+// os.ReadFile and os.WriteFile follow symlinks, so the lexical check alone is
+// not sufficient.
 func safeJoin(root, relPath string) (string, error) {
 	// Clean the relative path to remove any redundant components.
 	cleanRel := filepath.Clean(relPath)
@@ -373,7 +402,101 @@ func safeJoin(root, relPath string) (string, error) {
 		return "", fmt.Errorf("path %q is outside the workspace root %q", relPath, root)
 	}
 
-	return fullPath, nil
+	// Resolve any symlinks on the joined path and re-validate containment.
+	// resolveSymlinks returns the lexically-checked fullPath when the path (or
+	// its parent, for not-yet-existing write targets) cannot be fully resolved,
+	// but only after verifying the resolvable portion is not a symlink chain
+	// escaping the workspace.
+	resolved, err := resolveSymlinks(root, fullPath)
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+// resolveSymlinks resolves symlinks on path and verifies the resolved path
+// still stays within the workspace root. It returns the resolved absolute path
+// on success.
+//
+// Behavior:
+//   - If the final path exists, filepath.EvalSymlinks is used to fully resolve
+//     it. The resolved path is then checked for containment under root. If the
+//     final component is itself a symlink (Lstat reports ModeSymlink), the
+//     path is rejected outright — agents must not read or write through
+//     symlinks they may have created via approved shell commands.
+//   - If the final path does not exist (e.g. a write target that hasn't been
+//     created yet), EvalSymlinks fails. In that case the parent directory is
+//     resolved instead and the (lexical) final component is appended back.
+//     The parent is also Lstat-checked to ensure it is not itself a symlink.
+//   - If the parent also cannot be resolved, the lexical fullPath is returned
+//     as-is — the lexical containment check in safeJoin is the only remaining
+//     safeguard, but at that point no on-disk symlink chain exists to follow.
+//
+// root is the workspace root (already absolute and cleaned); path is the
+// absolute, lexically-validated candidate path under root.
+func resolveSymlinks(root, path string) (string, error) {
+	cleanRoot := filepath.Clean(root)
+
+	// Reject a symlink at the final component outright. Even if EvalSymlinks
+	// would resolve it back inside the workspace, allowing reads/writes through
+	// a symlink the agent created is the exact escape we are preventing: a
+	// `ln -s /etc/passwd ./passwd` followed by a ReadFile("./passwd") must be
+	// blocked regardless of where the link points.
+	if li, err := os.Lstat(path); err == nil && li.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("path %q is a symlink; symlinks are not permitted in workspace file access", path)
+	}
+
+	// Try to fully resolve the path. EvalSymlinks follows symlinks in every
+	// component and returns the canonical absolute path.
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		if !isWithinRoot(cleanRoot, resolved) {
+			return "", fmt.Errorf("resolved path %q escapes the workspace root %q", resolved, cleanRoot)
+		}
+		return resolved, nil
+	}
+
+	// EvalSymlinks failed — typically because the final component doesn't exist
+	// yet (a write target). Resolve the parent directory instead and re-append
+	// the final component, then re-check containment.
+	parent := filepath.Dir(path)
+	base := filepath.Base(path)
+
+	// If the parent is itself a symlink, reject: an agent could `ln -s /etc
+	// ./etc` and then write `./etc/passwd` to escape the workspace.
+	if li, perr := os.Lstat(parent); perr == nil && li.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("parent directory %q is a symlink; symlinks are not permitted in workspace file access", parent)
+	}
+
+	resolvedParent, perr := filepath.EvalSymlinks(parent)
+	if perr != nil {
+		// Neither the path nor its parent can be resolved (e.g. the parent
+		// doesn't exist either). Fall back to the lexical path; the lexical
+		// containment check in safeJoin remains the safeguard.
+		return path, nil
+	}
+
+	if !isWithinRoot(cleanRoot, resolvedParent) {
+		return "", fmt.Errorf("resolved parent %q escapes the workspace root %q", resolvedParent, cleanRoot)
+	}
+
+	// Re-attach the (lexical) final component to the resolved parent. This is
+	// safe because the final component is a leaf name that does not yet exist
+	// on disk, so it cannot itself be a symlink.
+	resolvedPath := filepath.Join(resolvedParent, base)
+	if !isWithinRoot(cleanRoot, resolvedPath) {
+		return "", fmt.Errorf("resolved path %q escapes the workspace root %q", resolvedPath, cleanRoot)
+	}
+	return resolvedPath, nil
+}
+
+// isWithinRoot reports whether path is equal to root or lives beneath it. Both
+// arguments are expected to be absolute and cleaned.
+func isWithinRoot(root, path string) bool {
+	if path == root {
+		return true
+	}
+	return strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
 // WriteFile writes content to a file in a workspace with optimistic locking.
@@ -404,6 +527,15 @@ func (m *Manager) WriteFile(_ context.Context, workspaceID, relPath, content str
 	// content hash and compare. The hash reflects the actual on-disk content
 	// (not mtime), so a concurrent edit that changed the bytes is detected.
 	if expectedRevision > 0 {
+		// Bound the read size so a multi-GB file cannot OOM the daemon during
+		// the revision check (same rationale as ReadFile's cap).
+		info, serr := os.Lstat(fullPath)
+		if serr != nil {
+			return 0, fmt.Errorf("stat file for revision check: %w", serr)
+		}
+		if info.Size() > maxReadFileSize {
+			return 0, fmt.Errorf("file too large (max %d bytes, file is %d bytes)", maxReadFileSize, info.Size())
+		}
 		current, rerr := os.ReadFile(fullPath) //nolint:gosec // fullPath is constrained by safeJoin.
 		if rerr != nil {
 			return 0, fmt.Errorf("read file for revision check: %w", rerr)

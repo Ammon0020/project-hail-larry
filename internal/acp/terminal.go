@@ -204,7 +204,7 @@ func (c *acpClientImpl) CreateTerminal(ctx context.Context, params acp.CreateTer
 	command := params.Command
 	args := params.Args
 	if len(args) == 0 && containsShellOperators(command) {
-		if runtime.GOOS == "windows" {
+		if runtime.GOOS == osWindows {
 			args = []string{"/c", command}
 			command = "cmd"
 		} else {

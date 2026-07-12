@@ -12,6 +12,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -158,6 +160,18 @@ func (h *Hub) ClientCount() int {
 // Loopback connections (127.0.0.1, ::1) bypass auth. The daemon runs on the
 // host and the host's browser connects via localhost, so the host machine is
 // always trusted. Remote (LAN) devices must still present credentials.
+//
+// CSRF defense: the WebSocket handshake's Origin header is verified before the
+// upgrade. Browsers always set Origin on WS handshakes, so an empty Origin is
+// rejected (this endpoint is browser-facing). The Origin's host must match the
+// request's Host — i.e. the host the client used to reach the daemon. The host
+// browser connects via localhost so Origin == Host; a remote paired device
+// connects via the LAN IP so Origin == Host there too. A cross-origin
+// handshake from a malicious website (e.g. a page on evil.com opening
+// ws://localhost:7337/ws from the host browser) carries Origin=evil.com while
+// Host=localhost:7337, so it is rejected with 403. Without this check a
+// malicious site could open the socket and exfiltrate all IDE data because
+// loopback bypasses auth.
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	// Validate device credentials before upgrading the connection.
 	// Loopback (host browser) is always allowed.
@@ -170,10 +184,21 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Accept the WebSocket connection.
+	// CSRF defense: verify the Origin header before upgrading. See the
+	// HandleWS doc comment for the threat model. originAllowed rejects empty
+	// Origin (non-browser clients are not expected on this browser-facing
+	// endpoint) and any Origin whose host does not match the request Host.
+	if !originAllowed(r) {
+		http.Error(w, "origin not allowed", http.StatusForbidden)
+		return
+	}
+
+	// Accept the WebSocket connection. InsecureSkipVerify is left at its
+	// default (false) so the library independently re-checks Origin against
+	// r.Host as defense in depth — the manual check above is the primary gate
+	// and produces a clean 403, while the library check is a backstop.
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// LAN-only; allow all origins for simplicity in Phase 1.
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: false,
 	})
 	if err != nil {
 		log.Printf("sync: accept websocket: %v", err)
@@ -297,4 +322,26 @@ func isLoopbackAddr(remoteAddr string) bool {
 		host = remoteAddr
 	}
 	return host == "127.0.0.1" || host == "::1" || host == "localhost"
+}
+
+// originAllowed reports whether the WebSocket upgrade request's Origin header
+// is acceptable as a CSRF defense. Browsers always set Origin on WebSocket
+// handshakes, so an empty Origin is rejected — this endpoint is browser-facing
+// and a missing Origin is suspicious. The Origin's host must match the
+// request's Host (the host the client used to reach the daemon): the host
+// browser connects via localhost so Origin == Host, and a remote paired device
+// connects via the LAN IP so Origin == Host there as well. A cross-origin
+// handshake from a malicious website has Origin != Host and is rejected,
+// preventing it from opening ws://localhost:<port>/ws and exfiltrating IDE
+// data through the loopback auth bypass.
+func originAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }

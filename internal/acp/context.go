@@ -27,6 +27,17 @@ import (
 	"github.com/adama/local-agent/internal/interfaces"
 )
 
+// Context-resource identifiers and MIME types used by the workspace context
+// bundle. Centralised here so the URIs and content types stay consistent
+// between the producer (this package) and the tests/assertions elsewhere.
+const (
+	workspaceContextURI  = "context://workspace"
+	contextMimeType      = "text/markdown"
+	workspaceContextName = "Workspace Context"
+	agentsMDFilename     = "AGENTS.md"
+	contextCountKey      = "count"
+)
+
 // PromptAction is the action a PromptMiddleware requests of the pipeline.
 type PromptAction int
 
@@ -230,16 +241,16 @@ func (m *FirstPromptContextMiddleware) BeforePromptResources(ctx context.Context
 			bundle = bundle[:sm.MaxContextBytes]
 		}
 		resources = append(resources, ContextResource{
-			URI:      "context://workspace",
-			MimeType: "text/markdown",
-			Name:     "Workspace Context",
+			URI:      workspaceContextURI,
+			MimeType: contextMimeType,
+			Name:     workspaceContextName,
 			Text:     bundle,
 		})
 	}
 
 	// AGENTS.md as its own resource with a real file URI.
 	if pc.WorkspacePath != "" {
-		path := filepath.Join(pc.WorkspacePath, "AGENTS.md")
+		path := filepath.Join(pc.WorkspacePath, agentsMDFilename)
 		if data, err := os.ReadFile(path); err == nil { //nolint:gosec // path is built from the registered workspace root.
 			text := string(data)
 			if len(text) > sm.MaxContextBytes {
@@ -247,8 +258,8 @@ func (m *FirstPromptContextMiddleware) BeforePromptResources(ctx context.Context
 			}
 			resources = append(resources, ContextResource{
 				URI:      "file://" + filepath.ToSlash(path),
-				MimeType: "text/markdown",
-				Name:     "AGENTS.md",
+				MimeType: contextMimeType,
+				Name:     agentsMDFilename,
 				Text:     text,
 			})
 		}
@@ -285,8 +296,8 @@ func (m *FirstPromptContextMiddleware) writeFileTree(ctx context.Context, b *str
 	}
 
 	header := sm.Render(sm.FilesHeader, map[string]string{
-		"count": strconv.Itoa(len(paths)),
-		"depth": strconv.Itoa(sm.MaxFileTreeDepth),
+		contextCountKey: strconv.Itoa(len(paths)),
+		"depth":         strconv.Itoa(sm.MaxFileTreeDepth),
 	})
 	fmt.Fprintf(b, "\n%s\n\n", header)
 	// Group by top-level directory for readability.
@@ -326,7 +337,7 @@ func (m *FirstPromptContextMiddleware) writeGitStatus(b *strings.Builder, pc *Pr
 func flattenFileNodes(nodes []interfaces.FileNode, depth, maxDepth int) []string {
 	var out []string
 	for _, n := range nodes {
-		if n.Type == "file" {
+		if n.Type == interfaces.FileNodeTypeFile {
 			out = append(out, n.Path)
 			continue
 		}

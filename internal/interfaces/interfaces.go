@@ -143,6 +143,13 @@ type FileNode struct {
 	Children []FileNode `json:"children,omitempty"`
 }
 
+// FileNode type values. These are part of the JSON wire format sent to the UI,
+// so the string literals must remain stable.
+const (
+	FileNodeTypeFile   = "file"
+	FileNodeTypeFolder = "folder"
+)
+
 // WorkspaceInfo describes a registered workspace.
 type WorkspaceInfo struct {
 	ID   string `json:"id"`

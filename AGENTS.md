@@ -85,6 +85,7 @@ If the quota runs out, use the small subagent. It's still very powerful and can 
 - Mobile-first: unprefixed = base, `md:`/`lg:` add up
 - Dark mode via `dark:` prefix or `data-theme` attribute, never JS conditionals
 - Order classes consistently: layout → spacing → typography → color → state
+- Use `clsx` or `tailwind-merge` (`cn` utility) for dynamic/conditional styling to avoid conflicts
 
 ## Docs
 

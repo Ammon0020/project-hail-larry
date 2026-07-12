@@ -79,12 +79,19 @@ func DefaultOrError() (*Config, error) {
 	dataDir := filepath.Join(homeDir, ".local-agent")
 
 	return &Config{
-		Port:              7337,
-		Host:              "0.0.0.0",
-		DataDir:           dataDir,
-		DBPath:            filepath.Join(dataDir, "local-agent.db"),
-		Workspaces:        []string{},
-		Agents:            []acp.AgentInfo{},
+		Port:       7337,
+		Host:       "0.0.0.0",
+		DataDir:    dataDir,
+		DBPath:     filepath.Join(dataDir, "local-agent.db"),
+		Workspaces: []string{},
+		Agents:     []acp.AgentInfo{},
+		// TLSEnabled defaults to true so fresh installs are secure by default —
+		// device Bearer tokens must not travel in cleartext over the LAN. An
+		// existing config file that explicitly sets "tlsEnabled": false is
+		// respected (see Load); an older config file that omits the field
+		// entirely also gets true (secure-by-default upgrade), unless the user
+		// explicitly opts out.
+		TLSEnabled:        true,
 		TLSCertDir:        filepath.Join(dataDir, "tls"),
 		PairingTTLSeconds: 300,
 
@@ -114,6 +121,20 @@ func Load() (*Config, error) {
 	var cfg Config
 	if unmarshalErr := json.Unmarshal(data, &cfg); unmarshalErr != nil {
 		return nil, unmarshalErr
+	}
+
+	// Detect whether the "tlsEnabled" key was explicitly present in the JSON.
+	// A plain bool zero-fills to false on omission, which we cannot distinguish
+	// from an explicit "tlsEnabled": false. To be secure-by-default on upgrade
+	// (older config files predate the field) while still respecting an explicit
+	// opt-out, decode into a raw map and check key presence: if the key is
+	// absent, force TLS on; if present, the value decoded above stands.
+	var raw map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(data, &raw); unmarshalErr != nil {
+		return nil, unmarshalErr
+	}
+	if _, ok := raw["tlsEnabled"]; !ok {
+		cfg.TLSEnabled = true
 	}
 
 	// Fill in any missing defaults.

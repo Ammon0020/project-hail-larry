@@ -16,8 +16,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Port != 7337 {
 		t.Errorf("expected port 7337, got %d", cfg.Port)
 	}
-	if cfg.Host != "0.0.0.0" {
-		t.Errorf("expected host 0.0.0.0, got %s", cfg.Host)
+	if cfg.Host != defaultBindHost {
+		t.Errorf("expected host %s, got %s", defaultBindHost, cfg.Host)
 	}
 	if cfg.DataDir == "" {
 		t.Error("expected non-empty data dir")
@@ -168,5 +168,86 @@ func TestMergeAutodetectedAgentsAddsNewAgent(t *testing.T) {
 	}
 	if merged[0].ID != "mistral-vibe" {
 		t.Fatalf("unexpected merged agent ID %q", merged[0].ID)
+	}
+}
+
+// TestPruneStaleKnownAgentsRemovesStaleCodex verifies that a persisted "codex"
+// entry whose command is the bare codex TUI (not the codex-acp adapter) is
+// pruned, since the codex spec only lists "codex-acp" as a valid command.
+func TestPruneStaleKnownAgentsRemovesStaleCodex(t *testing.T) {
+	agents := []acp.AgentInfo{
+		{ID: "codex", Name: "Codex CLI", Command: "/home/adam/.nvm/versions/node/v20.19.5/bin/codex"},
+		{ID: "claude-code", Name: "Claude Code", Command: "claude"},
+	}
+
+	pruned, removed := pruneStaleKnownAgents(agents)
+	if !removed {
+		t.Fatal("expected stale codex entry to be removed")
+	}
+	if len(pruned) != 1 {
+		t.Fatalf("expected 1 agent after prune, got %d", len(pruned))
+	}
+	if pruned[0].ID != "claude-code" {
+		t.Fatalf("expected claude-code to remain, got %q", pruned[0].ID)
+	}
+}
+
+// TestPruneStaleKnownAgentsKeepsValidCodexAcp verifies that a persisted "codex"
+// entry pointing at the codex-acp adapter (bare name or full path) is kept.
+func TestPruneStaleKnownAgentsKeepsValidCodexAcp(t *testing.T) {
+	agents := []acp.AgentInfo{
+		{ID: "codex", Command: "codex-acp"},
+		{ID: "codex-dup", Command: "/usr/local/bin/codex-acp"},
+	}
+
+	pruned, removed := pruneStaleKnownAgents(agents)
+	if removed {
+		t.Fatal("expected no removal when commands are valid")
+	}
+	if len(pruned) != 2 {
+		t.Fatalf("expected both agents kept, got %d", len(pruned))
+	}
+}
+
+// TestPruneStaleKnownAgentsKeepsUnknownAgent verifies that user-defined custom
+// agents (IDs that don't match any known spec) are never pruned, even when
+// their command is an arbitrary path.
+func TestPruneStaleKnownAgentsKeepsUnknownAgent(t *testing.T) {
+	agents := []acp.AgentInfo{
+		{ID: "my-custom-agent", Command: "/some/random/path/myagent"},
+	}
+
+	pruned, removed := pruneStaleKnownAgents(agents)
+	if removed {
+		t.Fatal("expected no removal for unknown custom agent")
+	}
+	if len(pruned) != 1 || pruned[0].ID != "my-custom-agent" {
+		t.Fatalf("expected custom agent preserved, got %+v", pruned)
+	}
+}
+
+// TestCommandMatchesSpec covers bare names, full paths, and the Windows
+// extension-stripping branch (the latter runs only on windows GOOS, but the
+// bare-name and path cases are platform-independent).
+func TestCommandMatchesSpec(t *testing.T) {
+	valid := []string{"codex-acp"}
+
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		{"codex-acp", true},
+		{"/usr/local/bin/codex-acp", true},
+		{"/home/adam/.nvm/versions/node/v20.19.5/bin/codex-acp", true},
+		{"codex", false},
+		{"/home/adam/.nvm/versions/node/v20.19.5/bin/codex", false},
+		{"", false},
+		{"codex-acp-other", false},
+	}
+	for _, c := range cases {
+		got := commandMatchesSpec(c.cmd, valid)
+		if got != c.want {
+			t.Errorf("commandMatchesSpec(%q, %v) = %v, want %v", c.cmd, valid, got, c.want)
+		}
 	}
 }

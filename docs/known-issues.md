@@ -58,3 +58,20 @@ the correct extension ourselves before storing the upload.
 When Claude Code fixes the inline-image gap upstream, no change is needed on
 our side — the capability gate will already send the inline `ImageBlock` to any
 agent that advertises image support.
+
+## Security audit — deferred findings (from 2026-07-07 audit)
+
+Two findings from the security audit are deferred as design items rather than
+code fixes:
+
+- **sec-auth-no-authorization-tiers (Medium):** All paired devices have equal
+  privileges — any device can revoke another device or register an arbitrary
+  filesystem path as a workspace. Fix requires introducing an authorization
+  tier (e.g. first-paired device as admin) or host-side confirmation for
+  destructive actions. Tracked as a design decision, not a quick patch.
+- **sec-auth-credentials-in-query-params (Low):** Device credentials are passed
+  as `deviceId`/`secret` query params on WebSocket/SSE handshakes (browsers
+  can't set headers on WS). Acceptable trade-off for direct LAN+TLS, but a
+  short-lived single-use WS ticket exchanged via the authenticated REST API
+  would eliminate the leakage vector if a reverse proxy is ever placed in
+  front.

@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +31,14 @@ import (
 const (
 	appDataDirPerm = 0700
 	pidFilePerm    = 0600
+
+	// defaultBindHost is the all-interfaces bind address used when the user
+	// doesn't override Host in config. An empty Host is treated equivalently.
+	defaultBindHost = "0.0.0.0"
+
+	// warningExecutableNotFound is set on an agent entry when its launch
+	// command is neither a valid file nor on PATH. Cleared once it resolves.
+	warningExecutableNotFound = "Executable not found in PATH"
 )
 
 // Config holds daemon configuration loaded from ~/.local-agent/.
@@ -76,10 +86,16 @@ func DefaultConfigOrError() (*Config, error) {
 	dataDir := filepath.Join(homeDir, ".local-agent")
 
 	return &Config{
-		Port:              7337,
-		Host:              "0.0.0.0",
-		DataDir:           dataDir,
-		DBPath:            filepath.Join(dataDir, "local-agent.db"),
+		Port:    7337,
+		Host:    defaultBindHost,
+		DataDir: dataDir,
+		DBPath:  filepath.Join(dataDir, "local-agent.db"),
+		// TLSEnabled defaults to true so device credentials (Bearer tokens) are
+		// never sent in cleartext over the LAN. The self-signed cert generation
+		// (internal/server/tls.go EnsureSelfSignedCert) covers localhost,
+		// 127.0.0.1, and all LAN IPs. Users who want plain HTTP can set
+		// "tlsEnabled": false in ~/.local-agent/config.json.
+		TLSEnabled:        true,
 		TLSCertDir:        filepath.Join(dataDir, "tls"),
 		PairingTTLSeconds: 300,
 
@@ -122,6 +138,63 @@ func mergeAutodetectedAgents(configured, detected []acp.AgentInfo) ([]acp.AgentI
 	}
 
 	return merged, changed
+}
+
+// pruneStaleKnownAgents removes persisted agent entries whose ID matches a
+// known agent spec but whose Command is no longer a valid launch command for
+// that spec. This is a one-time cleanup migration that runs at daemon startup
+// to repair configs left behind by spec changes — e.g. the "codex" spec used
+// to accept the bare "codex" TUI binary, which cannot speak ACP and now that
+// the spec only lists "codex-acp", any persisted entry pointing at the TUI is
+// stale and would otherwise be re-merged on every launch.
+//
+// Entries whose ID does not match a known spec (user-defined custom agents)
+// are always preserved. Returns the filtered slice and whether anything was
+// removed.
+func pruneStaleKnownAgents(agents []acp.AgentInfo) ([]acp.AgentInfo, bool) {
+	pruned := make([]acp.AgentInfo, 0, len(agents))
+	removed := false
+	for _, a := range agents {
+		validCommands := acp.ValidCommandsForAgent(a.ID)
+		if validCommands == nil {
+			// Unknown / user-defined agent — keep it.
+			pruned = append(pruned, a)
+			continue
+		}
+		if commandMatchesSpec(a.Command, validCommands) {
+			pruned = append(pruned, a)
+			continue
+		}
+		log.Printf("WARNING: removing stale agent entry %q: command %q is not a valid launch command for this agent (expected one of %v)",
+			a.ID, a.Command, validCommands)
+		removed = true
+	}
+	return pruned, removed
+}
+
+// commandMatchesSpec reports whether cmd is one of the spec's valid command
+// names, either as a bare name or as a filesystem path whose base name equals
+// one of them (e.g. "/home/user/.nvm/.../bin/codex-acp" matches "codex-acp").
+// On Windows the base name comparison is case-insensitive and ignores the
+// .exe/.cmd extension so a persisted "C:\\path\\codex-acp.exe" still matches.
+func commandMatchesSpec(cmd string, validCommands []string) bool {
+	if cmd == "" {
+		return false
+	}
+	base := filepath.Base(cmd)
+	for _, valid := range validCommands {
+		if cmd == valid || base == valid {
+			return true
+		}
+		if runtime.GOOS == "windows" {
+			if strings.EqualFold(base, valid) ||
+				strings.EqualFold(strings.TrimSuffix(base, ".exe"), valid) ||
+				strings.EqualFold(strings.TrimSuffix(base, ".cmd"), valid) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Daemon is the background process that serves the web UI and API.
@@ -223,6 +296,19 @@ func New(cfg *Config) (*Daemon, error) {
 	}
 	syncHub := sync.NewHub()
 
+	// One-time cleanup migration: prune persisted agent entries whose ID
+	// matches a known agent spec but whose Command is no longer valid for
+	// that spec (e.g. a stale "codex" entry pointing at the bare codex TUI
+	// binary instead of the codex-acp adapter). This runs before autodetect
+	// so the merge below doesn't re-add the stale command from the persisted
+	// copy. Unknown / user-defined agents are always preserved.
+	if pruned, removed := pruneStaleKnownAgents(appCfg.Agents); removed {
+		appCfg.Agents = pruned
+		if saveErr := appCfg.Save(); saveErr != nil {
+			log.Printf("WARNING: failed to persist pruned agent config: %v", saveErr)
+		}
+	}
+
 	// Load persisted agents from config and run autodetection
 	activeAgents, changed := mergeAutodetectedAgents(appCfg.Agents, acp.Autodetect())
 
@@ -232,11 +318,11 @@ func New(cfg *Config) (*Daemon, error) {
 		if _, statErr := os.Stat(activeAgents[i].Command); statErr != nil {
 			// fallback to LookPath
 			if _, lpErr := exec.LookPath(activeAgents[i].Command); lpErr != nil {
-				activeAgents[i].Warning = "Executable not found in PATH"
-			} else if activeAgents[i].Warning == "Executable not found in PATH" {
+				activeAgents[i].Warning = warningExecutableNotFound
+			} else if activeAgents[i].Warning == warningExecutableNotFound {
 				activeAgents[i].Warning = ""
 			}
-		} else if activeAgents[i].Warning == "Executable not found in PATH" {
+		} else if activeAgents[i].Warning == warningExecutableNotFound {
 			activeAgents[i].Warning = ""
 		}
 		acpClient.RegisterAgent(activeAgents[i])
@@ -343,6 +429,12 @@ func (d *Daemon) Start(ctx context.Context) error {
 		}
 		d.server.SetTLS(certPath, keyPath)
 		scheme = "https"
+	} else if d.config.Host == "" || d.config.Host == defaultBindHost {
+		// TLS is disabled and the daemon is bound to all interfaces — every
+		// request, including Bearer tokens, travels in cleartext on the LAN.
+		// Warn loudly so a user who flipped tlsEnabled off understands the
+		// exposure. (An empty Host is equivalent to 0.0.0.0 / all interfaces.)
+		log.Printf("WARNING: TLS is disabled and the server is bound to 0.0.0.0 — all traffic including credentials will be sent in cleartext on the network. Set tlsEnabled: true in config or bind to 127.0.0.1.")
 	}
 
 	// Start HTTP server in a goroutine.

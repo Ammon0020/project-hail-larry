@@ -166,6 +166,10 @@ func TestMockAgentFullFlow(t *testing.T) {
 			hasToolCompleted = true
 		case interfaces.EventAgentExited:
 			t.Errorf("unexpected AgentExited event: %s", e.Summary)
+		default:
+			// Other event types (plan updates, permissions, shell, file, session
+			// lifecycle, model changes) are not exercised by this integration
+			// scenario, so they're intentionally ignored here.
 		}
 	}
 

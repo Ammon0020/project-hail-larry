@@ -23,6 +23,10 @@ import (
 	"log/slog"
 )
 
+// defaultWorkspaceContextHeader is the built-in header for the workspace
+// context block. Externalised so tests and production reference the same value.
+const defaultWorkspaceContextHeader = "## Workspace Context"
+
 // SystemMessages mirrors the JSON config in configs/system-messages.json. It
 // carries the customizable header templates and numeric limits consumed by the
 // prompt middleware pipeline.
@@ -79,7 +83,7 @@ type SystemMessages struct {
 // context.go so behavior is unchanged when no config file is present.
 func DefaultSystemMessages() *SystemMessages {
 	return &SystemMessages{
-		WorkspaceContextHeader:     "## Workspace Context",
+		WorkspaceContextHeader:     defaultWorkspaceContextHeader,
 		FilesHeader:                "## Files (first {count}, depth ≤ {depth})",
 		GitHeader:                  "## Git",
 		AgentsMdHeader:             "## AGENTS.md",
