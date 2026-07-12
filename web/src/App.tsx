@@ -102,6 +102,15 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(
     () => localStorage.getItem('lai:activeTabId') || null,
   )
+  const lastCodeTabIdRef = useRef<string | null>(
+    activeTabId !== 'settings' ? activeTabId : null
+  )
+
+  useEffect(() => {
+    if (activeTabId && activeTabId !== 'settings') {
+      lastCodeTabIdRef.current = activeTabId
+    }
+  }, [activeTabId])
 
   const [wrap, setWrap] = useState(false)
 
@@ -864,7 +873,18 @@ export default function App() {
       {/* Mobile Bottom Nav (hidden on desktop) */}
       <MobileNav
         activeView={mobileView}
-        onSwitchView={setMobileView}
+        onSwitchView={(v) => {
+          if (v === 'editor' && activeTabId === 'settings') {
+            const lastCodeExists = openTabs.some(t => t.id === lastCodeTabIdRef.current)
+            if (lastCodeExists && lastCodeTabIdRef.current) {
+              setActiveTabId(lastCodeTabIdRef.current)
+            } else {
+              const firstCodeTab = openTabs.find(t => t.kind !== 'settings')
+              setActiveTabId(firstCodeTab ? firstCodeTab.id : null)
+            }
+          }
+          setMobileView(v)
+        }}
         onOpenSettings={() => {
           openSettingsTab()
           setMobileView('editor')

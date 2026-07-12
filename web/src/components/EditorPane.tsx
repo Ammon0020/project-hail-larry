@@ -95,17 +95,17 @@ export function EditorPane({
     onSelectionChangeRef.current = onSelectionChange
   }, [onSelectionChange])
 
-  // Hold the CodeMirror EditorView instance so we can imperatively dispatch
+  // Hold the CodeMirror EditorView instances so we can imperatively dispatch
   // selection/scroll transactions (e.g. jump-to-line from search results).
   // Populated via the onCreateEditor callback from @uiw/react-codemirror.
-  const editorViewRef = useRef<EditorView | null>(null)
+  const editorViewsRef = useRef<Record<string, EditorView>>({})
 
   // When scrollToLine changes (and is non-null), move the cursor to that line
   // and scroll it into view. The parent clears the value after the jump so a
   // subsequent click on the same line number re-triggers the effect.
   useEffect(() => {
-    if (scrollToLine == null) return
-    const view = editorViewRef.current
+    if (scrollToLine == null || !activeTabId) return
+    const view = editorViewsRef.current[activeTabId]
     if (!view) return
     // doc.line takes a 1-based line number and returns a line descriptor whose
     // .from is the start position. Guard against out-of-range line numbers.
@@ -115,7 +115,7 @@ export function EditorPane({
       selection: EditorSelection.cursor(linePos),
       scrollIntoView: true,
     })
-  }, [scrollToLine])
+  }, [scrollToLine, activeTabId])
 
   /**
    * Resolve a CodeMirror language extension from the tab's language hint.
@@ -318,33 +318,41 @@ export function EditorPane({
       )}
 
       {/* CodeMirror 6 Editor, Settings Panel, or Empty State */}
-      <div className="flex-1 overflow-hidden bg-editor">
-        {activeTab?.kind === 'settings' ? (
-          <div className="h-full overflow-hidden bg-background">
+      <div className="flex-1 overflow-hidden bg-editor relative">
+        {tabs.some(t => t.kind === 'settings') && (
+          <div className={cn("absolute inset-0 bg-background", activeTab?.kind === 'settings' ? 'block' : 'hidden')}>
             {settingsProps && <SettingsPanel {...settingsProps} />}
           </div>
-        ) : activeTab ? (
-          <CodeMirror
-            value={activeTab.content}
-            onChange={onContentChange}
-            extensions={extensions}
-            theme={oneDark}
-            height="100%"
-            className="text-[13px] h-full"
-            onCreateEditor={(view) => {
-              editorViewRef.current = view
-            }}
-            basicSetup={{
-              lineNumbers: true,
-              foldGutter: true,
-              highlightActiveLine: true,
-              autocompletion: true,
-              bracketMatching: true,
-              closeBrackets: true,
-              indentOnInput: true,
-            }}
-          />
-        ) : (
+        )}
+
+        {tabs.filter(t => t.kind !== 'settings').map(tab => (
+          <div key={tab.id} className={cn("absolute inset-0", activeTabId === tab.id ? 'block' : 'hidden')}>
+            <CodeMirror
+              value={tab.content}
+              onChange={(val) => {
+                if (activeTabId === tab.id) onContentChange(val)
+              }}
+              extensions={extensions}
+              theme={oneDark}
+              height="100%"
+              className="text-[13px] h-full"
+              onCreateEditor={(view) => {
+                editorViewsRef.current[tab.id] = view
+              }}
+              basicSetup={{
+                lineNumbers: true,
+                foldGutter: true,
+                highlightActiveLine: true,
+                autocompletion: true,
+                bracketMatching: true,
+                closeBrackets: true,
+                indentOnInput: true,
+              }}
+            />
+          </div>
+        ))}
+
+        {tabs.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center text-muted-foreground">
               <FileText className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
