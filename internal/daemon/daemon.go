@@ -55,6 +55,17 @@ type Config struct {
 	// idle this long must re-pair); 0 disables it (credentials never expire). It
 	// defaults to 30 days (see DefaultConfigOrError).
 	CredentialInactivityTTLSeconds int `json:"credentialInactivityTtlSeconds"`
+	// AllowRemoteWorkspaceRegistration controls whether paired devices may
+	// register new workspace directories from the web UI / remote API. It
+	// defaults to false: workspaces are registered from the host via the
+	// `app add-folder <path>` CLI command. Set to true to allow remote
+	// registration (still gated by the grace-period pending action flow).
+	AllowRemoteWorkspaceRegistration bool `json:"allowRemoteWorkspaceRegistration"`
+	// RevocationGracePeriodSeconds is the grace period (in seconds) that a
+	// device revocation or remote workspace registration spends in a pending
+	// state before being executed. Defaults to 300 (5 minutes); 0 means
+	// instant execution (no grace period).
+	RevocationGracePeriodSeconds int `json:"revocationGracePeriodSeconds"`
 }
 
 // defaultCredentialInactivityTTLSeconds is the default sliding-window credential
@@ -100,6 +111,16 @@ func DefaultConfigOrError() (*Config, error) {
 		PairingTTLSeconds: 300,
 
 		CredentialInactivityTTLSeconds: defaultCredentialInactivityTTLSeconds,
+
+		// Workspaces are registered from the host CLI by default; remote
+		// registration is gated behind a grace-period pending action and is
+		// off unless the user explicitly enables it.
+		AllowRemoteWorkspaceRegistration: false,
+		// Default 5-minute grace period for destructive actions (device
+		// revocation, remote workspace registration) so a stolen device
+		// cannot lock the user out or register sensitive directories before
+		// the user's other devices can cancel.
+		RevocationGracePeriodSeconds: 300,
 	}, nil
 }
 
@@ -239,6 +260,16 @@ func New(cfg *Config) (*Daemon, error) {
 	}
 	workspaceMgr := workspace.NewManager()
 
+	// Wire the workspace registration callback into the pairing manager so
+	// grace-period pending workspace registrations can execute against the
+	// workspace manager once their timer fires. The pairing package cannot
+	// import workspace (it would create an import cycle), so the daemon sets
+	// this callback after both managers are created.
+	pairingMgr.SetWorkspaceRegisterFn(func(path string) error {
+		_, regErr := workspaceMgr.Register(context.Background(), path)
+		return regErr
+	})
+
 	// Load persisted workspaces from config.
 	appCfg, err := config.Load()
 	if err != nil {
@@ -355,6 +386,13 @@ func New(cfg *Config) (*Daemon, error) {
 		Uploads:          uploadsMgr,
 		McpConfigPath:    mcpConfigPath,
 	})
+
+	// Register the grace-period pending-action routes (cancel-revocation,
+	// pending-actions list, cancel-workspace-registration). These live in
+	// api.go but are wired here so server.go's apiRoutes() does not need to
+	// be modified. server.New already registered the core routes; this adds
+	// the new ones on the same mux.
+	srv.RegisterPendingActionRoutes()
 
 	// Filesystem watcher: detect external file changes (edits made outside the
 	// app) and broadcast EventFileChangedOnDisk through the server's event sink

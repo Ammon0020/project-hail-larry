@@ -359,3 +359,275 @@ func TestNewCredentialSeedsLastSeen(t *testing.T) {
 		t.Error("expected newly issued credential to have a non-zero LastSeen")
 	}
 }
+
+// ----------------------------------------------------------------------------
+// Grace-period pending action tests (Blueprint Sec 19, Sec 13)
+// ----------------------------------------------------------------------------
+
+// TestRequestRevocation verifies that requesting a revocation with a positive
+// grace period creates a pending action that appears in ListPendingActions and
+// does not immediately delete the device.
+func TestRequestRevocation(t *testing.T) {
+	m := newTestManager(t)
+	cred := pairDevice(t, m)
+
+	action, err := m.RequestRevocation(cred.ID, "requester-dev", 5*time.Minute)
+	if err != nil {
+		t.Fatalf("request revocation: %v", err)
+	}
+	if action == nil {
+		t.Fatal("expected non-nil pending action")
+	}
+	if action.ID == "" {
+		t.Error("expected non-empty action ID")
+	}
+	if action.Type != PendingActionTypeRevocation {
+		t.Errorf("expected type %q, got %q", PendingActionTypeRevocation, action.Type)
+	}
+	if action.DeviceID != cred.ID {
+		t.Errorf("expected deviceID %s, got %s", cred.ID, action.DeviceID)
+	}
+	if action.RequestedBy != "requester-dev" {
+		t.Errorf("expected requestedBy 'requester-dev', got %s", action.RequestedBy)
+	}
+
+	// The device must still be present (grace period has not elapsed).
+	if !m.ValidateCredential(cred.ID, cred.Secret) {
+		t.Error("expected device to remain valid during grace period")
+	}
+
+	// The pending action must appear in ListPendingActions.
+	pending := m.ListPendingActions()
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending action, got %d", len(pending))
+	}
+	if pending[0].ID != action.ID {
+		t.Errorf("expected pending ID %s, got %s", action.ID, pending[0].ID)
+	}
+}
+
+// TestCancelRevocation verifies that cancelling a pending revocation stops the
+// timer and removes the pending action, leaving the device intact.
+func TestCancelRevocation(t *testing.T) {
+	m := newTestManager(t)
+	cred := pairDevice(t, m)
+
+	action, err := m.RequestRevocation(cred.ID, "requester-dev", 5*time.Minute)
+	if err != nil {
+		t.Fatalf("request revocation: %v", err)
+	}
+
+	if err := m.CancelRevocation(action.ID); err != nil {
+		t.Fatalf("cancel revocation: %v", err)
+	}
+
+	// The pending action must be gone.
+	if pending := m.ListPendingActions(); len(pending) != 0 {
+		t.Errorf("expected 0 pending actions after cancel, got %d", len(pending))
+	}
+
+	// The device must still be valid.
+	if !m.ValidateCredential(cred.ID, cred.Secret) {
+		t.Error("expected device to remain valid after cancelled revocation")
+	}
+}
+
+// TestCancelRevocationNotFound verifies that cancelling a non-existent action
+// returns an error.
+func TestCancelRevocationNotFound(t *testing.T) {
+	m := newTestManager(t)
+	if err := m.CancelRevocation("nonexistent"); err == nil {
+		t.Error("expected error for cancelling non-existent action")
+	}
+}
+
+// TestRevocationGracePeriodExpires verifies that when the grace period elapses
+// the revocation fires and the device is deleted. Uses a short grace period
+// with a real sleep.
+func TestRevocationGracePeriodExpires(t *testing.T) {
+	m := newTestManager(t)
+	cred := pairDevice(t, m)
+
+	if _, err := m.RequestRevocation(cred.ID, "requester-dev", 50*time.Millisecond); err != nil {
+		t.Fatalf("request revocation: %v", err)
+	}
+
+	// Wait for the timer to fire.
+	time.Sleep(150 * time.Millisecond)
+
+	// The device must be revoked.
+	if m.ValidateCredential(cred.ID, cred.Secret) {
+		t.Error("expected device to be revoked after grace period expired")
+	}
+
+	// The pending action must be cleaned up.
+	if pending := m.ListPendingActions(); len(pending) != 0 {
+		t.Errorf("expected 0 pending actions after expiry, got %d", len(pending))
+	}
+}
+
+// TestImmediateRevocation verifies that a grace period of 0 revokes the device
+// immediately (backward compatible with the pre-grace-period RevokeDevice).
+func TestImmediateRevocation(t *testing.T) {
+	m := newTestManager(t)
+	cred := pairDevice(t, m)
+
+	action, err := m.RequestRevocation(cred.ID, "requester-dev", 0)
+	if err != nil {
+		t.Fatalf("request revocation: %v", err)
+	}
+	if action == nil {
+		t.Fatal("expected non-nil action even on immediate revocation")
+	}
+
+	// The device must be revoked immediately.
+	if m.ValidateCredential(cred.ID, cred.Secret) {
+		t.Error("expected device to be revoked immediately when gracePeriod=0")
+	}
+
+	// No pending action should remain.
+	if pending := m.ListPendingActions(); len(pending) != 0 {
+		t.Errorf("expected 0 pending actions after immediate revocation, got %d", len(pending))
+	}
+}
+
+// TestDuplicatePendingRevocation verifies that requesting revocation for a
+// device that already has a pending revocation returns an error, so a stolen
+// device cannot queue many overlapping timers.
+func TestDuplicatePendingRevocation(t *testing.T) {
+	m := newTestManager(t)
+	cred := pairDevice(t, m)
+
+	if _, err := m.RequestRevocation(cred.ID, "requester-dev", 5*time.Minute); err != nil {
+		t.Fatalf("first request: %v", err)
+	}
+	if _, err := m.RequestRevocation(cred.ID, "requester-dev", 5*time.Minute); err == nil {
+		t.Error("expected error for duplicate pending revocation")
+	}
+}
+
+// TestRequestRevocationUnknownDevice verifies that requesting revocation for a
+// non-existent device returns an error.
+func TestRequestRevocationUnknownDevice(t *testing.T) {
+	m := newTestManager(t)
+	if _, err := m.RequestRevocation("nonexistent", "requester-dev", 5*time.Minute); err == nil {
+		t.Error("expected error for revoking unknown device")
+	}
+}
+
+// TestRequestWorkspaceRegistration verifies that requesting a workspace
+// registration with a positive grace period creates a pending action without
+// calling the workspaceRegisterFn.
+func TestRequestWorkspaceRegistration(t *testing.T) {
+	m := newTestManager(t)
+	called := false
+	m.SetWorkspaceRegisterFn(func(_ string) error {
+		called = true
+		return nil
+	})
+
+	action, err := m.RequestWorkspaceRegistration("/some/path", "requester-dev", 5*time.Minute)
+	if err != nil {
+		t.Fatalf("request workspace registration: %v", err)
+	}
+	if action.Type != PendingActionTypeWorkspaceRegistration {
+		t.Errorf("expected type %q, got %q", PendingActionTypeWorkspaceRegistration, action.Type)
+	}
+	if action.Path != "/some/path" {
+		t.Errorf("expected path /some/path, got %s", action.Path)
+	}
+	if called {
+		t.Error("expected workspaceRegisterFn NOT to be called during grace period")
+	}
+
+	pending := m.ListPendingActions()
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending action, got %d", len(pending))
+	}
+}
+
+// TestCancelWorkspaceRegistration verifies that cancelling a pending workspace
+// registration removes it without calling workspaceRegisterFn.
+func TestCancelWorkspaceRegistration(t *testing.T) {
+	m := newTestManager(t)
+	called := false
+	m.SetWorkspaceRegisterFn(func(_ string) error {
+		called = true
+		return nil
+	})
+
+	action, err := m.RequestWorkspaceRegistration("/some/path", "requester-dev", 5*time.Minute)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if err := m.CancelWorkspaceRegistration(action.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if called {
+		t.Error("expected workspaceRegisterFn NOT to be called after cancel")
+	}
+	if pending := m.ListPendingActions(); len(pending) != 0 {
+		t.Errorf("expected 0 pending actions, got %d", len(pending))
+	}
+}
+
+// TestWorkspaceRegistrationExpires verifies that when the grace period elapses
+// the workspaceRegisterFn is called and the pending action is removed.
+func TestWorkspaceRegistrationExpires(t *testing.T) {
+	m := newTestManager(t)
+	called := make(chan string, 1)
+	m.SetWorkspaceRegisterFn(func(p string) error {
+		called <- p
+		return nil
+	})
+
+	if _, err := m.RequestWorkspaceRegistration("/some/path", "requester-dev", 50*time.Millisecond); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+
+	select {
+	case path := <-called:
+		if path != "/some/path" {
+			t.Errorf("expected workspaceRegisterFn called with /some/path, got %s", path)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected workspaceRegisterFn to be called after grace period")
+	}
+
+	// Give the timer goroutine a moment to finish cleanup, then check the
+	// pending map is empty.
+	time.Sleep(20 * time.Millisecond)
+	if pending := m.ListPendingActions(); len(pending) != 0 {
+		t.Errorf("expected 0 pending actions after expiry, got %d", len(pending))
+	}
+}
+
+// TestDuplicatePendingWorkspaceRegistration verifies that requesting
+// registration for a path that already has a pending registration returns an
+// error.
+func TestDuplicatePendingWorkspaceRegistration(t *testing.T) {
+	m := newTestManager(t)
+	m.SetWorkspaceRegisterFn(func(_ string) error { return nil })
+
+	if _, err := m.RequestWorkspaceRegistration("/some/path", "requester-dev", 5*time.Minute); err != nil {
+		t.Fatalf("first request: %v", err)
+	}
+	if _, err := m.RequestWorkspaceRegistration("/some/path", "requester-dev", 5*time.Minute); err == nil {
+		t.Error("expected error for duplicate pending workspace registration")
+	}
+}
+
+// TestCancelRevocationTypeMismatch verifies that cancelling a workspace
+// registration via CancelRevocation (wrong type) returns an error.
+func TestCancelRevocationTypeMismatch(t *testing.T) {
+	m := newTestManager(t)
+	m.SetWorkspaceRegisterFn(func(_ string) error { return nil })
+
+	action, err := m.RequestWorkspaceRegistration("/some/path", "requester-dev", 5*time.Minute)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if err := m.CancelRevocation(action.ID); err == nil {
+		t.Error("expected error when cancelling workspace registration via CancelRevocation")
+	}
+}

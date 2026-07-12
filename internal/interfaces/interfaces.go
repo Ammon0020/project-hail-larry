@@ -58,6 +58,18 @@ const (
 	// preserved). Distinct from ConnectionRestarted, which implies the
 	// conversation history was reset/exported.
 	EventModelChanged EventType = "ModelChanged"
+	// EventDeviceRevocationPending is emitted when a device revocation enters
+	// its grace period. Any connected device can cancel it before the timer
+	// fires (Blueprint Sec 19).
+	EventDeviceRevocationPending   EventType = "DeviceRevocationPending"
+	EventDeviceRevocationCancelled EventType = "DeviceRevocationCancelled"
+	EventDeviceRevocationExecuted  EventType = "DeviceRevocationExecuted"
+	// EventWorkspaceRegistrationPending is emitted when a remote workspace
+	// registration enters its grace period. Any connected device can cancel it
+	// before the timer fires (Blueprint Sec 13).
+	EventWorkspaceRegistrationPending   EventType = "WorkspaceRegistrationPending"
+	EventWorkspaceRegistrationCancelled EventType = "WorkspaceRegistrationCancelled"
+	EventWorkspaceRegistrationExecuted  EventType = "WorkspaceRegistrationExecuted"
 )
 
 // Event is a single entry in the append-only event log.
@@ -93,6 +105,15 @@ type Event struct {
 	// log stays lightweight. The frontend renders thumbnails from the URI; the
 	// agent reads the file from disk via Path.
 	Attachments []Attachment `json:"attachments,omitempty"`
+	// ExecuteAt carries the scheduled execution time for a grace-period
+	// pending action (EventDeviceRevocationPending /
+	// EventWorkspaceRegistrationPending). It is the time at which the action
+	// will fire if no device cancels it first. Empty for non-pending events.
+	ExecuteAt time.Time `json:"executeAt,omitempty"`
+	// DeviceName carries the human-readable name of the device targeted by a
+	// pending revocation event (EventDeviceRevocationPending), so the frontend
+	// can show "Revoke <name>?" without an extra lookup. Empty for other events.
+	DeviceName string `json:"deviceName,omitempty"`
 }
 
 // Attachment describes a file attached to a user prompt (e.g. an uploaded
@@ -173,7 +194,7 @@ type WorkspaceManager interface {
 	FileTree(ctx context.Context, workspaceID string) ([]FileNode, error)
 
 	// ReadFile returns the content of a file and its current revision.
-	ReadFile(ctx context.Context, workspaceID, relPath string) (content string, revision int64, err error)
+	ReadFile(ctx context.Context, workspaceID, relPath string) (content string, revision int64, isBinary bool, err error)
 
 	// Search runs a workspace-wide content search and returns matching lines.
 	Search(ctx context.Context, workspaceID, pattern string, opts search.Options) ([]search.Result, error)

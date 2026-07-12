@@ -169,7 +169,7 @@ func TestReadFile(t *testing.T) {
 
 	ws, _ := m.Register(ctx, dir)
 
-	content, revision, err := m.ReadFile(ctx, ws.ID, "package.json")
+	content, revision, isBinary, err := m.ReadFile(ctx, ws.ID, "package.json")
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
@@ -179,6 +179,9 @@ func TestReadFile(t *testing.T) {
 	}
 	if revision == 0 {
 		t.Error("expected non-zero revision")
+	}
+	if isBinary {
+		t.Error("expected isBinary=false for package.json")
 	}
 }
 
@@ -190,7 +193,7 @@ func TestReadFileTraversal(t *testing.T) {
 
 	ws, _ := m.Register(ctx, dir)
 
-	_, _, err := m.ReadFile(ctx, ws.ID, "../../../etc/passwd")
+	_, _, _, err := m.ReadFile(ctx, ws.ID, "../../../etc/passwd")
 	if err == nil {
 		t.Error("expected error for path traversal")
 	}
@@ -219,7 +222,7 @@ func TestReadFileSymlinkEscape(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	if _, _, err := m.ReadFile(ctx, ws.ID, "link.txt"); err == nil {
+	if _, _, _, err := m.ReadFile(ctx, ws.ID, "link.txt"); err == nil {
 		t.Error("expected error when reading through a symlink escaping the workspace")
 	}
 }
@@ -241,7 +244,7 @@ func TestReadFileSymlinkInsideWorkspace(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	if _, _, err := m.ReadFile(ctx, ws.ID, "link.json"); err == nil {
+	if _, _, _, err := m.ReadFile(ctx, ws.ID, "link.json"); err == nil {
 		t.Error("expected error when reading through an in-workspace symlink")
 	}
 }
@@ -335,7 +338,7 @@ func TestReadFileSizeLimit(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	if _, _, err := m.ReadFile(ctx, ws.ID, "big.bin"); err == nil {
+	if _, _, _, err := m.ReadFile(ctx, ws.ID, "big.bin"); err == nil {
 		t.Error("expected error for file exceeding maxReadFileSize")
 	} else if !strings.Contains(err.Error(), "too large") {
 		t.Errorf("expected 'too large' error, got: %v", err)
@@ -359,12 +362,15 @@ func TestReadFileUnderSizeLimit(t *testing.T) {
 		t.Fatalf("write: %v", writeErr)
 	}
 
-	content, _, err := m.ReadFile(ctx, ws.ID, "small.txt")
+	content, _, isBinary, err := m.ReadFile(ctx, ws.ID, "small.txt")
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
 	if content != "hello" {
 		t.Errorf("expected 'hello', got %q", content)
+	}
+	if isBinary {
+		t.Error("expected isBinary=false for small.txt")
 	}
 }
 
@@ -376,9 +382,99 @@ func TestReadFileNotFound(t *testing.T) {
 
 	ws, _ := m.Register(ctx, dir)
 
-	_, _, err := m.ReadFile(ctx, ws.ID, "nonexistent.txt")
+	_, _, _, err := m.ReadFile(ctx, ws.ID, "nonexistent.txt")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
+	}
+}
+
+// TestReadFileBinary verifies that a file containing null bytes within the
+// first 512 bytes is detected as binary: content is empty, isBinary is true,
+// and a non-zero revision is still returned for optimistic-locking defense.
+func TestReadFileBinary(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	ws, err := m.Register(ctx, dir)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Write a file with a null byte early — mimics PNG/DOCX/EXE/etc. header.
+	binPath := filepath.Join(dir, "blob.bin")
+	if writeErr := os.WriteFile(binPath, []byte{0x89, 'P', 'N', 'G', 0x00, 0x0D, 0x0A, 0x1A, 0x0A}, 0644); writeErr != nil {
+		t.Fatalf("write: %v", writeErr)
+	}
+
+	content, revision, isBinary, err := m.ReadFile(ctx, ws.ID, "blob.bin")
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if !isBinary {
+		t.Error("expected isBinary=true for file with null bytes")
+	}
+	if content != "" {
+		t.Errorf("expected empty content for binary file, got %q", content)
+	}
+	if revision == 0 {
+		t.Error("expected non-zero revision for binary file")
+	}
+}
+
+// TestReadFileBinaryShortFile verifies that a tiny file consisting only of a
+// null byte is still detected as binary (short-read path).
+func TestReadFileBinaryShortFile(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	ws, err := m.Register(ctx, dir)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	binPath := filepath.Join(dir, "nul.bin")
+	if writeErr := os.WriteFile(binPath, []byte{0x00}, 0644); writeErr != nil {
+		t.Fatalf("write: %v", writeErr)
+	}
+
+	_, _, isBinary, err := m.ReadFile(ctx, ws.ID, "nul.bin")
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if !isBinary {
+		t.Error("expected isBinary=true for single-null-byte file")
+	}
+}
+
+// TestReadFileTextNotBinary verifies that a text file with no null bytes is
+// not flagged as binary even when it contains non-ASCII UTF-8 bytes.
+func TestReadFileTextNotBinary(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	ws, err := m.Register(ctx, dir)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Multi-byte UTF-8 (emoji + accented chars) — no null bytes, so text.
+	txtPath := filepath.Join(dir, "utf8.txt")
+	if writeErr := os.WriteFile(txtPath, []byte("héllo wörld 🌍\n"), 0644); writeErr != nil {
+		t.Fatalf("write: %v", writeErr)
+	}
+
+	content, _, isBinary, err := m.ReadFile(ctx, ws.ID, "utf8.txt")
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if isBinary {
+		t.Error("expected isBinary=false for UTF-8 text file")
+	}
+	if content != "héllo wörld 🌍\n" {
+		t.Errorf("unexpected content: %q", content)
 	}
 }
 
@@ -444,7 +540,7 @@ func TestConcurrentMapAccess(t *testing.T) {
 					t.Errorf("file tree: %v", err)
 					return
 				}
-				if _, _, err := m.ReadFile(ctx, ws.ID, "package.json"); err != nil {
+				if _, _, _, err := m.ReadFile(ctx, ws.ID, "package.json"); err != nil {
 					t.Errorf("read file: %v", err)
 					return
 				}

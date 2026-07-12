@@ -132,7 +132,57 @@ type Manager struct {
 	failures     []time.Time
 	lockoutUntil time.Time
 	lockoutCount int
+
+	// pending holds grace-period pending actions (device revocations and
+	// remote workspace registrations). Each entry has a timer that fires the
+	// action after the configured grace period unless a connected device
+	// cancels it first. Guarded by mu.
+	pending map[string]*PendingAction
+
+	// workspaceRegisterFn is the callback used to execute a pending workspace
+	// registration once its grace period expires. It is set by the daemon
+	// after the workspace manager is created (the pairing package cannot
+	// import workspace without a cycle). Guarded by mu.
+	workspaceRegisterFn func(path string) error
 }
+
+// PendingAction is an unexported record of a grace-period pending destructive
+// action (device revocation or remote workspace registration). The timer field
+// drives the deferred execution; PendingActionInfo is the exported, timer-free
+// view returned to the API.
+type PendingAction struct {
+	ID          string
+	Type        string // "revocation" or "workspace_registration"
+	DeviceID    string // for revocation
+	DeviceName  string // for revocation display
+	Path        string // for workspace_registration
+	RequestedBy string // device ID of requester
+	RequestedAt time.Time
+	ExecuteAt   time.Time
+	timer       *time.Timer
+}
+
+// PendingActionInfo is the exported, timer-free view of a PendingAction used
+// for API responses (GET /api/pending-actions and the 202 Accepted bodies). It
+// omits the unexported timer so the action cannot be manipulated through JSON
+// round-trips.
+type PendingActionInfo struct {
+	ID          string    `json:"id"`
+	Type        string    `json:"type"`
+	DeviceID    string    `json:"deviceId,omitempty"`
+	DeviceName  string    `json:"deviceName,omitempty"`
+	Path        string    `json:"path,omitempty"`
+	RequestedBy string    `json:"requestedBy"`
+	RequestedAt time.Time `json:"requestedAt"`
+	ExecuteAt   time.Time `json:"executeAt"`
+}
+
+// Pending action type values. These are part of the JSON wire format sent to
+// the UI, so the string literals must remain stable.
+const (
+	PendingActionTypeRevocation            = "revocation"
+	PendingActionTypeWorkspaceRegistration = "workspace_registration"
+)
 
 // devicesFileName is the on-disk file (within dataDir) that persists paired
 // device credentials. Only SHA-256 hashes of secrets are stored, never raw
@@ -151,6 +201,7 @@ func NewManager(dataDir string) *Manager {
 	m := &Manager{
 		sessions: make(map[string]*PairingSession),
 		devices:  make(map[string]*storedDevice),
+		pending:  make(map[string]*PendingAction),
 		dataDir:  dataDir,
 		ttl:      5 * time.Minute,
 	}
@@ -464,6 +515,280 @@ func (m *Manager) RevokeDevice(deviceID string) error {
 		return fmt.Errorf("persist device revocation: %w", err)
 	}
 	return nil
+}
+
+// ----------------------------------------------------------------------------
+// Grace-period pending actions (Blueprint Sec 19, Sec 13)
+//
+// Destructive actions (device revocation, remote workspace registration) enter
+// a pending state for a configurable grace period. During the grace period any
+// connected device can cancel the action — this protects a user whose device
+// is stolen: their other devices see the pending action via the broadcast
+// event and can cancel it before it takes effect. If the grace period is 0 the
+// action executes immediately (backward compatible).
+// ----------------------------------------------------------------------------
+
+// SetWorkspaceRegisterFn wires the callback used to execute a pending workspace
+// registration once its grace period expires. The pairing package cannot import
+// the workspace package (it would create an import cycle), so the daemon sets
+// this callback after both managers are created.
+func (m *Manager) SetWorkspaceRegisterFn(fn func(path string) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.workspaceRegisterFn = fn
+}
+
+// RequestRevocation creates a pending device-revocation action. The action
+// fires (deletes the device and persists) after gracePeriod unless
+// CancelRevocation is called first. If gracePeriod is 0 the revocation is
+// immediate (backward compatible with the pre-grace-period RevokeDevice). An
+// error is returned if the target device does not exist or a revocation is
+// already pending for that device.
+func (m *Manager) RequestRevocation(deviceID, requestedBy string, gracePeriod time.Duration) (*PendingAction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	stored, ok := m.devices[deviceID]
+	if !ok {
+		return nil, fmt.Errorf("device not found: %s", deviceID)
+	}
+
+	// Reject a duplicate pending revocation for the same device so a stolen
+	// device cannot queue many overlapping timers.
+	for _, p := range m.pending {
+		if p.Type == PendingActionTypeRevocation && p.DeviceID == deviceID {
+			return nil, fmt.Errorf("revocation already pending for device %s", deviceID)
+		}
+	}
+
+	now := time.Now().UTC()
+	action := &PendingAction{
+		ID:          generateActionID(),
+		Type:        PendingActionTypeRevocation,
+		DeviceID:    deviceID,
+		DeviceName:  stored.Name,
+		RequestedBy: requestedBy,
+		RequestedAt: now,
+		ExecuteAt:   now.Add(gracePeriod),
+	}
+
+	if gracePeriod <= 0 {
+		// Backward-compatible immediate revocation. Stage the action in the
+		// pending map so executeRevocationLocked can resolve its target, then
+		// run inline (no timer) so the caller observes the persisted result
+		// synchronously.
+		m.pending[action.ID] = action
+		m.executeRevocationLocked(action.ID)
+		return action, nil
+	}
+
+	m.pending[action.ID] = action
+	action.timer = time.AfterFunc(gracePeriod, func() {
+		m.executeRevocation(action.ID)
+	})
+	return action, nil
+}
+
+// CancelRevocation stops a pending revocation's timer and removes it from the
+// pending map. Returns an error if no pending revocation with the given ID
+// exists (it may have already fired or been cancelled).
+func (m *Manager) CancelRevocation(actionID string) error {
+	return m.cancelPending(actionID, PendingActionTypeRevocation)
+}
+
+// RequestWorkspaceRegistration creates a pending workspace-registration action.
+// The action fires (calls workspaceRegisterFn) after gracePeriod unless
+// CancelWorkspaceRegistration is called first. If gracePeriod is 0 and
+// workspaceRegisterFn is set, the registration is immediate.
+func (m *Manager) RequestWorkspaceRegistration(path, requestedBy string, gracePeriod time.Duration) (*PendingAction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Reject a duplicate pending registration for the same path.
+	for _, p := range m.pending {
+		if p.Type == PendingActionTypeWorkspaceRegistration && p.Path == path {
+			return nil, fmt.Errorf("workspace registration already pending for path %s", path)
+		}
+	}
+
+	now := time.Now().UTC()
+	action := &PendingAction{
+		ID:          generateActionID(),
+		Type:        PendingActionTypeWorkspaceRegistration,
+		Path:        path,
+		RequestedBy: requestedBy,
+		RequestedAt: now,
+		ExecuteAt:   now.Add(gracePeriod),
+	}
+
+	if gracePeriod <= 0 {
+		if m.workspaceRegisterFn != nil {
+			m.executeWorkspaceRegistrationLocked(action.ID)
+		} else {
+			// No callback wired — keep the pending entry so a caller can
+			// observe it rather than silently dropping the request.
+			m.pending[action.ID] = action
+		}
+		return action, nil
+	}
+
+	m.pending[action.ID] = action
+	action.timer = time.AfterFunc(gracePeriod, func() {
+		m.executeWorkspaceRegistration(action.ID)
+	})
+	return action, nil
+}
+
+// CancelWorkspaceRegistration stops a pending workspace registration's timer
+// and removes it from the pending map. Returns an error if no pending
+// registration with the given ID exists.
+func (m *Manager) CancelWorkspaceRegistration(actionID string) error {
+	return m.cancelPending(actionID, PendingActionTypeWorkspaceRegistration)
+}
+
+// ListPendingActions returns a snapshot of all pending actions (revocations
+// and workspace registrations) as exported, timer-free views for API
+// responses. The slice is ordered by RequestedAt.
+func (m *Manager) ListPendingActions() []PendingActionInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	infos := make([]PendingActionInfo, 0, len(m.pending))
+	for _, p := range m.pending {
+		infos = append(infos, PendingActionInfo{
+			ID:          p.ID,
+			Type:        p.Type,
+			DeviceID:    p.DeviceID,
+			DeviceName:  p.DeviceName,
+			Path:        p.Path,
+			RequestedBy: p.RequestedBy,
+			RequestedAt: p.RequestedAt,
+			ExecuteAt:   p.ExecuteAt,
+		})
+	}
+	// Stable-ish ordering by RequestedAt so the UI can render the oldest
+	// pending action first. Ties are broken by ID.
+	sortPendingActions(infos)
+	return infos
+}
+
+// cancelPending is the shared helper for CancelRevocation and
+// CancelWorkspaceRegistration. It validates the action exists and matches the
+// expected type, stops its timer, and removes it from the pending map. Caller
+// type-checks prevent a cancel-revocation call from cancelling a workspace
+// registration and vice versa.
+func (m *Manager) cancelPending(actionID, expectedType string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	p, ok := m.pending[actionID]
+	if !ok {
+		return fmt.Errorf("pending action not found: %s", actionID)
+	}
+	if p.Type != expectedType {
+		return fmt.Errorf("pending action %s is not a %s", actionID, expectedType)
+	}
+	if p.timer != nil {
+		p.timer.Stop()
+	}
+	delete(m.pending, actionID)
+	return nil
+}
+
+// executeRevocation is the timer callback for a pending revocation. It deletes
+// the device, persists the change, and removes the pending action. Errors are
+// logged loudly rather than returned (the timer has no caller to surface them
+// to); a failed persist leaves the device deleted in memory, which is the
+// intended end state.
+func (m *Manager) executeRevocation(actionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.executeRevocationLocked(actionID)
+}
+
+// executeRevocationLocked is the lock-held inner body of executeRevocation. It
+// is also called directly by RequestRevocation for the gracePeriod == 0
+// immediate path (which stages the action in m.pending first) so the caller
+// observes the persisted result synchronously.
+func (m *Manager) executeRevocationLocked(actionID string) {
+	p, ok := m.pending[actionID]
+	if !ok {
+		// The action vanished (already cancelled or fired). Nothing to do.
+		return
+	}
+	delete(m.pending, actionID)
+
+	deviceID := p.DeviceID
+	if deviceID == "" {
+		log.Printf("pairing: executeRevocation: pending action %s has no deviceID", actionID)
+		return
+	}
+
+	if _, ok := m.devices[deviceID]; ok {
+		delete(m.devices, deviceID)
+		if err := m.saveDevices(); err != nil {
+			log.Printf("pairing: failed to persist device revocation for %s: %v", deviceID, err)
+		}
+	}
+}
+
+// executeWorkspaceRegistration is the timer callback for a pending workspace
+// registration. It calls the wired workspaceRegisterFn and removes the pending
+// action. If no callback is wired, the action is removed with a log warning.
+func (m *Manager) executeWorkspaceRegistration(actionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.executeWorkspaceRegistrationLocked(actionID)
+}
+
+// executeWorkspaceRegistrationLocked is the lock-held inner body of
+// executeWorkspaceRegistration, also called directly by
+// RequestWorkspaceRegistration for the gracePeriod == 0 immediate path.
+func (m *Manager) executeWorkspaceRegistrationLocked(actionID string) {
+	p, ok := m.pending[actionID]
+	if ok {
+		delete(m.pending, actionID)
+	}
+	if p == nil {
+		log.Printf("pairing: executeWorkspaceRegistration: pending action %s not found", actionID)
+		return
+	}
+	if m.workspaceRegisterFn == nil {
+		log.Printf("pairing: workspace registration fired but no workspaceRegisterFn is wired (path=%s)", p.Path)
+		return
+	}
+	if err := m.workspaceRegisterFn(p.Path); err != nil {
+		log.Printf("pairing: workspace registration failed for path %s: %v", p.Path, err)
+	}
+}
+
+// generateActionID returns a cryptographically random hex string used as the
+// unique ID for a pending action. 16 bytes (32 hex chars) is enough to make
+// collisions infeasible across the small number of concurrent pending actions.
+func generateActionID() string {
+	id, err := generateToken(16)
+	if err != nil {
+		// Should never happen with crypto/rand; fall back to a timestamp-based
+		// ID so the action is still usable rather than erroring out.
+		return fmt.Sprintf("pa-%d", time.Now().UnixNano())
+	}
+	return id
+}
+
+// sortPendingActions sorts the slice by RequestedAt ascending, breaking ties
+// by ID so the order is deterministic. A simple insertion sort is used because
+// the slice is tiny (at most a handful of concurrent pending actions).
+func sortPendingActions(infos []PendingActionInfo) {
+	for i := 1; i < len(infos); i++ {
+		for j := i; j > 0; j-- {
+			a, b := infos[j-1], infos[j]
+			if a.RequestedAt.After(b.RequestedAt) || (a.RequestedAt.Equal(b.RequestedAt) && a.ID > b.ID) {
+				infos[j-1], infos[j] = infos[j], infos[j-1]
+			} else {
+				break
+			}
+		}
+	}
 }
 
 // checkRateLimit returns an error if verify attempts are currently locked out.

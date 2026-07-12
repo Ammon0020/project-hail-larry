@@ -16,6 +16,7 @@ import (
 
 	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/interfaces"
+	"github.com/adama/local-agent/internal/pairing"
 	"github.com/adama/local-agent/internal/search"
 	"github.com/adama/local-agent/internal/uploads"
 	"golang.org/x/time/rate"
@@ -47,6 +48,11 @@ import (
 const (
 	pairRateLimitPerMinute = 5
 	pairRateBurst          = 5
+)
+
+const (
+	statusCancelled = "cancelled"
+	pathKey         = "path"
 )
 
 var (
@@ -187,14 +193,84 @@ func (s *Server) handleListDevices(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, devices)
 }
 
-// handleRevokeDevice revokes a paired device's access.
+// handleRevokeDevice revokes a paired device's access. When a revocation
+// grace period is configured (RevocationGracePeriodSeconds > 0) the revocation
+// enters a pending state for that duration and the handler returns 202
+// Accepted with the pending action; any connected device can cancel it via
+// POST /api/devices/cancel-revocation. When the grace period is 0 the
+// revocation is immediate and the handler returns 200 OK (backward compatible
+// with the pre-grace-period behavior).
 func (s *Server) handleRevokeDevice(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
-	if err := s.deps.PairingMgr.RevokeDevice(deviceID); err != nil {
+
+	gracePeriod := 0 * time.Second
+	if s.deps != nil && s.deps.Config != nil {
+		gracePeriod = time.Duration(s.deps.Config.RevocationGracePeriodSeconds) * time.Second
+	}
+	requesterID := deviceIDFromRequest(r)
+
+	action, err := s.deps.PairingMgr.RequestRevocation(deviceID, requesterID, gracePeriod)
+	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{statusKey: "revoked"})
+
+	if gracePeriod <= 0 {
+		// Immediate revocation — backward-compatible 200 OK response.
+		writeJSON(w, http.StatusOK, map[string]string{statusKey: "revoked"})
+		return
+	}
+
+	// Grace-period pending revocation. Broadcast a pending event so every
+	// connected device can surface the action and cancel it.
+	s.recordEvent(r.Context(), interfaces.Event{
+		Type:       interfaces.EventDeviceRevocationPending,
+		Target:     action.DeviceID,
+		DeviceName: action.DeviceName,
+		RequestID:  action.ID,
+		Command:    action.RequestedBy,
+		ExecuteAt:  action.ExecuteAt,
+	})
+
+	writeJSON(w, http.StatusAccepted, pendingActionInfoFromAction(action))
+}
+
+// handleCancelRevocation cancels a pending device revocation. Body:
+// `{"actionId": "..."}`. The cancellation is broadcast as a
+// DeviceRevocationCancelled event so every connected device can dismiss its
+// pending-action prompt.
+func (s *Server) handleCancelRevocation(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ActionID string `json:"actionId"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.ActionID == "" {
+		writeError(w, http.StatusBadRequest, "missing 'actionId'")
+		return
+	}
+
+	if err := s.deps.PairingMgr.CancelRevocation(req.ActionID); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	s.recordEvent(r.Context(), interfaces.Event{
+		Type:      interfaces.EventDeviceRevocationCancelled,
+		RequestID: req.ActionID,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: statusCancelled})
+}
+
+// handleListPendingActions returns all pending grace-period actions (device
+// revocations and remote workspace registrations) so the UI can render the
+// pending-action prompts that any connected device can cancel.
+func (s *Server) handleListPendingActions(w http.ResponseWriter, _ *http.Request) {
+	pending := s.deps.PairingMgr.ListPendingActions()
+	writeJSON(w, http.StatusOK, pending)
 }
 
 // ----------------------------------------------------------------------------
@@ -211,7 +287,16 @@ func (s *Server) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, workspaces)
 }
 
-// handleRegisterWorkspace registers a new workspace directory.
+// handleRegisterWorkspace registers a new workspace directory. When
+// AllowRemoteWorkspaceRegistration is false (the default), the endpoint
+// returns 403 and directs the user to the `app add-folder` CLI — this keeps
+// the sensitive surface (a remote device could otherwise register ~/.ssh,
+// /etc, etc. and read files) on the host. When enabled, the registration
+// goes through the grace-period pending flow (see
+// RevocationGracePeriodSeconds) so other devices can cancel a suspicious
+// registration; the handler returns 202 Accepted with the pending action.
+// When the grace period is 0 the registration is immediate and the handler
+// returns 201 Created with the workspace (backward compatible).
 func (s *Server) handleRegisterWorkspace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Path string `json:"path"`
@@ -221,12 +306,136 @@ func (s *Server) handleRegisterWorkspace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ws, err := s.deps.WorkspaceMgr.Register(r.Context(), req.Path)
+	// Gate remote registration by config. The default is false so the host
+	// CLI (`app add-folder`) remains the only registration path.
+	if s.deps == nil || s.deps.Config == nil || !s.deps.Config.AllowRemoteWorkspaceRegistration {
+		writeError(w, http.StatusForbidden, "Remote workspace registration is disabled. Use 'app add-folder <path>' on the host, or set allowRemoteWorkspaceRegistration: true in config.")
+		return
+	}
+
+	gracePeriod := 0 * time.Second
+	if s.deps.Config != nil {
+		gracePeriod = time.Duration(s.deps.Config.RevocationGracePeriodSeconds) * time.Second
+	}
+	requesterID := deviceIDFromRequest(r)
+
+	action, err := s.deps.PairingMgr.RequestWorkspaceRegistration(req.Path, requesterID, gracePeriod)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, ws)
+
+	if gracePeriod <= 0 {
+		// Immediate registration — backward-compatible 201 Created. The
+		// workspace was registered synchronously by the pairing manager's
+		// workspaceRegisterFn callback, so look it up to return the info.
+		workspaces, werr := s.deps.WorkspaceMgr.List(r.Context())
+		if werr == nil {
+			for _, wsInfo := range workspaces {
+				if wsInfo.Path == req.Path {
+					writeJSON(w, http.StatusCreated, wsInfo)
+					return
+				}
+			}
+		}
+		// Fallback if the lookup failed for any reason.
+		writeJSON(w, http.StatusCreated, map[string]string{statusKey: "registered", pathKey: req.Path})
+		return
+	}
+
+	// Grace-period pending registration. Broadcast a pending event so every
+	// connected device can surface the action and cancel it.
+	s.recordEvent(r.Context(), interfaces.Event{
+		Type:      interfaces.EventWorkspaceRegistrationPending,
+		Target:    action.Path,
+		RequestID: action.ID,
+		Command:   action.RequestedBy,
+		ExecuteAt: action.ExecuteAt,
+	})
+
+	writeJSON(w, http.StatusAccepted, pendingActionInfoFromAction(action))
+}
+
+// handleCancelWorkspaceRegistration cancels a pending remote workspace
+// registration. Body: `{"actionId": "..."}`. The cancellation is broadcast as
+// a WorkspaceRegistrationCancelled event so every connected device can dismiss
+// its pending-action prompt.
+func (s *Server) handleCancelWorkspaceRegistration(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ActionID string `json:"actionId"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.ActionID == "" {
+		writeError(w, http.StatusBadRequest, "missing 'actionId'")
+		return
+	}
+
+	if err := s.deps.PairingMgr.CancelWorkspaceRegistration(req.ActionID); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	s.recordEvent(r.Context(), interfaces.Event{
+		Type:      interfaces.EventWorkspaceRegistrationCancelled,
+		RequestID: req.ActionID,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: statusCancelled})
+}
+
+// deviceIDFromRequest extracts the device ID of the requester from the
+// request's Authorization header (or query params). It is used to attribute
+// pending actions to the device that requested them so other devices can see
+// who initiated a destructive action. Returns "" when no credential is
+// present (e.g. loopback requests, which bypass auth).
+func deviceIDFromRequest(r *http.Request) string {
+	id, _ := extractCredential(r)
+	return id
+}
+
+// pendingActionInfoFromAction converts an unexported pairing.PendingAction to
+// the exported pairing.PendingActionInfo used in API responses. The pairing
+// package returns *PendingAction from its Request* methods; this helper keeps
+// the timer field out of the JSON response.
+func pendingActionInfoFromAction(a *pairing.PendingAction) pairing.PendingActionInfo {
+	return pairing.PendingActionInfo{
+		ID:          a.ID,
+		Type:        a.Type,
+		DeviceID:    a.DeviceID,
+		DeviceName:  a.DeviceName,
+		Path:        a.Path,
+		RequestedBy: a.RequestedBy,
+		RequestedAt: a.RequestedAt,
+		ExecuteAt:   a.ExecuteAt,
+	}
+}
+
+// RegisterPendingActionRoutes registers the grace-period pending-action HTTP
+// routes on the server's mux. It is exported so the daemon (which owns the
+// server's lifecycle) can wire the routes after server.New without modifying
+// server.go's apiRoutes(). The routes are wrapped in requireAuth so only
+// authenticated devices (or loopback callers) can cancel or list pending
+// actions. The pending-action handlers themselves live in api.go.
+//
+// Routes added:
+//
+//	POST /api/devices/cancel-revocation        -> handleCancelRevocation
+//	GET  /api/pending-actions                  -> handleListPendingActions
+//	POST /api/workspaces/cancel-registration   -> handleCancelWorkspaceRegistration
+//
+// The revoke (DELETE /api/devices/{id}) and register (POST /api/workspaces)
+// routes are already registered in server.go's apiRoutes(); this function only
+// adds the new cancel/list routes.
+func (s *Server) RegisterPendingActionRoutes() {
+	if s.deps == nil || s.deps.PairingMgr == nil {
+		return
+	}
+	s.mux.HandleFunc("POST /api/devices/cancel-revocation", s.requireAuth(s.handleCancelRevocation))
+	s.mux.HandleFunc("GET /api/pending-actions", s.requireAuth(s.handleListPendingActions))
+	s.mux.HandleFunc("POST /api/workspaces/cancel-registration", s.requireAuth(s.handleCancelWorkspaceRegistration))
 }
 
 // handleFileTree returns the file tree for a workspace.
@@ -249,7 +458,7 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, revision, err := s.deps.WorkspaceMgr.ReadFile(r.Context(), workspaceID, relPath)
+	content, revision, isBinary, err := s.deps.WorkspaceMgr.ReadFile(r.Context(), workspaceID, relPath)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -259,6 +468,7 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		"content":  content,
 		"revision": revision,
 		"path":     relPath,
+		"isBinary": isBinary,
 	})
 }
 
@@ -291,7 +501,7 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		Content:   req.Path,
 	})
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"revision": newRevision, "path": req.Path})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"revision": newRevision, pathKey: req.Path})
 }
 
 // handleSearch runs a workspace-wide content search (Blueprint Sec 17 — file
@@ -716,7 +926,7 @@ func (s *Server) handleCancelSession(w http.ResponseWriter, r *http.Request) {
 		SessionID: sessionID,
 	})
 
-	writeJSON(w, http.StatusOK, map[string]string{statusKey: "cancelled"})
+	writeJSON(w, http.StatusOK, map[string]string{statusKey: statusCancelled})
 }
 
 // handleCloseSession closes a session.

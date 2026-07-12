@@ -22,6 +22,14 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.DataDir == "" {
 		t.Error("expected non-empty data dir")
 	}
+	// Grace-period defaults: 5-minute revocation grace period, remote
+	// workspace registration disabled.
+	if cfg.RevocationGracePeriodSeconds != 300 {
+		t.Errorf("expected default revocation grace period 300, got %d", cfg.RevocationGracePeriodSeconds)
+	}
+	if cfg.AllowRemoteWorkspaceRegistration {
+		t.Error("expected AllowRemoteWorkspaceRegistration to default to false")
+	}
 }
 
 // TestIsRunningNoPidFile verifies IsRunning returns 0 when no PID file exists.

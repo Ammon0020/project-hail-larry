@@ -43,6 +43,25 @@ type Config struct {
 	// explicitly to enable expiry on an existing install. An explicit value of
 	// 0 disables expiry entirely (credentials never expire).
 	CredentialInactivityTTLSeconds int `json:"credentialInactivityTtlSeconds,omitempty"`
+	// AllowRemoteWorkspaceRegistration controls whether paired devices may
+	// register new workspace directories from the web UI / remote API. It
+	// defaults to false: workspaces are registered from the host via the
+	// `app add-folder <path>` CLI command, which keeps the sensitive surface
+	// (a remote device could otherwise register ~/.ssh, /etc, etc. and read
+	// files) on the host. Set to true to allow remote registration, in which
+	// case the registration still goes through the grace-period pending
+	// action flow (see RevocationGracePeriodSeconds) so other devices can
+	// cancel a suspicious registration.
+	AllowRemoteWorkspaceRegistration bool `json:"allowRemoteWorkspaceRegistration,omitempty"`
+	// RevocationGracePeriodSeconds is the grace period (in seconds) that a
+	// device revocation or workspace registration spends in a pending state
+	// before being executed. During the grace period any connected device can
+	// cancel the action — this protects a user whose device is stolen: their
+	// other devices see the pending action via the broadcast event and can
+	// cancel it before it takes effect. Defaults to 300 (5 minutes). A value
+	// of 0 means instant execution (no grace period), preserving backward
+	// compatibility for users who explicitly opt out of the grace window.
+	RevocationGracePeriodSeconds int `json:"revocationGracePeriodSeconds,omitempty"`
 }
 
 // defaultCredentialInactivityTTLSeconds is the default sliding-window credential
@@ -50,6 +69,12 @@ type Config struct {
 // is on by default per the product decision, while an explicitly configured 0
 // still disables expiry.
 const defaultCredentialInactivityTTLSeconds = 2592000
+
+// defaultRevocationGracePeriodSeconds is the default grace period (5 minutes)
+// applied to a fresh config and to legacy config files that omit the
+// revocationGracePeriodSeconds key. An explicit 0 in the config disables the
+// grace period (instant execution) and is respected.
+const defaultRevocationGracePeriodSeconds = 300
 
 // Default returns the default configuration.
 //
@@ -96,6 +121,16 @@ func DefaultOrError() (*Config, error) {
 		PairingTTLSeconds: 300,
 
 		CredentialInactivityTTLSeconds: defaultCredentialInactivityTTLSeconds,
+
+		// Workspaces are registered from the host CLI by default; remote
+		// registration is gated behind a grace-period pending action and is
+		// off unless the user explicitly enables it.
+		AllowRemoteWorkspaceRegistration: false,
+		// Default 5-minute grace period for destructive actions (device
+		// revocation, remote workspace registration) so a stolen device
+		// cannot lock the user out or register sensitive directories before
+		// the user's other devices can cancel.
+		RevocationGracePeriodSeconds: defaultRevocationGracePeriodSeconds,
 	}, nil
 }
 
@@ -135,6 +170,17 @@ func Load() (*Config, error) {
 	}
 	if _, ok := raw["tlsEnabled"]; !ok {
 		cfg.TLSEnabled = true
+	}
+
+	// Detect whether "revocationGracePeriodSeconds" was explicitly present in
+	// the JSON, mirroring the tlsEnabled handling above. A plain int zero-fills
+	// to 0 on omission, which we cannot distinguish from an explicit 0 (which
+	// means "instant execution, no grace period"). For legacy config files
+	// that predate the field, default to the 5-minute grace window so the
+	// grace-period protection is on by default on upgrade; an explicit 0
+	// remains respected as an opt-out.
+	if _, ok := raw["revocationGracePeriodSeconds"]; !ok {
+		cfg.RevocationGracePeriodSeconds = defaultRevocationGracePeriodSeconds
 	}
 
 	// Fill in any missing defaults.
