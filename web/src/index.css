@@ -194,6 +194,21 @@
   border-radius: 2px;
 }
 
+/* Checkered background for transparent image previews — the standard
+   "transparency" pattern used by image editors. Without this, transparent
+   PNGs rendered on the dark editor background (#1e1e1e) appear as black
+   silhouettes because the transparent pixels show the dark background. */
+.bg-checkerboard {
+  background-image:
+    linear-gradient(45deg, #c8c8c8 25%, transparent 25%),
+    linear-gradient(-45deg, #c8c8c8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #c8c8c8 75%),
+    linear-gradient(-45deg, transparent 75%, #c8c8c8 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  background-color: #ffffff;
+}
+
 /* Scoped styles for DOCX HTML rendered by mammoth.js. The HTML is injected
    via dangerouslySetInnerHTML from mammoth.convertToHtml, so we can't use
    Tailwind classes on it. These rules give the converted Word document

@@ -222,6 +222,20 @@ func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (cont
 		return "", 0, false, fmt.Errorf("file too large (max %d bytes, file is %d bytes)", maxReadFileSize, info.Size())
 	}
 
+	// Extension-based binary detection for formats that are previewed by the
+	// frontend's FileViewer (3D models, images, PDF, video, audio) but may not
+	// contain null bytes in the first 512 bytes — e.g. 3MF and GLTF are
+	// XML/text-based, SVG is text, OBJ is text. Without this, these files would
+	// be read as text and sent to CodeMirror instead of the specialized viewer.
+	// The content is still sampled for a revision so optimistic locking works.
+	if isPreviewExt(relPath) {
+		sample, serr := readPrefix(fullPath, binarySniffSize)
+		if serr != nil {
+			return "", 0, false, fmt.Errorf("read file: %w", serr)
+		}
+		return "", contentRevision(sample), true, nil
+	}
+
 	// Detect binary content before reading the whole file. We sniff the first
 	// 512 bytes and check for null bytes (0x00) — the same heuristic git uses.
 	// A null byte within the first 512 bytes is a strong signal that the file
@@ -318,6 +332,36 @@ func isBinaryBytes(sample []byte) bool {
 		}
 	}
 	return false
+}
+
+// previewExts lists file extensions that the frontend's FileViewer handles
+// with specialized viewers (images, PDF, video, audio, 3D models, DOCX).
+// Files with these extensions are marked as binary in ReadFile so the frontend
+// routes them to FileViewer instead of CodeMirror — even when the content is
+// text-based (3MF, GLTF, OBJ, SVG) and would not trigger the null-byte sniff.
+var previewExts = map[string]bool{
+	// Images
+	"png": true, "jpg": true, "jpeg": true, "gif": true, "webp": true,
+	"svg": true, "bmp": true, "ico": true, "avif": true,
+	// Documents
+	"pdf": true, "docx": true,
+	// Video
+	"mp4": true, "webm": true, "ogv": true, "mov": true, "mkv": true,
+	// Audio
+	"mp3": true, "wav": true, "oga": true, "ogg": true, "flac": true,
+	"m4a": true, "aac": true, "opus": true,
+	// 3D models
+	"stl": true, "3mf": true, "obj": true, "gltf": true, "glb": true, "ply": true,
+}
+
+// isPreviewExt reports whether the file at relPath has an extension handled by
+// the frontend's FileViewer. The check is case-insensitive on the extension.
+func isPreviewExt(relPath string) bool {
+	dot := strings.LastIndexByte(relPath, '.')
+	if dot < 0 {
+		return false
+	}
+	return previewExts[strings.ToLower(relPath[dot+1:])]
 }
 
 // contentRevision computes a deterministic revision from file content by taking

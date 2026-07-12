@@ -7,7 +7,7 @@
  *  - Video (mp4, webm, ogv, mov, mkv) → <video controls>
  *  - Audio (mp3, wav, ogg, flac, m4a, aac, opus) → <audio controls>
  *  - DOCX → mammoth.js (converts to HTML in-browser)
- *  - STL → Three.js + STLLoader (3D orbit viewer)
+ *  - 3D models (stl, 3mf, obj, gltf, glb, ply) → Three.js orbit viewer
  *  - Fallback → "preview not available" + download link
  *
  * All binary content is served from GET /api/workspaces/{id}/raw, which
@@ -30,9 +30,9 @@ const PDF_EXTS = ['pdf']
 const VIDEO_EXTS = ['mp4', 'webm', 'ogv', 'mov', 'mkv']
 const AUDIO_EXTS = ['mp3', 'wav', 'oga', 'ogg', 'flac', 'm4a', 'aac', 'opus']
 const DOCX_EXTS = ['docx']
-const STL_EXTS = ['stl']
+const MODEL_EXTS = ['stl', '3mf', 'obj', 'gltf', 'glb', 'ply']
 
-type ViewerKind = 'image' | 'pdf' | 'video' | 'audio' | 'docx' | 'stl' | 'fallback'
+type ViewerKind = 'image' | 'pdf' | 'video' | 'audio' | 'docx' | 'model' | 'fallback'
 
 /** Resolves the viewer kind from a file name's extension. */
 function viewerKind(name: string): ViewerKind {
@@ -42,7 +42,7 @@ function viewerKind(name: string): ViewerKind {
   if (VIDEO_EXTS.includes(ext)) return 'video'
   if (AUDIO_EXTS.includes(ext)) return 'audio'
   if (DOCX_EXTS.includes(ext)) return 'docx'
-  if (STL_EXTS.includes(ext)) return 'stl'
+  if (MODEL_EXTS.includes(ext)) return 'model'
   return 'fallback'
 }
 
@@ -55,13 +55,13 @@ export function FileViewer({ tab, active }: { tab: Tab; active: boolean }) {
   const url = rawFileUrl(tab.workspaceId ?? '', tab.path)
 
   return (
-    <div className={cn('absolute inset-0 flex items-center justify-center bg-editor', active ? 'block' : 'hidden')}>
+    <div className={cn('absolute inset-0 items-center justify-center bg-editor', active ? 'flex' : 'hidden')}>
       {kind === 'image' && <ImageViewer url={url} name={tab.name} />}
       {kind === 'pdf' && <PdfViewer url={url} />}
       {kind === 'video' && <VideoViewer url={url} name={tab.name} />}
       {kind === 'audio' && <AudioViewer url={url} name={tab.name} />}
       {kind === 'docx' && <DocxViewer url={url} name={tab.name} />}
-      {kind === 'stl' && <StlViewer url={url} name={tab.name} />}
+      {kind === 'model' && <ModelViewer url={url} name={tab.name} />}
       {kind === 'fallback' && <FallbackViewer url={url} name={tab.name} />}
     </div>
   )
@@ -77,7 +77,7 @@ function ImageViewer({ url, name }: { url: string; name: string }) {
       <img
         src={url}
         alt={name}
-        className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg"
+        className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg bg-checkerboard"
       />
       <span className="text-xs text-muted-foreground">{name}</span>
     </div>
@@ -188,7 +188,69 @@ function DocxViewer({ url, name }: { url: string; name: string }) {
 // STL viewer — Three.js + STLLoader with orbit controls
 // ---------------------------------------------------------------------------
 
-function StlViewer({ url, name }: { url: string; name: string }) {
+// ---------------------------------------------------------------------------
+// 3D model viewer — Three.js with format-specific loaders
+//
+// STL and PLY loaders return BufferGeometry (wrapped in a Mesh with a default
+// material). 3MF, OBJ, and GLTF loaders return Object3D/Group (already
+// materialized, added directly to the scene). The scene setup — renderer,
+// camera, lighting, auto-framing, orbit controls, animation loop, cleanup —
+// is shared across all formats.
+// ---------------------------------------------------------------------------
+
+/** Loads a 3D file from url and returns an Object3D ready to add to the scene. */
+async function loadModel(
+  THREE: typeof import('three'),
+  ext: string,
+  url: string,
+): Promise<import('three').Object3D> {
+  switch (ext) {
+    case 'stl': {
+      const { STLLoader } = await import('three/examples/jsm/loaders/STLLoader.js')
+      const geometry = await new Promise<import('three').BufferGeometry>((resolve, reject) =>
+        new STLLoader().load(url, resolve, undefined, reject),
+      )
+      geometry.computeVertexNormals()
+      return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+        color: 0x8b9bb4, metalness: 0.1, roughness: 0.5,
+      }))
+    }
+    case 'ply': {
+      const { PLYLoader } = await import('three/examples/jsm/loaders/PLYLoader.js')
+      const geometry = await new Promise<import('three').BufferGeometry>((resolve, reject) =>
+        new PLYLoader().load(url, resolve, undefined, reject),
+      )
+      geometry.computeVertexNormals()
+      return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+        color: 0x8b9bb4, metalness: 0.1, roughness: 0.5,
+      }))
+    }
+    case '3mf': {
+      const { ThreeMFLoader } = await import('three/examples/jsm/loaders/3MFLoader.js')
+      return new Promise<import('three').Object3D>((resolve, reject) =>
+        new ThreeMFLoader().load(url, resolve, undefined, reject),
+      )
+    }
+    case 'obj': {
+      const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js')
+      return new Promise<import('three').Object3D>((resolve, reject) =>
+        new OBJLoader().load(url, resolve, undefined, reject),
+      )
+    }
+    case 'gltf':
+    case 'glb': {
+      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js')
+      const gltf = await new Promise<import('three/examples/jsm/loaders/GLTFLoader.js').GLTF>(
+        (resolve, reject) => new GLTFLoader().load(url, resolve, undefined, reject),
+      )
+      return gltf.scene
+    }
+    default:
+      throw new Error(`Unsupported 3D format: .${ext}`)
+  }
+}
+
+function ModelViewer({ url, name }: { url: string; name: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -198,98 +260,74 @@ function StlViewer({ url, name }: { url: string; name: string }) {
     let frameId = 0
     let cancelled = false
 
-    // Dynamic import keeps Three.js (~600KB) out of the main bundle.
     async function init() {
       try {
         const THREE = await import('three')
-        const { STLLoader } = await import('three/examples/jsm/loaders/STLLoader.js')
         const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
-
         if (cancelled || !containerRef.current) return
 
-        // Load the STL geometry from the raw file endpoint.
-        const loader = new STLLoader()
-        loader.load(
-          url,
-          (geometry) => {
-            if (cancelled || !containerRef.current) return
-            geometry.computeVertexNormals()
+        const ext = name.split('.').pop()?.toLowerCase() || ''
+        const object = await loadModel(THREE, ext, url)
+        if (cancelled || !containerRef.current) return
 
-            const container = containerRef.current
-            const width = container.clientWidth
-            const height = container.clientHeight
+        const container = containerRef.current
+        const width = container.clientWidth
+        const height = container.clientHeight
 
-            // Scene setup with neutral lighting so STL surface details are visible.
-            const scene = new THREE.Scene()
-            scene.background = new THREE.Color(0x1e1e2e)
+        // Scene setup with neutral lighting so surface details are visible.
+        const scene = new THREE.Scene()
+        scene.background = new THREE.Color(0x1e1e2e)
 
-            const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 10000)
-            const renderer3 = new THREE.WebGLRenderer({ antialias: true })
-            renderer3.setSize(width, height)
-            renderer3.setPixelRatio(window.devicePixelRatio)
-            container.appendChild(renderer3.domElement)
-            renderer = renderer3
+        const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 10000)
+        const renderer3 = new THREE.WebGLRenderer({ antialias: true })
+        renderer3.setSize(width, height)
+        renderer3.setPixelRatio(window.devicePixelRatio)
+        container.appendChild(renderer3.domElement)
+        renderer = renderer3
 
-            // Mesh material — standard material responds to the lights below.
-            const material = new THREE.MeshStandardMaterial({
-              color: 0x8b9bb4,
-              metalness: 0.1,
-              roughness: 0.5,
-              flatShading: false,
-            })
-            const mesh = new THREE.Mesh(geometry, material)
-            scene.add(mesh)
+        scene.add(object)
 
-            // Auto-frame the model: compute bounding box, center the geometry,
-            // and position the camera at a distance that fits the bounding sphere.
-            const box = new THREE.Box3().setFromObject(mesh)
-            const size = box.getSize(new THREE.Vector3())
-            const center = box.getCenter(new THREE.Vector3())
-            const maxDim = Math.max(size.x, size.y, size.z)
-            const fov = camera.fov * (Math.PI / 180)
-            const distance = (maxDim / 2) / Math.tan(fov / 2) * 1.8
-            camera.position.set(center.x + distance * 0.5, center.y + distance * 0.4, center.z + distance)
-            camera.lookAt(center)
+        // Auto-frame: compute bounding box, center the model, and position the
+        // camera at a distance that fits the bounding sphere.
+        const box = new THREE.Box3().setFromObject(object)
+        const size = box.getSize(new THREE.Vector3())
+        const center = box.getCenter(new THREE.Vector3())
+        const maxDim = Math.max(size.x, size.y, size.z)
+        const fov = camera.fov * (Math.PI / 180)
+        const distance = (maxDim / 2) / Math.tan(fov / 2) * 1.8
+        camera.position.set(center.x + distance * 0.5, center.y + distance * 0.4, center.z + distance)
+        camera.lookAt(center)
 
-            // Lights — a key light, fill light, and back light for depth.
-            const keyLight = new THREE.DirectionalLight(0xffffff, 1.2)
-            keyLight.position.set(1, 1, 2)
-            scene.add(keyLight)
-            const fillLight = new THREE.DirectionalLight(0xffffff, 0.4)
-            fillLight.position.set(-1, -0.5, 1)
-            scene.add(fillLight)
-            const backLight = new THREE.DirectionalLight(0xffffff, 0.3)
-            backLight.position.set(0, 1, -2)
-            scene.add(backLight)
-            scene.add(new THREE.AmbientLight(0xffffff, 0.3))
+        // Lights — key, fill, and back for depth, plus ambient for base level.
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.2)
+        keyLight.position.set(1, 1, 2)
+        scene.add(keyLight)
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.4)
+        fillLight.position.set(-1, -0.5, 1)
+        scene.add(fillLight)
+        const backLight = new THREE.DirectionalLight(0xffffff, 0.3)
+        backLight.position.set(0, 1, -2)
+        scene.add(backLight)
+        scene.add(new THREE.AmbientLight(0xffffff, 0.3))
 
-            // Orbit controls let the user rotate, zoom, and pan the model.
-            const controls = new OrbitControls(camera, renderer3.domElement)
-            controls.target.copy(center)
-            controls.enableDamping = true
-            controls.dampingFactor = 0.08
-            controls.update()
+        // Orbit controls let the user rotate, zoom, and pan the model.
+        const controls = new OrbitControls(camera, renderer3.domElement)
+        controls.target.copy(center)
+        controls.enableDamping = true
+        controls.dampingFactor = 0.08
+        controls.update()
 
-            const animate = () => {
-              if (cancelled) return
-              frameId = requestAnimationFrame(animate)
-              controls.update()
-              renderer3.render(scene, camera)
-            }
-            animate()
-            setLoading(false)
-          },
-          undefined,
-          (err) => {
-            if (!cancelled) {
-              setError(err instanceof Error ? err.message : 'Failed to load STL')
-              setLoading(false)
-            }
-          },
-        )
+        const animate = () => {
+          if (cancelled) return
+          frameId = requestAnimationFrame(animate)
+          controls.update()
+          renderer3.render(scene, camera)
+        }
+        animate()
+        setLoading(false)
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to initialize 3D viewer')
+          setError(err instanceof Error ? err.message : 'Failed to load 3D model')
           setLoading(false)
         }
       }
@@ -307,10 +345,10 @@ function StlViewer({ url, name }: { url: string; name: string }) {
         }
       }
     }
-  }, [url])
+  }, [url, name])
 
   if (error) {
-    return <FallbackViewer url={url} name={name} message={`Failed to render STL: ${error}`} />
+    return <FallbackViewer url={url} name={name} message={`Failed to render 3D model: ${error}`} />
   }
   return (
     <div className="w-full h-full relative">
