@@ -1,7 +1,7 @@
 ---
 name: routine
-description: Medium-low difficulty tier. Smaller routine feature implementation. Uses Sonnet.
-model: sonnet-5
+description: Medium-low difficulty tier. Smaller routine feature implementation.
+model: grok-4-5-medium
 ---
 
-See AGENTS.md for instructions and development rules. 
+Read AGENTS.md for instructions and development rules.

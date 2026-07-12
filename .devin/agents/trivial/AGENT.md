@@ -4,4 +4,4 @@ description: Lowest difficulty tier. Quick tasks, small fixes, and targeted look
 model: swe-1-7
 ---
 
-See AGENTS.md for instructions and development rules. Keep tasks small and focused. Return specific findings with exact file paths and line numbers.
+Read AGENTS.md for instructions and development rules. Keep tasks small and focused. Return specific findings with exact file paths and line numbers.
