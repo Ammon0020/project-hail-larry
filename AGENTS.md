@@ -6,7 +6,7 @@ Rules and critical info posted at the start of every chat to create context.
 
 Self-hosted web code editor with AI built in. A Go daemon runs on the user's machine, serving a browser-based IDE to any device on the local network. The app has an ACP (Agent Client Protocol) client that orchestrates external agents (Claude Code, Codex CLI, Gemini CLI, etc.) alongside a VS Code-style editor. All files and state stay on the host; devices are thin clients synced in real time. Cross platform (Windows, Mac, and Linux).
 
-## Workflow
+## App Workflow
 
 - **Setup:** `app add-folder .` registers a workspace, `app pair` generates a QR code
 - **First device:** Scan QR → paired → web UI opens
@@ -55,6 +55,7 @@ docs/                    → see ## Docs section below
 - UI never communicates directly with agent implementations
 - Agents plan and propose; the client executes approved actions
 - Stay in your lane — define interfaces, don't implement another agent's code
+- Use maintainable code and architecture. Avoid bloated fixes and repeated code. Avoid letting the code get longer and longer with each fix. Use occasional subagents to explore optimizations to the code.
 
 ## Subagents
 
@@ -78,8 +79,8 @@ If the quota runs out, use the small subagent. It's still very powerful and can 
 - **Use linters:**
   - `golangci-lint` for Go
   - `eslint` for JavaScript/TypeScript
-
 - **Keep `docs/STATUS.md` current.** When you start, modify, or complete a task, update the relevant row in STATUS.md immediately. Mark gaps honestly — "⚠️ Partial" or "⚠️ Stub" over false "✅ Done". Include short notes on what's missing. Compact occasionally. 
+- **Suggest git commit messages:** At the end of each task, suggest a commit message that summarizes the changes.
 
 ## Security
 
