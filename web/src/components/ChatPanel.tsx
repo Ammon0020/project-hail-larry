@@ -92,7 +92,7 @@ export function ChatPanel({
   /** Switches the model on a live session without restarting the agent process
    *  (preserves conversation history). Used by handleModelChange for model-only
    *  switches; onRebindSession is still used for agent (harness) switches. */
-  onSwitchModel: (sessionId: string, modelId: string) => void
+  onSwitchModel: (sessionId: string, modelId: string) => Promise<void>
   onExportSession: (sessionId: string) => void
   /** Uploads a file to a session's upload store. Routed through useBackend so
    *  uploads share the hook's session-recovery semantics instead of bypassing
@@ -249,12 +249,21 @@ export function ChatPanel({
 
   // The active conversation owns its agent/model — derive the selectors from it
   // so switching reflects that conversation. For a new chat (no active session)
-  // the local selection drives the choice.
+  // the local selection drives the choice. The locally-selected model takes
+  // priority over the session's persisted model so the dropdown visually updates
+  // immediately when the user picks a different model — the backend switch is
+  // deferred to send time (see handleSend). The guard `currentAgent?.models.some`
+  // ensures the stored model belongs to the effective agent, so switching to a
+  // session with a different agent doesn't show a stale model from the old one.
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const effectiveAgentId = activeSession?.agentId || selectedAgent || agents[0]?.id || ''
   const currentAgent = agents.find((a) => a.id === effectiveAgentId)
+  const userSelectedModel =
+    selectedModel && currentAgent?.models.some((m) => m.id === selectedModel)
+      ? selectedModel
+      : null
   const effectiveModelId =
-    activeSession?.modelId || selectedModel || currentAgent?.models[0]?.id || ''
+    userSelectedModel || activeSession?.modelId || currentAgent?.models[0]?.id || ''
 
   // Determine whether a turn is currently in flight, to toggle Send/Stop.
   const lastEvent = events[events.length - 1]
@@ -358,13 +367,12 @@ export function ChatPanel({
     setPendingAgentId(null)
   }
 
-  /** Switches model on a live session without resetting history — routes to
-   *  the backend's SwitchModel (model-only PATCH, no agentId) instead of
-   *  RebindSession. Only the model changes; the agent process keeps its
-   *  in-memory context for subsequent turns. */
+  /** Updates the locally-selected model only. The backend switch is deferred
+   *  to send time (see handleSend) so the user can change their mind in the
+   *  dropdown without round-tripping to the server on every selection — only
+   *  the model that's actually in effect when a prompt is sent gets applied. */
   const handleModelChange = (modelId: string) => {
     setStoredModel(modelId)
-    if (activeSessionId) onSwitchModel(activeSessionId, modelId)
   }
 
   const handleSend = async () => {
@@ -377,6 +385,7 @@ export function ChatPanel({
 
     try {
       let sessionId = activeSessionId
+      const wasNewSession = !sessionId
       if (!sessionId) {
         sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
         // A real session now exists — drop the transient "New chat" placeholder.
@@ -387,6 +396,14 @@ export function ChatPanel({
       // been added to openTabIds yet (the auto-open effect also handles this,
       // but calling it here makes the tab appear immediately on send).
       openTab(sessionId)
+      // Deferred model switch: handleModelChange only updates local state, so
+      // if the user picked a model that differs from an existing session's
+      // current model, apply the switch on the backend now so this prompt uses
+      // it. Skipped for newly-created sessions — onCreateSession already used
+      // the selected model, so switching again would be redundant.
+      if (!wasNewSession && userSelectedModel && activeSession?.modelId !== userSelectedModel) {
+        await onSwitchModel(sessionId, userSelectedModel)
+      }
       const attachmentsToSend = pendingAttachments
       await onSendMessage(
         sessionId,
