@@ -17,6 +17,7 @@
 - **File sync** — revision tracking (48-bit content hash), three-way merge, per-file locking, LRU cache, live on-disk change detection (`internal/fswatch`).
 - **MCP** — Claude-compatible `~/.local-agent/mcp.json`; inline stdio/http/sse transports to the agent (capability-filtered); health status endpoint; settings editor + composer toggle popout.
 - **Frontend** — React 19 + Vite 8 + Tailwind v4 + shadcn/ui. Desktop/mobile layouts, chat (streaming, markdown, tool/plan cards, rename/delete/rebind/export, autoscroll), CodeMirror 6 editor, file tree, search, settings-as-tab, image upload, SPA offline shell (service worker), light/dark/system theme.
+- **Binary file previews** — `GET /api/workspaces/{id}/raw` streams raw bytes with Content-Type for browser-native rendering. FileViewer dispatches by extension: images (`<img>`), PDF (`<iframe>`), video/audio (HTML5 players), DOCX (mammoth.js → HTML), STL (Three.js + STLLoader orbit viewer). Three.js/mammoth are dynamically imported (code-split) so only users who open those file types pay the bundle cost.
 - **Security** — auth middleware on all routes, WS Origin/CSRF checks, path-traversal + symlink containment, rate limiting, request/size caps. Full audit 2026-07-07 (9/11 fixed; 2 deferred in known-issues).
 
 ## Active TODO
@@ -35,6 +36,7 @@
 
 ## Recent Changes (2026-07)
 
+- **07-13** — Binary file previews: raw file endpoint (`GET /api/workspaces/{id}/raw`), FileViewer component with PDF/DOCX/STL/video/audio/image viewers. Three.js + mammoth dynamically imported.
 - **07-13** — MCP-over-ACP (P4.10) investigated → blocked on SDK, deferred (docs only).
 - **07-12** — ACP provider management (P4.11): `providers/list|set|disable`, REST `/api/sessions/{id}/providers`, Settings UI. SPA offline service worker. Dual HTTP/HTTPS listeners. Device-credential expiry clarified. Devin subagent skills + exec-guard security tooling.
 - **07-12** — ACP AdditionalDirectories (P4.5) multi-root; MCP health UX (green/red/gray dots); Devin ACP auth + quieter autodetect logs.

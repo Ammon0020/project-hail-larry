@@ -13,10 +13,11 @@ import { LanguageDescription, bracketMatching, foldGutter, indentOnInput, indent
 import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Prec, EditorSelection } from '@codemirror/state'
-import { GitBranch, CircleAlert, TriangleAlert, FileText, RefreshCw, FileX, ZoomIn, ZoomOut } from 'lucide-react'
+import { GitBranch, CircleAlert, TriangleAlert, FileText, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { SettingsPanel } from '@/components/SettingsPanel'
+import { FileViewer } from '@/components/FileViewer'
 import { TabBar } from './TabBar'
 import type { Agent } from '@/types'
 import type { Extension } from '@codemirror/state'
@@ -414,28 +415,7 @@ export function EditorPane({
 
         {tabs.filter(t => t.kind !== 'settings').map(tab => {
           if (tab.isBinary) {
-            const ext = tab.name.split('.').pop()?.toLowerCase() || ''
-            const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)
-            return (
-              <div key={tab.id} className={cn("absolute inset-0 flex items-center justify-center bg-editor", activeTabId === tab.id ? 'block' : 'hidden')}>
-                {isImage ? (
-                  <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
-                    <img
-                      src={`/workspaces/${tab.workspaceId ?? ''}/file?path=${encodeURIComponent(tab.path)}`}
-                      alt={tab.name}
-                      className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg"
-                    />
-                    <span className="text-xs text-muted-foreground">{tab.name}</span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-3 text-muted-foreground">
-                    <FileX className="w-12 h-12" />
-                    <p className="text-sm font-medium">Binary file — preview not available</p>
-                    <p className="text-xs text-muted-foreground/70">{tab.name}</p>
-                  </div>
-                )}
-              </div>
-            )
+            return <FileViewer key={tab.id} tab={tab} active={activeTabId === tab.id} />
           }
           return (
           <div key={tab.id} className={cn("absolute inset-0", activeTabId === tab.id ? 'block' : 'hidden')}>

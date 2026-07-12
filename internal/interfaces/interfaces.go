@@ -196,6 +196,12 @@ type WorkspaceManager interface {
 	// ReadFile returns the content of a file and its current revision.
 	ReadFile(ctx context.Context, workspaceID, relPath string) (content string, revision int64, isBinary bool, err error)
 
+	// FilePath returns the absolute filesystem path for a file in the
+	// workspace, after validating path traversal and symlink constraints.
+	// Used by the raw file serving endpoint to stream binary file bytes
+	// (PDF, video, audio, etc.) directly to the client.
+	FilePath(ctx context.Context, workspaceID, relPath string) (string, error)
+
 	// Search runs a workspace-wide content search and returns matching lines.
 	Search(ctx context.Context, workspaceID, pattern string, opts search.Options) ([]search.Result, error)
 }

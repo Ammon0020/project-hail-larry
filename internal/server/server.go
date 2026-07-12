@@ -153,6 +153,7 @@ func (s *Server) apiRoutes() {
 	s.mux.HandleFunc("POST /api/workspaces", s.requireAuth(s.handleRegisterWorkspace))
 	s.mux.HandleFunc("GET /api/workspaces/{id}/files", s.requireAuth(s.handleFileTree))
 	s.mux.HandleFunc("GET /api/workspaces/{id}/file", s.requireAuth(s.handleReadFile))
+	s.mux.HandleFunc("GET /api/workspaces/{id}/raw", s.requireAuth(s.handleRawFile))
 	s.mux.HandleFunc("POST /api/workspaces/{id}/file", s.requireAuth(s.handleWriteFile))
 	s.mux.HandleFunc("GET /api/workspaces/{id}/search", s.requireAuth(s.handleSearch))
 

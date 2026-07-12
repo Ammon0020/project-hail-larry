@@ -43,6 +43,10 @@ func (m *fileWorkspaceManager) Search(_ context.Context, _, _ string, _ search.O
 	return nil, nil
 }
 
+func (m *fileWorkspaceManager) FilePath(_ context.Context, _, _ string) (string, error) {
+	return "", &fileNotFoundError{path: "not implemented"}
+}
+
 func (m *fileWorkspaceManager) Remove(_ context.Context, _ string) error { return nil }
 
 // fileNotFoundError is a minimal sentinel error so ReadFile failures are

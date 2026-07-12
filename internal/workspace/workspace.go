@@ -248,6 +248,41 @@ func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (cont
 	return string(data), contentRevision(data), false, nil
 }
 
+// FilePath returns the absolute filesystem path for a file in the workspace,
+// after validating path traversal and symlink constraints via safeJoin. Used
+// by the raw file serving endpoint (GET /api/workspaces/{id}/raw) to stream
+// file bytes directly to the client with proper Content-Type headers —
+// needed for PDF, video, audio, and other binary previews that cannot be
+// served through the JSON-wrapped ReadFile endpoint.
+//
+// Unlike ReadFile, no size limit is enforced here: the caller uses
+// http.ServeFile which streams from disk and supports range requests,
+// so large media files (e.g. videos) can be served without loading them
+// entirely into memory. Access is still bounded by auth (requireAuth) and
+// path validation (safeJoin + symlink rejection).
+func (m *Manager) FilePath(_ context.Context, workspaceID, relPath string) (string, error) {
+	m.mu.RLock()
+	wsPath, ok := m.workspaces[workspaceID]
+	m.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("workspace not found: %s", workspaceID)
+	}
+
+	fullPath, err := safeJoin(wsPath, relPath)
+	if err != nil {
+		return "", err
+	}
+
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("stat file: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("path is a directory, not a file")
+	}
+	return fullPath, nil
+}
+
 // binarySniffSize is the number of leading bytes inspected for binary
 // detection. 512 matches http.DetectContentType's sniff window and git's
 // heuristic, and is large enough that a stray null byte early in a real

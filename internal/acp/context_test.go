@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -40,6 +41,10 @@ func (m *fakeWorkspaceManager) FileTree(_ context.Context, _ string) ([]interfac
 
 func (m *fakeWorkspaceManager) ReadFile(_ context.Context, _, _ string) (string, int64, bool, error) {
 	return "", 0, false, nil
+}
+
+func (m *fakeWorkspaceManager) FilePath(_ context.Context, _, _ string) (string, error) {
+	return "", errors.New("not implemented")
 }
 
 func (m *fakeWorkspaceManager) Search(_ context.Context, _, _ string, _ search.Options) ([]search.Result, error) {

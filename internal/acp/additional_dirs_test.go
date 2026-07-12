@@ -58,6 +58,10 @@ func (m *multiRootWorkspaceManager) Search(_ context.Context, _, _ string, _ sea
 	return nil, nil
 }
 
+func (m *multiRootWorkspaceManager) FilePath(_ context.Context, _, _ string) (string, error) {
+	return "", errors.New("not implemented")
+}
+
 func (m *multiRootWorkspaceManager) Remove(_ context.Context, _ string) error { return nil }
 
 // absPath returns an absolute path that is stable across platforms for use in

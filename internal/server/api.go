@@ -510,6 +510,39 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleRawFile serves the raw bytes of a workspace file with a proper
+// Content-Type, enabling browser-native rendering of PDF, video, audio,
+// images, and other binary formats that cannot be served through the JSON-
+// wrapped handleReadFile endpoint. Uses http.ServeFile which supports range
+// requests (essential for video seeking and PDF page navigation) and sets
+// Content-Type from the file extension via mime.TypeByExtension, falling
+// back to content sniffing.
+//
+// Auth: behind requireAuth, same as all workspace routes. Browser media tags
+// (<img>, <video>, <iframe>) cannot set Authorization headers, so the
+// frontend appends deviceId/secret as query params — extractCredential
+// already supports this fallback for WebSocket and SSE.
+func (s *Server) handleRawFile(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.PathValue("id")
+	relPath := r.URL.Query().Get("path")
+	if relPath == "" {
+		writeError(w, http.StatusBadRequest, "missing 'path' query parameter")
+		return
+	}
+
+	fullPath, err := s.deps.WorkspaceMgr.FilePath(r.Context(), workspaceID, relPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	// Content-Disposition: inline so the browser renders the file in-page
+	// rather than downloading it. http.ServeFile sets Content-Type from the
+	// extension and supports range requests for partial content (206).
+	w.Header().Set("Content-Disposition", "inline")
+	http.ServeFile(w, r, fullPath)
+}
+
 // handleWriteFile writes content to a file in a workspace.
 func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	workspaceID := r.PathValue("id")

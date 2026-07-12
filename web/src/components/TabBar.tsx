@@ -106,6 +106,7 @@ export function TabBar({
               <div
                 key={tab.id}
                 data-tab-id={tab.id}
+                title={tab.kind === 'settings' ? tab.name : tab.path}
                 className={cn(
                   'flex items-center gap-2 px-3 h-9 text-sm shrink-0 border-r border-background cursor-pointer select-none',
                   isActive

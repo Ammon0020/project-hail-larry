@@ -193,3 +193,25 @@
   background: var(--muted-foreground);
   border-radius: 2px;
 }
+
+/* Scoped styles for DOCX HTML rendered by mammoth.js. The HTML is injected
+   via dangerouslySetInnerHTML from mammoth.convertToHtml, so we can't use
+   Tailwind classes on it. These rules give the converted Word document
+   readable typography (margins, headings, lists, tables) on the white
+   surface the DOCX viewer renders on. Per AGENTS.md, scoped CSS for
+   third-party HTML we don't control is an accepted use of global CSS. */
+.prose-docx h1 { font-size: 1.75rem; font-weight: 700; margin: 1.5rem 0 1rem; }
+.prose-docx h2 { font-size: 1.4rem; font-weight: 700; margin: 1.25rem 0 0.75rem; }
+.prose-docx h3 { font-size: 1.15rem; font-weight: 600; margin: 1rem 0 0.5rem; }
+.prose-docx p { margin: 0.5rem 0; line-height: 1.6; }
+.prose-docx ul, .prose-docx ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+.prose-docx ul { list-style: disc; }
+.prose-docx ol { list-style: decimal; }
+.prose-docx li { margin: 0.25rem 0; }
+.prose-docx table { border-collapse: collapse; margin: 1rem 0; width: 100%; }
+.prose-docx th, .prose-docx td { border: 1px solid #d1d5db; padding: 0.4rem 0.6rem; text-align: left; }
+.prose-docx th { background: #f3f4f6; font-weight: 600; }
+.prose-docx img { max-width: 100%; height: auto; margin: 0.5rem 0; }
+.prose-docx a { color: #2563eb; text-decoration: underline; }
+.prose-docx strong { font-weight: 700; }
+.prose-docx em { font-style: italic; }
