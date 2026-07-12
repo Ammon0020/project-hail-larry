@@ -155,8 +155,39 @@ func TestCheckHealth_StdioNoCommand(t *testing.T) {
 	if results[0].Status != "unhealthy" {
 		t.Errorf("expected unhealthy, got %q", results[0].Status)
 	}
-	if results[0].Error != "no command configured" {
+	if results[0].Error != errNoCommand {
 		t.Errorf("unexpected error: %q", results[0].Error)
+	}
+}
+
+// TestCheckHealth_UrlWithoutTypeInferredAsHttp verifies that a server with a
+// `url` but no `type` field (and no `command`) is inferred as HTTP and checked
+// via TCP dial, not treated as a stdio server with an empty command. This is
+// the context7 shape: {"url": "https://...", "headers": {...}} with no type.
+func TestCheckHealth_UrlWithoutTypeInferredAsHttp(t *testing.T) {
+	enabled := true
+	f := &File{
+		Version: CurrentVersion,
+		McpServers: map[string]ServerConfig{
+			"context7-like": {
+				URL:     "http://192.0.2.1:12345", // RFC 5737 TEST-NET — unreachable.
+				Headers: map[string]string{"API_KEY": "tok"},
+				Enabled: &enabled,
+			},
+		},
+	}
+
+	results := CheckHealth(f, 200*time.Millisecond)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	// Must be unhealthy due to connection failure — NOT "no command configured"
+	// (which would indicate it was misclassified as stdio).
+	if results[0].Status != "unhealthy" {
+		t.Errorf("expected unhealthy (connection failed), got %q", results[0].Status)
+	}
+	if results[0].Error == "no command configured" {
+		t.Error("server with URL was misclassified as stdio — expected HTTP check")
 	}
 }
 

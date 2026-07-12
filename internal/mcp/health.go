@@ -33,6 +33,11 @@ const (
 	statusUnknown   = "unknown"
 )
 
+// errNoCommand is the error string returned when a stdio server has no command
+// configured. Extracted as a constant to satisfy goconst (3+ occurrences across
+// health.go and its tests).
+const errNoCommand = "no command configured"
+
 // ServerStatus represents the health of a single MCP server.
 type ServerStatus struct {
 	Name    string `json:"name"`
@@ -92,10 +97,11 @@ func CheckHealth(f *File, timeout time.Duration) []ServerStatus {
 }
 
 // checkServer performs a single health check based on the server's transport
-// type. Returns (status, errorMessage).
+// type. Returns (status, errorMessage). Uses effectiveType so a server with no
+// `type` field but a `url` (e.g. context7) is checked as HTTP, not stdio.
 func checkServer(cfg ServerConfig, timeout time.Duration) (string, string) {
-	switch strings.ToLower(cfg.Type) {
-	case "", transportTypeStdio:
+	switch effectiveType(cfg) {
+	case transportTypeStdio:
 		return checkStdio(cfg)
 	case transportTypeHTTP, transportTypeSSE:
 		return checkNetwork(cfg, timeout)
@@ -108,7 +114,7 @@ func checkServer(cfg ServerConfig, timeout time.Duration) (string, string) {
 // exists on PATH. This is fast and has no side effects (no process is spawned).
 func checkStdio(cfg ServerConfig) (string, string) {
 	if cfg.Command == "" {
-		return statusUnhealthy, "no command configured"
+		return statusUnhealthy, errNoCommand
 	}
 	// Expand env vars in the command before looking it up, matching the
 	// expansion that happens at session-start time in ToACP.

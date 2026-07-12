@@ -250,6 +250,31 @@ func TestToACPUnknownType(t *testing.T) {
 	}
 }
 
+// TestToACPUrlWithoutTypeInferredAsHttp verifies that a server with a `url` but
+// no `type` field (and no `command`) is inferred as HTTP — the context7 shape.
+// Without this inference, the server would be sent as stdio with an empty
+// command, which fails at runtime.
+func TestToACPUrlWithoutTypeInferredAsHttp(t *testing.T) {
+	t.Parallel()
+	cfg := ServerConfig{
+		URL:     "https://mcp.context7.com/mcp",
+		Headers: map[string]string{"CONTEXT7_API_KEY": "tok"},
+	}
+	srv, err := ToACP("context7", cfg)
+	if err != nil {
+		t.Fatalf("ToACP: %v", err)
+	}
+	if srv.Http == nil {
+		t.Fatal("expected Http transport (inferred from URL), got nil")
+	}
+	if srv.Stdio != nil {
+		t.Errorf("expected no Stdio transport, got %v", srv.Stdio)
+	}
+	if srv.Http.Url != "https://mcp.context7.com/mcp" {
+		t.Errorf("Url = %q", srv.Http.Url)
+	}
+}
+
 // TestToACPEnvExpansion verifies ${VAR} references are expanded against
 // os.Getenv at translation time in Command, Args, Env values, Url, and Headers.
 //

@@ -203,20 +203,41 @@ func expandEnv(s string) string {
 	})
 }
 
+// effectiveType returns the transport type to use for a server, inferring it
+// from the configured fields when cfg.Type is empty. The Claude Desktop
+// convention is that an absent `type` field means stdio — but that convention
+// only holds when a `command` is present. A server configured with a `url` and
+// no `command` (a common shape for remote MCP servers like context7) is
+// unambiguously an HTTP server, so we infer "http" in that case to avoid
+// misclassifying it as a stdio server with an empty command.
+func effectiveType(cfg ServerConfig) string {
+	t := strings.ToLower(cfg.Type)
+	if t != "" {
+		return t
+	}
+	// Empty type: infer from fields. URL without Command => http; otherwise stdio.
+	if cfg.URL != "" && cfg.Command == "" {
+		return transportTypeHTTP
+	}
+	return transportTypeStdio
+}
+
 // ToACP translates one ServerConfig to an acp.McpServer ready to be sent on
-// session/new or session/load. The transport is selected by cfg.Type:
+// session/new or session/load. The transport is selected by effectiveType
+// (which infers from cfg.Type, falling back to field-based inference when it's
+// empty):
 //
 //   - "http"  => McpServerHttpInline (requires mcp_capabilities.http on the agent)
 //   - "sse"   => McpServerSseInline  (requires mcp_capabilities.sse on the agent)
-//   - "stdio" (or empty) => McpServerStdio (always supported)
+//   - "stdio" => McpServerStdio (always supported)
 //
 // ${VAR} env references in Command, Args, Env values, Url, and Header values
 // are expanded against os.Getenv at this point. The Claude-style Env map and
 // Headers map are translated to ACP's []EnvVariable / []HttpHeader array shape.
 // Returns an error for an unknown Type.
 func ToACP(name string, cfg ServerConfig) (acp.McpServer, error) {
-	switch strings.ToLower(cfg.Type) {
-	case "", "stdio":
+	switch effectiveType(cfg) {
+	case "stdio":
 		env := make([]acp.EnvVariable, 0, len(cfg.Env))
 		// Sort keys for deterministic wire output (stable diffs in tests/logs).
 		keys := make([]string, 0, len(cfg.Env))
@@ -309,7 +330,7 @@ func ToACPSlice(f *File, caps acp.McpCapabilities) ([]acp.McpServer, error) {
 	out := make([]acp.McpServer, 0, len(names))
 	for _, name := range names {
 		cfg := enabled[name]
-		switch strings.ToLower(cfg.Type) {
+		switch effectiveType(cfg) {
 		case transportTypeHTTP:
 			if !caps.Http {
 				continue
@@ -318,7 +339,7 @@ func ToACPSlice(f *File, caps acp.McpCapabilities) ([]acp.McpServer, error) {
 			if !caps.Sse {
 				continue
 			}
-		case "", transportTypeStdio:
+		case transportTypeStdio:
 			// Always supported per ACP spec.
 		default:
 			return nil, fmt.Errorf("mcp server %q: unknown type %q", name, cfg.Type)
