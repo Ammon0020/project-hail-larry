@@ -1,2 +1,14 @@
-- [x] Devin CLI ACP (`devin acp`) — authenticate before session/new; quiet providers/list MethodNotFound (2026-07-12)
-- [x] MCP health check — backend + UI status dots (healthy/unhealthy/disabled) in Tools popout (2026-07-12)
+- [ ] Devin CLI ACP (`devin acp`) — Automatically fetch available models. 
+- [ ] If models couldn't be fetched on a harness, show a warning icon by the harness name. If the user taps or hovers over the warning it shows the actual warning. Show an icon in the dropdown too.
+- [ ] Mistral asks for login every server restart. Should stay logged in. 
+- [ ] When opening a file from the explorer, italicize the tab's name. If they click on another file, replace the previous tab with the new file. This way if they click a ton of files trying to find something they don't end up with a hundred files. Think of the way vs code handles files. Then the moment they make a change, unitilicize and keep that open. Sort of like a buffer tab?
+- [ ] Add a tab right click menu. Close, close others, close saved, close to the right, copy path, copy relative path, keep open, etc. Mobile friendly. 
+- [ ] Make tabs draggable. Mobile friendly (hold for a moment until highlighted then drag). 
+- [ ] Gray out save button unless edits have been made. 
+- [ ] Remove diff button. It doesn't make sense there. What would you diff against? 
+- [ ] Add a git action bar item and diff viewer and a way to stage/commit/push if a git repo is detected. 
+- [ ] Add a way to initialize git in the workspace if it isn't detected. 
+- [ ] Add a little popup/slideup above the chat input with icons for edited files and subagents and anything else we choose to add. Popup only shows if something is in one of them. The one that has a status has a blue dot indicator on its top right. Extremely compact. Eg. If a file is changed, it shows the blue dot by that and when you click it, the popup slides open more to reveal the list of edited files and changed line counts (plus and minus) on the right of the filename, and to the right of the edits is an accept edits button and a revert button. Revert requires a confirmation. When you click/tap any file it opens the agent diff in an editor tab. 
+- [ ] Add agent icon on the far right of the top bar, next to the save icon. 
+- [ ] Add a command palette and handle ctrl+p. Put the button to the right of the agent icon. An "Action items menu". 
+- [ ] The bottom bar is only in the editor. It should span the entire bottom of the app. 
