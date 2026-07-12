@@ -496,6 +496,11 @@ type Transport struct {
 	// filtered to transports the agent advertised support for. nil/empty means
 	// "no MCP servers" (the pre-MCP-config behavior).
 	mcpServers []acp.McpServer
+	// providersSupported records whether the agent advertised the (unstable)
+	// providers capability during Initialize. The Client sets it after
+	// Initialize returns so the provider-management methods can gate on it
+	// without re-reading the InitializeResponse.
+	providersSupported bool
 }
 
 // SetMcpServers sets the MCP server list to pass on the next NewSession /
@@ -527,6 +532,64 @@ func (t *Transport) StderrTail() string {
 // from the InitializeResponse and cached on the transport.
 func (t *Transport) SupportsEmbeddedContext() bool {
 	return t.promptCaps.EmbeddedContext
+}
+
+// SupportsProviders reports whether the agent advertised the (unstable) providers
+// capability during Initialize. The value is captured from the
+// InitializeResponse (initResp.AgentCapabilities.Providers != nil) and cached on
+// the transport by the Client after Initialize. Provider-management methods
+// (ListProviders/SetProvider/DisableProvider) should only be called when this
+// returns true.
+func (t *Transport) SupportsProviders() bool {
+	return t.providersSupported
+}
+
+// ListProviders calls the unstable ACP providers/list method, returning the
+// agent's configurable LLM providers with their current routing info. Only
+// valid when SupportsProviders() returns true; callers must gate on that.
+func (t *Transport) ListProviders(ctx context.Context) ([]acp.UnstableProviderInfo, error) {
+	req := acp.UnstableListProvidersRequest{}
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validate list providers request: %w", err)
+	}
+	resp, err := t.conn.UnstableListProviders(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Providers, nil
+}
+
+// SetProvider calls the unstable ACP providers/set method, replacing the full
+// configuration for one provider id. apiType is one of the
+// acp.UnstableLlmProtocol values ("anthropic","openai","azure","vertex",
+// "bedrock"). headers is an optional map of integration-specific headers
+// (e.g. authorization, routing) and may be nil.
+func (t *Transport) SetProvider(ctx context.Context, id, apiType, baseURL string, headers map[string]any) error {
+	req := acp.UnstableSetProviderRequest{
+		Id:      id,
+		ApiType: acp.UnstableLlmProtocol(apiType),
+		BaseUrl: baseURL,
+		Headers: headers,
+	}
+	if err := req.Validate(); err != nil {
+		return fmt.Errorf("validate set provider request: %w", err)
+	}
+	_, err := t.conn.UnstableSetProvider(ctx, req)
+	return err
+}
+
+// DisableProvider calls the unstable ACP providers/disable method, disabling the
+// provider with the given id. The agent rejects this for providers marked
+// Required (per the spec, clients MUST NOT call providers/disable for a
+// required provider); callers should check the Required flag from ListProviders
+// before invoking.
+func (t *Transport) DisableProvider(ctx context.Context, id string) error {
+	req := acp.UnstableDisableProviderRequest{Id: id}
+	if err := req.Validate(); err != nil {
+		return fmt.Errorf("validate disable provider request: %w", err)
+	}
+	_, err := t.conn.UnstableDisableProvider(ctx, req)
+	return err
 }
 
 // Start launches the agent subprocess with the given command and args in

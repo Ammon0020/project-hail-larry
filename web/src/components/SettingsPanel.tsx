@@ -18,8 +18,16 @@ import {
   HelpCircle,
   Menu,
 } from 'lucide-react'
-import type { AgentInfo } from '@/lib/api'
-import { getMcpConfig, putMcpConfig, patchMcpServer } from '@/lib/api'
+import type { AgentInfo, ProviderInfo } from '@/lib/api'
+import {
+  getMcpConfig,
+  putMcpConfig,
+  patchMcpServer,
+  listProviders,
+  setProvider,
+  disableProvider,
+  UnsupportedProvidersError,
+} from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { getStoredTheme, setTheme, type Theme } from '@/lib/theme'
 
@@ -59,11 +67,17 @@ export function SettingsPanel({
   onAddAgent,
   onDeleteAgent,
   onAutodetect,
+  activeSessionId,
 }: {
   agents: AgentInfo[]
   onAddAgent: (a: AgentInfo) => Promise<void>
   onDeleteAgent: (id: string) => Promise<void>
   onAutodetect: () => Promise<AgentInfo[]>
+  /** Id of the currently active chat session, or null when none is open.
+   *  Threaded from App.tsx → EditorPane → here so the Providers (advanced)
+   *  section can call the session-scoped provider endpoints. When null the
+   *  section renders a muted "open a session" hint instead of fetching. */
+  activeSessionId?: string | null
 }) {
   const [activeTab, setActiveTab] = useState<'agents' | 'mcp' | 'general'>('agents')
   const [isDetecting, setIsDetecting] = useState(false)
@@ -84,6 +98,17 @@ export function SettingsPanel({
   const [mcpSaved, setMcpSaved] = useState(false)
   const [togglingServer, setTogglingServer] = useState<string | null>(null)
   const [showQuickRef, setShowQuickRef] = useState(false)
+
+  // Providers (advanced) state — capability-gated per active session.
+  // `providersStatus` discriminates loading / unsupported / loaded / error so
+  // the section can render the right muted note without conflating a 501
+  // (agent lacks provider support) with a transport failure.
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [providersStatus, setProvidersStatus] = useState<
+    'idle' | 'loading' | 'unsupported' | 'loaded' | 'error'
+  >('idle')
+  const [providersError, setProvidersError] = useState<string | null>(null)
+  const [providerBusy, setProviderBusy] = useState<string | null>(null)
 
   const handleAutodetect = async () => {
     setIsDetecting(true)
@@ -182,6 +207,99 @@ export function SettingsPanel({
       setMcpError(e instanceof Error ? e.message : String(e))
     } finally {
       setTogglingServer(null)
+    }
+  }
+
+  // ---- Providers (advanced) ----
+
+  /** Fetches the provider list for the active session. A 501 maps to the
+   *  `unsupported` status (rendered as a muted note); any other failure
+   *  surfaces inline via `providersError`. Safe to call with no active
+   *  session — returns early leaving the section idle. */
+  async function loadProviders(sessionId: string) {
+    setProvidersStatus('loading')
+    setProvidersError(null)
+    try {
+      const list = await listProviders(sessionId)
+      setProviders(list)
+      setProvidersStatus('loaded')
+    } catch (e) {
+      if (e instanceof UnsupportedProvidersError) {
+        setProvidersStatus('unsupported')
+        setProviders([])
+      } else {
+        setProvidersStatus('error')
+        setProvidersError(e instanceof Error ? e.message : String(e))
+      }
+    }
+  }
+
+  // Load providers when the General tab is opened with an active session.
+  // Re-fetches when the session changes so switching chats refreshes the list.
+  // Mirrors the loadMcp effect above: the async helper sets a 'loading' state
+  // before its first await (required for the loading indicator). The
+  // set-state-in-effect rule flags interprocedural calls with args but not
+  // the arg-less loadMcp — same pattern, so we disable it here for parity.
+  useEffect(() => {
+    if (activeTab !== 'general' || !activeSessionId) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadProviders(activeSessionId)
+  }, [activeTab, activeSessionId])
+
+  /** Parses a "key: value" textarea into a header record. Blank lines and
+   *  lines without a colon are skipped. Values are trimmed but otherwise
+   *  passed through verbatim — they may contain auth tokens, so we never
+   *  log the parsed result. */
+  function parseHeaders(text: string): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const raw of text.split('\n')) {
+      const line = raw.trim()
+      if (!line) continue
+      const idx = line.indexOf(':')
+      if (idx <= 0) continue
+      const key = line.slice(0, idx).trim()
+      const val = line.slice(idx + 1).trim()
+      if (key) out[key] = val
+    }
+    return out
+  }
+
+  async function handleSetProvider(
+    providerId: string,
+    apiType: string,
+    baseUrl: string,
+    headersText: string,
+  ) {
+    if (!activeSessionId) return
+    setProviderBusy(providerId)
+    setProvidersError(null)
+    try {
+      await setProvider(
+        activeSessionId,
+        providerId,
+        apiType,
+        baseUrl,
+        parseHeaders(headersText),
+      )
+      await loadProviders(activeSessionId)
+    } catch (e) {
+      setProvidersError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setProviderBusy(null)
+    }
+  }
+
+  async function handleDisableProvider(providerId: string) {
+    if (!activeSessionId) return
+    setProviderBusy(providerId)
+    setProvidersError(null)
+    try {
+      await disableProvider(activeSessionId, providerId)
+      await loadProviders(activeSessionId)
+    } catch (e) {
+      setProvidersError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setProviderBusy(null)
     }
   }
 
@@ -566,6 +684,64 @@ export function SettingsPanel({
                 ))}
               </div>
             </div>
+
+            {/* Providers (advanced) — per-session ACP provider configuration.
+                Capability-gated: hidden entirely when no session is open, and
+                shows a muted note when the agent returns 501 (no provider
+                support). Renders one ProviderRow per provider. */}
+            <div className="p-4 bg-panel border border-border rounded-lg space-y-3">
+              <div className="flex items-center gap-2">
+                <h4 className="font-semibold text-sm text-foreground">Providers (advanced)</h4>
+                {providersStatus === 'loading' && (
+                  <span className="text-xs text-muted-foreground">Loading…</span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Configure the model providers the active session's agent can use. Per-session; advanced.
+              </p>
+
+              {!activeSessionId && (
+                <p className="text-xs text-muted-foreground italic">
+                  Open a chat session to configure providers.
+                </p>
+              )}
+
+              {activeSessionId && providersStatus === 'unsupported' && (
+                <p className="text-xs text-muted-foreground italic">
+                  The current agent does not support runtime provider configuration.
+                </p>
+              )}
+
+              {activeSessionId && providersStatus === 'error' && providersError && (
+                <div className="flex items-start gap-2 p-3 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span className="font-mono whitespace-pre-wrap break-all">{providersError}</span>
+                </div>
+              )}
+
+              {activeSessionId && providersStatus === 'loaded' && providers.length === 0 && (
+                <p className="text-xs text-muted-foreground italic">
+                  No configurable providers for this agent.
+                </p>
+              )}
+
+              {activeSessionId && (providersStatus === 'loaded' || providersStatus === 'loading') && providers.length > 0 && (
+                <div className="space-y-3">
+                  {providers.map(p => (
+                    <ProviderRow
+                      key={`${p.id}:${p.current?.apiType ?? ''}:${p.current?.baseUrl ?? ''}`}
+                      provider={p}
+                      busy={providerBusy === p.id}
+                      error={providerBusy === p.id ? providersError : null}
+                      onSet={(apiType, baseUrl, headersText) =>
+                        handleSetProvider(p.id, apiType, baseUrl, headersText)
+                      }
+                      onDisable={() => handleDisableProvider(p.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -601,6 +777,132 @@ function CopyableExample({ label, text }: { label: string; text: string }) {
       <pre className="text-[11px] font-mono bg-muted p-2 rounded border border-border overflow-x-auto text-foreground">
         {text}
       </pre>
+    </div>
+  )
+}
+
+/**
+ * One row per provider in the Providers (advanced) section. Shows the
+ * provider id, a "required" badge, the supported protocols, and the current
+ * config (or "disabled"). Renders a small inline form to set apiType
+ * (dropdown constrained to `supported`), baseUrl, optional headers
+ * (key:value textarea), and a Disable button — hidden when the provider is
+ * required (the backend rejects DELETE with 400 for required providers).
+ *
+ * Headers may contain auth tokens, so the textarea value is never logged.
+ */
+function ProviderRow({
+  provider,
+  busy,
+  error,
+  onSet,
+  onDisable,
+}: {
+  provider: ProviderInfo
+  busy: boolean
+  error: string | null
+  onSet: (apiType: string, baseUrl: string, headersText: string) => void
+  onDisable: () => void
+}) {
+  const supported = provider.supported.length > 0 ? provider.supported : []
+  const initialApiType = provider.current?.apiType ?? supported[0] ?? ''
+  const [apiType, setApiType] = useState(initialApiType)
+  const [baseUrl, setBaseUrl] = useState(provider.current?.baseUrl ?? '')
+  const [headersText, setHeadersText] = useState('')
+
+  // The parent remounts this row (via a `key` that includes current.apiType
+  // and current.baseUrl) after a successful set/disable round-trip, so the
+  // useState initializers above re-run with the refreshed config — no
+  // sync-setState effect needed.
+
+  const canSet = !busy && apiType && baseUrl.trim().length > 0
+  const canDisable = !busy && !provider.required && !!provider.current
+
+  return (
+    <div className="p-3 bg-background border border-border rounded-md space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-mono text-sm text-foreground">{provider.id}</span>
+        {provider.required && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            required
+          </span>
+        )}
+        {supported.length > 0 && (
+          <span className="text-[10px] text-muted-foreground">
+            supports: {supported.join(', ')}
+          </span>
+        )}
+      </div>
+
+      <div className="text-xs text-muted-foreground">
+        {provider.current
+          ? <>current: <span className="font-mono">{provider.current.apiType}</span> · <span className="font-mono break-all">{provider.current.baseUrl}</span></>
+          : <span className="italic">disabled</span>}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-[120px_1fr] gap-2">
+        <select
+          value={apiType}
+          onChange={e => setApiType(e.target.value)}
+          disabled={busy || supported.length === 0}
+          className="bg-background border border-input rounded-md px-2 py-1.5 text-sm disabled:opacity-50"
+          aria-label={`${provider.id} api type`}
+        >
+          {supported.length === 0 && <option value="">—</option>}
+          {supported.map(t => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={baseUrl}
+          onChange={e => setBaseUrl(e.target.value)}
+          placeholder="https://api.example.com"
+          disabled={busy}
+          className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm disabled:opacity-50"
+          aria-label={`${provider.id} base URL`}
+        />
+      </div>
+
+      <textarea
+        value={headersText}
+        onChange={e => setHeadersText(e.target.value)}
+        placeholder={'Optional headers (one per line):\nAuthorization: Bearer ...'}
+        rows={2}
+        disabled={busy}
+        className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-xs font-mono disabled:opacity-50"
+        aria-label={`${provider.id} headers`}
+      />
+
+      {error && (
+        <div className="flex items-start gap-2 p-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span className="font-mono whitespace-pre-wrap break-all">{error}</span>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onSet(apiType, baseUrl.trim(), headersText)}
+          disabled={!canSet}
+          className="px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition disabled:opacity-50"
+        >
+          {busy ? 'Saving…' : 'Set'}
+        </button>
+        {provider.required ? (
+          <span className="text-[10px] text-muted-foreground">Required providers cannot be disabled.</span>
+        ) : (
+          <button
+            type="button"
+            onClick={onDisable}
+            disabled={!canDisable}
+            className="px-3 py-1.5 text-xs font-medium text-foreground bg-secondary hover:bg-accent rounded-md border border-input transition disabled:opacity-50"
+          >
+            Disable
+          </button>
+        )}
+      </div>
     </div>
   )
 }

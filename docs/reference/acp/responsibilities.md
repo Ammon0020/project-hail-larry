@@ -70,7 +70,7 @@ Available in `coder/acp-go-sdk v0.13.5` (Go) and/or `@agentclientprotocol/sdk` (
 | Elicitation | Unstable methods | Future | v2 draft — high interest once stable |
 | NES | Unstable methods | Future | Inline completions |
 | MCP-over-ACP | Unstable methods | Future | Preferred long-term: let harness manage MCP; config UI already exists |
-| Provider mgmt | Unstable methods | Future | High priority: shift custom agent/model registry toward standard |
+| Provider mgmt | Unstable methods | ✅ Done | Session-scoped `providers/list\|set\|disable`; REST `/api/sessions/{id}/providers`; Settings → General UI (P4.11) |
 | Tool content helpers | `ToolContent`, `ToolDiffContent`, `ToolTerminalRef` | ✅ N/A | Agent-side only; we are the client |
 | Explicit validation | `Validate()` on requests | ✅ Done | All constructed requests (P4.2) |
 | AdditionalDirectories | v0.13.5 | ✅ Done | Multi-root via registered workspaces (P4.5) |

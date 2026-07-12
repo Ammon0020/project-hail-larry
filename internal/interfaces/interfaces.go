@@ -238,6 +238,35 @@ type SessionInfo struct {
 // session. ListSessions returns a slice of Sessions.
 type Session = SessionInfo
 
+// ProviderInfo describes a configurable LLM provider advertised by an agent
+// (the unstable ACP providers capability). It is the interface-layer projection
+// of the SDK's acp.UnstableProviderInfo, carrying only the fields the server/UI
+// need so they never depend on the SDK type.
+type ProviderInfo struct {
+	// ID is the provider identifier (e.g. "main", "openai").
+	ID string `json:"id"`
+	// Required is true when the agent marks this provider as mandatory and it
+	// MUST NOT be disabled via providers/disable.
+	Required bool `json:"required"`
+	// Supported lists the LLM protocol types this provider accepts
+	// ("anthropic","openai","azure","vertex","bedrock").
+	Supported []string `json:"supported"`
+	// Current holds the effective non-secret routing config, or nil when the
+	// provider is disabled.
+	Current *ProviderCurrentConfig `json:"current,omitempty"`
+}
+
+// ProviderCurrentConfig is the current effective routing configuration for a
+// provider (non-secret). A nil/omitted Current on a ProviderInfo means the
+// provider is disabled.
+type ProviderCurrentConfig struct {
+	// APIType is the protocol currently used by this provider (one of the
+	// UnstableLlmProtocol values).
+	APIType string `json:"apiType"`
+	// BaseURL is the base URL currently used by this provider.
+	BaseURL string `json:"baseUrl"`
+}
+
 // ACPCallbacks allows the ACP client to notify the daemon of events.
 // The daemon implements these to persist events and broadcast to clients.
 type ACPCallbacks interface {
@@ -295,6 +324,22 @@ type ACPClient interface {
 	// session. The profile middleware reads this before each prompt and injects
 	// the corresponding system instructions.
 	SetSessionProfile(sessionID, profile string)
+
+	// ListProviders returns the agent's configurable LLM providers for the
+	// session, with their current routing info. Returns an error (e.g.
+	// ErrProvidersUnsupported) when the agent did not advertise the providers
+	// capability.
+	ListProviders(ctx context.Context, sessionID string) ([]ProviderInfo, error)
+
+	// SetProvider configures a single LLM provider on the agent for the
+	// session. headers is an optional map of integration-specific headers
+	// (e.g. authorization).
+	SetProvider(ctx context.Context, sessionID, id, apiType, baseURL string, headers map[string]string) error
+
+	// DisableProvider disables the LLM provider with the given id. Callers
+	// MUST check the Required flag (via ListProviders) before calling — the
+	// spec forbids disabling a required provider.
+	DisableProvider(ctx context.Context, sessionID, id string) error
 }
 
 // ----------------------------------------------------------------------------

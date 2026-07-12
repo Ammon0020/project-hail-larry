@@ -72,6 +72,9 @@ export function EditorPane({
     onAddAgent: (a: AgentInfo) => Promise<void>
     onDeleteAgent: (id: string) => Promise<void>
     onAutodetect: () => Promise<AgentInfo[]>
+    /** Id of the active chat session, or null when none is open. Threaded
+     *  through to the Providers (advanced) section of SettingsPanel. */
+    activeSessionId?: string | null
   }
   hideTabBar?: boolean
   wrap?: boolean

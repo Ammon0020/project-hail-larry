@@ -177,6 +177,12 @@ func (s *Server) apiRoutes() {
 	s.mux.HandleFunc("POST /api/sessions/{id}/uploads", s.requireAuth(s.handleUpload))
 	s.mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.requireAuth(s.handleServeUpload))
 
+	// ACP provider management routes — require auth. Expose the unstable
+	// providers/list|set|disable methods per live session transport.
+	s.mux.HandleFunc("GET /api/sessions/{id}/providers", s.requireAuth(s.handleListProviders))
+	s.mux.HandleFunc("PUT /api/sessions/{id}/providers/{providerId}", s.requireAuth(s.handleSetProvider))
+	s.mux.HandleFunc("DELETE /api/sessions/{id}/providers/{providerId}", s.requireAuth(s.handleDisableProvider))
+
 	// Permission routes — require auth.
 	s.mux.HandleFunc("GET /api/permissions/pending", s.requireAuth(s.handlePendingPermissions))
 	s.mux.HandleFunc("POST /api/permissions/{id}/respond", s.requireAuth(s.handleRespondPermission))

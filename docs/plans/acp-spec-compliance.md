@@ -208,9 +208,13 @@ The one practical adoption: typed `AppEvent.stopReason` as a local `StopReason` 
 
 #### 4.11 Provider management
 
+**Status:** ✅ Done (2026-07-12).
+
 **Rationale:** `unstable_listProviders`, `unstable_setProvider`, `unstable_disableProvider` enable dynamic provider config (e.g. switching API keys/models at runtime).
 
-**Affected files:** `internal/acp/transport.go`, frontend settings.
+**What was done:** Transport gains `SupportsProviders`/`ListProviders`/`SetProvider`/`DisableProvider` (capability captured from `AgentCapabilities.Providers` at Initialize). Client methods are session-scoped, mirroring `SwitchModel` (lazy transport start, gate on `ErrProvidersUnsupported`). REST `GET/PUT/DELETE /api/sessions/{id}/providers[/{providerId}]` — Required-provider guard + apiType validation (anthropic/openai/azure/vertex/bedrock) in the handler; unsupported → 501, session-not-found → 404. Frontend: capability-gated "Providers (advanced)" subsection in Settings → General.
+
+**Affected files:** `internal/acp/transport.go`, `internal/acp/acp.go`, `internal/interfaces/interfaces.go`, `internal/server/providers.go`, `internal/server/server.go`, `web/src/lib/api.ts`, `web/src/components/SettingsPanel.tsx`, `web/src/components/EditorPane.tsx`, `web/src/App.tsx`.
 
 #### 4.12 ACP-inspector integration
 
@@ -222,7 +226,7 @@ The one practical adoption: typed `AppEvent.stopReason` as a local `StopReason` 
 
 ## Implementation Notes
 
-- Priority 1, Priority 2, and P4 near-term (4.1–4.5) are complete (see "Completed" above). Remaining Priority 4 future items: session fork/resume/close, elicitation, NES, MCP-over-ACP, provider management, audio, ACP-inspector.
+- Priority 1, Priority 2, P4 near-term (4.1–4.5), and provider management (4.11) are complete. Remaining Priority 4 future items: session fork/resume/close, elicitation, NES, MCP-over-ACP, audio, ACP-inspector.
 - 1.1 and 1.3 were interrelated and implemented together (structured-blocks infrastructure first, then open-files middleware on top).
 - Priority 2 items were each small, isolated changes.
 - Run `go test ./internal/acp/...` and `go vet ./...` after each change. Update `docs/STATUS.md` and `docs/reference/acp/responsibilities.md` to reflect implemented items.

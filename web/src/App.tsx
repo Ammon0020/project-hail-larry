@@ -802,6 +802,7 @@ export default function App() {
           onAddAgent: backend.addAgent,
           onDeleteAgent: backend.deleteAgent,
           onAutodetect: backend.autodetectAgents,
+          activeSessionId,
         }}
         hideTabBar={isDesktop}
         wrap={wrap}

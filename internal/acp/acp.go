@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -139,7 +140,27 @@ type transportLike interface {
 	// SupportsEmbeddedContext reports whether the agent advertised the
 	// embeddedContext prompt capability during Initialize.
 	SupportsEmbeddedContext() bool
+	// SupportsProviders reports whether the agent advertised the (unstable)
+	// providers capability during Initialize.
+	SupportsProviders() bool
+	// ListProviders calls the unstable ACP providers/list method.
+	ListProviders(ctx context.Context) ([]acp.UnstableProviderInfo, error)
+	// SetProvider calls the unstable ACP providers/set method.
+	SetProvider(ctx context.Context, id, apiType, baseURL string, headers map[string]any) error
+	// DisableProvider calls the unstable ACP providers/disable method.
+	DisableProvider(ctx context.Context, id string) error
 }
+
+// TransportLike is the exported alias of the internal transportLike interface,
+// so tests in other packages (e.g. internal/server) can inject a mock transport
+// via Client.SetTransportForTest. *Transport satisfies it.
+type TransportLike = transportLike
+
+// ErrProvidersUnsupported is returned by the provider-management Client methods
+// when the agent did not advertise the (unstable) providers capability during
+// Initialize. Callers should surface this as a clear "not supported by this
+// agent" error rather than a generic failure.
+var ErrProvidersUnsupported = errors.New("agent does not support the providers capability")
 
 // defaultConversationName is the placeholder name used until the first prompt
 // (or an explicit rename) gives the conversation a real title.
@@ -482,6 +503,10 @@ func (c *Client) startTransportLocked(ctx context.Context, session *Session) err
 	// Store the agent's prompt capabilities on the transport so Prompt can
 	// build capability-gated content blocks (inline images vs. resource links).
 	transport.promptCaps = initResp.AgentCapabilities.PromptCapabilities
+	// Capture the (unstable) providers capability so the provider-management
+	// methods can gate on it without re-reading the InitializeResponse. A nil
+	// pointer means the agent did not advertise the capability.
+	transport.providersSupported = initResp.AgentCapabilities.Providers != nil
 
 	// Authenticate before opening a session when the agent requires it.
 	// Devin (and similar hosts) advertise authMethods and reject
@@ -1181,6 +1206,152 @@ func (c *Client) SwitchModel(ctx context.Context, sessionID, modelID string) err
 		Timestamp: time.Now().UTC(),
 		Content:   fmt.Sprintf("Switched model to %s.", modelID),
 	})
+	return nil
+}
+
+// ListProviders returns the agent's configurable LLM providers for the given
+// session, with their current routing info. The transport is lazily (re)started
+// if nil (same pattern as SwitchModel/SendPrompt). Returns ErrProvidersUnsupported
+// when the agent did not advertise the providers capability during Initialize.
+func (c *Client) ListProviders(ctx context.Context, sessionID string) ([]interfaces.ProviderInfo, error) {
+	c.mu.Lock()
+	session, ok := c.sessions[sessionID]
+	if !ok {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("session not found: %s", sessionID)
+	}
+	if session.transport == nil {
+		if err := c.startTransportLocked(ctx, session); err != nil {
+			c.mu.Unlock()
+			return nil, fmt.Errorf("start transport for providers list: %w", err)
+		}
+	}
+	if !session.transport.SupportsProviders() {
+		c.mu.Unlock()
+		return nil, ErrProvidersUnsupported
+	}
+	transport := session.transport
+	c.mu.Unlock()
+
+	providers, err := transport.ListProviders(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list providers: %w", err)
+	}
+	return toInterfacesProviders(providers), nil
+}
+
+// SetProvider configures a single LLM provider on the agent for the given
+// session. id is the provider identifier (e.g. "main", "openai"); apiType is one
+// of the ACP LLM protocol strings ("anthropic","openai","azure","vertex",
+// "bedrock"); baseURL is the endpoint; headers is an optional map of
+// integration-specific headers (e.g. authorization). The transport is lazily
+// (re)started if nil. Returns ErrProvidersUnsupported when the agent did not
+// advertise the providers capability.
+func (c *Client) SetProvider(ctx context.Context, sessionID, id, apiType, baseURL string, headers map[string]string) error {
+	c.mu.Lock()
+	session, ok := c.sessions[sessionID]
+	if !ok {
+		c.mu.Unlock()
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	if session.transport == nil {
+		if err := c.startTransportLocked(ctx, session); err != nil {
+			c.mu.Unlock()
+			return fmt.Errorf("start transport for set provider: %w", err)
+		}
+	}
+	if !session.transport.SupportsProviders() {
+		c.mu.Unlock()
+		return ErrProvidersUnsupported
+	}
+	transport := session.transport
+	c.mu.Unlock()
+
+	// Convert map[string]string → map[string]any for the SDK. A nil map is
+	// passed through as nil so the field is omitted on the wire.
+	var hdrs map[string]any
+	if len(headers) > 0 {
+		hdrs = make(map[string]any, len(headers))
+		for k, v := range headers {
+			hdrs[k] = v
+		}
+	}
+	if err := transport.SetProvider(ctx, id, apiType, baseURL, hdrs); err != nil {
+		return fmt.Errorf("set provider: %w", err)
+	}
+	return nil
+}
+
+// DisableProvider disables the LLM provider with the given id on the agent for
+// the given session. The transport is lazily (re)started if nil. Returns
+// ErrProvidersUnsupported when the agent did not advertise the providers
+// capability. Callers MUST check the Required flag (via ListProviders) before
+// calling this — the spec forbids disabling a required provider, and the agent
+// will reject it. The REST handler enforces this guard.
+func (c *Client) DisableProvider(ctx context.Context, sessionID, id string) error {
+	c.mu.Lock()
+	session, ok := c.sessions[sessionID]
+	if !ok {
+		c.mu.Unlock()
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	if session.transport == nil {
+		if err := c.startTransportLocked(ctx, session); err != nil {
+			c.mu.Unlock()
+			return fmt.Errorf("start transport for disable provider: %w", err)
+		}
+	}
+	if !session.transport.SupportsProviders() {
+		c.mu.Unlock()
+		return ErrProvidersUnsupported
+	}
+	transport := session.transport
+	c.mu.Unlock()
+
+	if err := transport.DisableProvider(ctx, id); err != nil {
+		return fmt.Errorf("disable provider: %w", err)
+	}
+	return nil
+}
+
+// toInterfacesProviders converts the SDK's []acp.UnstableProviderInfo into the
+// interface-layer []interfaces.ProviderInfo projection. Supported protocols
+// (acp.UnstableLlmProtocol) are stringified so the server/UI never depend on
+// the SDK type.
+func toInterfacesProviders(in []acp.UnstableProviderInfo) []interfaces.ProviderInfo {
+	out := make([]interfaces.ProviderInfo, 0, len(in))
+	for _, p := range in {
+		pi := interfaces.ProviderInfo{
+			ID:       p.Id,
+			Required: p.Required,
+		}
+		for _, s := range p.Supported {
+			pi.Supported = append(pi.Supported, string(s))
+		}
+		if p.Current != nil {
+			pi.Current = &interfaces.ProviderCurrentConfig{
+				APIType: string(p.Current.ApiType),
+				BaseURL: p.Current.BaseUrl,
+			}
+		}
+		out = append(out, pi)
+	}
+	return out
+}
+
+// SetTransportForTest injects a mock transport into an existing session so
+// tests in other packages (e.g. internal/server) can exercise the
+// provider-management Client methods without spawning a real agent process.
+// The session must already exist (create it via LoadConversations from a seed
+// file). This is intended for testing only.
+func (c *Client) SetTransportForTest(sessionID string, t TransportLike) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	session, ok := c.sessions[sessionID]
+	if !ok {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	session.transport = t
 	return nil
 }
 

@@ -58,6 +58,19 @@ type mockTransport struct {
 	setConfigOptionCalled bool
 	setConfigOptionArgs   []string // sessionID, configID, value
 	setConfigOptionErr    error
+
+	// Providers
+	providersSupported    bool
+	listProvidersResult   []acpsdk.UnstableProviderInfo
+	listProvidersErr      error
+	listProvidersCalled   bool
+	setProviderCalled     bool
+	setProviderArgs       []string // id, apiType, baseURL
+	setProviderHeaders    map[string]any
+	setProviderErr        error
+	disableProviderCalled bool
+	disableProviderID     string
+	disableProviderErr    error
 }
 
 func (m *mockTransport) NewSession(_ context.Context, cwd string, additionalDirs []string) (string, []acpsdk.SessionConfigOption, error) {
@@ -112,6 +125,28 @@ func (m *mockTransport) StderrTail() string {
 
 func (m *mockTransport) SupportsEmbeddedContext() bool {
 	return false
+}
+
+func (m *mockTransport) SupportsProviders() bool {
+	return m.providersSupported
+}
+
+func (m *mockTransport) ListProviders(_ context.Context) ([]acpsdk.UnstableProviderInfo, error) {
+	m.listProvidersCalled = true
+	return m.listProvidersResult, m.listProvidersErr
+}
+
+func (m *mockTransport) SetProvider(_ context.Context, id, apiType, baseURL string, headers map[string]any) error {
+	m.setProviderCalled = true
+	m.setProviderArgs = []string{id, apiType, baseURL}
+	m.setProviderHeaders = headers
+	return m.setProviderErr
+}
+
+func (m *mockTransport) DisableProvider(_ context.Context, id string) error {
+	m.disableProviderCalled = true
+	m.disableProviderID = id
+	return m.disableProviderErr
 }
 
 // TestResolveACPSession verifies the session/load-vs-session/new decision in
