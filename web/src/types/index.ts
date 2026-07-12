@@ -43,6 +43,10 @@ export interface Tab {
    *  the settings panel. Settings tabs use a synthetic path like 'settings'
    *  and are not persisted to localStorage. */
   kind?: 'file' | 'settings'
+  /** True when the file is binary (image, executable, archive, etc.) and
+   *  cannot be edited as text. The editor renders a placeholder or image
+   *  preview instead of a CodeMirror instance. */
+  isBinary?: boolean
 }
 
 /** A registered AI agent (Blueprint Sec 5 — agent registration). */

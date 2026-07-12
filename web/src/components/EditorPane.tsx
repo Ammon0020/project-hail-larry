@@ -4,21 +4,23 @@ import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
 import { python } from '@codemirror/lang-python'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { json } from '@codemirror/lang-json'
 import { languages as mdLanguages } from '@codemirror/language-data'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { search } from '@codemirror/search'
 import { autocompletion } from '@codemirror/autocomplete'
-import { bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemirror/language'
+import { LanguageDescription, bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemirror/language'
 import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Prec, EditorSelection } from '@codemirror/state'
-import { GitBranch, CircleAlert, TriangleAlert, FileText, RefreshCw } from 'lucide-react'
-import { useEffect, useMemo, useRef } from 'react'
+import { GitBranch, CircleAlert, TriangleAlert, FileText, RefreshCw, FileX, ZoomIn, ZoomOut } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { TabBar } from './TabBar'
 import type { AgentInfo } from '@/lib/api'
 import type { Extension } from '@codemirror/state'
+import type { LanguageSupport } from '@codemirror/language'
 import type { Tab } from '@/types'
 
 /**
@@ -43,6 +45,7 @@ export function EditorPane({
   hideTabBar = false,
   wrap = false,
   onToggleWrap,
+  isDesktop,
 }: {
   tabs: Tab[]
   activeTabId: string | null
@@ -73,8 +76,25 @@ export function EditorPane({
   hideTabBar?: boolean
   wrap?: boolean
   onToggleWrap?: () => void
+  /** Whether the viewport is desktop-sized (≥1024px). When false, the editor
+   *  applies touch-friendly theme tweaks: larger line height, wider gutters,
+   *  bigger font, and disables mouse-only selection modes. */
+  isDesktop?: boolean
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
+  const mobile = !(isDesktop ?? true)
+
+  // Editor font size — persisted to localStorage so the user's zoom preference
+  // survives reloads. Adjustable via +/- buttons in the status bar. Defaults to
+  // 13px on desktop, 15px on mobile for better readability on small screens.
+  const [fontSize, setFontSize] = useState<number>(() => {
+    const stored = localStorage.getItem('lai:editor-font-size')
+    if (stored) return parseInt(stored, 10) || (mobile ? 15 : 13)
+    return mobile ? 15 : 13
+  })
+  useEffect(() => {
+    localStorage.setItem('lai:editor-font-size', String(fontSize))
+  }, [fontSize])
 
   // Keep a ref to the latest onSave so the memoized CodeMirror Ctrl+S keybinding
   // always calls the fresh closure. Without this, the keybinding captures the
@@ -117,6 +137,31 @@ export function EditorPane({
     })
   }, [scrollToLine, activeTabId])
 
+  // On mobile, when the soft keyboard opens/closes the viewport height changes.
+  // Scroll the cursor back into view so the line being edited isn't hidden
+  // behind the keyboard. Only active on touch devices.
+  useEffect(() => {
+    if (!mobile) return
+    const onResize = () => {
+      if (!activeTabId) return
+      const view = editorViewsRef.current[activeTabId]
+      if (!view) return
+      view.dispatch({
+        effects: EditorView.scrollIntoView(view.state.selection.main.head, { y: 'nearest' }),
+      })
+    }
+    window.addEventListener('resize', onResize)
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', onResize)
+    }
+    return () => {
+      window.removeEventListener('resize', onResize)
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', onResize)
+      }
+    }
+  }, [mobile, activeTabId])
+
   /**
    * Resolve a CodeMirror language extension from the tab's language hint.
    *
@@ -125,7 +170,19 @@ export function EditorPane({
    * (e.g. "tsx", "css"). Unknown or empty values default to JavaScript so
    * the editor always has syntax highlighting and bracket handling.
    */
-  const getLanguageExtension = (lang: string): Extension[] => {
+  const [loadedSupports, setLoadedSupports] = useState<Record<string, LanguageSupport>>({})
+  const loadingRef = useRef<Set<string>>(new Set())
+  function loadLanguage(desc: LanguageDescription) {
+    if (desc.support || loadedSupports[desc.name] || loadingRef.current.has(desc.name)) return
+    loadingRef.current.add(desc.name)
+    desc.load().then((support) => {
+      setLoadedSupports((prev) => ({ ...prev, [desc.name]: support }))
+    }).catch(() => {
+      loadingRef.current.delete(desc.name)
+    })
+  }
+
+  const getLanguageExtension = (lang: string, tabPath: string): Extension[] => {
     const normalized = lang.toLowerCase()
     if (['javascript', 'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs'].includes(normalized)) {
       return [
@@ -150,8 +207,19 @@ export function EditorPane({
       // (e.g. ```js, ```python) via lazy language loading.
       return [markdown({ base: markdownLanguage, codeLanguages: mdLanguages })]
     }
+    if (['json', 'jsonc'].includes(normalized)) {
+      return [json()]
+    }
     // Default to JavaScript for unknown/no extension so the editor is never bare.
-    return [javascript({ jsx: false, typescript: false })]
+    const filename = tabPath.split(/[\\/]/).pop() || tabPath
+    const desc = LanguageDescription.matchFilename(mdLanguages, filename)
+    if (desc) {
+      if (desc.support) return [desc.support]
+      if (loadedSupports[desc.name]) return [loadedSupports[desc.name]]
+      loadLanguage(desc)
+      return []
+    }
+    return []
   }
 
   /**
@@ -179,7 +247,7 @@ export function EditorPane({
    */
   const getExtensions = (lang: string, tabPath: string): Extension[] => {
     const exts: Extension[] = [
-      ...getLanguageExtension(lang),
+      ...getLanguageExtension(lang, tabPath),
 
       // Full-height theme: make the editor fill its container so clicking
       // below the last line works (places the cursor at the end). The height
@@ -188,10 +256,27 @@ export function EditorPane({
       // .cm-content (minHeight:100%). Without every link, the editor only
       // takes the height of its content and the area below is dead space.
       EditorView.theme({
-        '&': { height: '100%', backgroundColor: 'transparent' },
-        '.cm-scroller': { overflow: 'auto' },
-        '.cm-content': { minHeight: '100%', paddingBottom: '50vh' },
-        '.cm-gutters': { minHeight: '100%' },
+        '&': {
+          height: '100%',
+          backgroundColor: 'transparent',
+          fontSize: `${fontSize}px`,
+        },
+        '.cm-scroller': {
+          overflow: 'auto',
+          ...(mobile ? { WebkitOverflowScrolling: 'touch' as const } : {}),
+        },
+        '.cm-content': {
+          minHeight: '100%',
+          paddingBottom: '50vh',
+          ...(mobile ? { lineHeight: '28px' } : {}),
+        },
+        '.cm-gutters': {
+          minHeight: '100%',
+          ...(mobile ? { minWidth: '3.5em' } : {}),
+        },
+        '.cm-lineNumbers .cm-gutterElement': {
+          ...(mobile ? { padding: '0 6px' } : {}),
+        },
       }),
 
       // Search (Ctrl+F)
@@ -211,8 +296,7 @@ export function EditorPane({
       highlightActiveLineGutter(),
       drawSelection(),
       highlightSpecialChars(),
-      rectangularSelection(),
-      crosshairCursor(),
+      ...(!mobile ? [rectangularSelection(), crosshairCursor()] : []),
 
       // Standard keybindings: default + history + tab-to-indent
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
@@ -273,7 +357,7 @@ export function EditorPane({
     () => (activeTab ? getExtensions(activeTab.language, activeTab.path) : []),
     // getExtensions depends on `wrap` and the active tab's language/path.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeTab?.language, activeTab?.path, wrap, activeTab?.id],
+    [activeTab?.language, activeTab?.path, wrap, activeTab?.id, loadedSupports, fontSize, mobile],
   )
 
   return (
@@ -325,7 +409,32 @@ export function EditorPane({
           </div>
         )}
 
-        {tabs.filter(t => t.kind !== 'settings').map(tab => (
+        {tabs.filter(t => t.kind !== 'settings').map(tab => {
+          if (tab.isBinary) {
+            const ext = tab.name.split('.').pop()?.toLowerCase() || ''
+            const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)
+            return (
+              <div key={tab.id} className={cn("absolute inset-0 flex items-center justify-center bg-editor", activeTabId === tab.id ? 'block' : 'hidden')}>
+                {isImage ? (
+                  <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
+                    <img
+                      src={`/workspaces/${tab.workspaceId ?? ''}/file?path=${encodeURIComponent(tab.path)}`}
+                      alt={tab.name}
+                      className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg"
+                    />
+                    <span className="text-xs text-muted-foreground">{tab.name}</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-3 text-muted-foreground">
+                    <FileX className="w-12 h-12" />
+                    <p className="text-sm font-medium">Binary file — preview not available</p>
+                    <p className="text-xs text-muted-foreground/70">{tab.name}</p>
+                  </div>
+                )}
+              </div>
+            )
+          }
+          return (
           <div key={tab.id} className={cn("absolute inset-0", activeTabId === tab.id ? 'block' : 'hidden')}>
             <CodeMirror
               value={tab.content}
@@ -335,7 +444,7 @@ export function EditorPane({
               extensions={extensions}
               theme={oneDark}
               height="100%"
-              className="text-[13px] h-full"
+              className="h-full"
               onCreateEditor={(view) => {
                 editorViewsRef.current[tab.id] = view
               }}
@@ -350,7 +459,8 @@ export function EditorPane({
               }}
             />
           </div>
-        ))}
+          )
+        })}
 
         {tabs.length === 0 && (
           <div className="flex items-center justify-center h-full">
@@ -370,6 +480,27 @@ export function EditorPane({
           <span className="hidden md:flex items-center gap-1"><TriangleAlert className="w-3 h-3" /> 0 warnings</span>
         </div>
         <div className="flex items-center gap-3">
+          {activeTab?.kind !== 'settings' && !activeTab?.isBinary && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setFontSize((s) => Math.max(8, s - 1))}
+                className="p-0.5 hover:bg-white/10 rounded transition"
+                aria-label="Decrease font size"
+                title="Decrease font size"
+              >
+                <ZoomOut className="w-3 h-3" />
+              </button>
+              <span className="tabular-nums w-7 text-center">{fontSize}</span>
+              <button
+                onClick={() => setFontSize((s) => Math.min(32, s + 1))}
+                className="p-0.5 hover:bg-white/10 rounded transition"
+                aria-label="Increase font size"
+                title="Increase font size"
+              >
+                <ZoomIn className="w-3 h-3" />
+              </button>
+            </div>
+          )}
           <span className="hidden md:inline">{activeTab?.kind === 'settings' ? 'Settings' : (activeTab?.language || 'Plain Text')}</span>
           <span className="hidden md:inline">UTF-8</span>
           <span className="hidden md:inline">LF</span>

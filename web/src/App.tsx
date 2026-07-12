@@ -329,7 +329,7 @@ export default function App() {
           setOpenTabs((prev) =>
             prev.map((t) =>
               t.id === tab.id && !t.unsaved
-                ? { ...t, content: file.content, revision: file.revision, changedOnDisk: false }
+                ? { ...t, content: file.content, revision: file.revision, isBinary: file.isBinary ?? false, changedOnDisk: false }
                 : t,
             ),
           )
@@ -418,6 +418,7 @@ export default function App() {
                   ...t,
                   content: file.content,
                   revision: file.revision,
+                  isBinary: file.isBinary ?? false,
                   unsaved: false,
                   changedOnDisk: false,
                 }
@@ -518,7 +519,6 @@ export default function App() {
       const file = await backend.readFile(path)
       const name = path.split(/[\\/]/).pop() || path
       const ext = name.split('.').pop() || ''
-      const lang = ['js', 'jsx', 'ts', 'tsx'].includes(ext) ? 'javascript' : ext
       const tab: Tab = {
         id: path,
         name,
@@ -526,7 +526,8 @@ export default function App() {
         content: file.content,
         revision: file.revision,
         unsaved: false,
-        language: lang,
+        language: ext.toLowerCase(),
+        isBinary: file.isBinary ?? false,
         workspaceId: backend.activeWorkspace?.id,
       }
       setOpenTabs((prev) => [...prev, tab])
@@ -805,6 +806,7 @@ export default function App() {
         hideTabBar={isDesktop}
         wrap={wrap}
         onToggleWrap={() => setWrap(!wrap)}
+        isDesktop={isDesktop}
       />
 
       {/* Resize handle between editor and right chat panel (desktop only) */}

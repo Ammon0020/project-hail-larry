@@ -221,7 +221,7 @@ export const api = {
   getFileTree: (workspaceId: string) =>
     apiFetch<FileNode[]>(`/workspaces/${workspaceId}/files`),
   readFile: (workspaceId: string, path: string) =>
-    apiFetch<{ content: string; revision: number; path: string }>(
+    apiFetch<{ content: string; revision: number; path: string; isBinary?: boolean }>(
       `/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
     ),
   saveFile: (workspaceId: string, path: string, content: string, expectedRevision: number) =>

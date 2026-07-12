@@ -4,7 +4,7 @@ import type { LeftPanel } from '@/types'
 
 /**
  * Activity bar — far-left icon-only strip (Blueprint Sec 17).
- * Files, Search at top; connection status and Settings at bottom.
+ * Files, Search at top; Settings at bottom.
  * Hidden on mobile (mobile uses bottom nav instead).
  */
 export function ActivityBar({
@@ -45,11 +45,6 @@ export function ActivityBar({
       ))}
 
       <div className="flex-1" />
-
-      {/* WebSocket connection status */}
-      <div className="flex items-center justify-center py-2" title="Connected to local daemon" role="status" aria-label="Connected to local daemon">
-        <div className="w-2 h-2 rounded-full bg-green-400" />
-      </div>
 
       <button
         onClick={onOpenSettings}
