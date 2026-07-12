@@ -63,7 +63,8 @@ export function ChatPanel({
   onSwitchModel,
   onExportSession,
   onUploadFile,
-  workspaceName,
+  workspaceId,
+  onSelectWorkspace,
   style,
 }: {
   events: AppEvent[]
@@ -97,8 +98,10 @@ export function ChatPanel({
    *  uploads share the hook's session-recovery semantics instead of bypassing
    *  it via api.uploadFile directly. */
   onUploadFile: (sessionId: string, file: File) => Promise<UploadResult>
-  /** Active workspace name — surfaced at the bottom of the panel by WorkspaceBar. */
-  workspaceName: string
+  /** Active workspace id. */
+  workspaceId: string
+  /** Workspace change handler. */
+  onSelectWorkspace: (id: string) => void
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
   style?: CSSProperties
 }) {
@@ -316,11 +319,12 @@ export function ChatPanel({
     })
   }
 
+  const hasConversation =
+    !!activeSessionId && events.some((e) => e.type === 'PromptSubmitted')
+
   /** Updates models when the harness changes; rebinds an active conversation. */
   const handleAgentChange = (agentId: string) => {
     const previousAgentId = effectiveAgentId
-    const hasConversation =
-      !!activeSessionId && events.some((e) => e.type === 'PromptSubmitted')
     if (!hasConversation) {
       setStoredAgent(agentId)
       const agent = agents.find((a) => a.id === agentId)
@@ -629,7 +633,10 @@ export function ChatPanel({
         agents={agents}
         currentAgentId={effectiveAgentId}
         onSelectAgent={handleAgentChange}
-        workspaceName={workspaceName}
+        workspaces={workspaces}
+        workspaceId={workspaceId}
+        onSelectWorkspace={onSelectWorkspace}
+        workspaceDisabled={hasConversation}
         disabled={sending || agents.length === 0}
       />
 

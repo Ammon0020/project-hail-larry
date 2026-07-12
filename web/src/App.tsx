@@ -846,7 +846,11 @@ export default function App() {
           workspace: s.workspace,
         }))}
         workspaces={backend.workspaces}
-        workspaceName={backend.activeWorkspace?.name ?? ''}
+        workspaceId={backend.activeWorkspace?.id ?? ''}
+        onSelectWorkspace={(id) => {
+          const ws = backend.workspaces.find((w) => w.id === id)
+          if (ws) backend.selectWorkspace(ws)
+        }}
         visible={showChat}
         connected={backend.connected}
         isDesktop={isDesktop}

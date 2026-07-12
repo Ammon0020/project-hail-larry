@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useState } from 'react'
+import { type KeyboardEvent, useState, useRef, useEffect } from 'react'
 import { Plus, ArrowUp, Square, X, Loader2, Wrench, Code } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { McpPopout } from './chat/McpPopout'
@@ -65,6 +65,15 @@ export function ChatComposer({
 
   const currentModel = models.find((m) => m.id === effectiveModelId)
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px'
+    }
+  }, [input])
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -75,7 +84,7 @@ export function ChatComposer({
   return (
     // Outer wrapper — no mobile bottom padding here anymore; that moved to
     // WorkspaceBar so the bottom-nav layout can own its own spacing.
-    <div className="p-2.5 lg:p-3 shrink-0 border-t border-border/50">
+    <div className="pt-2.5 px-2.5 pb-0 lg:pt-3 lg:px-3 lg:pb-0 shrink-0 border-t border-border/50">
       {/* Pending attachment previews — above the card so the card stays clean. */}
       {pendingPreviews.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
@@ -114,15 +123,16 @@ export function ChatComposer({
 
       {/* Composer card — textarea on top, actions row below. Focus reveals a
           subtle border (transparent → border). No divider; gap-3 spaces them. */}
-      <div className="bg-input rounded-xl p-3 flex flex-col gap-3 border border-transparent focus-within:border-border transition-colors">
+      <div className="bg-input rounded-xl px-3 pt-2 pb-1 flex flex-col gap-1.5 border border-transparent focus-within:border-border transition-colors">
         <textarea
+          ref={textareaRef}
           value={input}
           onChange={(e) => onInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Type @ to bring in another conversation"
           disabled={disabled}
-          rows={2}
-          className="w-full bg-transparent border-0 outline-none text-sm text-foreground placeholder:text-muted-foreground resize-none min-h-[2.5rem] disabled:opacity-60 disabled:cursor-not-allowed"
+          rows={1}
+          className="w-full bg-transparent border-0 outline-none text-[13px] text-foreground placeholder:text-muted-foreground resize-none py-1 disabled:opacity-60 disabled:cursor-not-allowed"
         />
 
         {/* Actions row: [attach|Tools group] [profile] [model] ... [send/stop] */}

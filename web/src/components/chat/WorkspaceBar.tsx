@@ -1,5 +1,6 @@
 import { Folder, Laptop } from 'lucide-react'
 import type { Agent } from '../../types'
+import { cn } from '@/lib/utils'
 
 interface WorkspaceBarProps {
   /** Agents list for the harness selector. */
@@ -8,16 +9,22 @@ interface WorkspaceBarProps {
   currentAgentId: string
   /** Harness change handler. */
   onSelectAgent: (id: string) => void
-  /** Static workspace name shown with the folder icon (non-interactive). */
-  workspaceName: string
+  /** Workspaces list. */
+  workspaces: { id: string; name: string }[]
+  /** Currently active workspace id. */
+  workspaceId: string
+  /** Workspace change handler. */
+  onSelectWorkspace: (id: string) => void
+  /** If true, the workspace switcher is disabled (e.g. because the session has started). */
+  workspaceDisabled?: boolean
   /** Disabled state passthrough. */
   disabled?: boolean
 }
 
 /**
  * Bottom workspace bar — sits below the chat composer. Shows the execution
- * harness (agent) selector on the left and the active workspace name on the
- * right. The workspace name is non-interactive (display only).
+ * harness (agent) selector on the left and the active workspace switcher on the
+ * right.
  *
  * See agent_chat_update.htm (workspace bar section).
  */
@@ -25,19 +32,25 @@ export function WorkspaceBar({
   agents,
   currentAgentId,
   onSelectAgent,
-  workspaceName,
+  workspaces,
+  workspaceId,
+  onSelectWorkspace,
+  workspaceDisabled,
   disabled,
 }: WorkspaceBarProps) {
   // Resolve the currently effective agent so we can render its display name.
   // Falls back to "Agent" when the id doesn't match (e.g. transient state).
   const currentAgent = agents.find((a) => a.id === currentAgentId)
+  
+  // Resolve the currently active workspace.
+  const currentWorkspace = workspaces.find((w) => w.id === workspaceId)
 
   return (
-    // pb-20 on mobile clears the fixed mobile bottom-nav; lg:pb-3 restores a
+    // pb-16 on mobile clears the fixed mobile bottom-nav; lg:pb-[3px] restores a
     // tight bottom inset on desktop where there is no bottom-nav. This padding
     // was moved here from ChatComposer's wrapper so the bar owns its own
     // clearance.
-    <div className="flex items-center gap-4 px-3 pt-2.5 pb-20 lg:pb-3 text-xs text-muted-foreground shrink-0">
+    <div className="flex items-center gap-4 px-3 pt-0 pb-16 lg:pt-0 lg:pb-[3px] text-xs text-muted-foreground shrink-0">
       {/* Harness selector: an invisible native <select> overlays a styled
           label row so we get accessible option rendering for free while the
           visible chrome (icon + name) is fully custom. */}
@@ -64,11 +77,30 @@ export function WorkspaceBar({
         </select>
       </div>
 
-      {/* Workspace name: display only. pointer-events-none keeps it out of
-           the hit-test so it never steals clicks from siblings. */}
-      <div className="flex items-center gap-1.5 px-1 py-0.5 pointer-events-none">
+      {/* Workspace switcher: same overlay pattern as the harness selector. */}
+      <div 
+        className={cn(
+          "relative flex items-center gap-1.5 px-1 py-0.5 rounded text-muted-foreground transition-colors cursor-pointer",
+          (disabled || workspaceDisabled) ? "opacity-50 cursor-not-allowed" : "hover:text-foreground hover:bg-white/[0.03]"
+        )}
+        title={workspaceDisabled ? "Cannot change workspace mid-conversation" : "Workspace"}
+      >
         <Folder className="w-3.5 h-3.5" strokeWidth={1.5} />
-        <span>{workspaceName || 'No workspace'}</span>
+        <span className="pointer-events-none">
+          {currentWorkspace?.name ?? 'No workspace'}
+        </span>
+        <select
+          value={workspaceId}
+          onChange={(e) => onSelectWorkspace(e.target.value)}
+          disabled={disabled || workspaceDisabled || workspaces.length === 0}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent disabled:cursor-not-allowed"
+        >
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.name}
+            </option>
+          ))}
+        </select>
       </div>
     </div>
   )
