@@ -225,7 +225,7 @@ func (m *OpenFilesResourceMiddleware) BeforePromptResources(ctx context.Context,
 	var resources []ContextResource
 	total := 0
 	for _, rel := range paths {
-		content, _, err := m.Workspace.ReadFile(ctx, pc.WorkspaceID, rel)
+		content, _, _, err := m.Workspace.ReadFile(ctx, pc.WorkspaceID, rel)
 		if err != nil || content == "" {
 			continue
 		}

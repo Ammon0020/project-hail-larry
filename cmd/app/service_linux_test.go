@@ -19,7 +19,7 @@ func TestSystemdUnitContent(t *testing.T) {
 		"After=network.target",
 		"[Service]",
 		"Type=simple",
-		"ExecStart=" + binary + " start",
+		`ExecStart="` + binary + `" start`,
 		"Restart=on-failure",
 		"RestartSec=5",
 		"[Install]",

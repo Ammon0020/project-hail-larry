@@ -20,9 +20,9 @@ func launchAgentPath() (string, error) {
 	return filepath.Join(home, "Library", "LaunchAgents", "com.local-agent.plist"), nil
 }
 
-// xmlEscape escapes the characters that are special in XML text content
-// (&, <, >, "). This prevents malformed plists when the binary path contains
-// characters like & or <.
+// xmlEscape escapes the characters that are special in XML attribute values
+// and text content (&, <, >, "). This prevents malformed plists when the
+// binary path contains characters like & or <.
 func xmlEscape(s string) string {
 	return strings.NewReplacer(
 		"&", "&amp;",
@@ -45,8 +45,9 @@ func logPath(filename string) (string, error) {
 
 // launchPlistContent builds the launchd LaunchAgent plist that runs
 // `<binary> start` at login, keeping it alive on crash. The binary path is
-// XML-escaped to prevent malformed plists. Logs go to ~/Library/Logs
-// (user-private) not /tmp (world-writable). Extracted for testability.
+// XML-escaped to prevent malformed plists when it contains & < > or ".
+// Logs go to ~/Library/Logs (user-private) not /tmp (world-writable).
+// Extracted for testability.
 func launchPlistContent(binary, stdoutLog, stderrLog string) string {
 	escaped := xmlEscape(binary)
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>

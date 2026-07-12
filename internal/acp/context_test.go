@@ -38,8 +38,8 @@ func (m *fakeWorkspaceManager) FileTree(_ context.Context, _ string) ([]interfac
 	return m.tree, nil
 }
 
-func (m *fakeWorkspaceManager) ReadFile(_ context.Context, _, _ string) (string, int64, error) {
-	return "", 0, nil
+func (m *fakeWorkspaceManager) ReadFile(_ context.Context, _, _ string) (string, int64, bool, error) {
+	return "", 0, false, nil
 }
 
 func (m *fakeWorkspaceManager) Search(_ context.Context, _, _ string, _ search.Options) ([]search.Result, error) {

@@ -512,6 +512,12 @@ func (d *Daemon) cleanup() {
 	if d.fsWatcher != nil {
 		_ = d.fsWatcher.Close()
 	}
+	// Stop pending action timers before shutting down the HTTP server so
+	// timers don't fire and attempt to broadcast events or write to disk
+	// during shutdown.
+	if d.pairingMgr != nil {
+		d.pairingMgr.Close()
+	}
 	if d.server != nil {
 		_ = d.server.Shutdown(ctx)
 	}

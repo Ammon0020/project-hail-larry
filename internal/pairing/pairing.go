@@ -762,6 +762,22 @@ func (m *Manager) executeWorkspaceRegistrationLocked(actionID string) {
 	}
 }
 
+// Close stops all pending action timers and clears the pending map. Call this
+// during daemon shutdown to prevent timers from firing after the manager is
+// no longer in use. Pending actions are in-memory only and are intentionally
+// lost on restart — a device that was mid-revocation will need to be
+// re-requested after the daemon restarts.
+func (m *Manager) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.pending {
+		if p.timer != nil {
+			p.timer.Stop()
+		}
+	}
+	m.pending = make(map[string]*PendingAction)
+}
+
 // generateActionID returns a cryptographically random hex string used as the
 // unique ID for a pending action. 16 bytes (32 hex chars) is enough to make
 // collisions infeasible across the small number of concurrent pending actions.

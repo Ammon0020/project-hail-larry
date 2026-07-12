@@ -384,7 +384,7 @@ func (c *acpClientImpl) ReadTextFile(ctx context.Context, params acp.ReadTextFil
 		return acp.ReadTextFileResponse{}, fmt.Errorf("workspace manager not configured")
 	}
 	relPath := toRelativePath(c.workspacePath, params.Path)
-	content, _, err := c.workspaceMgr.ReadFile(ctx, c.workspaceID, relPath)
+	content, _, _, err := c.workspaceMgr.ReadFile(ctx, c.workspaceID, relPath)
 	if err != nil {
 		return acp.ReadTextFileResponse{}, err
 	}

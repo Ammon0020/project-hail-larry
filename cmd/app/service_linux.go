@@ -28,7 +28,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%s start
+ExecStart="%s" start
 Restart=on-failure
 RestartSec=5
 
