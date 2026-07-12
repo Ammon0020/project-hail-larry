@@ -1,11 +1,15 @@
 package server
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/adama/local-agent/internal/config"
 	"github.com/adama/local-agent/internal/pairing"
 	"golang.org/x/time/rate"
 )
@@ -157,5 +161,264 @@ func TestPairVerifyPasscodeRateLimited(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 after burst, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Grace-period pending action handler tests (Blueprint Sec 19, Sec 13)
+// ----------------------------------------------------------------------------
+
+// pairDeviceForTest creates a session, pairs a device, and returns the issued
+// credential. It mirrors the pairing_test.go helper but lives here so the
+// server tests can build a populated PairingMgr.
+func pairDeviceForTest(t *testing.T, mgr *pairing.Manager) *pairing.DeviceCredential {
+	t.Helper()
+	session, err := mgr.CreateSession("localhost", 7337)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	cred, err := mgr.VerifyPasscode(session.Passcode, "Device")
+	if err != nil {
+		t.Fatalf("verify passcode: %v", err)
+	}
+	return cred
+}
+
+// newPendingActionsServer builds a Server wired with a PairingMgr (with one
+// paired device) and a Config carrying the given grace period and remote
+// registration flag. The returned credential is the paired device.
+func newPendingActionsServer(t *testing.T, graceSeconds int, allowRemote bool) (*Server, *pairing.DeviceCredential) {
+	t.Helper()
+	mgr := pairing.NewManager(t.TempDir())
+	cred := pairDeviceForTest(t, mgr)
+	srv := New(&Deps{
+		PairingMgr: mgr,
+		Config: &config.Config{
+			RevocationGracePeriodSeconds:     graceSeconds,
+			AllowRemoteWorkspaceRegistration: allowRemote,
+		},
+	})
+	srv.RegisterPendingActionRoutes()
+	return srv, cred
+}
+
+// loopbackReq is a helper that builds an httptest.Request with a loopback
+// RemoteAddr so requireAuth's loopback bypass applies (the host browser hits
+// the daemon via localhost and is trusted without a device credential).
+func loopbackReq(method, target string, body io.Reader) *http.Request {
+	req := httptest.NewRequest(method, target, body)
+	req.RemoteAddr = "127.0.0.1:1234"
+	return req
+}
+
+// decodePendingAction decodes a 202 Accepted body into a PendingActionInfo.
+func decodePendingAction(t *testing.T, body []byte) pairing.PendingActionInfo {
+	t.Helper()
+	var info pairing.PendingActionInfo
+	if err := json.Unmarshal(body, &info); err != nil {
+		t.Fatalf("decode pending action: %v (body: %s)", err, body)
+	}
+	return info
+}
+
+// TestRevokeDeviceGracePeriod verifies that DELETE /api/devices/{id} returns
+// 202 Accepted when a grace period is configured, and that the pending action
+// appears in GET /api/pending-actions.
+func TestRevokeDeviceGracePeriod(t *testing.T) {
+	srv, cred := newPendingActionsServer(t, 300, false)
+
+	req := loopbackReq(http.MethodDelete, "/api/devices/"+cred.ID, nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 Accepted, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	info := decodePendingAction(t, rec.Body.Bytes())
+	if info.DeviceID != cred.ID {
+		t.Errorf("expected deviceId %s, got %s", cred.ID, info.DeviceID)
+	}
+	if info.Type != "revocation" {
+		t.Errorf("expected type 'revocation', got %s", info.Type)
+	}
+
+	// The pending action must appear in the list endpoint.
+	listReq := loopbackReq(http.MethodGet, "/api/pending-actions", nil)
+	listRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", listRec.Code)
+	}
+	var pending []pairing.PendingActionInfo
+	if err := json.Unmarshal(listRec.Body.Bytes(), &pending); err != nil {
+		t.Fatalf("decode pending list: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending action, got %d", len(pending))
+	}
+	if pending[0].ID != info.ID {
+		t.Errorf("expected pending ID %s, got %s", info.ID, pending[0].ID)
+	}
+}
+
+// TestRevokeDeviceImmediate verifies that DELETE /api/devices/{id} returns 200
+// OK when the grace period is 0 (backward compatible).
+func TestRevokeDeviceImmediate(t *testing.T) {
+	srv, cred := newPendingActionsServer(t, 0, false)
+
+	req := loopbackReq(http.MethodDelete, "/api/devices/"+cred.ID, nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCancelRevocation verifies that POST /api/devices/cancel-revocation
+// cancels a pending revocation and returns 200 OK.
+func TestCancelRevocation(t *testing.T) {
+	srv, cred := newPendingActionsServer(t, 300, false)
+
+	// Start a pending revocation.
+	delReq := loopbackReq(http.MethodDelete, "/api/devices/"+cred.ID, nil)
+	delRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(delRec, delReq)
+	if delRec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", delRec.Code)
+	}
+	info := decodePendingAction(t, delRec.Body.Bytes())
+
+	// Cancel it.
+	cancelBody := `{"actionId":"` + info.ID + `"}`
+	cancelReq := loopbackReq(http.MethodPost, "/api/devices/cancel-revocation", strings.NewReader(cancelBody))
+	cancelReq.Header.Set("Content-Type", "application/json")
+	cancelRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(cancelRec, cancelReq)
+	if cancelRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d (body: %s)", cancelRec.Code, cancelRec.Body.String())
+	}
+
+	// The pending action must be gone.
+	listReq := loopbackReq(http.MethodGet, "/api/pending-actions", nil)
+	listRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(listRec, listReq)
+	var pending []pairing.PendingActionInfo
+	_ = json.Unmarshal(listRec.Body.Bytes(), &pending)
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending actions after cancel, got %d", len(pending))
+	}
+}
+
+// TestCancelRevocationNotFound verifies that cancelling a non-existent action
+// returns 404.
+func TestCancelRevocationNotFound(t *testing.T) {
+	srv, _ := newPendingActionsServer(t, 300, false)
+
+	body := `{"actionId":"nonexistent"}`
+	req := loopbackReq(http.MethodPost, "/api/devices/cancel-revocation", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestWorkspaceRegistrationDisabled verifies that POST /api/workspaces returns
+// 403 when AllowRemoteWorkspaceRegistration is false (the default).
+func TestWorkspaceRegistrationDisabled(t *testing.T) {
+	srv, _ := newPendingActionsServer(t, 300, false)
+
+	body := `{"path":"/some/path"}`
+	req := loopbackReq(http.MethodPost, "/api/workspaces", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Remote workspace registration is disabled") {
+		t.Errorf("expected disabled message in body, got: %s", rec.Body.String())
+	}
+}
+
+// TestWorkspaceRegistrationEnabled verifies that POST /api/workspaces returns
+// 202 Accepted with a pending action when remote registration is enabled and a
+// grace period is configured.
+func TestWorkspaceRegistrationEnabled(t *testing.T) {
+	srv, _ := newPendingActionsServer(t, 300, true)
+
+	body := `{"path":"/some/path"}`
+	req := loopbackReq(http.MethodPost, "/api/workspaces", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 Accepted, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	info := decodePendingAction(t, rec.Body.Bytes())
+	if info.Type != "workspace_registration" {
+		t.Errorf("expected type 'workspace_registration', got %s", info.Type)
+	}
+	if info.Path != "/some/path" {
+		t.Errorf("expected path /some/path, got %s", info.Path)
+	}
+}
+
+// TestCancelWorkspaceRegistration verifies that POST
+// /api/workspaces/cancel-registration cancels a pending workspace registration.
+func TestCancelWorkspaceRegistration(t *testing.T) {
+	srv, _ := newPendingActionsServer(t, 300, true)
+
+	// Start a pending registration.
+	regBody := `{"path":"/some/path"}`
+	regReq := loopbackReq(http.MethodPost, "/api/workspaces", strings.NewReader(regBody))
+	regReq.Header.Set("Content-Type", "application/json")
+	regRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(regRec, regReq)
+	if regRec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (body: %s)", regRec.Code, regRec.Body.String())
+	}
+	info := decodePendingAction(t, regRec.Body.Bytes())
+
+	// Cancel it.
+	cancelBody := `{"actionId":"` + info.ID + `"}`
+	cancelReq := loopbackReq(http.MethodPost, "/api/workspaces/cancel-registration", strings.NewReader(cancelBody))
+	cancelReq.Header.Set("Content-Type", "application/json")
+	cancelRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(cancelRec, cancelReq)
+	if cancelRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d (body: %s)", cancelRec.Code, cancelRec.Body.String())
+	}
+
+	// The pending action must be gone.
+	listReq := loopbackReq(http.MethodGet, "/api/pending-actions", nil)
+	listRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(listRec, listReq)
+	var pending []pairing.PendingActionInfo
+	_ = json.Unmarshal(listRec.Body.Bytes(), &pending)
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending actions after cancel, got %d", len(pending))
+	}
+}
+
+// TestRevokeDeviceGracePeriodExpires verifies that after the grace period
+// elapses the device is revoked. Uses a short grace period with a real sleep.
+func TestRevokeDeviceGracePeriodExpires(t *testing.T) {
+	srv, cred := newPendingActionsServer(t, 0, false)
+	// Override the config to a very short grace period for the test.
+	srv.deps.Config.RevocationGracePeriodSeconds = 0
+	// Use the pairing manager directly with a short grace period to test the
+	// timer path end-to-end through the API would require a config change
+	// mid-test; instead exercise the manager directly here since the API
+	// path is covered by TestRevokeDeviceGracePeriod.
+	const grace = 50 * time.Millisecond
+	if _, err := srv.deps.PairingMgr.RequestRevocation(cred.ID, "test", grace); err != nil {
+		t.Fatalf("request revocation: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if srv.deps.PairingMgr.ValidateCredential(cred.ID, cred.Secret) {
+		t.Error("expected device to be revoked after grace period expired")
 	}
 }

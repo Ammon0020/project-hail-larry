@@ -10,7 +10,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -185,20 +187,24 @@ const maxReadFileSize = 50 * 1024 * 1024
 // causing the optimistic-lock check to fail on every save. 48 bits (2^48
 // possible values) keeps the collision probability negligible (~2^-48 per
 // comparison) while remaining exactly representable as a JS number.
-func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (string, int64, error) {
+//
+// For binary files, isBinary is true and content is empty. The revision is
+// still computed (from the sampled bytes) so the optimistic-lock check works
+// defensively if a save is ever attempted.
+func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (content string, revision int64, isBinary bool, err error) {
 	// Copy the workspace path out under the read lock, then perform all disk
 	// I/O without holding the mutex.
 	m.mu.RLock()
 	wsPath, ok := m.workspaces[workspaceID]
 	m.mu.RUnlock()
 	if !ok {
-		return "", 0, fmt.Errorf("workspace not found: %s", workspaceID)
+		return "", 0, false, fmt.Errorf("workspace not found: %s", workspaceID)
 	}
 
 	// Prevent path traversal outside the workspace.
 	fullPath, err := safeJoin(wsPath, relPath)
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
 
 	// Bound the read size so a multi-GB file cannot OOM the daemon. Lstat is
@@ -209,21 +215,73 @@ func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (stri
 	// which is the desired behavior.
 	info, err := os.Lstat(fullPath)
 	if err != nil {
-		return "", 0, fmt.Errorf("stat file: %w", err)
+		return "", 0, false, fmt.Errorf("stat file: %w", err)
 	}
 	if info.Size() > maxReadFileSize {
-		return "", 0, fmt.Errorf("file too large (max %d bytes, file is %d bytes)", maxReadFileSize, info.Size())
+		return "", 0, false, fmt.Errorf("file too large (max %d bytes, file is %d bytes)", maxReadFileSize, info.Size())
 	}
 
-	content, err := os.ReadFile(fullPath) //nolint:gosec // fullPath is constrained by safeJoin to the registered workspace root.
+	// Detect binary content before reading the whole file. We sniff the first
+	// 512 bytes and check for null bytes (0x00) — the same heuristic git uses.
+	// A null byte within the first 512 bytes is a strong signal that the file
+	// is not text; reading it as a string would yield garbage and break JSON
+	// serialization. For binary files we return empty content but still
+	// compute a revision from the sampled bytes so optimistic locking remains
+	// defensive if a save is ever attempted.
+	sample, serr := readPrefix(fullPath, binarySniffSize)
+	if serr != nil {
+		return "", 0, false, fmt.Errorf("read file: %w", serr)
+	}
+	if isBinaryBytes(sample) {
+		return "", contentRevision(sample), true, nil
+	}
+
+	data, err := os.ReadFile(fullPath) //nolint:gosec // fullPath is constrained by safeJoin to the registered workspace root.
 	if err != nil {
-		return "", 0, fmt.Errorf("read file: %w", err)
+		return "", 0, false, fmt.Errorf("read file: %w", err)
 	}
 
 	// Revision is a content hash derived from the file bytes. This is
 	// independent of filesystem mtime (which is non-monotonic and coarse) so
 	// optimistic locking remains correct.
-	return string(content), contentRevision(content), nil
+	return string(data), contentRevision(data), false, nil
+}
+
+// binarySniffSize is the number of leading bytes inspected for binary
+// detection. 512 matches http.DetectContentType's sniff window and git's
+// heuristic, and is large enough that a stray null byte early in a real
+// binary file is virtually always caught.
+const binarySniffSize = 512
+
+// readPrefix reads up to n leading bytes of the file at path. It does not
+// treat a short read as an error — files smaller than n simply return their
+// full contents.
+func readPrefix(path string, n int) ([]byte, error) {
+	f, err := os.Open(path) //nolint:gosec // path is constrained by safeJoin to the workspace root.
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, n)
+	nread, err := f.Read(buf)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return buf[:nread], nil
+}
+
+// isBinaryBytes reports whether the given sample looks like binary content.
+// The heuristic is git's: any null byte (0x00) in the sample means binary.
+// This is more reliable than http.DetectContentType for formats like docx/xlsx
+// whose sniffed MIME type starts with "application/" but are nonetheless
+// binary, and avoids false-positiving on JSON/XML which are text.
+func isBinaryBytes(sample []byte) bool {
+	for _, b := range sample {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // contentRevision computes a deterministic revision from file content by taking

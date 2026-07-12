@@ -61,17 +61,23 @@ agent that advertises image support.
 
 ## Security audit — deferred findings (from 2026-07-07 audit)
 
-Two findings from the security audit are deferred as design items rather than
-code fixes:
-
-- **sec-auth-no-authorization-tiers (Medium):** All paired devices have equal
-  privileges — any device can revoke another device or register an arbitrary
-  filesystem path as a workspace. Fix requires introducing an authorization
-  tier (e.g. first-paired device as admin) or host-side confirmation for
-  destructive actions. Tracked as a design decision, not a quick patch.
+- **sec-auth-no-authorization-tiers (Medium) — RESOLVED (2026-07-11):**
+  Implemented grace-period-with-broadcast for destructive actions. Device
+  revocation now enters a pending state for a configurable grace period
+  (default 5 min); any connected device can cancel it. Workspace registration
+  via the REST API is disabled by default (`allowRemoteWorkspaceRegistration:
+  false` in config); when enabled, it uses the same grace-period flow. This
+  protects a user whose device is stolen — their other devices see the pending
+  action and can cancel it before it takes effect.
 - **sec-auth-credentials-in-query-params (Low):** Device credentials are passed
   as `deviceId`/`secret` query params on WebSocket/SSE handshakes (browsers
   can't set headers on WS). Acceptable trade-off for direct LAN+TLS, but a
   short-lived single-use WS ticket exchanged via the authenticated REST API
   would eliminate the leakage vector if a reverse proxy is ever placed in
   front.
+
+## Pre-existing test/vet failures (unrelated work-in-progress, 2026-07-08)
+
+RESOLVED. The previously-noted test failures (server-api-revocation-registration
+and config-test-unused-import) were from uncommitted WIP that has since been
+completed and committed. All tests and vet now pass clean.
