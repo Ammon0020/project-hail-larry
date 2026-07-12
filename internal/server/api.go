@@ -109,13 +109,51 @@ func mustDecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
+// withPairRateLimit wraps a pairing handler with per-IP rate limiting. When
+// the client has exceeded the pairing rate limit, it writes a 429 response
+// instead of calling next.
+func withPairRateLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !allowPairRequest(r) {
+			writeError(w, http.StatusTooManyRequests, "pairing rate limit exceeded, try again later")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// revocationGracePeriod returns the configured grace period for destructive
+// actions (device revocation, workspace registration). Returns 0 when no config
+// is wired, meaning the action is immediate (backward compatible).
+func (s *Server) revocationGracePeriod() time.Duration {
+	if s.deps != nil && s.deps.Config != nil {
+		return time.Duration(s.deps.Config.RevocationGracePeriodSeconds) * time.Second
+	}
+	return 0
+}
+
+// requireUploads checks that the uploads manager is wired. On failure, it
+// writes a 503 response and returns false. Callers should return immediately.
+func (s *Server) requireUploads(w http.ResponseWriter) bool {
+	if s.deps == nil || s.deps.Uploads == nil {
+		writeError(w, http.StatusServiceUnavailable, "uploads not configured")
+		return false
+	}
+	return true
+}
+
+// requireMcpConfig checks that an MCP config path is wired. On failure, it
+// writes a 503 response and returns false. Callers should return immediately.
+func (s *Server) requireMcpConfig(w http.ResponseWriter) bool {
+	if s.mcpConfigPath() == "" {
+		writeError(w, http.StatusServiceUnavailable, "mcp config not configured")
+		return false
+	}
+	return true
+}
+
 // handlePairInitiate creates a new pairing session with QR code and mnemonic.
 func (s *Server) handlePairInitiate(w http.ResponseWriter, r *http.Request) {
-	if !allowPairRequest(r) {
-		writeError(w, http.StatusTooManyRequests, "pairing rate limit exceeded, try again later")
-		return
-	}
-
 	var req struct {
 		Host string `json:"host"`
 		Port int    `json:"port"`
@@ -160,11 +198,6 @@ func (s *Server) handlePairInitiate(w http.ResponseWriter, r *http.Request) {
 
 // handlePairVerifyPasscode verifies a mnemonic passcode and issues a device credential.
 func (s *Server) handlePairVerifyPasscode(w http.ResponseWriter, r *http.Request) {
-	if !allowPairRequest(r) {
-		writeError(w, http.StatusTooManyRequests, "pairing rate limit exceeded, try again later")
-		return
-	}
-
 	var req struct {
 		Passcode   string `json:"passcode"`
 		DeviceName string `json:"deviceName"`
@@ -184,11 +217,6 @@ func (s *Server) handlePairVerifyPasscode(w http.ResponseWriter, r *http.Request
 
 // handlePairVerifyToken verifies a QR token and issues a device credential.
 func (s *Server) handlePairVerifyToken(w http.ResponseWriter, r *http.Request) {
-	if !allowPairRequest(r) {
-		writeError(w, http.StatusTooManyRequests, "pairing rate limit exceeded, try again later")
-		return
-	}
-
 	var req struct {
 		Token      string `json:"token"`
 		DeviceName string `json:"deviceName"`
@@ -222,10 +250,7 @@ func (s *Server) handleListDevices(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleRevokeDevice(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
 
-	gracePeriod := 0 * time.Second
-	if s.deps != nil && s.deps.Config != nil {
-		gracePeriod = time.Duration(s.deps.Config.RevocationGracePeriodSeconds) * time.Second
-	}
+	gracePeriod := s.revocationGracePeriod()
 	requesterID := deviceIDFromRequest(r)
 
 	action, err := s.deps.PairingMgr.RequestRevocation(deviceID, requesterID, gracePeriod)
@@ -330,10 +355,7 @@ func (s *Server) handleRegisterWorkspace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	gracePeriod := 0 * time.Second
-	if s.deps.Config != nil {
-		gracePeriod = time.Duration(s.deps.Config.RevocationGracePeriodSeconds) * time.Second
-	}
+	gracePeriod := s.revocationGracePeriod()
 	requesterID := deviceIDFromRequest(r)
 
 	action, err := s.deps.PairingMgr.RequestWorkspaceRegistration(req.Path, requesterID, gracePeriod)
@@ -971,8 +993,7 @@ func (s *Server) handleCloseSession(w http.ResponseWriter, r *http.Request) {
 // the uploads manager (magic-byte detection, size cap), and responds with the
 // upload metadata including a URL the frontend can use for <img src>.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
-	if s.deps == nil || s.deps.Uploads == nil {
-		writeError(w, http.StatusServiceUnavailable, "uploads not configured")
+	if !s.requireUploads(w) {
 		return
 	}
 	sessionID := r.PathValue("id")
@@ -1023,8 +1044,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 // sets the Content-Type from the stored extension (chosen by magic-byte
 // detection during Store).
 func (s *Server) handleServeUpload(w http.ResponseWriter, r *http.Request) {
-	if s.deps == nil || s.deps.Uploads == nil {
-		writeError(w, http.StatusServiceUnavailable, "uploads not configured")
+	if !s.requireUploads(w) {
 		return
 	}
 	sessionID := r.PathValue("id")
@@ -1162,10 +1182,14 @@ func isDenyDecision(decision string, offered []interfaces.PermissionOptionInfo) 
 // contract does not guarantee a minimum ID length, so an empty or short ID
 // (e.g. from a stub or future ID scheme) must not crash the handler.
 func shortSessionID(id string) string {
-	if len(id) <= 8 {
+	return truncateID(id, 8)
+}
+
+func truncateID(id string, maxLen int) string {
+	if len(id) <= maxLen {
 		return id
 	}
-	return id[:8]
+	return id[:maxLen]
 }
 
 // isValidSessionID validates a session ID taken from a URL path parameter

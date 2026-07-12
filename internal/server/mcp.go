@@ -30,11 +30,10 @@ const emptyMcpConfigJSON = "{\n  \"version\": 1,\n  \"mcpServers\": {}\n}\n"
 // Returns 503 when the server was started without an MCP config path wired in
 // (degraded/test setup), and 500 on any other read error.
 func (s *Server) handleGetMcp(w http.ResponseWriter, _ *http.Request) {
-	path := s.mcpConfigPath()
-	if path == "" {
-		writeError(w, http.StatusServiceUnavailable, "mcp config not configured")
+	if !s.requireMcpConfig(w) {
 		return
 	}
+	path := s.mcpConfigPath()
 
 	data, err := os.ReadFile(path) //nolint:gosec // path is constructed by the daemon from a trusted base dir.
 	if err != nil {
@@ -65,11 +64,10 @@ func (s *Server) handleGetMcp(w http.ResponseWriter, _ *http.Request) {
 // than any realistic MCP config — the limit exists to prevent a runaway
 // request from exhausting memory.
 func (s *Server) handlePutMcp(w http.ResponseWriter, r *http.Request) {
-	path := s.mcpConfigPath()
-	if path == "" {
-		writeError(w, http.StatusServiceUnavailable, "mcp config not configured")
+	if !s.requireMcpConfig(w) {
 		return
 	}
+	path := s.mcpConfigPath()
 
 	body := http.MaxBytesReader(w, r.Body, defaultMaxBodyBytes)
 	raw, err := io.ReadAll(body)
@@ -121,11 +119,10 @@ func (s *Server) handlePutMcp(w http.ResponseWriter, r *http.Request) {
 // This is the backend for the per-server enable/disable toggle in the UI; the
 // full JSON editor uses PUT /api/mcp instead.
 func (s *Server) handlePatchMcpServer(w http.ResponseWriter, r *http.Request) {
-	path := s.mcpConfigPath()
-	if path == "" {
-		writeError(w, http.StatusServiceUnavailable, "mcp config not configured")
+	if !s.requireMcpConfig(w) {
 		return
 	}
+	path := s.mcpConfigPath()
 
 	name := r.PathValue("name")
 	if name == "" {
@@ -194,11 +191,10 @@ func (s *Server) mcpConfigPath() string {
 // This is called by the frontend when the MCP popout opens — there is no
 // background health-check ticker, keeping the daemon lightweight.
 func (s *Server) handleGetMcpStatus(w http.ResponseWriter, _ *http.Request) {
-	path := s.mcpConfigPath()
-	if path == "" {
-		writeError(w, http.StatusServiceUnavailable, "mcp config not configured")
+	if !s.requireMcpConfig(w) {
 		return
 	}
+	path := s.mcpConfigPath()
 
 	f, err := mcp.Load(path)
 	if err != nil {

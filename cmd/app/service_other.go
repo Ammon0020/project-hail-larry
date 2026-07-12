@@ -8,11 +8,11 @@ import "fmt"
 // mechanism. The daemon is cross-platform, but boot-time service registration
 // is only implemented for Linux (systemd), macOS (launchd), and Windows
 // (Run key).
-func installService(user bool) error {
+func installService() error {
 	return fmt.Errorf("install-service is not supported on this platform")
 }
 
 // uninstallService mirrors installService for unsupported platforms.
-func uninstallService(user bool) error {
+func uninstallService() error {
 	return fmt.Errorf("uninstall-service is not supported on this platform")
 }

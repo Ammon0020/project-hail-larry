@@ -76,11 +76,7 @@ func launchPlistContent(binary, stdoutLog, stderrLog string) string {
 
 // installService registers the daemon as a launchd LaunchAgent that runs at
 // login. Only the user-level installation is supported.
-func installService(user bool) error {
-	if !user {
-		return fmt.Errorf("system-wide install is not supported on macOS; use --user (the default)")
-	}
-
+func installService() error {
 	binary, err := resolveBinaryPath()
 	if err != nil {
 		return err
@@ -126,11 +122,7 @@ func installService(user bool) error {
 }
 
 // uninstallService unloads and removes the launchd LaunchAgent.
-func uninstallService(user bool) error {
-	if !user {
-		return fmt.Errorf("system-wide uninstall is not supported on macOS; use --user (the default)")
-	}
-
+func uninstallService() error {
 	plistPath, err := launchAgentPath()
 	if err != nil {
 		return err

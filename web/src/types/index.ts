@@ -71,6 +71,17 @@ export interface AgentModel {
   name: string
 }
 
+export interface McpServerConfig {
+  enabled?: boolean
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  type?: string
+  url?: string
+  headers?: Record<string, string>
+  [key: string]: unknown
+}
+
 /** Session lifecycle states (Blueprint Sec 10). */
 export type SessionStatus =
   | 'created'

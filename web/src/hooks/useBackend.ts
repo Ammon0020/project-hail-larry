@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, getDeviceCredential, type AppEvent, type WorkspaceInfo, type FileNode, type DeviceCredential, type PendingPermission, type UploadResult, type EditorSelection } from '@/lib/api'
+import { api, getDeviceCredential, type AppEvent, type WorkspaceInfo, type FileNode, type DeviceCredential, type PendingPermission, type UploadResult, type EditorSelectionInfo } from '@/lib/api'
 import type { Attachment, Agent, Session } from '@/types'
 
 /**
@@ -563,7 +563,7 @@ export function useBackend() {
     sessionId: string,
     openFiles: string[],
     recentEdits: string[],
-    selection?: EditorSelection,
+    selection?: EditorSelectionInfo,
   ) {
     if (reportContextTimerRef.current) clearTimeout(reportContextTimerRef.current)
     reportContextTimerRef.current = setTimeout(async () => {

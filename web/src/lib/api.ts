@@ -48,6 +48,25 @@ function authHeader(): string | null {
 }
 
 /**
+ * Builds a URL for the raw file serving endpoint (GET /api/workspaces/{id}/raw).
+ * Unlike apiFetch, this is used directly in <img>, <video>, <iframe> src
+ * attributes and fetch() blob downloads — browser media tags cannot set
+ * Authorization headers, so device credentials are appended as query params
+ * (deviceId/secret), which the backend's extractCredential supports as a
+ * fallback for non-loopback connections. Loopback connections bypass auth
+ * entirely, so the host browser works without credentials.
+ */
+export function rawFileUrl(workspaceId: string, path: string): string {
+  const params = new URLSearchParams({ path })
+  const cred = getDeviceCredential()
+  if (cred) {
+    params.set('deviceId', cred.id)
+    params.set('secret', cred.secret)
+  }
+  return `${API_BASE}/workspaces/${workspaceId}/raw?${params.toString()}`
+}
+
+/**
  * Merges auth + caller headers into a single headers object. The auth header
  * is only added when a credential exists AND the caller hasn't already set
  * an Authorization header (e.g. for the pairing endpoints that run before
@@ -99,7 +118,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
  *  so the ACP prompt pipeline can send it as a resource block. Path is
  *  relative to the workspace root; startLine/endLine are 1-based and
  *  inclusive. An empty/undefined Text clears the selection. */
-export interface EditorSelection {
+export interface EditorSelectionInfo {
   path: string
   startLine: number
   endLine: number
@@ -235,7 +254,7 @@ export const api = {
     sessionId: string,
     openFiles: string[],
     recentEdits: string[],
-    selection?: EditorSelection,
+    selection?: EditorSelectionInfo,
   ) =>
     apiFetch<{ status: string }>(`/sessions/${sessionId}/context`, {
       method: 'POST',

@@ -18,7 +18,7 @@ import {
   HelpCircle,
   Menu,
 } from 'lucide-react'
-import type { Agent } from '@/types'
+import type { Agent, McpServerConfig } from '@/types'
 import type { ProviderInfo } from '@/lib/api'
 import {
   getMcpConfig,
@@ -31,17 +31,6 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { getStoredTheme, setTheme, type Theme } from '@/lib/theme'
-
-type McpServerConfig = {
-  enabled?: boolean
-  command?: string
-  args?: string[]
-  env?: Record<string, string>
-  type?: string
-  url?: string
-  headers?: Record<string, string>
-  [key: string]: unknown
-}
 
 const STDIO_EXAMPLE = `{
   "mcpServers": {

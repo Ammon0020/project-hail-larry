@@ -300,6 +300,14 @@ func (m *Manager) GetAuditLog() []AuditEntry {
 	return log
 }
 
+func clearPolicyMap[T any](policies map[policyKey]T, sessionID string) {
+	for key := range policies {
+		if key.sessionID == sessionID {
+			delete(policies, key)
+		}
+	}
+}
+
 // ClearSession drops all cached permission policies for the given session and
 // denies any pending permission requests for it. It should be called when a
 // session closes so that allow_always/allow_session decisions do not leak
@@ -309,16 +317,8 @@ func (m *Manager) GetAuditLog() []AuditEntry {
 func (m *Manager) ClearSession(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for k := range m.policy {
-		if k.sessionID == sessionID {
-			delete(m.policy, k)
-		}
-	}
-	for k := range m.denied {
-		if k.sessionID == sessionID {
-			delete(m.denied, k)
-		}
-	}
+	clearPolicyMap(m.policy, sessionID)
+	clearPolicyMap(m.denied, sessionID)
 	// Deny pending requests for this session so the agent's RequestPermission
 	// RPC does not hang with no response. The send is non-blocking (the
 	// response channel is buffered with capacity 1); a full channel means the

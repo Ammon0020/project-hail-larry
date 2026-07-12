@@ -13,7 +13,7 @@ import { MobileNav } from '@/components/MobileNav'
 import { useBackend } from '@/hooks/useBackend'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { usePanelResize } from '@/hooks/usePanelResize'
-import type { EditorSelection } from '@/lib/api'
+import type { EditorSelectionInfo } from '@/lib/api'
 import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Attachment, SessionStatus, Tab } from '@/types'
 
 /**
@@ -130,7 +130,7 @@ export default function App() {
   // onSelectionChange callback so it can be reported to the backend alongside
   // open files (ACP spec item 1.3 — selection sent as a resource block).
   // undefined means "no active selection".
-  const [editorSelection, setEditorSelection] = useState<EditorSelection | undefined>(undefined)
+  const [editorSelection, setEditorSelection] = useState<EditorSelectionInfo | undefined>(undefined)
 
   // Save error — shown as a transient banner so save failures aren't silent
   // (previously only console.error'd, making debugging impossible).

@@ -41,11 +41,7 @@ WantedBy=default.target
 // user-level installation is supported; system-wide installation would require
 // root and writing under /etc/systemd/system, which is intentionally not
 // implemented.
-func installService(user bool) error {
-	if !user {
-		return fmt.Errorf("system-wide install is not supported on Linux; use --user (the default)")
-	}
-
+func installService() error {
 	binary, err := resolveBinaryPath()
 	if err != nil {
 		return err
@@ -90,11 +86,7 @@ func installService(user bool) error {
 }
 
 // uninstallService disables and removes the systemd user service.
-func uninstallService(user bool) error {
-	if !user {
-		return fmt.Errorf("system-wide uninstall is not supported on Linux; use --user (the default)")
-	}
-
+func uninstallService() error {
 	unitPath, err := systemdUnitPath()
 	if err != nil {
 		return err

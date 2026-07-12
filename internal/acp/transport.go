@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/adama/local-agent/internal/interfaces"
+	"github.com/adama/local-agent/internal/pathutil"
 	"github.com/coder/acp-go-sdk"
 )
 
@@ -493,13 +494,10 @@ func (c *acpClientImpl) resolveWorkspaceFile(ctx context.Context, path string) (
 		if relErr != nil {
 			continue
 		}
-		if rel == "." {
-			return w.ID, "."
+		if _, joinErr := pathutil.SafeJoin(w.Path, rel); joinErr != nil {
+			continue
 		}
-		// Containment: rel must not climb out of the root.
-		if !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel) {
-			return w.ID, rel
-		}
+		return w.ID, rel
 	}
 	// No registered workspace contains the path — fall back to primary so the
 	// workspace manager returns its standard traversal error to the agent.
@@ -537,6 +535,13 @@ type Transport struct {
 // RPC is made. It is safe to call before Start; the slice is copied.
 func (t *Transport) SetMcpServers(servers []acp.McpServer) {
 	t.mcpServers = append(t.mcpServers[:0:0], servers...)
+}
+
+func normalizeMcpServers(servers []acp.McpServer) []acp.McpServer {
+	if servers == nil {
+		return []acp.McpServer{}
+	}
+	return servers
 }
 
 // NewTransport returns a new Transport that manages a single agent process
@@ -713,14 +718,8 @@ func (t *Transport) Authenticate(ctx context.Context, methodID string) error {
 func (t *Transport) NewSession(ctx context.Context, cwd string, additionalDirs []string) (string, []acp.SessionConfigOption, error) {
 	req := acp.NewSessionRequest{
 		Cwd:                   cwd,
-		McpServers:            t.mcpServers,
+		McpServers:            normalizeMcpServers(t.mcpServers),
 		AdditionalDirectories: additionalDirs,
-	}
-	// The SDK's Validate rejects a nil McpServers slice ("mcpServers is
-	// required"), so normalize nil to an empty slice. SetMcpServers leaves a
-	// nil slice when never called; this keeps the pre-MCP-config path valid.
-	if req.McpServers == nil {
-		req.McpServers = []acp.McpServer{}
 	}
 	if err := req.Validate(); err != nil {
 		return "", nil, fmt.Errorf("validate new session request: %w", err)
@@ -750,13 +749,8 @@ func (t *Transport) LoadSession(ctx context.Context, acpSessionID string, additi
 	req := acp.LoadSessionRequest{
 		SessionId:             acp.SessionId(acpSessionID),
 		Cwd:                   t.cwd,
-		McpServers:            t.mcpServers,
+		McpServers:            normalizeMcpServers(t.mcpServers),
 		AdditionalDirectories: additionalDirs,
-	}
-	// The SDK's Validate rejects a nil McpServers slice ("mcpServers is
-	// required"), so normalize nil to an empty slice.
-	if req.McpServers == nil {
-		req.McpServers = []acp.McpServer{}
 	}
 	if err := req.Validate(); err != nil {
 		return "", nil, fmt.Errorf("validate load session request: %w", err)

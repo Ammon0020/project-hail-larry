@@ -73,43 +73,39 @@ func newRootCommand() *cobra.Command {
 	return rootCmd
 }
 
-// newInstallServiceCommand registers the daemon as a system service that
-// starts on boot. The --user flag (default true) installs a per-user service
-// (systemd user unit / launchd LaunchAgent / Windows Run-key) rather than a
-// system-wide service, which would require root/admin privileges.
+// newInstallServiceCommand registers the daemon as a per-user system service
+// that starts on boot (systemd user unit / launchd LaunchAgent / Windows Run-key).
+// System-wide installation is not supported — it would require root/admin
+// privileges and is intentionally not implemented.
 func newInstallServiceCommand() *cobra.Command {
-	var user bool
 	cmd := &cobra.Command{
 		Use:   "install-service",
-		Short: "Register the daemon as a system service that starts on boot",
+		Short: "Register the daemon as a user service that starts on boot",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := installService(user); err != nil {
+			if err := installService(); err != nil {
 				return err
 			}
 			return writeln(cmd.OutOrStdout(), "Service installed.")
 		},
 	}
-	cmd.Flags().BoolVar(&user, "user", true, "install as a user service (not system-wide)")
 	return cmd
 }
 
 // newUninstallServiceCommand removes the system service previously registered
 // by install-service.
 func newUninstallServiceCommand() *cobra.Command {
-	var user bool
 	cmd := &cobra.Command{
 		Use:   "uninstall-service",
 		Short: "Remove the system service registered by install-service",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := uninstallService(user); err != nil {
+			if err := uninstallService(); err != nil {
 				return err
 			}
 			return writeln(cmd.OutOrStdout(), "Service uninstalled.")
 		},
 	}
-	cmd.Flags().BoolVar(&user, "user", true, "uninstall the user service (not system-wide)")
 	return cmd
 }
 
@@ -700,8 +696,12 @@ func writeString(w io.Writer, s string) error {
 }
 
 func shortID(id string) string {
-	if len(id) <= 12 {
+	return truncateID(id, 12)
+}
+
+func truncateID(id string, maxLen int) string {
+	if len(id) <= maxLen {
 		return id
 	}
-	return id[:12]
+	return id[:maxLen]
 }

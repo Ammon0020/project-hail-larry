@@ -139,10 +139,10 @@ func (s *Server) routes() {
 func (s *Server) apiRoutes() {
 	d := s.deps
 
-	// Pairing routes — no auth (devices are not yet paired).
-	s.mux.HandleFunc("POST /api/pair/initiate", s.handlePairInitiate)
-	s.mux.HandleFunc("POST /api/pair/verify-passcode", s.handlePairVerifyPasscode)
-	s.mux.HandleFunc("POST /api/pair/verify-token", s.handlePairVerifyToken)
+	// Pairing routes — no auth (devices are not yet paired), but rate-limited.
+	s.mux.HandleFunc("POST /api/pair/initiate", withPairRateLimit(s.handlePairInitiate))
+	s.mux.HandleFunc("POST /api/pair/verify-passcode", withPairRateLimit(s.handlePairVerifyPasscode))
+	s.mux.HandleFunc("POST /api/pair/verify-token", withPairRateLimit(s.handlePairVerifyToken))
 
 	// Device management routes — require auth.
 	s.mux.HandleFunc("GET /api/devices", s.requireAuth(s.handleListDevices))

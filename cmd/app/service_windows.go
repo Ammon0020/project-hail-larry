@@ -29,11 +29,7 @@ func runKeyValue(binary string) string {
 // installService registers the daemon to start at login via the per-user Run
 // registry key. This is the simplest reliable user-level autostart on Windows
 // and avoids the admin privileges a true Windows Service would require.
-func installService(user bool) error {
-	if !user {
-		return fmt.Errorf("system-wide install is not supported on Windows; use --user (the default)")
-	}
-
+func installService() error {
 	binary, err := resolveBinaryPath()
 	if err != nil {
 		return err
@@ -66,11 +62,7 @@ func installService(user bool) error {
 
 // uninstallService removes the per-user Run registry entry created by
 // installService.
-func uninstallService(user bool) error {
-	if !user {
-		return fmt.Errorf("system-wide uninstall is not supported on Windows; use --user (the default)")
-	}
-
+func uninstallService() error {
 	key, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.SET_VALUE|registry.QUERY_VALUE)
 	if err != nil {
 		return fmt.Errorf("open HKCU\\%s: %w", runKeyPath, err)
