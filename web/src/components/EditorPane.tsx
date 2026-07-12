@@ -13,7 +13,7 @@ import { LanguageDescription, bracketMatching, foldGutter, indentOnInput, indent
 import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Prec, EditorSelection } from '@codemirror/state'
-import { GitBranch, CircleAlert, TriangleAlert, FileText, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react'
+import { GitBranch, CircleAlert, TriangleAlert, FileText, RefreshCw, ZoomIn, ZoomOut, Eye, Code } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { SettingsPanel } from '@/components/SettingsPanel'
@@ -46,6 +46,7 @@ export function EditorPane({
   hideTabBar = false,
   wrap = false,
   onToggleWrap,
+  onToggleViewMode,
   isDesktop,
 }: {
   tabs: Tab[]
@@ -80,6 +81,10 @@ export function EditorPane({
   hideTabBar?: boolean
   wrap?: boolean
   onToggleWrap?: () => void
+  /** Toggles a text-preview tab between edit (CodeMirror) and preview
+   *  (FileViewer) modes. Called when the user clicks the Preview/View Raw
+   *  button in the TabBar actions area. */
+  onToggleViewMode?: (id: string) => void
   /** Whether the viewport is desktop-sized (≥1024px). When false, the editor
    *  applies touch-friendly theme tweaks: larger line height, wider gutters,
    *  bigger font, and disables mouse-only selection modes. */
@@ -384,6 +389,32 @@ export function EditorPane({
         />
       )}
 
+      {/* Preview / View Raw toggle — shown for text-preview files (SVG, CSV,
+          HTML, OBJ, etc.) that can be both edited in CodeMirror and viewed
+          in a visual preview. Binary-only files don't get this toggle since
+          they always show FileViewer. */}
+      {activeTab?.previewable && !activeTab.isBinary && onToggleViewMode && (
+        <div className="flex items-center gap-2 px-3 py-1 border-b border-border bg-panel text-xs text-muted-foreground shrink-0">
+          {activeTab.viewMode === 'preview' ? (
+            <button
+              type="button"
+              onClick={() => onToggleViewMode(activeTab.id)}
+              className="flex items-center gap-1.5 font-medium text-foreground hover:text-primary transition"
+            >
+              <Code className="w-3.5 h-3.5" /> View Raw
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onToggleViewMode(activeTab.id)}
+              className="flex items-center gap-1.5 font-medium text-foreground hover:text-primary transition"
+            >
+              <Eye className="w-3.5 h-3.5" /> Preview
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Changed-on-disk banner — shown when the active tab's file was modified
           on disk (agent write / external edit) while the user had unsaved
           edits, so its content was NOT auto-refreshed. Offers a Reload that
@@ -414,8 +445,12 @@ export function EditorPane({
         )}
 
         {tabs.filter(t => t.kind !== 'settings').map(tab => {
-          if (tab.isBinary) {
-            return <FileViewer key={tab.id} tab={tab} active={activeTabId === tab.id} />
+          // Binary files always go to FileViewer. Text-preview files (SVG,
+          // CSV, HTML, OBJ, etc.) go to FileViewer only when the user has
+          // toggled to preview mode; otherwise they edit in CodeMirror.
+          const showPreview = tab.isBinary || (tab.previewable && tab.viewMode === 'preview')
+          if (showPreview) {
+            return <FileViewer key={tab.id} tab={tab} active={activeTabId === tab.id} onToggleViewMode={onToggleViewMode} />
           }
           return (
           <div key={tab.id} className={cn("absolute inset-0", activeTabId === tab.id ? 'block' : 'hidden')}>

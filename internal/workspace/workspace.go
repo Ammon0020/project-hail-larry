@@ -192,20 +192,20 @@ const maxReadFileSize = 50 * 1024 * 1024
 // For binary files, isBinary is true and content is empty. The revision is
 // still computed (from the sampled bytes) so the optimistic-lock check works
 // defensively if a save is ever attempted.
-func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (content string, revision int64, isBinary bool, err error) {
+func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (content string, revision int64, isBinary bool, previewable bool, err error) {
 	// Copy the workspace path out under the read lock, then perform all disk
 	// I/O without holding the mutex.
 	m.mu.RLock()
 	wsPath, ok := m.workspaces[workspaceID]
 	m.mu.RUnlock()
 	if !ok {
-		return "", 0, false, fmt.Errorf("workspace not found: %s", workspaceID)
+		return "", 0, false, false, fmt.Errorf("workspace not found: %s", workspaceID)
 	}
 
 	// Prevent path traversal outside the workspace.
 	fullPath, err := safeJoin(wsPath, relPath)
 	if err != nil {
-		return "", 0, false, err
+		return "", 0, false, false, err
 	}
 
 	// Bound the read size so a multi-GB file cannot OOM the daemon. Lstat is
@@ -216,24 +216,21 @@ func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (cont
 	// which is the desired behavior.
 	info, err := os.Lstat(fullPath)
 	if err != nil {
-		return "", 0, false, fmt.Errorf("stat file: %w", err)
+		return "", 0, false, false, fmt.Errorf("stat file: %w", err)
 	}
 	if info.Size() > maxReadFileSize {
-		return "", 0, false, fmt.Errorf("file too large (max %d bytes, file is %d bytes)", maxReadFileSize, info.Size())
+		return "", 0, false, false, fmt.Errorf("file too large (max %d bytes, file is %d bytes)", maxReadFileSize, info.Size())
 	}
 
-	// Extension-based binary detection for formats that are previewed by the
-	// frontend's FileViewer (3D models, images, PDF, video, audio) but may not
-	// contain null bytes in the first 512 bytes — e.g. 3MF and GLTF are
-	// XML/text-based, SVG is text, OBJ is text. Without this, these files would
-	// be read as text and sent to CodeMirror instead of the specialized viewer.
-	// The content is still sampled for a revision so optimistic locking works.
-	if isPreviewExt(relPath) {
+	// Binary-only preview formats (images, PDF, video, audio, binary 3D models,
+	// XLSX, EPUB, etc.) cannot be text-edited and go straight to FileViewer.
+	// The content is sampled for a revision so optimistic locking works.
+	if isBinaryPreviewExt(relPath) {
 		sample, serr := readPrefix(fullPath, binarySniffSize)
 		if serr != nil {
-			return "", 0, false, fmt.Errorf("read file: %w", serr)
+			return "", 0, false, true, fmt.Errorf("read file: %w", serr)
 		}
-		return "", contentRevision(sample), true, nil
+		return "", contentRevision(sample), true, true, nil
 	}
 
 	// Detect binary content before reading the whole file. We sniff the first
@@ -245,21 +242,21 @@ func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (cont
 	// defensive if a save is ever attempted.
 	sample, serr := readPrefix(fullPath, binarySniffSize)
 	if serr != nil {
-		return "", 0, false, fmt.Errorf("read file: %w", serr)
+		return "", 0, false, isTextPreviewExt(relPath), fmt.Errorf("read file: %w", serr)
 	}
 	if isBinaryBytes(sample) {
-		return "", contentRevision(sample), true, nil
+		return "", contentRevision(sample), true, isTextPreviewExt(relPath), nil
 	}
 
 	data, err := os.ReadFile(fullPath) //nolint:gosec // fullPath is constrained by safeJoin to the registered workspace root.
 	if err != nil {
-		return "", 0, false, fmt.Errorf("read file: %w", err)
+		return "", 0, false, isTextPreviewExt(relPath), fmt.Errorf("read file: %w", err)
 	}
 
 	// Revision is a content hash derived from the file bytes. This is
 	// independent of filesystem mtime (which is non-monotonic and coarse) so
 	// optimistic locking remains correct.
-	return string(data), contentRevision(data), false, nil
+	return string(data), contentRevision(data), false, isTextPreviewExt(relPath), nil
 }
 
 // FilePath returns the absolute filesystem path for a file in the workspace,
@@ -334,34 +331,59 @@ func isBinaryBytes(sample []byte) bool {
 	return false
 }
 
-// previewExts lists file extensions that the frontend's FileViewer handles
-// with specialized viewers (images, PDF, video, audio, 3D models, DOCX).
-// Files with these extensions are marked as binary in ReadFile so the frontend
-// routes them to FileViewer instead of CodeMirror — even when the content is
-// text-based (3MF, GLTF, OBJ, SVG) and would not trigger the null-byte sniff.
-var previewExts = map[string]bool{
-	// Images
+// binaryPreviewExts lists extensions for files that are previewed by the
+// frontend's FileViewer and cannot be meaningfully text-edited. These are
+// always marked as binary in ReadFile so the frontend routes them directly to
+// FileViewer — no CodeMirror editor, no "View Raw" toggle.
+var binaryPreviewExts = map[string]bool{
+	// Images (browser-native + JS-decoded)
 	"png": true, "jpg": true, "jpeg": true, "gif": true, "webp": true,
-	"svg": true, "bmp": true, "ico": true, "avif": true,
+	"bmp": true, "ico": true, "avif": true, "tiff": true, "tif": true,
+	"heic": true, "heif": true,
 	// Documents
-	"pdf": true, "docx": true,
+	"pdf": true, "docx": true, "xlsx": true, "epub": true,
 	// Video
 	"mp4": true, "webm": true, "ogv": true, "mov": true, "mkv": true,
 	// Audio
 	"mp3": true, "wav": true, "oga": true, "ogg": true, "flac": true,
 	"m4a": true, "aac": true, "opus": true,
-	// 3D models
-	"stl": true, "3mf": true, "obj": true, "gltf": true, "glb": true, "ply": true,
+	// 3D models (binary formats)
+	"stl": true, "glb": true, "ply": true,
 }
 
-// isPreviewExt reports whether the file at relPath has an extension handled by
-// the frontend's FileViewer. The check is case-insensitive on the extension.
-func isPreviewExt(relPath string) bool {
+// textPreviewExts lists extensions for files that have a visual preview in
+// FileViewer but are also text-editable. These files open in CodeMirror by
+// default (with a "Preview" button to switch to the visual viewer). The
+// previewable flag is set to true so the frontend knows to show the button.
+var textPreviewExts = map[string]bool{
+	// Images (text-based, editable)
+	"svg": true,
+	// 3D models (text/XML-based, editable)
+	"obj": true, "gltf": true, "3mf": true, "dae": true, "wrl": true, "vrml": true,
+	// Data (text-based, table preview)
+	"csv": true,
+	// Web (text-based, rendered preview)
+	"html": true, "htm": true,
+}
+
+// isBinaryPreviewExt reports whether the file has a binary-only preview extension.
+func isBinaryPreviewExt(relPath string) bool {
+	return binaryPreviewExts[extLower(relPath)]
+}
+
+// isTextPreviewExt reports whether the file has a text-based preview extension
+// (editable in CodeMirror with an optional visual preview).
+func isTextPreviewExt(relPath string) bool {
+	return textPreviewExts[extLower(relPath)]
+}
+
+// extLower extracts the lowercase file extension from a path, or "" if none.
+func extLower(relPath string) string {
 	dot := strings.LastIndexByte(relPath, '.')
 	if dot < 0 {
-		return false
+		return ""
 	}
-	return previewExts[strings.ToLower(relPath[dot+1:])]
+	return strings.ToLower(relPath[dot+1:])
 }
 
 // contentRevision computes a deterministic revision from file content by taking

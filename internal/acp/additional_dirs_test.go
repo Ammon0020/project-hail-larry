@@ -42,16 +42,16 @@ func (m *multiRootWorkspaceManager) FileTree(_ context.Context, _ string) ([]int
 	return nil, nil
 }
 
-func (m *multiRootWorkspaceManager) ReadFile(_ context.Context, workspaceID, relPath string) (string, int64, bool, error) {
+func (m *multiRootWorkspaceManager) ReadFile(_ context.Context, workspaceID, relPath string) (string, int64, bool, bool, error) {
 	if m.files == nil {
-		return "", 0, false, nil
+		return "", 0, false, false, nil
 	}
 	if wsFiles, ok := m.files[workspaceID]; ok {
 		if content, ok := wsFiles[relPath]; ok {
-			return content, 1, false, nil
+			return content, 1, false, false, nil
 		}
 	}
-	return "", 0, false, errors.New("file not found")
+	return "", 0, false, false, errors.New("file not found")
 }
 
 func (m *multiRootWorkspaceManager) Search(_ context.Context, _, _ string, _ search.Options) ([]search.Result, error) {
@@ -388,7 +388,7 @@ func TestResolveWorkspaceFile(t *testing.T) {
 			// End-to-end: ReadTextFile should return the expected content for
 			// paths that have a backing file in the stub.
 			if tc.wantReadResult != "" {
-				content, _, _, rerr := wm.ReadFile(context.Background(), wsID, rel)
+				content, _, _, _, rerr := wm.ReadFile(context.Background(), wsID, rel)
 				if rerr != nil {
 					t.Fatalf("ReadFile: %v", rerr)
 				}

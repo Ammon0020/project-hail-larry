@@ -327,7 +327,7 @@ export default function App() {
           setOpenTabs((prev) =>
             prev.map((t) =>
               t.id === tab.id && !t.unsaved
-                ? { ...t, content: file.content, revision: file.revision, isBinary: file.isBinary ?? false, changedOnDisk: false }
+                ? { ...t, content: file.content, revision: file.revision, isBinary: file.isBinary ?? false, previewable: file.previewable ?? false, changedOnDisk: false }
                 : t,
             ),
           )
@@ -417,6 +417,7 @@ export default function App() {
                   content: file.content,
                   revision: file.revision,
                   isBinary: file.isBinary ?? false,
+                  previewable: file.previewable ?? false,
                   unsaved: false,
                   changedOnDisk: false,
                 }
@@ -430,6 +431,19 @@ export default function App() {
     },
     [backend, openTabs],
   )
+
+  /** Toggles a text-preview tab between edit (CodeMirror) and preview
+   *  (FileViewer) modes. Only applies to files with previewable=true and
+   *  isBinary=false — binary files always show FileViewer. */
+  const handleToggleViewMode = useCallback((tabId: string) => {
+    setOpenTabs((prev) =>
+      prev.map((t) =>
+        t.id === tabId && t.previewable && !t.isBinary
+          ? { ...t, viewMode: t.viewMode === 'preview' ? 'edit' : 'preview' }
+          : t,
+      ),
+    )
+  }, [])
 
   // ---- Global keyboard shortcuts ----
   // Registered on window so they work even when the CodeMirror editor isn't
@@ -512,6 +526,7 @@ export default function App() {
         unsaved: false,
         language: ext.toLowerCase(),
         isBinary: file.isBinary ?? false,
+        previewable: file.previewable ?? false,
         workspaceId: backend.activeWorkspace?.id,
       }
       setOpenTabs((prev) => [...prev, tab])
@@ -761,6 +776,7 @@ export default function App() {
         hideTabBar={isDesktop}
         wrap={wrap}
         onToggleWrap={() => setWrap(!wrap)}
+        onToggleViewMode={handleToggleViewMode}
         isDesktop={isDesktop}
       />
 

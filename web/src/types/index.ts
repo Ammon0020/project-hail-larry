@@ -47,6 +47,15 @@ export interface Tab {
    *  cannot be edited as text. The editor renders a placeholder or image
    *  preview instead of a CodeMirror instance. */
   isBinary?: boolean
+  /** True when the file has a visual preview available in FileViewer (images,
+   *  PDF, 3D models, SVG, CSV, etc.). When isBinary is false, the file opens
+   *  in CodeMirror with a "Preview" button; when isBinary is true, it opens
+   *  directly in FileViewer. */
+  previewable?: boolean
+  /** View mode for text-preview files (SVG, CSV, HTML, OBJ, etc.). 'edit'
+   *  shows CodeMirror (default); 'preview' shows the visual FileViewer.
+   *  Binary-only files always show FileViewer regardless of this field. */
+  viewMode?: 'edit' | 'preview'
 }
 
 /** A registered AI agent (Blueprint Sec 5 — agent registration). */

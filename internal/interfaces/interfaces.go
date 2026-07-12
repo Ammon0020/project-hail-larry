@@ -193,8 +193,12 @@ type WorkspaceManager interface {
 	// FileTree returns the file tree for a workspace.
 	FileTree(ctx context.Context, workspaceID string) ([]FileNode, error)
 
-	// ReadFile returns the content of a file and its current revision.
-	ReadFile(ctx context.Context, workspaceID, relPath string) (content string, revision int64, isBinary bool, err error)
+	// ReadFile returns the content of a file, its current revision, and flags
+	// indicating whether the file is binary and/or has a visual preview
+	// available in the frontend's FileViewer. Text-preview files (SVG, OBJ,
+	// CSV, etc.) return isBinary=false with previewable=true so the frontend
+	// opens them in CodeMirror with a "Preview" button.
+	ReadFile(ctx context.Context, workspaceID, relPath string) (content string, revision int64, isBinary bool, previewable bool, err error)
 
 	// FilePath returns the absolute filesystem path for a file in the
 	// workspace, after validating path traversal and symlink constraints.

@@ -496,17 +496,18 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, revision, isBinary, err := s.deps.WorkspaceMgr.ReadFile(r.Context(), workspaceID, relPath)
+	content, revision, isBinary, previewable, err := s.deps.WorkspaceMgr.ReadFile(r.Context(), workspaceID, relPath)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"content":  content,
-		"revision": revision,
-		"path":     relPath,
-		"isBinary": isBinary,
+		"content":     content,
+		"revision":    revision,
+		"path":        relPath,
+		"isBinary":    isBinary,
+		"previewable": previewable,
 	})
 }
 

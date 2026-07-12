@@ -169,7 +169,7 @@ func TestReadFile(t *testing.T) {
 
 	ws, _ := m.Register(ctx, dir)
 
-	content, revision, isBinary, err := m.ReadFile(ctx, ws.ID, "package.json")
+	content, revision, isBinary, _, err := m.ReadFile(ctx, ws.ID, "package.json")
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestReadFileTraversal(t *testing.T) {
 
 	ws, _ := m.Register(ctx, dir)
 
-	_, _, _, err := m.ReadFile(ctx, ws.ID, "../../../etc/passwd")
+	_, _, _, _, err := m.ReadFile(ctx, ws.ID, "../../../etc/passwd")
 	if err == nil {
 		t.Error("expected error for path traversal")
 	}
@@ -222,7 +222,7 @@ func TestReadFileSymlinkEscape(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	if _, _, _, err := m.ReadFile(ctx, ws.ID, "link.txt"); err == nil {
+	if _, _, _, _, err := m.ReadFile(ctx, ws.ID, "link.txt"); err == nil {
 		t.Error("expected error when reading through a symlink escaping the workspace")
 	}
 }
@@ -244,7 +244,7 @@ func TestReadFileSymlinkInsideWorkspace(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	if _, _, _, err := m.ReadFile(ctx, ws.ID, "link.json"); err == nil {
+	if _, _, _, _, err := m.ReadFile(ctx, ws.ID, "link.json"); err == nil {
 		t.Error("expected error when reading through an in-workspace symlink")
 	}
 }
@@ -338,7 +338,7 @@ func TestReadFileSizeLimit(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	if _, _, _, err := m.ReadFile(ctx, ws.ID, "big.bin"); err == nil {
+	if _, _, _, _, err := m.ReadFile(ctx, ws.ID, "big.bin"); err == nil {
 		t.Error("expected error for file exceeding maxReadFileSize")
 	} else if !strings.Contains(err.Error(), "too large") {
 		t.Errorf("expected 'too large' error, got: %v", err)
@@ -362,7 +362,7 @@ func TestReadFileUnderSizeLimit(t *testing.T) {
 		t.Fatalf("write: %v", writeErr)
 	}
 
-	content, _, isBinary, err := m.ReadFile(ctx, ws.ID, "small.txt")
+	content, _, isBinary, _, err := m.ReadFile(ctx, ws.ID, "small.txt")
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestReadFileNotFound(t *testing.T) {
 
 	ws, _ := m.Register(ctx, dir)
 
-	_, _, _, err := m.ReadFile(ctx, ws.ID, "nonexistent.txt")
+	_, _, _, _, err := m.ReadFile(ctx, ws.ID, "nonexistent.txt")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
 	}
@@ -407,7 +407,7 @@ func TestReadFileBinary(t *testing.T) {
 		t.Fatalf("write: %v", writeErr)
 	}
 
-	content, revision, isBinary, err := m.ReadFile(ctx, ws.ID, "blob.bin")
+	content, revision, isBinary, _, err := m.ReadFile(ctx, ws.ID, "blob.bin")
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestReadFileBinaryShortFile(t *testing.T) {
 		t.Fatalf("write: %v", writeErr)
 	}
 
-	_, _, isBinary, err := m.ReadFile(ctx, ws.ID, "nul.bin")
+	_, _, isBinary, _, err := m.ReadFile(ctx, ws.ID, "nul.bin")
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestReadFileTextNotBinary(t *testing.T) {
 		t.Fatalf("write: %v", writeErr)
 	}
 
-	content, _, isBinary, err := m.ReadFile(ctx, ws.ID, "utf8.txt")
+	content, _, isBinary, _, err := m.ReadFile(ctx, ws.ID, "utf8.txt")
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestConcurrentMapAccess(t *testing.T) {
 					t.Errorf("file tree: %v", err)
 					return
 				}
-				if _, _, _, err := m.ReadFile(ctx, ws.ID, "package.json"); err != nil {
+				if _, _, _, _, err := m.ReadFile(ctx, ws.ID, "package.json"); err != nil {
 					t.Errorf("read file: %v", err)
 					return
 				}

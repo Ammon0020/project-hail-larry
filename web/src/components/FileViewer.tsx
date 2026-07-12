@@ -2,12 +2,19 @@
  * FileViewer — renders binary/non-text files that CodeMirror cannot edit.
  *
  * Dispatches to specialized viewers based on file extension:
- *  - Images (png, jpg, gif, webp, svg, bmp, ico, avif) → <img>
+ *  - Images (png, jpg, gif, webp, bmp, ico, avif) → <img>
+ *  - TIFF (tiff, tif) → UTIF canvas rendering
+ *  - HEIC (heic, heif) → heic2any PNG conversion
+ *  - SVG → <img>
  *  - PDF → <iframe> (browser-native rendering)
  *  - Video (mp4, webm, ogv, mov, mkv) → <video controls>
  *  - Audio (mp3, wav, ogg, flac, m4a, aac, opus) → <audio controls>
  *  - DOCX → mammoth.js (converts to HTML in-browser)
- *  - 3D models (stl, 3mf, obj, gltf, glb, ply) → Three.js orbit viewer
+ *  - XLSX → SheetJS table preview
+ *  - EPUB → epub.js reader
+ *  - CSV → table preview
+ *  - HTML (html, htm) → sandboxed <iframe>
+ *  - 3D models (stl, 3mf, obj, gltf, glb, ply, dae, wrl, vrml) → Three.js orbit viewer
  *  - Fallback → "preview not available" + download link
  *
  * All binary content is served from GET /api/workspaces/{id}/raw, which
@@ -16,7 +23,7 @@
  * so rawFileUrl appends device credentials as query params.
  */
 import { useEffect, useRef, useState } from 'react'
-import { FileX, Download, Loader2, Box } from 'lucide-react'
+import { FileX, Download, Loader2, Box, Code } from 'lucide-react'
 import { rawFileUrl } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { Tab } from '@/types'
@@ -25,23 +32,45 @@ import type { Tab } from '@/types'
 // Extension classification
 // ---------------------------------------------------------------------------
 
-const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif']
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'tiff', 'tif', 'heic', 'heif']
+const SVG_EXTS = ['svg']
 const PDF_EXTS = ['pdf']
 const VIDEO_EXTS = ['mp4', 'webm', 'ogv', 'mov', 'mkv']
 const AUDIO_EXTS = ['mp3', 'wav', 'oga', 'ogg', 'flac', 'm4a', 'aac', 'opus']
 const DOCX_EXTS = ['docx']
-const MODEL_EXTS = ['stl', '3mf', 'obj', 'gltf', 'glb', 'ply']
+const XLSX_EXTS = ['xlsx']
+const EPUB_EXTS = ['epub']
+const CSV_EXTS = ['csv']
+const HTML_EXTS = ['html', 'htm']
+const MODEL_EXTS = ['stl', '3mf', 'obj', 'gltf', 'glb', 'ply', 'dae', 'wrl', 'vrml']
 
-type ViewerKind = 'image' | 'pdf' | 'video' | 'audio' | 'docx' | 'model' | 'fallback'
+type ViewerKind =
+  | 'image'
+  | 'svg'
+  | 'pdf'
+  | 'video'
+  | 'audio'
+  | 'docx'
+  | 'xlsx'
+  | 'epub'
+  | 'csv'
+  | 'html'
+  | 'model'
+  | 'fallback'
 
 /** Resolves the viewer kind from a file name's extension. */
 function viewerKind(name: string): ViewerKind {
   const ext = name.split('.').pop()?.toLowerCase() || ''
   if (IMAGE_EXTS.includes(ext)) return 'image'
+  if (SVG_EXTS.includes(ext)) return 'svg'
   if (PDF_EXTS.includes(ext)) return 'pdf'
   if (VIDEO_EXTS.includes(ext)) return 'video'
   if (AUDIO_EXTS.includes(ext)) return 'audio'
   if (DOCX_EXTS.includes(ext)) return 'docx'
+  if (XLSX_EXTS.includes(ext)) return 'xlsx'
+  if (EPUB_EXTS.includes(ext)) return 'epub'
+  if (CSV_EXTS.includes(ext)) return 'csv'
+  if (HTML_EXTS.includes(ext)) return 'html'
   if (MODEL_EXTS.includes(ext)) return 'model'
   return 'fallback'
 }
@@ -50,19 +79,42 @@ function viewerKind(name: string): ViewerKind {
 // Main dispatcher
 // ---------------------------------------------------------------------------
 
-export function FileViewer({ tab, active }: { tab: Tab; active: boolean }) {
+export function FileViewer({ tab, active, onToggleViewMode }: { tab: Tab; active: boolean; onToggleViewMode?: (id: string) => void }) {
   const kind = viewerKind(tab.name)
   const url = rawFileUrl(tab.workspaceId ?? '', tab.path)
+  const ext = tab.name.split('.').pop()?.toLowerCase() || ''
 
   return (
     <div className={cn('absolute inset-0 items-center justify-center bg-editor', active ? 'flex' : 'hidden')}>
-      {kind === 'image' && <ImageViewer url={url} name={tab.name} />}
+      {kind === 'image' && (
+        ext === 'tiff' || ext === 'tif'
+          ? <TiffViewer url={url} name={tab.name} />
+          : ext === 'heic' || ext === 'heif'
+            ? <HeicViewer url={url} name={tab.name} />
+            : <ImageViewer url={url} name={tab.name} />
+      )}
+      {kind === 'svg' && <SvgViewer url={url} name={tab.name} />}
       {kind === 'pdf' && <PdfViewer url={url} />}
       {kind === 'video' && <VideoViewer url={url} name={tab.name} />}
       {kind === 'audio' && <AudioViewer url={url} name={tab.name} />}
       {kind === 'docx' && <DocxViewer url={url} name={tab.name} />}
+      {kind === 'xlsx' && <XlsxViewer url={url} name={tab.name} />}
+      {kind === 'epub' && <EpubViewer url={url} />}
+      {kind === 'csv' && <CsvViewer url={url} name={tab.name} />}
+      {kind === 'html' && <HtmlViewer url={url} />}
       {kind === 'model' && <ModelViewer url={url} name={tab.name} />}
       {kind === 'fallback' && <FallbackViewer url={url} name={tab.name} />}
+      {/* View Raw button — shown for text-preview files (SVG, CSV, HTML, OBJ)
+          that are in preview mode, so the user can switch back to CodeMirror. */}
+      {tab.previewable && !tab.isBinary && onToggleViewMode && (
+        <button
+          type="button"
+          onClick={() => onToggleViewMode(tab.id)}
+          className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded bg-secondary/90 hover:bg-secondary text-secondary-foreground backdrop-blur-sm transition shadow-sm"
+        >
+          <Code className="w-3.5 h-3.5" /> View Raw
+        </button>
+      )}
     </div>
   )
 }
@@ -76,6 +128,122 @@ function ImageViewer({ url, name }: { url: string; name: string }) {
     <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
       <img
         src={url}
+        alt={name}
+        className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg bg-checkerboard"
+      />
+      <span className="text-xs text-muted-foreground">{name}</span>
+    </div>
+  )
+}
+
+function SvgViewer({ url, name }: { url: string; name: string }) {
+  return (
+    <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
+      <img
+        src={url}
+        alt={name}
+        className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg bg-checkerboard"
+      />
+      <span className="text-xs text-muted-foreground">{name}</span>
+    </div>
+  )
+}
+
+function TiffViewer({ url, name }: { url: string; name: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(url)
+      .then((res) => res.arrayBuffer())
+      .then(async (buf) => {
+        if (cancelled) return
+        // @ts-expect-error utif does not publish TypeScript declarations.
+        const UTIF = await import('utif')
+        const ifds = UTIF.decode(buf)
+        UTIF.decodeImage(buf, ifds[0])
+        const rgba = UTIF.toRGBA8(ifds[0])
+        const canvas = canvasRef.current
+        if (!canvas || cancelled) return
+        canvas.width = ifds[0].width
+        canvas.height = ifds[0].height
+        const ctx = canvas.getContext('2d')!
+        const imageData = ctx.createImageData(canvas.width, canvas.height)
+        imageData.data.set(rgba)
+        ctx.putImageData(imageData, 0, 0)
+        setLoading(false)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err))
+          setLoading(false)
+        }
+      })
+    return () => { cancelled = true }
+  }, [url])
+
+  if (error) {
+    return <FallbackViewer url={url} name={name} message={`Failed to render TIFF: ${error}`} />
+  }
+  return (
+    <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
+      {loading && <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />}
+      <canvas
+        ref={canvasRef}
+        className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg bg-checkerboard"
+      />
+      <span className="text-xs text-muted-foreground">{name}</span>
+    </div>
+  )
+}
+
+function HeicViewer({ url, name }: { url: string; name: string }) {
+  const [pngUrl, setPngUrl] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl: string | null = null
+    fetch(url)
+      .then((res) => res.blob())
+      .then(async (blob) => {
+        if (cancelled) return
+        const heic2any = (await import('heic2any')).default
+        const pngBlob = await heic2any({ blob, toType: 'image/png' })
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(pngBlob as Blob)
+        setPngUrl(objectUrl)
+        setLoading(false)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err))
+          setLoading(false)
+        }
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [url])
+
+  if (error) {
+    return <FallbackViewer url={url} name={name} message={`Failed to render HEIC: ${error}`} />
+  }
+  if (loading || !pngUrl) {
+    return (
+      <div className="flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
+      <img
+        src={pngUrl}
         alt={name}
         className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg bg-checkerboard"
       />
@@ -184,6 +352,224 @@ function DocxViewer({ url, name }: { url: string; name: string }) {
   )
 }
 
+function XlsxViewer({ url, name }: { url: string; name: string }) {
+  const [sheets, setSheets] = useState<{ name: string; html: string }[]>([])
+  const [activeSheet, setActiveSheet] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(url)
+      .then((res) => res.arrayBuffer())
+      .then(async (buf) => {
+        if (cancelled) return
+        const XLSX = await import('xlsx')
+        const wb = XLSX.read(buf, { type: 'array' })
+        const sheetData = wb.SheetNames.map((sheetName) => {
+          const sheet = wb.Sheets[sheetName]
+          const html = XLSX.utils.sheet_to_html(sheet, { editable: false })
+          return { name: sheetName, html }
+        })
+        if (!cancelled) {
+          setSheets(sheetData)
+          setLoading(false)
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err))
+          setLoading(false)
+        }
+      })
+    return () => { cancelled = true }
+  }, [url])
+
+  if (error) {
+    return <FallbackViewer url={url} name={name} message={`Failed to render XLSX: ${error}`} />
+  }
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+  return (
+    <div className="w-full h-full flex flex-col bg-white text-black">
+      {sheets.length > 1 && (
+        <div className="flex gap-1 p-2 border-b border-gray-200 bg-gray-50 overflow-x-auto">
+          {sheets.map((sheet, index) => (
+            <button
+              key={sheet.name}
+              onClick={() => setActiveSheet(index)}
+              className={cn(
+                'px-3 py-1 text-xs rounded whitespace-nowrap',
+                index === activeSheet
+                  ? 'bg-white border border-gray-300 font-medium shadow-sm'
+                  : 'text-gray-600 hover:bg-gray-100',
+              )}
+            >
+              {sheet.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <div
+        className="flex-1 overflow-auto"
+        dangerouslySetInnerHTML={{ __html: sheets[activeSheet]?.html || '' }}
+      />
+    </div>
+  )
+}
+
+function EpubViewer({ url }: { url: string }) {
+  const viewerRef = useRef<HTMLDivElement>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    let rendition: import('epubjs').Rendition | null = null
+
+    async function init() {
+      if (cancelled || !viewerRef.current) return
+      const ePub = (await import('epubjs')).default
+      const book = ePub(url)
+      rendition = book.renderTo(viewerRef.current, { width: '100%', height: '100%' })
+      await rendition.display()
+      if (!cancelled) setLoading(false)
+    }
+
+    init().catch((err) => {
+      if (!cancelled) {
+        setError(err instanceof Error ? err.message : String(err))
+        setLoading(false)
+      }
+    })
+    return () => {
+      cancelled = true
+      if (rendition) rendition.destroy()
+    }
+  }, [url])
+
+  if (error) {
+    return <FallbackViewer url={url} name="" message={`Failed to render EPUB: ${error}`} />
+  }
+  return (
+    <div className="w-full h-full relative bg-white">
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        </div>
+      )}
+      <div ref={viewerRef} className="w-full h-full" />
+    </div>
+  )
+}
+
+function CsvViewer({ url, name }: { url: string; name: string }) {
+  const [rows, setRows] = useState<string[][]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(url)
+      .then((res) => res.text())
+      .then((text) => {
+        if (cancelled) return
+        setRows(parseCsv(text))
+        setLoading(false)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err))
+          setLoading(false)
+        }
+      })
+    return () => { cancelled = true }
+  }, [url])
+
+  if (error) {
+    return <FallbackViewer url={url} name={name} message={`Failed to render CSV: ${error}`} />
+  }
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+  return (
+    <div className="w-full h-full overflow-auto bg-white text-black">
+      <table className="border-collapse text-xs">
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex} className={rowIndex === 0 ? 'font-bold bg-gray-100 sticky top-0' : ''}>
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex} className="border border-gray-300 px-2 py-1 whitespace-nowrap">
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let field = ''
+  let inQuotes = false
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index]
+    if (inQuotes) {
+      if (character === '"') {
+        if (text[index + 1] === '"') {
+          field += '"'
+          index++
+        } else {
+          inQuotes = false
+        }
+      } else {
+        field += character
+      }
+    } else if (character === '"') {
+      inQuotes = true
+    } else if (character === ',') {
+      row.push(field)
+      field = ''
+    } else if (character === '\n') {
+      row.push(field)
+      rows.push(row)
+      row = []
+      field = ''
+    } else if (character !== '\r') {
+      field += character
+    }
+  }
+  if (field || row.length) {
+    row.push(field)
+    rows.push(row)
+  }
+  return rows
+}
+
+function HtmlViewer({ url }: { url: string }) {
+  return (
+    <iframe
+      src={url}
+      title="HTML preview"
+      className="w-full h-full border-0 bg-white"
+      sandbox="allow-same-origin"
+    />
+  )
+}
+
 // ---------------------------------------------------------------------------
 // STL viewer — Three.js + STLLoader with orbit controls
 // ---------------------------------------------------------------------------
@@ -192,7 +578,7 @@ function DocxViewer({ url, name }: { url: string; name: string }) {
 // 3D model viewer — Three.js with format-specific loaders
 //
 // STL and PLY loaders return BufferGeometry (wrapped in a Mesh with a default
-// material). 3MF, OBJ, and GLTF loaders return Object3D/Group (already
+// material). 3MF, OBJ, GLTF, Collada, and VRML loaders return Object3D/Group (already
 // materialized, added directly to the scene). The scene setup — renderer,
 // camera, lighting, auto-framing, orbit controls, animation loop, cleanup —
 // is shared across all formats.
@@ -244,6 +630,25 @@ async function loadModel(
         (resolve, reject) => new GLTFLoader().load(url, resolve, undefined, reject),
       )
       return gltf.scene
+    }
+    case 'dae': {
+      const { ColladaLoader } = await import('three/examples/jsm/loaders/ColladaLoader.js')
+      const collada = await new Promise<import('three/examples/jsm/loaders/ColladaLoader.js').Collada>(
+        (resolve, reject) => new ColladaLoader().load(
+          url,
+          (result) => result ? resolve(result) : reject(new Error('Failed to load Collada model')),
+          undefined,
+          reject,
+        ),
+      )
+      return collada.scene
+    }
+    case 'wrl':
+    case 'vrml': {
+      const { VRMLLoader } = await import('three/examples/jsm/loaders/VRMLLoader.js')
+      return new Promise<import('three').Object3D>((resolve, reject) =>
+        new VRMLLoader().load(url, resolve, undefined, reject),
+      )
     }
     default:
       throw new Error(`Unsupported 3D format: .${ext}`)

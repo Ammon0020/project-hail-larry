@@ -28,15 +28,15 @@ func (m *fileWorkspaceManager) FileTree(_ context.Context, _ string) ([]interfac
 	return nil, nil
 }
 
-func (m *fileWorkspaceManager) ReadFile(_ context.Context, _, relPath string) (string, int64, bool, error) {
+func (m *fileWorkspaceManager) ReadFile(_ context.Context, _, relPath string) (string, int64, bool, bool, error) {
 	if m.err != nil {
-		return "", 0, false, m.err
+		return "", 0, false, false, m.err
 	}
 	content, ok := m.files[relPath]
 	if !ok {
-		return "", 0, false, &fileNotFoundError{path: relPath}
+		return "", 0, false, false, &fileNotFoundError{path: relPath}
 	}
-	return content, 1, false, nil
+	return content, 1, false, false, nil
 }
 
 func (m *fileWorkspaceManager) Search(_ context.Context, _, _ string, _ search.Options) ([]search.Result, error) {
