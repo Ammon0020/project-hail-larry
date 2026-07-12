@@ -46,6 +46,42 @@ func (c *acpClientImpl) emitStreamUpdate(content string, thought bool) {
 	})
 }
 
+// emitToolStarted emits a ToolStarted event for the given tool call details.
+func (c *acpClientImpl) emitToolStarted(tool, toolKind, toolCallID, target, command, summary string) {
+	c.emit(interfaces.Event{
+		Type:       interfaces.EventToolStarted,
+		SessionID:  c.sessionID,
+		Tool:       tool,
+		ToolKind:   toolKind,
+		ToolCallID: toolCallID,
+		Target:     target,
+		Command:    command,
+		Summary:    summary,
+	})
+}
+
+// emitToolCompleted emits a ToolCompleted event for the given tool call update.
+func (c *acpClientImpl) emitToolCompleted(toolCallID, toolKind, target, summary, content string) {
+	c.emit(interfaces.Event{
+		Type:       interfaces.EventToolCompleted,
+		SessionID:  c.sessionID,
+		ToolCallID: toolCallID,
+		ToolKind:   toolKind,
+		Target:     target,
+		Summary:    summary,
+		Content:    content,
+	})
+}
+
+// emitPlanUpdated emits a PlanUpdated event with the rendered plan summary.
+func (c *acpClientImpl) emitPlanUpdated(content string) {
+	c.emit(interfaces.Event{
+		Type:      interfaces.EventPlanUpdated,
+		SessionID: c.sessionID,
+		Content:   content,
+	})
+}
+
 func (c *acpClientImpl) SessionUpdate(_ context.Context, params acp.SessionNotification) error {
 	u := params.Update
 	if c.callbacks == nil {
@@ -66,16 +102,14 @@ func (c *acpClientImpl) SessionUpdate(_ context.Context, params acp.SessionNotif
 		if len(u.ToolCall.Locations) > 0 {
 			target = u.ToolCall.Locations[0].Path
 		}
-		c.callbacks.OnEvent(interfaces.Event{
-			Type:       interfaces.EventToolStarted,
-			SessionID:  c.sessionID,
-			Tool:       u.ToolCall.Title,
-			ToolKind:   string(u.ToolCall.Kind),
-			ToolCallID: string(u.ToolCall.ToolCallId),
-			Target:     target,
-			Command:    rawInputString(u.ToolCall.RawInput),
-			Summary:    string(u.ToolCall.Status),
-		})
+		c.emitToolStarted(
+			u.ToolCall.Title,
+			string(u.ToolCall.Kind),
+			string(u.ToolCall.ToolCallId),
+			target,
+			rawInputString(u.ToolCall.RawInput),
+			string(u.ToolCall.Status),
+		)
 	case u.ToolCallUpdate != nil:
 		status := ""
 		if u.ToolCallUpdate.Status != nil {
@@ -104,21 +138,15 @@ func (c *acpClientImpl) SessionUpdate(_ context.Context, params acp.SessionNotif
 			isOutsideWorkspace(c.workspacePath, target) {
 			content = fmt.Sprintf("Read failed: path %q is outside the workspace root %q.", target, c.workspacePath)
 		}
-		c.callbacks.OnEvent(interfaces.Event{
-			Type:       interfaces.EventToolCompleted,
-			SessionID:  c.sessionID,
-			ToolCallID: string(u.ToolCallUpdate.ToolCallId),
-			ToolKind:   kind,
-			Target:     target,
-			Summary:    status,
-			Content:    content,
-		})
+		c.emitToolCompleted(
+			string(u.ToolCallUpdate.ToolCallId),
+			kind,
+			target,
+			status,
+			content,
+		)
 	case u.Plan != nil:
-		c.callbacks.OnEvent(interfaces.Event{
-			Type:      interfaces.EventPlanUpdated,
-			SessionID: c.sessionID,
-			Content:   planSummary(u.Plan.Entries),
-		})
+		c.emitPlanUpdated(planSummary(u.Plan.Entries))
 	case u.UserMessageChunk != nil:
 		// Usually already emitted by our side when the prompt was submitted.
 	}

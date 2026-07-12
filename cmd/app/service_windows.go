@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"golang.org/x/sys/windows/registry"
@@ -35,9 +34,9 @@ func installService(user bool) error {
 		return fmt.Errorf("system-wide install is not supported on Windows; use --user (the default)")
 	}
 
-	binary, err := os.Executable()
+	binary, err := resolveBinaryPath()
 	if err != nil {
-		return fmt.Errorf("resolve executable path: %w", err)
+		return err
 	}
 
 	// Open the user Run key for writing. HKCU does not require admin rights.

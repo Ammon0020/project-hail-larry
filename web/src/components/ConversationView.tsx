@@ -1,5 +1,6 @@
 import { ChevronDown, X } from 'lucide-react'
 import { ChatMessageItem } from './ChatMessageItem'
+import { Banner } from './ui/Banner'
 import type { AppEvent } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 
@@ -96,7 +97,10 @@ export function ConversationView({
           )
         })}
         {mcpConfigChanged && (
-          <div className="rounded-lg border border-primary/40 bg-primary/10 p-3 text-xs text-primary flex items-center justify-between gap-2">
+          <Banner
+            variant="success"
+            className="rounded-lg border p-3 flex items-center justify-between gap-2"
+          >
             <span>MCP config changed — restart to apply</span>
             <div className="flex items-center gap-2">
               {onRestartForMcp && (
@@ -117,12 +121,15 @@ export function ConversationView({
                 </button>
               )}
             </div>
-          </div>
+          </Banner>
         )}
         {error && (
-          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+          <Banner
+            variant="error"
+            className="rounded-lg border p-3"
+          >
             {error}
-          </div>
+          </Banner>
         )}
       </div>
 

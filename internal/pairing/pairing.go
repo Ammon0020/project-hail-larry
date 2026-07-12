@@ -290,38 +290,36 @@ func (m *Manager) CreateSession(host string, port int) (*PairingSession, error) 
 // whether no session matched or the session was used/expired, to avoid
 // enumerating active sessions.
 func (m *Manager) VerifyPasscode(passcode, deviceName string) (*DeviceCredential, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Sweep expired/used sessions on each verify so cleanup happens even when
-	// no new sessions are being created.
-	m.cleanupSessions()
-
-	if err := m.checkRateLimit(); err != nil {
-		return nil, err
-	}
-
-	session := m.findSession(func(s *PairingSession) bool {
-		// Constant-time comparison prevents timing leakage of the matching
-		// prefix of the passcode across many requests.
-		return subtle.ConstantTimeCompare([]byte(s.Passcode), []byte(passcode)) == 1
-	})
-	if session == nil {
-		m.recordFailure()
-		return nil, fmt.Errorf("invalid or expired passcode")
-	}
-	cred, err := m.issueCredential(session, deviceName)
-	if err != nil {
-		return nil, err
-	}
-	m.resetRateLimit()
-	return cred, nil
+	return m.verifyWithMatch(
+		func(s *PairingSession) bool {
+			// Constant-time comparison prevents timing leakage of the matching
+			// prefix of the passcode across many requests.
+			return subtle.ConstantTimeCompare([]byte(s.Passcode), []byte(passcode)) == 1
+		},
+		deviceName,
+		"invalid or expired passcode",
+	)
 }
 
 // VerifyToken validates a QR code token and issues a device credential. The
 // token must match an active, unused, non-expired pairing session. The same
 // rate limiting applied to VerifyPasscode applies here.
 func (m *Manager) VerifyToken(token, deviceName string) (*DeviceCredential, error) {
+	return m.verifyWithMatch(
+		func(s *PairingSession) bool {
+			// Constant-time comparison prevents timing leakage of the token.
+			return subtle.ConstantTimeCompare([]byte(s.Token), []byte(token)) == 1
+		},
+		deviceName,
+		"invalid or expired token",
+	)
+}
+
+// verifyWithMatch contains the shared verification flow for passcode and token
+// verification: cleanup, rate-limit check, session lookup via match, credential
+// issuance, and rate-limit reset. A generic error (errMsg) is returned on
+// lookup failure to avoid enumerating active sessions.
+func (m *Manager) verifyWithMatch(match func(*PairingSession) bool, deviceName, errMsg string) (*DeviceCredential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -333,13 +331,10 @@ func (m *Manager) VerifyToken(token, deviceName string) (*DeviceCredential, erro
 		return nil, err
 	}
 
-	session := m.findSession(func(s *PairingSession) bool {
-		// Constant-time comparison prevents timing leakage of the token.
-		return subtle.ConstantTimeCompare([]byte(s.Token), []byte(token)) == 1
-	})
+	session := m.findSession(match)
 	if session == nil {
 		m.recordFailure()
-		return nil, fmt.Errorf("invalid or expired token")
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 	cred, err := m.issueCredential(session, deviceName)
 	if err != nil {

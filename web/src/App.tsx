@@ -6,10 +6,13 @@ import { LeftSidebar } from '@/components/LeftSidebar'
 import { EditorPane } from '@/components/EditorPane'
 import { TabBar } from '@/components/TabBar'
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
+import { Banner } from '@/components/ui/Banner'
 import { cn } from '@/lib/utils'
 import { ChatPanel } from '@/components/ChatPanel'
 import { MobileNav } from '@/components/MobileNav'
 import { useBackend } from '@/hooks/useBackend'
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
+import { usePanelResize } from '@/hooks/usePanelResize'
 import type { EditorSelection } from '@/lib/api'
 import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Attachment, SessionStatus, Tab } from '@/types'
 
@@ -74,20 +77,29 @@ export default function App() {
   const LEFT_MAX = 480
   const RIGHT_MIN = 300
   const RIGHT_MAX = 700
-  const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
-    const stored = Number(localStorage.getItem('lai:leftPanelWidth'))
-    return Number.isFinite(stored) && stored >= LEFT_MIN && stored <= LEFT_MAX
-      ? stored
-      : 260
-  })
-  // Stashes the pre-hide width so Ctrl+B can restore the user's custom size
-  // instead of a hardcoded 260. A ref (not state) so toggling doesn't re-render.
-  const hiddenLeftWidthRef = useRef(260)
-  const [rightPanelWidth, setRightPanelWidth] = useState(() => {
-    const stored = Number(localStorage.getItem('lai:rightPanelWidth'))
-    return Number.isFinite(stored) && stored >= RIGHT_MIN && stored <= RIGHT_MAX
-      ? stored
-      : 420
+  const {
+    leftWidth: leftPanelWidth,
+    rightWidth: rightPanelWidth,
+    setLeftWidth: setLeftPanelWidth,
+    setRightWidth: setRightPanelWidth,
+    startLeftDrag,
+    startRightDrag,
+    hideLeftPanel,
+    showLeftPanel,
+    toggleLeftPanel,
+  } = usePanelResize({
+    left: {
+      initialWidth: 260,
+      minWidth: LEFT_MIN,
+      maxWidth: LEFT_MAX,
+      storageKey: 'lai:leftPanelWidth',
+    },
+    right: {
+      initialWidth: 420,
+      minWidth: RIGHT_MIN,
+      maxWidth: RIGHT_MAX,
+      storageKey: 'lai:rightPanelWidth',
+    },
   })
 
   // Tab state — restored from localStorage so open files survive a reload.
@@ -247,20 +259,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('lai:mobileView', mobileView)
   }, [mobileView])
-
-  // Persist panel widths so the resized layout survives a reload (Feature 2).
-  // Skip persisting when the left panel is hidden (width === 0) so localStorage
-  // always holds the last real width; otherwise the initializer's `>= LEFT_MIN`
-  // check would reject "0" and reset to the default, losing the custom width.
-  useEffect(() => {
-    if (leftPanelWidth > 0) {
-      localStorage.setItem('lai:leftPanelWidth', String(leftPanelWidth))
-    }
-  }, [leftPanelWidth])
-
-  useEffect(() => {
-    localStorage.setItem('lai:rightPanelWidth', String(rightPanelWidth))
-  }, [rightPanelWidth])
 
   // Clear the search-result line target after the editor has had a chance to
   // dispatch the jump. Using setTimeout(0) defers the clear to the next
@@ -437,57 +435,43 @@ export default function App() {
   // Registered on window so they work even when the CodeMirror editor isn't
   // focused. Ctrl+S is also handled inside CodeMirror (Prec.highest) for when
   // the editor IS focused — this is the fallback for when it isn't.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey
+  useKeyboardShortcuts((e) => {
+    const mod = e.ctrlKey || e.metaKey
 
-      // Ctrl+W — close active editor tab (prevent browser close).
-      if (mod && !e.shiftKey && e.key === 'w') {
-        e.preventDefault()
-        if (activeTabId) handleTabClose(activeTabId)
-        return
-      }
-
-      // Ctrl+S — save active file.
-      if (mod && !e.shiftKey && e.key === 's') {
-        e.preventDefault()
-        handleSave()
-        return
-      }
-
-      // Ctrl+Shift+F — switch to search panel.
-      if (mod && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
-        e.preventDefault()
-        setLeftPanel('search')
-        return
-      }
-
-      // Ctrl+Shift+E — switch to explorer/files panel.
-      if (mod && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
-        e.preventDefault()
-        setLeftPanel('files')
-        return
-      }
-
-      // Ctrl+B — toggle left sidebar visibility on desktop.
-      if (mod && !e.shiftKey && e.key === 'b') {
-        e.preventDefault()
-        setLeftPanelWidth((prev) => {
-          if (prev > 0) {
-            hiddenLeftWidthRef.current = prev
-            return 0
-          }
-          return hiddenLeftWidthRef.current ?? 260
-        })
-        return
-      }
+    // Ctrl+W — close active editor tab (prevent browser close).
+    if (mod && !e.shiftKey && e.key === 'w') {
+      e.preventDefault()
+      if (activeTabId) handleTabClose(activeTabId)
+      return
     }
 
-    window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
-    // handleSave and handleTabClose close over current openTabs/activeTabId,
-    // so they are intentionally refreshed on every tab/active change.
-  }, [activeTabId, openTabs, handleSave, handleTabClose])
+    // Ctrl+S — save active file.
+    if (mod && !e.shiftKey && e.key === 's') {
+      e.preventDefault()
+      handleSave()
+      return
+    }
+
+    // Ctrl+Shift+F — switch to search panel.
+    if (mod && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+      e.preventDefault()
+      setLeftPanel('search')
+      return
+    }
+
+    // Ctrl+Shift+E — switch to explorer/files panel.
+    if (mod && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
+      e.preventDefault()
+      setLeftPanel('files')
+      return
+    }
+
+    // Ctrl+B — toggle left sidebar visibility on desktop.
+    if (mod && !e.shiftKey && e.key === 'b') {
+      e.preventDefault()
+      toggleLeftPanel()
+    }
+  })
 
   // ---- Lock screen for unpaired devices ----
   if (!paired) {
@@ -615,43 +599,6 @@ export default function App() {
   const showEditor = isDesktop || mobileView === 'editor'
   const showChat = isDesktop || mobileView === 'chat'
 
-  /**
-   * Begins a panel-resize drag. Attaches window-level mousemove/mouseup
-   * listeners that update the width state and tear themselves down on
-   * release. The drag origin (startX/startWidth) is captured in the
-   * listener closures — no React state or refs are touched during the
-   * drag except the width setters (Feature 2).
-   */
-  const startPanelDrag = (side: 'left' | 'right') => (e: React.MouseEvent) => {
-    e.preventDefault()
-    const startX = e.clientX
-    const startWidth = side === 'left' ? leftPanelWidth : rightPanelWidth
-
-    const onMove = (ev: MouseEvent) => {
-      const delta = ev.clientX - startX
-      if (side === 'left') {
-        // Dragging the right edge rightward widens the left panel.
-        const next = Math.min(LEFT_MAX, Math.max(LEFT_MIN, startWidth + delta))
-        setLeftPanelWidth(next)
-      } else {
-        // Dragging the left edge leftward widens the right panel.
-        const next = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, startWidth - delta))
-        setRightPanelWidth(next)
-      }
-    }
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    // Lock cursor + selection so dragging feels smooth across the whole window.
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-  }
-
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background text-foreground font-sans selection:bg-primary/30">
       {/* Reconnecting banner — shown only after a prior successful connection
@@ -659,15 +606,23 @@ export default function App() {
           reconnecting, so the banner stays hidden on first load. The pulsing
           dot uses the animate-pulse utility; semantic tokens only. */}
       {backend.reconnecting && (
-        <div role="status" className="flex items-center gap-2 px-3 py-1.5 text-xs bg-muted text-muted-foreground border-b border-border shrink-0">
+        <Banner
+          variant="info"
+          role="status"
+          className="flex items-center gap-2 px-3 py-1.5 border-b shrink-0"
+        >
           <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/70 animate-pulse" />
           Reconnecting…
-        </div>
+        </Banner>
       )}
       {/* Save error banner — transient, dismissible. Shown when a save fails
           so the error isn't silent (previously only console.error'd). */}
       {saveError && (
-        <div role="alert" className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs bg-destructive/10 text-destructive border-b border-destructive/20 shrink-0">
+        <Banner
+          variant="error"
+          role="alert"
+          className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-destructive/20 shrink-0"
+        >
           <span className="truncate">Save failed: {saveError}</span>
           <button
             type="button"
@@ -677,7 +632,7 @@ export default function App() {
           >
             <X className="w-3.5 h-3.5" />
           </button>
-        </div>
+        </Banner>
       )}
       {/* Top Header Bar (Desktop only) */}
       {isDesktop && (
@@ -734,11 +689,10 @@ export default function App() {
           if (leftPanelWidth === 0) {
             // Sidebar is hidden — open it with the clicked panel.
             setLeftPanel(id)
-            setLeftPanelWidth(hiddenLeftWidthRef.current ?? 260)
+            showLeftPanel()
           } else if (leftPanel === id) {
             // Sidebar is open and clicking the already-active panel — close it (VS Code toggle).
-            hiddenLeftWidthRef.current = leftPanelWidth
-            setLeftPanelWidth(0)
+            hideLeftPanel()
           } else {
             // Sidebar is open and clicking a different panel — just switch.
             setLeftPanel(id)
@@ -774,7 +728,7 @@ export default function App() {
           aria-valuenow={leftPanelWidth}
           aria-valuemin={LEFT_MIN}
           aria-valuemax={LEFT_MAX}
-          onMouseDown={startPanelDrag('left')}
+          onMouseDown={startLeftDrag}
           onKeyDown={(e) => {
             if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
             e.preventDefault()
@@ -819,7 +773,7 @@ export default function App() {
           aria-valuenow={rightPanelWidth}
           aria-valuemin={RIGHT_MIN}
           aria-valuemax={RIGHT_MAX}
-          onMouseDown={startPanelDrag('right')}
+          onMouseDown={startRightDrag}
           onKeyDown={(e) => {
             if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
             e.preventDefault()

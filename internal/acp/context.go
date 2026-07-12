@@ -196,16 +196,17 @@ type FirstPromptContextMiddleware struct {
 // backed by the given workspace manager and system-message templates. If
 // messages is nil, DefaultSystemMessages is used.
 func NewFirstPromptContextMiddleware(wm interfaces.WorkspaceManager, messages *SystemMessages) *FirstPromptContextMiddleware {
-	if messages == nil {
-		messages = DefaultSystemMessages()
-	}
-	return &FirstPromptContextMiddleware{WorkspaceManager: wm, Messages: messages}
+	m := &FirstPromptContextMiddleware{WorkspaceManager: wm, Messages: messages}
+	m.ensureMessages()
+	return m
 }
 
-// messages returns the configured SystemMessages, falling back to defaults.
-func (m *FirstPromptContextMiddleware) messages() *SystemMessages {
+// ensureMessages returns the configured SystemMessages, falling back to
+// defaults. It memoizes the default so subsequent calls return the same
+// instance without re-checking nil.
+func (m *FirstPromptContextMiddleware) ensureMessages() *SystemMessages {
 	if m.Messages == nil {
-		return DefaultSystemMessages()
+		m.Messages = DefaultSystemMessages()
 	}
 	return m.Messages
 }
@@ -229,47 +230,64 @@ func (m *FirstPromptContextMiddleware) BeforePromptResources(ctx context.Context
 		return nil
 	}
 
-	sm := m.messages()
+	var resources []ContextResource
+	resources = append(resources, m.buildWorkspaceContext(ctx, pc)...)
+	resources = append(resources, m.loadAgentsMD(ctx, pc)...)
+	return resources
+}
+
+// buildWorkspaceContext provides the workspace header, file tree, and git
+// status as a single context://workspace resource.
+func (m *FirstPromptContextMiddleware) buildWorkspaceContext(ctx context.Context, pc *PromptContext) []ContextResource {
+	sm := m.ensureMessages()
 
 	// Workspace bundle: header + file tree + git status (NOT AGENTS.md, which
 	// gets its own resource below so the agent can address it by file URI).
 	var b strings.Builder
 	m.writeHeader(&b, pc, sm)
 	m.writeFileTree(ctx, &b, pc, sm)
-	m.writeGitStatus(&b, pc, sm)
+	b.WriteString(m.buildGitStatus(ctx, pc).Text)
 	bundle := strings.TrimSpace(b.String())
-
-	var resources []ContextResource
-	if bundle != "" {
-		if len(bundle) > sm.MaxContextBytes {
-			bundle = bundle[:sm.MaxContextBytes]
-		}
-		resources = append(resources, ContextResource{
-			URI:      workspaceContextURI,
-			MimeType: contextMimeType,
-			Name:     workspaceContextName,
-			Text:     bundle,
-		})
+	if bundle == "" {
+		return nil
+	}
+	if len(bundle) > sm.MaxContextBytes {
+		bundle = bundle[:sm.MaxContextBytes]
 	}
 
+	return []ContextResource{{
+		URI:      workspaceContextURI,
+		MimeType: contextMimeType,
+		Name:     workspaceContextName,
+		Text:     bundle,
+	}}
+}
+
+// loadAgentsMD provides AGENTS.md as its own resource with a real file URI
+// when the file is present in the workspace.
+func (m *FirstPromptContextMiddleware) loadAgentsMD(_ context.Context, pc *PromptContext) []ContextResource {
+	if pc.WorkspacePath == "" {
+		return nil
+	}
+
+	sm := m.ensureMessages()
 	// AGENTS.md as its own resource with a real file URI.
-	if pc.WorkspacePath != "" {
-		path := filepath.Join(pc.WorkspacePath, agentsMDFilename)
-		if data, err := os.ReadFile(path); err == nil { //nolint:gosec // path is built from the registered workspace root.
-			text := string(data)
-			if len(text) > sm.MaxContextBytes {
-				text = text[:sm.MaxContextBytes]
-			}
-			resources = append(resources, ContextResource{
-				URI:      "file://" + filepath.ToSlash(path),
-				MimeType: contextMimeType,
-				Name:     agentsMDFilename,
-				Text:     text,
-			})
-		}
+	path := filepath.Join(pc.WorkspacePath, agentsMDFilename)
+	data, err := os.ReadFile(path) //nolint:gosec // path is built from the registered workspace root.
+	if err != nil {
+		return nil
+	}
+	text := string(data)
+	if len(text) > sm.MaxContextBytes {
+		text = text[:sm.MaxContextBytes]
 	}
 
-	return resources
+	return []ContextResource{{
+		URI:      "file://" + filepath.ToSlash(path),
+		MimeType: contextMimeType,
+		Name:     agentsMDFilename,
+		Text:     text,
+	}}
 }
 
 // writeHeader emits the workspace root path and OS/platform string.
@@ -313,25 +331,29 @@ func (m *FirstPromptContextMiddleware) writeFileTree(ctx context.Context, b *str
 	}
 }
 
-// writeGitStatus appends branch, clean/dirty summary, and the last 5 commits.
+// buildGitStatus provides branch, clean/dirty summary, and the last 5 commits.
 // It degrades gracefully (omits the section) if the workspace is not a git
 // repo or git is unavailable.
-func (m *FirstPromptContextMiddleware) writeGitStatus(b *strings.Builder, pc *PromptContext, sm *SystemMessages) {
+func (m *FirstPromptContextMiddleware) buildGitStatus(_ context.Context, pc *PromptContext) ContextResource {
 	if pc.WorkspacePath == "" {
-		return
+		return ContextResource{}
 	}
 	statusOut := runGit(pc.WorkspacePath, "status", "--short", "-b")
 	if statusOut == "" {
 		// Not a git repo or git missing — omit the section gracefully.
-		return
+		return ContextResource{}
 	}
 	logOut := runGit(pc.WorkspacePath, "log", "-5", "--oneline")
 
-	fmt.Fprintf(b, "\n%s\n\n", sm.GitHeader)
-	fmt.Fprintf(b, "```\n%s```\n", strings.TrimSpace(statusOut))
+	sm := m.ensureMessages()
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n%s\n\n", sm.GitHeader)
+	fmt.Fprintf(&b, "```\n%s```\n", strings.TrimSpace(statusOut))
 	if logOut != "" {
-		fmt.Fprintf(b, "\nRecent commits:\n```\n%s```\n", strings.TrimSpace(logOut))
+		fmt.Fprintf(&b, "\nRecent commits:\n```\n%s```\n", strings.TrimSpace(logOut))
 	}
+
+	return ContextResource{Text: b.String()}
 }
 
 // flattenFileNodes walks the recursive FileNode tree depth-first and returns a

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, getDeviceCredential, type AppEvent, type WorkspaceInfo, type FileNode, type AgentInfo, type SessionInfo, type DeviceCredential, type PendingPermission, type UploadResult, type EditorSelection } from '@/lib/api'
-import type { Attachment } from '@/types'
+import { api, getDeviceCredential, type AppEvent, type WorkspaceInfo, type FileNode, type DeviceCredential, type PendingPermission, type UploadResult, type EditorSelection } from '@/lib/api'
+import type { Attachment, Agent, Session } from '@/types'
 
 /**
  * Upper bound on how many events we keep in memory at once. The in-memory
@@ -35,8 +35,8 @@ export function useBackend() {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceInfo | null>(null)
   const [fileTree, setFileTree] = useState<FileNode[]>([])
-  const [agents, setAgents] = useState<AgentInfo[]>([])
-  const [sessions, setSessions] = useState<SessionInfo[]>([])
+  const [agents, setAgents] = useState<Agent[]>([])
+  const [sessions, setSessions] = useState<Session[]>([])
   const [events, setEvents] = useState<AppEvent[]>([])
   const [devices, setDevices] = useState<DeviceCredential[]>([])
   const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([])
@@ -352,7 +352,7 @@ export function useBackend() {
     }
   }
 
-  async function addAgent(agent: AgentInfo) {
+  async function addAgent(agent: Agent) {
     await api.addAgent(agent)
     await loadAgents()
   }

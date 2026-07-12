@@ -60,18 +60,24 @@ type TimeMiddleware struct {
 // NewTimeMiddleware constructs a TimeMiddleware using the given templates. If
 // messages is nil, DefaultSystemMessages is used.
 func NewTimeMiddleware(messages *SystemMessages) *TimeMiddleware {
-	if messages == nil {
-		messages = DefaultSystemMessages()
+	m := &TimeMiddleware{Messages: messages}
+	m.ensureMessages()
+	return m
+}
+
+// ensureMessages returns the configured SystemMessages, falling back to
+// defaults. It memoizes the default so subsequent calls return the same
+// instance without re-checking nil.
+func (m *TimeMiddleware) ensureMessages() *SystemMessages {
+	if m.Messages == nil {
+		m.Messages = DefaultSystemMessages()
 	}
-	return &TimeMiddleware{Messages: messages}
+	return m.Messages
 }
 
 // BeforePrompt implements PromptMiddleware. It always injects the current time.
 func (m *TimeMiddleware) BeforePrompt(_ context.Context, _ *PromptContext) (PromptAction, string) {
-	sm := m.Messages
-	if sm == nil {
-		sm = DefaultSystemMessages()
-	}
+	sm := m.ensureMessages()
 	now := nowFunc()
 	// ISO 8601 with timezone, e.g. "2026-06-27T15:04:05-07:00".
 	body := fmt.Sprintf("%s\n\n%s", sm.TimeHeader, now.Format(time.RFC3339))
@@ -89,10 +95,19 @@ type OpenFilesMiddleware struct {
 // NewOpenFilesMiddleware constructs an OpenFilesMiddleware backed by the given
 // provider and templates. If messages is nil, DefaultSystemMessages is used.
 func NewOpenFilesMiddleware(provider OpenFilesProvider, messages *SystemMessages) *OpenFilesMiddleware {
-	if messages == nil {
-		messages = DefaultSystemMessages()
+	m := &OpenFilesMiddleware{Provider: provider, Messages: messages}
+	m.ensureMessages()
+	return m
+}
+
+// ensureMessages returns the configured SystemMessages, falling back to
+// defaults. It memoizes the default so subsequent calls return the same
+// instance without re-checking nil.
+func (m *OpenFilesMiddleware) ensureMessages() *SystemMessages {
+	if m.Messages == nil {
+		m.Messages = DefaultSystemMessages()
 	}
-	return &OpenFilesMiddleware{Provider: provider, Messages: messages}
+	return m.Messages
 }
 
 // BeforePrompt implements PromptMiddleware. It injects the open-file list when
@@ -101,10 +116,7 @@ func (m *OpenFilesMiddleware) BeforePrompt(_ context.Context, _ *PromptContext) 
 	if m.Provider == nil {
 		return ActionContinue, ""
 	}
-	sm := m.Messages
-	if sm == nil {
-		sm = DefaultSystemMessages()
-	}
+	sm := m.ensureMessages()
 	paths := capPaths(m.Provider.OpenFiles(), sm.MaxOpenFiles)
 	if len(paths) == 0 {
 		return ActionContinue, ""
@@ -129,10 +141,19 @@ type RecentEditsMiddleware struct {
 // given provider and templates. If messages is nil, DefaultSystemMessages is
 // used.
 func NewRecentEditsMiddleware(provider OpenFilesProvider, messages *SystemMessages) *RecentEditsMiddleware {
-	if messages == nil {
-		messages = DefaultSystemMessages()
+	m := &RecentEditsMiddleware{Provider: provider, Messages: messages}
+	m.ensureMessages()
+	return m
+}
+
+// ensureMessages returns the configured SystemMessages, falling back to
+// defaults. It memoizes the default so subsequent calls return the same
+// instance without re-checking nil.
+func (m *RecentEditsMiddleware) ensureMessages() *SystemMessages {
+	if m.Messages == nil {
+		m.Messages = DefaultSystemMessages()
 	}
-	return &RecentEditsMiddleware{Provider: provider, Messages: messages}
+	return m.Messages
 }
 
 // BeforePrompt implements PromptMiddleware. It injects the recent-edits list
@@ -141,10 +162,7 @@ func (m *RecentEditsMiddleware) BeforePrompt(_ context.Context, _ *PromptContext
 	if m.Provider == nil {
 		return ActionContinue, ""
 	}
-	sm := m.Messages
-	if sm == nil {
-		sm = DefaultSystemMessages()
-	}
+	sm := m.ensureMessages()
 	paths := capPaths(m.Provider.RecentEdits(), sm.MaxRecentEdits)
 	if len(paths) == 0 {
 		return ActionContinue, ""
@@ -191,10 +209,19 @@ type OpenFilesResourceMiddleware struct {
 // backed by the given tracker, workspace manager, and templates. If messages
 // is nil, DefaultSystemMessages is used.
 func NewOpenFilesResourceMiddleware(tracker *OpenFilesTracker, wm interfaces.WorkspaceManager, messages *SystemMessages) *OpenFilesResourceMiddleware {
-	if messages == nil {
-		messages = DefaultSystemMessages()
+	m := &OpenFilesResourceMiddleware{Tracker: tracker, Workspace: wm, Messages: messages}
+	m.ensureMessages()
+	return m
+}
+
+// ensureMessages returns the configured SystemMessages, falling back to
+// defaults. It memoizes the default so subsequent calls return the same
+// instance without re-checking nil.
+func (m *OpenFilesResourceMiddleware) ensureMessages() *SystemMessages {
+	if m.Messages == nil {
+		m.Messages = DefaultSystemMessages()
 	}
-	return &OpenFilesResourceMiddleware{Tracker: tracker, Workspace: wm, Messages: messages}
+	return m.Messages
 }
 
 // BeforePrompt implements PromptMiddleware. This middleware contributes only
@@ -211,10 +238,7 @@ func (m *OpenFilesResourceMiddleware) BeforePromptResources(ctx context.Context,
 	if m.Tracker == nil || m.Workspace == nil {
 		return nil
 	}
-	sm := m.Messages
-	if sm == nil {
-		sm = DefaultSystemMessages()
-	}
+	sm := m.ensureMessages()
 	paths := capPaths(m.Tracker.OpenFiles(), sm.MaxOpenFiles)
 	if len(paths) == 0 && pc.WorkspaceID == "" {
 		// No open files and (without a workspace) no way to resolve a

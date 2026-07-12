@@ -2,7 +2,6 @@
   "permissions": {
     "allow": [
       "Read(**)",
-      "Exec(git)",
       "Exec(go build)",
       "Exec(go test)",
       "Exec(go vet)",

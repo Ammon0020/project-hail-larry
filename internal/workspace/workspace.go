@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/adama/local-agent/internal/interfaces"
+	"github.com/adama/local-agent/internal/pathutil"
 	"github.com/adama/local-agent/internal/search"
 )
 
@@ -441,22 +442,12 @@ func buildFileTree(root, relPath string, depth int, nodeCount *int) ([]interface
 // os.ReadFile and os.WriteFile follow symlinks, so the lexical check alone is
 // not sufficient.
 func safeJoin(root, relPath string) (string, error) {
-	// Clean the relative path to remove any redundant components.
-	cleanRel := filepath.Clean(relPath)
-	if filepath.IsAbs(cleanRel) {
-		return "", fmt.Errorf("path %q is outside the workspace root %q", relPath, root)
-	}
-	// Reject only a real ".." path component, not a filename like "..foo".
-	for _, part := range strings.Split(filepath.ToSlash(cleanRel), "/") {
-		if part == ".." {
-			return "", fmt.Errorf("path %q is outside the workspace root %q", relPath, root)
-		}
-	}
-
-	fullPath := filepath.Join(root, cleanRel)
-
-	// Verify the result is still within the workspace root.
-	if !strings.HasPrefix(fullPath, filepath.Clean(root)+string(filepath.Separator)) && fullPath != filepath.Clean(root) {
+	// Delegate the core lexical traversal checks (clean, reject absolute,
+	// reject ".." components, containment) to pathutil.SafeJoin. The shared
+	// helper returns a generic traversal error; reformat it to the
+	// workspace-specific message so callers see consistent diagnostics.
+	fullPath, err := pathutil.SafeJoin(root, relPath)
+	if err != nil {
 		return "", fmt.Errorf("path %q is outside the workspace root %q", relPath, root)
 	}
 

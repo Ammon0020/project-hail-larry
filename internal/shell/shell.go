@@ -111,33 +111,7 @@ func (e *Executor) Run(ctx context.Context, command string) (Result, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
-
-	result := Result{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: 0,
-	}
-
-	if err != nil {
-		// Try to extract the exit code.
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// Command ran but exited non-zero or was killed by a signal.
-			// Report the exit code and, on Unix, the terminating signal.
-			result.ExitCode = exitErr.ExitCode()
-			result.Signal = exitSignal(exitErr)
-			return result, nil
-		}
-		// Command failed to start or the context was cancelled. Surface the
-		// real error so callers can distinguish "could not run at all" from
-		// "ran and exited non-zero".
-		result.ExitCode = -1
-		result.Stderr += "\n" + err.Error()
-		return result, err
-	}
-
-	return result, nil
+	return buildResult(cmd.Run(), stdout.String(), stderr.String())
 }
 
 // RunAsync executes a command and streams output via the provided callbacks.
@@ -190,16 +164,25 @@ func (e *Executor) RunAsync(ctx context.Context, command string, onStdout, onStd
 	// final buffered writes may still be in flight without this barrier.
 	wg.Wait()
 
+	return buildResult(err, stdoutBuf.String(), stderrBuf.String())
+}
+
+// buildResult constructs a Result from captured stdout/stderr and the error
+// returned by cmd.Run() or cmd.Wait(). A non-nil err that is an *exec.ExitError
+// is treated as a normal non-zero exit (exit code + signal extracted, error
+// cleared); other errors (start failure, context cancellation) are surfaced
+// with ExitCode -1 and appended to stderr.
+func buildResult(err error, stdout, stderr string) (Result, error) {
 	result := Result{
-		Stdout:   stdoutBuf.String(),
-		Stderr:   stderrBuf.String(),
+		Stdout:   stdout,
+		Stderr:   stderr,
 		ExitCode: 0,
 	}
-
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			// Command ran but exited non-zero or was killed by a signal.
+			// Report the exit code and, on Unix, the terminating signal.
 			result.ExitCode = exitErr.ExitCode()
 			result.Signal = exitSignal(exitErr)
 			return result, nil
@@ -211,7 +194,6 @@ func (e *Executor) RunAsync(ctx context.Context, command string, onStdout, onStd
 		result.Stderr += "\n" + err.Error()
 		return result, err
 	}
-
 	return result, nil
 }
 

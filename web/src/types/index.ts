@@ -54,6 +54,15 @@ export interface Agent {
   id: string
   name: string
   models: AgentModel[]
+  /** Command executable used to launch the agent process. Present on agents
+   *  returned by the backend; optional because the UI subset (id/name/models)
+   *  is all most components need. */
+  command?: string
+  /** Args passed to the agent command. Present on backend responses; not
+   *  used directly by the UI. */
+  args?: string[]
+  /** Backend warning (e.g. agent not found on PATH). Surfaced in SettingsPanel. */
+  warning?: string
 }
 
 /** A model offered by a registered agent. */
@@ -77,20 +86,17 @@ export type SessionStatus =
 export interface Session {
   id: string
   name: string
-  time: string
+  /** Human-readable relative timestamp (e.g. "2m ago"). Kept for backward
+   *  compat with mock data; the backend sends `updatedAt` instead. */
+  time?: string
+  /** ISO timestamp of the last session update, sent by the backend. Preferred
+   *  over `time` for sorting and display. */
+  updatedAt?: string
   status: SessionStatus
   active?: boolean
   agentId?: string
   modelId?: string
   workspace?: string
-}
-
-/** A paired device (Blueprint Sec 19 — device pairing). */
-export interface PairedDevice {
-  id: string
-  name: string
-  icon: string
-  pairedAt: string
 }
 
 /** An image (or other file) attached to a prompt or event. The `uri` is

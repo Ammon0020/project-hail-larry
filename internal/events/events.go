@@ -295,28 +295,10 @@ func (s *Store) Prune(maxRows int) (int64, error) {
 	// Keep the newest maxRows events by id and delete the rest. The subquery
 	// is the exact form requested in the finding; SQLite handles the NOT IN
 	// against the primary key efficiently.
-	res, err := s.db.Exec(
+	return s.pruneWithQuery("prune by row count",
 		"DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT ?)",
 		maxRows,
 	)
-	if err != nil {
-		return 0, fmt.Errorf("events: prune by row count: %w", err)
-	}
-
-	deleted, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("events: prune rows affected: %w", err)
-	}
-
-	if deleted > 0 {
-		if err := s.incrementalVacuum(); err != nil {
-			// Vacuum failure is non-fatal — the rows are already gone, we
-			// just couldn't hand pages back to the OS yet. Log via the error
-			// chain so callers can observe it.
-			return deleted, fmt.Errorf("events: prune succeeded but vacuum failed: %w", err)
-		}
-	}
-	return deleted, nil
 }
 
 // PruneOlderThan deletes events whose timestamp is older than maxAge measured
@@ -328,22 +310,32 @@ func (s *Store) PruneOlderThan(maxAge time.Duration) (int64, error) {
 	}
 
 	cutoff := time.Now().UTC().Add(-maxAge)
-	res, err := s.db.Exec(
+	return s.pruneWithQuery("prune by age",
 		"DELETE FROM events WHERE timestamp < ?",
 		cutoff,
 	)
+}
+
+// pruneWithQuery executes a DELETE query and returns the number of rows deleted.
+// label is used in error messages to identify the prune operation. If rows are
+// deleted, incrementalVacuum is called to reclaim freed pages.
+func (s *Store) pruneWithQuery(label, query string, args ...any) (int64, error) {
+	res, err := s.db.Exec(query, args...)
 	if err != nil {
-		return 0, fmt.Errorf("events: prune by age: %w", err)
+		return 0, fmt.Errorf("events: %s: %w", label, err)
 	}
 
 	deleted, err := res.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("events: prune by age rows affected: %w", err)
+		return 0, fmt.Errorf("events: %s rows affected: %w", label, err)
 	}
 
 	if deleted > 0 {
 		if err := s.incrementalVacuum(); err != nil {
-			return deleted, fmt.Errorf("events: prune by age succeeded but vacuum failed: %w", err)
+			// Vacuum failure is non-fatal — the rows are already gone, we
+			// just couldn't hand pages back to the OS yet. Log via the error
+			// chain so callers can observe it.
+			return deleted, fmt.Errorf("events: %s succeeded but vacuum failed: %w", label, err)
 		}
 	}
 	return deleted, nil

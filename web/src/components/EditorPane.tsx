@@ -18,7 +18,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { TabBar } from './TabBar'
-import type { AgentInfo } from '@/lib/api'
+import type { Agent } from '@/types'
 import type { Extension } from '@codemirror/state'
 import type { LanguageSupport } from '@codemirror/language'
 import type { Tab } from '@/types'
@@ -68,10 +68,10 @@ export function EditorPane({
   /** Props for the SettingsPanel, rendered when the active tab has
    *  kind === 'settings'. Passed through from App.tsx. */
   settingsProps?: {
-    agents: AgentInfo[]
-    onAddAgent: (a: AgentInfo) => Promise<void>
+    agents: Agent[]
+    onAddAgent: (a: Agent) => Promise<void>
     onDeleteAgent: (id: string) => Promise<void>
-    onAutodetect: () => Promise<AgentInfo[]>
+    onAutodetect: () => Promise<Agent[]>
     /** Id of the active chat session, or null when none is open. Threaded
      *  through to the Providers (advanced) section of SettingsPanel. */
     activeSessionId?: string | null

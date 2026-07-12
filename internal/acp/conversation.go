@@ -174,13 +174,22 @@ type conversationTransfer struct {
 // ConversationTransferMiddleware backed by the given system-message templates.
 // If messages is nil, DefaultSystemMessages is used.
 func NewConversationTransferMiddleware(messages *SystemMessages) *ConversationTransferMiddleware {
-	if messages == nil {
-		messages = DefaultSystemMessages()
-	}
-	return &ConversationTransferMiddleware{
+	m := &ConversationTransferMiddleware{
 		Messages:  messages,
 		transfers: make(map[string]conversationTransfer),
 	}
+	m.ensureMessages()
+	return m
+}
+
+// ensureMessages returns the configured SystemMessages, falling back to
+// defaults. It memoizes the default so subsequent calls return the same
+// instance without re-checking nil.
+func (m *ConversationTransferMiddleware) ensureMessages() *SystemMessages {
+	if m.Messages == nil {
+		m.Messages = DefaultSystemMessages()
+	}
+	return m.Messages
 }
 
 // SetTransfer queues a conversation transcript for injection into the next
@@ -216,10 +225,7 @@ func (m *ConversationTransferMiddleware) BeforePrompt(_ context.Context, pc *Pro
 		return ActionContinue, ""
 	}
 
-	sm := m.Messages
-	if sm == nil {
-		sm = DefaultSystemMessages()
-	}
+	sm := m.ensureMessages()
 	header := sm.Render(sm.ConversationTransferHeader, map[string]string{
 		"agentName": transfer.FromAgentName,
 	})

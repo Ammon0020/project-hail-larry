@@ -113,6 +113,17 @@ func newUninstallServiceCommand() *cobra.Command {
 	return cmd
 }
 
+// resolveBinaryPath returns the absolute path to the running executable, used
+// when registering the daemon as a system service so the service file points at
+// the same binary the user invoked.
+func resolveBinaryPath() (string, error) {
+	binary, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve executable path: %w", err)
+	}
+	return binary, nil
+}
+
 func newStartCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",
@@ -302,7 +313,7 @@ func newPairCommand() *cobra.Command {
 }
 
 func runPair(cmd *cobra.Command, _ []string) error {
-	cfg, err := loadRunningConfig()
+	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -318,22 +329,11 @@ func runPair(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("marshal pairing request: %w", err)
 	}
 
-	resp, err := localHTTPClient(cfg).Post(localAPIURL(cfg, "/api/pair/initiate"), "application/json", bytes.NewReader(body))
+	session, err := callAPI[pairingSession](cfg, http.MethodPost, "/api/pair/initiate", bytes.NewReader(body), "pairing failed")
 	if err != nil {
-		return fmt.Errorf("call pairing API: %w", err)
+		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return statusError(resp, "pairing failed")
-	}
-
-	var session pairingSession
-	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
-		return fmt.Errorf("decode pairing response: %w", err)
-	}
-
-	return writePairingSession(cmd.OutOrStdout(), session)
+	return writePairingSession(cmd.OutOrStdout(), *session)
 }
 
 func newStopCommand() *cobra.Command {
@@ -368,30 +368,11 @@ func runDevices(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	pid, err := daemon.IsRunning(cfg.DataDir)
+	devices, err := callAPI[[]pairedDevice](cfg, http.MethodGet, "/api/devices", nil, "list devices failed")
 	if err != nil {
-		return fmt.Errorf("check daemon: %w", err)
+		return err
 	}
-	if pid == 0 {
-		return writeln(cmd.OutOrStdout(), "Daemon is not running. Start it with 'app start'.")
-	}
-
-	resp, err := localHTTPClient(cfg).Get(localAPIURL(cfg, "/api/devices"))
-	if err != nil {
-		return fmt.Errorf("call devices API: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return statusError(resp, "list devices failed")
-	}
-
-	var devices []pairedDevice
-	if err := json.NewDecoder(resp.Body).Decode(&devices); err != nil {
-		return fmt.Errorf("decode devices response: %w", err)
-	}
-
-	return writeDevices(cmd.OutOrStdout(), devices)
+	return writeDevices(cmd.OutOrStdout(), *devices)
 }
 
 func newRevokeCommand() *cobra.Command {
@@ -404,27 +385,15 @@ func newRevokeCommand() *cobra.Command {
 }
 
 func runRevoke(cmd *cobra.Command, args []string) error {
-	cfg, err := loadRunningConfig()
+	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
 
 	deviceID := args[0]
-	req, err := http.NewRequest(http.MethodDelete, localAPIURL(cfg, "/api/devices/"+deviceID), nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+	if _, err := callAPI[struct{}](cfg, http.MethodDelete, "/api/devices/"+deviceID, nil, "revoke failed"); err != nil {
+		return err
 	}
-
-	resp, err := localHTTPClient(cfg).Do(req)
-	if err != nil {
-		return fmt.Errorf("call revoke API: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return statusError(resp, "revoke failed")
-	}
-
 	return writef(cmd.OutOrStdout(), "Device %s revoked.\n", deviceID)
 }
 
@@ -600,6 +569,37 @@ func statusError(resp *http.Response, prefix string) error {
 		return fmt.Errorf("%s (HTTP %d): read response body: %w", prefix, resp.StatusCode, err)
 	}
 	return fmt.Errorf("%s (HTTP %d): %s", prefix, resp.StatusCode, string(body))
+}
+
+// callAPI makes an HTTP request to the local daemon API and decodes the JSON
+// response into a value of type T. It verifies the daemon is running, builds
+// the request from method/path/body (setting Content-Type: application/json
+// when a body is supplied), and returns a statusError when the response is not
+// 200 OK. errMsg prefixes the HTTP-call and status errors.
+func callAPI[T any](cfg *config.Config, method, path string, body io.Reader, errMsg string) (*T, error) {
+	if err := requireDaemonRunning(cfg.DataDir); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(method, localAPIURL(cfg, path), body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := localHTTPClient(cfg).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", errMsg, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, statusError(resp, errMsg)
+	}
+	var result T
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &result, nil
 }
 
 func writeStatus(w io.Writer, cfg *config.Config, pid int) error {

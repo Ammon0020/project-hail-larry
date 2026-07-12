@@ -669,46 +669,41 @@ func findModelConfigID(opts []acp.SessionConfigOption, knownModels []AgentModel)
 		known[m.ID] = struct{}{}
 	}
 
-	// Pass 1: explicit category match (spec-preferred).
-	for _, opt := range opts {
-		if opt.Select == nil || opt.Select.Category == nil {
-			continue
-		}
-		if *opt.Select.Category == acp.SessionConfigOptionCategoryModel {
-			return string(opt.Select.Id)
-		}
+	// modelMatcher defines a single priority-ordered match strategy. Each
+	// matcher is tried in sequence over all config options; the first option
+	// that matches wins. needsKnown indicates the matcher requires the known
+	// model-ID set (only the value-match fallback does).
+	type modelMatcher struct {
+		matches    func(opt acp.SessionConfigOption) bool
+		needsKnown bool
 	}
-	// Pass 2: conventional id "model".
-	for _, opt := range opts {
-		if opt.Select == nil {
-			continue
-		}
-		if string(opt.Select.Id) == modelConfigCategory {
-			return string(opt.Select.Id)
-		}
-	}
-	// Pass 3: name contains "model" (case-insensitive).
-	for _, opt := range opts {
-		if opt.Select == nil {
-			continue
-		}
-		if strings.Contains(strings.ToLower(opt.Select.Name), "model") {
-			return string(opt.Select.Id)
-		}
-	}
-	// Pass 4: current value or any option value matches a known model ID.
-	if len(known) > 0 {
-		for _, opt := range opts {
+
+	matchers := []modelMatcher{
+		// Pass 1: explicit category match (spec-preferred).
+		{matches: func(opt acp.SessionConfigOption) bool {
+			return opt.Select != nil && opt.Select.Category != nil &&
+				*opt.Select.Category == acp.SessionConfigOptionCategoryModel
+		}},
+		// Pass 2: conventional id "model".
+		{matches: func(opt acp.SessionConfigOption) bool {
+			return opt.Select != nil && string(opt.Select.Id) == modelConfigCategory
+		}},
+		// Pass 3: name contains "model" (case-insensitive).
+		{matches: func(opt acp.SessionConfigOption) bool {
+			return opt.Select != nil && strings.Contains(strings.ToLower(opt.Select.Name), "model")
+		}},
+		// Pass 4: current value or any option value matches a known model ID.
+		{matches: func(opt acp.SessionConfigOption) bool {
 			if opt.Select == nil {
-				continue
+				return false
 			}
 			if _, ok := known[string(opt.Select.CurrentValue)]; ok {
-				return string(opt.Select.Id)
+				return true
 			}
 			if opt.Select.Options.Ungrouped != nil {
 				for _, v := range *opt.Select.Options.Ungrouped {
 					if _, ok := known[string(v.Value)]; ok {
-						return string(opt.Select.Id)
+						return true
 					}
 				}
 			}
@@ -716,10 +711,22 @@ func findModelConfigID(opts []acp.SessionConfigOption, knownModels []AgentModel)
 				for _, g := range *opt.Select.Options.Grouped {
 					for _, v := range g.Options {
 						if _, ok := known[string(v.Value)]; ok {
-							return string(opt.Select.Id)
+							return true
 						}
 					}
 				}
+			}
+			return false
+		}, needsKnown: true},
+	}
+
+	for _, matcher := range matchers {
+		if matcher.needsKnown && len(known) == 0 {
+			continue
+		}
+		for _, opt := range opts {
+			if matcher.matches(opt) {
+				return string(opt.Select.Id)
 			}
 		}
 	}
@@ -742,18 +749,49 @@ func sessionExists(sessions []acp.SessionInfo, acpSessionID string) bool {
 // Response chunks arrive asynchronously via acpClientImpl.SessionUpdate.
 func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, attachments []interfaces.Attachment) error {
 	c.mu.Lock()
-	session, ok := c.sessions[sessionID]
-	if !ok {
+	session, err := c.validatePromptSession(sessionID)
+	if err != nil {
 		c.mu.Unlock()
-		return fmt.Errorf("session not found: %s", sessionID)
+		return err
 	}
 
+	callbacks, pipeline, err := c.preparePromptSessionLocked(ctx, session, sessionID, content)
+	c.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
+	finalContent, resources := c.runPromptPipeline(ctx, pipeline, session, sessionID, content)
+	c.emitPromptSubmitted(callbacks, sessionID, finalContent, attachments)
+	c.startPromptGoroutine(ctx, callbacks, session, sessionID, finalContent, resources, attachments)
+
+	return nil
+}
+
+// validatePromptSession looks up the session that will receive a prompt. The
+// caller must hold c.mu.
+func (c *Client) validatePromptSession(sessionID string) (*Session, error) {
+	session, ok := c.sessions[sessionID]
+	if !ok {
+		return nil, fmt.Errorf("session not found: %s", sessionID)
+	}
+	return session, nil
+}
+
+// preparePromptSessionLocked ensures the session has a live transport and
+// records its running state before the prompt pipeline starts. The caller must
+// hold c.mu.
+func (c *Client) preparePromptSessionLocked(
+	ctx context.Context,
+	session *Session,
+	sessionID string,
+	content string,
+) (interfaces.ACPCallbacks, *PromptPipeline, error) {
 	// Lazily (re)start the agent process — sessions loaded from disk or rebound
 	// to another model start without a live transport.
 	if session.transport == nil {
 		if err := c.startTransportLocked(ctx, session); err != nil {
-			c.mu.Unlock()
-			return fmt.Errorf("start session %s: %w", sessionID, err)
+			return nil, nil, fmt.Errorf("start session %s: %w", sessionID, err)
 		}
 	}
 
@@ -766,8 +804,18 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 	c.persistLocked()
 	callbacks := c.callbacks
 	pipeline := c.pipeline
-	c.mu.Unlock()
+	return callbacks, pipeline, nil
+}
 
+// runPromptPipeline applies the pre-prompt middleware and returns the content
+// and structured resources that should be sent to the agent.
+func (c *Client) runPromptPipeline(
+	ctx context.Context,
+	pipeline *PromptPipeline,
+	session *Session,
+	sessionID string,
+	content string,
+) (string, []ContextResource) {
 	// Run the pre-prompt middleware pipeline. If it injects context, prepend any
 	// free-form text to the content used for both the PromptSubmitted event and
 	// the transport call so the UI and the agent see the same prompt, and pass
@@ -800,18 +848,40 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 			}
 		}
 	}
+	return finalContent, resources
+}
 
+// emitPromptSubmitted emits the user-visible prompt after middleware has
+// finished injecting text and structured context.
+func (c *Client) emitPromptSubmitted(
+	callbacks interfaces.ACPCallbacks,
+	sessionID string,
+	content string,
+	attachments []interfaces.Attachment,
+) {
 	if callbacks != nil {
 		callbacks.OnEvent(interfaces.Event{
 			Type:        interfaces.EventPromptSubmitted,
 			SessionID:   sessionID,
 			Timestamp:   time.Now().UTC(),
 			Role:        roleUser,
-			Content:     finalContent,
+			Content:     content,
 			Attachments: attachments,
 		})
 	}
+}
 
+// startPromptGoroutine starts the bounded asynchronous prompt call and updates
+// the session and event stream when the agent completes or fails.
+func (c *Client) startPromptGoroutine(
+	ctx context.Context,
+	callbacks interfaces.ACPCallbacks,
+	session *Session,
+	sessionID string,
+	content string,
+	resources []ContextResource,
+	attachments []interfaces.Attachment,
+) {
 	// Detach from the caller's context (the HTTP request ends when this
 	// method returns) but apply a finite timeout so a hung agent cannot block
 	// the prompt goroutine forever. Without this bound, an agent that stays
@@ -829,7 +899,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 			})
 		}
 
-		stopReason, err := session.transport.Prompt(promptCtx, session.ACPSessionID, finalContent, resources, attachments)
+		stopReason, err := session.transport.Prompt(promptCtx, session.ACPSessionID, content, resources, attachments)
 		if err != nil {
 			c.mu.Lock()
 			session.Status = statusFailed
@@ -878,8 +948,6 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 		}
 		c.mu.Unlock()
 	}()
-
-	return nil
 }
 
 // CancelSession interrupts a running session.

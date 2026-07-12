@@ -39,13 +39,12 @@ type ProfileMiddleware struct {
 // NewProfileMiddleware constructs a ProfileMiddleware using the given templates.
 // If messages is nil, DefaultSystemMessages is used.
 func NewProfileMiddleware(messages *SystemMessages) *ProfileMiddleware {
-	if messages == nil {
-		messages = DefaultSystemMessages()
-	}
-	return &ProfileMiddleware{
+	m := &ProfileMiddleware{
 		Messages: messages,
 		profiles: make(map[string]string),
 	}
+	m.ensureMessages()
+	return m
 }
 
 // SetProfile records the user's selected profile for a session. Called by the
@@ -76,10 +75,12 @@ func (m *ProfileMiddleware) getProfile(sessionID string) string {
 	return "Code"
 }
 
-// messages returns the configured SystemMessages, falling back to defaults.
-func (m *ProfileMiddleware) messages() *SystemMessages {
+// ensureMessages returns the configured SystemMessages, falling back to
+// defaults. It memoizes the default so subsequent calls return the same
+// instance without re-checking nil.
+func (m *ProfileMiddleware) ensureMessages() *SystemMessages {
 	if m.Messages == nil {
-		return DefaultSystemMessages()
+		m.Messages = DefaultSystemMessages()
 	}
 	return m.Messages
 }
@@ -87,7 +88,7 @@ func (m *ProfileMiddleware) messages() *SystemMessages {
 // instructionsForProfile returns the system instruction text for the given
 // profile name, sourced from the SystemMessages templates.
 func (m *ProfileMiddleware) instructionsForProfile(profile string) string {
-	sm := m.messages()
+	sm := m.ensureMessages()
 	switch strings.ToLower(profile) {
 	case "ask":
 		return sm.ProfileAskInstructions
@@ -101,7 +102,7 @@ func (m *ProfileMiddleware) instructionsForProfile(profile string) string {
 
 // buildText builds the full profile injection text (header + instructions).
 func (m *ProfileMiddleware) buildText(profile string) string {
-	sm := m.messages()
+	sm := m.ensureMessages()
 	header := sm.Render(sm.ProfileHeader, map[string]string{"profile": profile})
 	instructions := m.instructionsForProfile(profile)
 	return fmt.Sprintf("%s\n\n%s", header, instructions)

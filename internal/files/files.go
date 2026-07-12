@@ -12,8 +12,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
+
+	"github.com/adama/local-agent/internal/pathutil"
 )
 
 // ErrStaleRevision is returned when the expected revision doesn't match
@@ -99,7 +100,7 @@ func (f *FileSync) Save(_ context.Context, workspacePath, relPath, content strin
 
 	// Write the file to disk. Only the per-file mutex is held here, so an
 	// unrelated save to a different file/workspace is not blocked.
-	fullPath, err := safeJoin(workspacePath, relPath)
+	fullPath, err := pathutil.SafeJoin(workspacePath, relPath)
 	if err != nil {
 		return 0, err
 	}
@@ -177,33 +178,6 @@ func (f *FileSync) Forget(workspacePath, relPath string) {
 // fileKey generates a unique key for a file within a workspace.
 func fileKey(workspacePath, relPath string) string {
 	return filepath.Join(workspacePath, relPath)
-}
-
-// safeJoin joins a workspace root with a relative path, preventing path
-// traversal. A path is rejected if any individual component equals ".." (a real
-// parent-directory traversal) or if the cleaned path is absolute. The final
-// containment check (result must stay within root) is the real safety net; the
-// component check avoids false-rejecting legitimate filenames such as "..foo"
-// that merely begin with the characters "..".
-func safeJoin(root, relPath string) (string, error) {
-	cleanRel := filepath.Clean(relPath)
-	if filepath.IsAbs(cleanRel) {
-		return "", fmt.Errorf("path traversal detected: %s", relPath)
-	}
-	// Reject only a real ".." path component, not a filename like "..foo".
-	for _, part := range strings.Split(filepath.ToSlash(cleanRel), "/") {
-		if part == ".." {
-			return "", fmt.Errorf("path traversal detected: %s", relPath)
-		}
-	}
-
-	fullPath := filepath.Join(root, cleanRel)
-
-	if !strings.HasPrefix(fullPath, filepath.Clean(root)+string(filepath.Separator)) && fullPath != filepath.Clean(root) {
-		return "", fmt.Errorf("path traversal detected: %s", relPath)
-	}
-
-	return fullPath, nil
 }
 
 // lruCache is a simple bounded LRU cache mapping string keys to string values.

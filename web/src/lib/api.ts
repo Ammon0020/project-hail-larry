@@ -3,12 +3,11 @@
  * All endpoints are relative to the same origin (served by the Go server).
  */
 
-import type { AppEvent, Attachment } from '@/types'
+import type { AppEvent, Attachment, Agent, Session, SearchOptions, SearchResult } from '@/types'
 
-// Re-export AppEvent so existing callers importing it from '@/lib/api' keep
-// working — the canonical definition lives in @/types (optional id, typed
-// EventType) and is shared by both the real and mock backend hooks.
-export type { AppEvent }
+// Re-export types so existing callers importing them from '@/lib/api' keep
+// working — the canonical definitions live in @/types.
+export type { AppEvent, Agent, Session, SearchOptions, SearchResult }
 
 const API_BASE = '/api'
 
@@ -120,30 +119,6 @@ export interface FileNode {
   children?: FileNode[]
 }
 
-export interface AgentInfo {
-  id: string
-  name: string
-  command: string
-  args: string[]
-  models: AgentModel[]
-  warning?: string
-}
-
-export interface AgentModel {
-  id: string
-  name: string
-}
-
-export interface SessionInfo {
-  id: string
-  name: string
-  status: string
-  agentId?: string
-  modelId?: string
-  updatedAt?: string
-  workspace?: string
-}
-
 export interface PermissionOptionInfo {
   id: string
   name: string
@@ -165,24 +140,6 @@ export interface DeviceCredential {
   name: string
   secret: string
   pairedAt: string
-}
-
-/** Options for a workspace content search (mirrors Go search.Options). */
-export interface SearchOptions {
-  pattern: string
-  ignoreCase?: boolean
-  maxResults?: number
-  filePattern?: string
-  contextLines?: number
-}
-
-/** A single search match within a file (mirrors Go search.Result). */
-export interface SearchResult {
-  path: string
-  lineNumber: number
-  lineContent: string
-  matchStart: number
-  matchEnd: number
 }
 
 export interface PairingSession {
@@ -246,9 +203,9 @@ export const api = {
     apiFetch<AppEvent[]>(`/events/${sessionId}?after=${afterId}&limit=${limit}`),
 
   // Agents & Sessions
-  listAgents: () => apiFetch<AgentInfo[]>('/agents'),
-  addAgent: (agent: AgentInfo) =>
-    apiFetch<AgentInfo>('/agents', {
+  listAgents: () => apiFetch<Agent[]>('/agents'),
+  addAgent: (agent: Agent) =>
+    apiFetch<Agent>('/agents', {
       method: 'POST',
       body: JSON.stringify(agent),
     }),
@@ -257,12 +214,12 @@ export const api = {
       method: 'DELETE',
     }),
   autodetectAgents: () =>
-    apiFetch<AgentInfo[]>('/agents/autodetect', {
+    apiFetch<Agent[]>('/agents/autodetect', {
       method: 'POST',
     }),
-  listSessions: () => apiFetch<SessionInfo[]>('/sessions'),
+  listSessions: () => apiFetch<Session[]>('/sessions'),
   createSession: (agentId: string, modelId: string, workspaceId: string) =>
-    apiFetch<SessionInfo>('/sessions', {
+    apiFetch<Session>('/sessions', {
       method: 'POST',
       body: JSON.stringify({ agentId, modelId, workspaceId }),
     }),

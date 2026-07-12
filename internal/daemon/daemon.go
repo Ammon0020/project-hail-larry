@@ -222,6 +222,25 @@ func commandMatchesSpec(cmd string, validCommands []string) bool {
 	return false
 }
 
+// verifyAgentExecutable checks whether an agent's launch command exists as a
+// file (os.Stat) or is on PATH (exec.LookPath), updating the Warning field
+// accordingly: it sets warningExecutableNotFound when the command cannot be
+// resolved, and clears a previously-set warningExecutableNotFound once the
+// command resolves again. A warning set to any other value is preserved.
+func verifyAgentExecutable(agent acp.AgentInfo) acp.AgentInfo {
+	if _, statErr := os.Stat(agent.Command); statErr != nil {
+		// fallback to LookPath
+		if _, lpErr := exec.LookPath(agent.Command); lpErr != nil {
+			agent.Warning = warningExecutableNotFound
+		} else if agent.Warning == warningExecutableNotFound {
+			agent.Warning = ""
+		}
+	} else if agent.Warning == warningExecutableNotFound {
+		agent.Warning = ""
+	}
+	return agent
+}
+
 // Daemon is the background process that serves the web UI and API.
 type Daemon struct {
 	config *Config
@@ -355,17 +374,7 @@ func New(cfg *Config) (*Daemon, error) {
 
 	// Verify executables and register
 	for i := range activeAgents {
-		// Use acp.AgentInfo struct defined in acp.go
-		if _, statErr := os.Stat(activeAgents[i].Command); statErr != nil {
-			// fallback to LookPath
-			if _, lpErr := exec.LookPath(activeAgents[i].Command); lpErr != nil {
-				activeAgents[i].Warning = warningExecutableNotFound
-			} else if activeAgents[i].Warning == warningExecutableNotFound {
-				activeAgents[i].Warning = ""
-			}
-		} else if activeAgents[i].Warning == warningExecutableNotFound {
-			activeAgents[i].Warning = ""
-		}
+		activeAgents[i] = verifyAgentExecutable(activeAgents[i])
 		acpClient.RegisterAgent(activeAgents[i])
 	}
 
@@ -531,15 +540,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		// failure on HTTPS tears down HTTP too (fail-fast) so the user is
 		// not silently left with only cleartext when they requested dual.
 		errCh := d.server.ListenDual(addr, httpsAddr, certPath, keyPath)
-		select {
-		case err := <-errCh:
-			d.cleanup()
-			return err
-		case <-ctx.Done():
-			log.Println("Shutting down daemon...")
-			d.cleanup()
-			return nil
-		}
+		return d.waitForShutdown(ctx, errCh)
 	}
 
 	// HTTP-only path (TLSEnabled false). Warn loudly when bound to all
@@ -557,6 +558,14 @@ func (d *Daemon) Start(ctx context.Context) error {
 	log.Printf("Local Agent Interface daemon started on http://%s", addr)
 	log.Printf("Data directory: %s", d.config.DataDir)
 
+	return d.waitForShutdown(ctx, errCh)
+}
+
+// waitForShutdown blocks until either the server returns an error (from the
+// provided channel) or the context is cancelled (SIGINT/SIGTERM). In both
+// cases it runs cleanup before returning. On context cancellation it logs
+// the shutdown notice and returns nil.
+func (d *Daemon) waitForShutdown(ctx context.Context, errCh <-chan error) error {
 	select {
 	case err := <-errCh:
 		d.cleanup()

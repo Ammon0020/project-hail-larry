@@ -1,16 +1,18 @@
-import { useState, useRef, useMemo, useEffect, type ChangeEvent, type CSSProperties } from 'react'
+import { useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
 import { WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UploadResult } from '@/lib/api'
-import { getMcpConfig, patchMcpServer, getMcpStatus, type McpServerStatus } from '@/lib/api'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatComposer } from './ChatComposer'
 import { ConversationView } from './ConversationView'
 import { ChatHistory } from './ChatHistory'
 import { SwitchAgentDialog } from './SwitchAgentDialog'
 import { WorkspaceBar } from './chat/WorkspaceBar'
+import { Banner } from './ui/Banner'
 import { useAutoscroll } from '@/hooks/useAutoscroll'
+import { useChatTabs } from '@/hooks/useChatTabs'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
+import { useMcpServers } from '@/hooks/useMcpServers'
 import type { AppEvent, Agent, Attachment, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 
@@ -114,7 +116,6 @@ export function ChatPanel({
   // agents load asynchronously — no separate prevAgents reconciliation block.
   const [storedAgent, setStoredAgent] = useLocalStorage<string>('lai:selectedAgent', '')
   const [storedModel, setStoredModel] = useLocalStorage<string>('lai:selectedModel', '')
-  const [openTabIds, setOpenTabIds] = useLocalStorage<string[]>('lai:openTabIds', [])
   const selectedAgent = agents.some((a) => a.id === storedAgent)
     ? storedAgent
     : (agents[0]?.id ?? '')
@@ -150,130 +151,20 @@ export function ChatPanel({
   const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
   const [truncateLength, setTruncateLength] = useState<number>(8000)
 
-  // MCP server list + toggle state for the chat overflow menu's "MCP servers"
-  // sub-menu. The settings panel is the primary editing surface; the chat menu
-  // just reflects the current config and lets users toggle servers inline.
-  // ACP mandates a restart to apply MCP changes (no live add/remove in v1), so
-  // toggling a server while a session is active surfaces a restart banner.
-  const [mcpServers, setMcpServers] = useState<{ name: string; enabled: boolean }[]>([])
-  const [mcpTogglingServer, setMcpTogglingServer] = useState<string | null>(null)
-  const [mcpConfigChanged, setMcpConfigChanged] = useState(false)
-
-  // MCP health status — keyed by server name, fetched on demand from
-  // `GET /api/mcp/status` (see `internal/server/mcp.go` handleGetMcpStatus).
-  // Absent entries cause McpPopout to fall back to enabled-based coloring.
-  const [mcpHealth, setMcpHealth] = useState<Record<string, McpServerStatus>>({})
-  // True while a `getMcpStatus()` refresh is in flight. Drives a small
-  // spinner in the McpPopout header so the user can tell dots may update.
-  const [mcpStatusLoading, setMcpStatusLoading] = useState(false)
-
-  // Mounted guard (#6) — prevents setState after the component unmounts
-  // (e.g. a health fetch resolving after a route change). Combined with the
-  // request-generation counter below, this makes loadMcpStatus race-safe.
-  const mountedRef = useRef(true)
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
-
-  // Request-generation counter for loadMcpStatus (#3/#4). Each call
-  // increments this; if a newer call has started by the time an older
-  // `getMcpStatus()` resolves, the older response is dropped so a slow
-  // in-flight request can't overwrite a fresher one (e.g. user toggles a
-  // server, then opens the popout again before the first refresh returns).
-  const mcpStatusReqRef = useRef(0)
+  const {
+    mcpServers,
+    mcpHealth,
+    mcpStatusLoading,
+    mcpTogglingServer,
+    mcpConfigChanged,
+    setMcpConfigChanged,
+    loadMcpStatus,
+    handleToggleMcpServer,
+  } = useMcpServers()
 
   // Profile mode state — owned here so it can be passed to both the composer
   // (for the dropdown) and to onSendMessage (for backend injection).
   const [profile, setProfile] = useState<'Code' | 'Ask' | 'Plan'>('Code')
-
-
-  async function loadMcpServers() {
-    try {
-      const text = await getMcpConfig()
-      const parsed = JSON.parse(text) as { mcpServers?: Record<string, { enabled?: boolean }> }
-      const entries = Object.entries(parsed.mcpServers || {})
-      setMcpServers(
-        entries.map(([name, cfg]) => ({
-          name,
-          enabled: cfg.enabled !== false,
-        })),
-      )
-    } catch {
-      // If MCP config can't be loaded, just show empty list
-    }
-  }
-
-  /**
-   * Refresh MCP health status from `GET /api/mcp/status` and merge results
-   * into the `mcpHealth` map keyed by server name. Safe to call any time —
-   * failures are logged and clear the health map (#7) so stale dots don't
-   * linger, and they never block the toggle flow or leave the popout stuck
-   * in a loading state.
-   *
-   * Race safety (#3/#4/#6): a request-generation counter (`mcpStatusReqRef`)
-   * drops responses from any call superseded by a newer one, and a mounted
-   * guard skips setState entirely after unmount. This prevents a slow
-   * in-flight `getMcpStatus()` from overwriting a fresher result or hitting
-   * an unmounted component.
-   */
-  async function loadMcpStatus() {
-    const reqId = ++mcpStatusReqRef.current
-    setMcpStatusLoading(true)
-    try {
-      const statuses = await getMcpStatus()
-      if (reqId !== mcpStatusReqRef.current) return // stale — a newer call won
-      if (!mountedRef.current) return
-      const next: Record<string, McpServerStatus> = {}
-      for (const s of statuses) next[s.name] = s
-      setMcpHealth(next)
-    } catch (e) {
-      // Don't block the UI if the health check fails — but DO clear the
-      // health map (#7) so we don't keep showing stale dots from a previous
-      // successful fetch. The popout falls back to enabled-based coloring.
-      if (reqId !== mcpStatusReqRef.current) return
-      if (!mountedRef.current) return
-      console.error('Failed to load MCP status:', e)
-      setMcpHealth({})
-    } finally {
-      if (reqId === mcpStatusReqRef.current && mountedRef.current) {
-        setMcpStatusLoading(false)
-      }
-    }
-  }
-
-  useEffect(() => {
-    // loadMcpServers is async: setState runs after `await getMcpConfig()`,
-    // so it's not synchronous within this effect body. The disable is needed
-    // because the linter can't see through the function boundary.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadMcpServers()
-    // Health status is refreshed on-demand when the popout opens
-    // (onMcpPopoutOpen → loadMcpStatus), so we don't kick off a mount-time
-    // `getMcpStatus()` here — that would dial every MCP server's health
-    // check on ChatPanel mount even if the user never opens the popout (#10).
-  }, [])
-
-  const handleToggleMcpServer = async (name: string, enabled: boolean) => {
-    setMcpTogglingServer(name)
-    try {
-      await patchMcpServer(name, enabled)
-      await loadMcpServers()
-      // Refresh health after a successful toggle so the dot reflects the
-      // new state (e.g. a server just enabled may now report healthy or
-      // unhealthy). Awaited (#8) so the per-row spinner stays visible
-      // through the health refresh — clearing `mcpTogglingServer` only
-      // after the dots have updated avoids a brief flash of stale color.
-      await loadMcpStatus()
-      setMcpConfigChanged(true)
-    } catch (e) {
-      console.error('Failed to toggle MCP server:', e)
-    } finally {
-      setMcpTogglingServer(null)
-    }
-  }
 
   /** Restart for MCP: ACP doesn't support live add/remove in v1, so the
    *  simplest correct action is to drop the active session and let the user
@@ -286,45 +177,11 @@ export function ChatPanel({
 
   // Scroll container ref for the smart-autoscroll hook (Feature 1).
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-
-  // Auto-open the active session as a tab. New chats (created via handleSend /
-  // handleFileChange) and existing chats restored via activeSessionId (e.g.
-  // cold reload, history click that didn't go through handleSelectAndOpen)
-  // would otherwise never enter openTabIds, so they wouldn't render a tab.
-  // Uses the "adjust state during render" pattern (React docs) — same as the
-  // prevSessions block below — to avoid react-hooks/set-state-in-effect.
-  const [prevActiveSessionId, setPrevActiveSessionId] = useState(activeSessionId)
-  if (activeSessionId !== prevActiveSessionId) {
-    setPrevActiveSessionId(activeSessionId)
-    // Only auto-open a real session as a tab. The new-chat state
-    // (activeSessionId is null/empty) is represented by the transient
-    // `showNewChatTab` placeholder, NOT an entry in openTabIds — adding an
-    // empty id here would corrupt the persisted openTabIds list.
-    if (activeSessionId && sessions.some((s) => s.id === activeSessionId)) {
-      setOpenTabIds((prev) =>
-        prev.includes(activeSessionId) ? prev : [...prev, activeSessionId],
-      )
-    }
-  }
-
-  // Drop open-tab ids whose sessions have been deleted (e.g. after a daemon
-  // restart that wiped conversations.json). Render-time pure adjustment.
-  // Also auto-opens the active session as a tab — covers the cold-reload case
-  // where activeSessionId is restored from localStorage immediately but
-  // sessions load asynchronously, so the prevActiveSessionId block above
-  // (which only fires on activeSessionId change) would miss it.
-  const [prevSessions, setPrevSessions] = useState(sessions)
-  if (sessions !== prevSessions) {
-    setPrevSessions(sessions)
-    const known = new Set(sessions.map((s) => s.id))
-    setOpenTabIds((prev) => {
-      const filtered = prev.filter((id) => known.has(id))
-      if (activeSessionId && known.has(activeSessionId) && !filtered.includes(activeSessionId)) {
-        return [...filtered, activeSessionId]
-      }
-      return filtered
-    })
-  }
+  const { openTabIds, openTab, handleCloseTab } = useChatTabs({
+    sessions,
+    activeSessionId,
+    onSelectSession,
+  })
 
   // The active conversation owns its agent/model — derive the selectors from it
   // so switching reflects that conversation. For a new chat (no active session)
@@ -385,27 +242,6 @@ export function ChatPanel({
   const openTabs = openTabIds
     .map((id) => sessions.find((s) => s.id === id))
     .filter((s): s is Session => !!s)
-
-  /** Adds a session id to the open tabs (idempotent — no reorder if already open). */
-  const openTab = (id: string) => {
-    setOpenTabIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
-  }
-
-  /** Hides a tab without deleting the session. If the closed tab was active,
-   *  fall back to the most-recently still-open tab (or new-chat state). */
-  const handleCloseTab = (id: string) => {
-    setOpenTabIds((prev) => {
-      const next = prev.filter((tid) => tid !== id)
-      if (id === activeSessionId) {
-        if (next.length > 0) {
-          onSelectSession(next[next.length - 1])
-        } else {
-          onSelectSession('')
-        }
-      }
-      return next
-    })
-  }
 
   const hasConversation =
     !!activeSessionId && events.some((e) => e.type === 'PromptSubmitted')
@@ -686,9 +522,12 @@ export function ChatPanel({
 
       {/* Disconnected banner — surfaces connection loss to the user. */}
       {!connected && (
-        <div className="bg-warning/10 border-b border-warning/40 px-3 py-2 text-xs text-warning flex items-center gap-2 shrink-0">
+        <Banner
+          variant="warning"
+          className="border-b px-3 py-2 flex items-center gap-2 shrink-0"
+        >
           <WifiOff className="w-3.5 h-3.5" /> Reconnecting to daemon…
-        </div>
+        </Banner>
       )}
 
       <ConversationView

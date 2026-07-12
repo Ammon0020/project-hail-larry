@@ -18,7 +18,8 @@ import {
   HelpCircle,
   Menu,
 } from 'lucide-react'
-import type { AgentInfo, ProviderInfo } from '@/lib/api'
+import type { Agent } from '@/types'
+import type { ProviderInfo } from '@/lib/api'
 import {
   getMcpConfig,
   putMcpConfig,
@@ -69,10 +70,10 @@ export function SettingsPanel({
   onAutodetect,
   activeSessionId,
 }: {
-  agents: AgentInfo[]
-  onAddAgent: (a: AgentInfo) => Promise<void>
+  agents: Agent[]
+  onAddAgent: (a: Agent) => Promise<void>
   onDeleteAgent: (id: string) => Promise<void>
-  onAutodetect: () => Promise<AgentInfo[]>
+  onAutodetect: () => Promise<Agent[]>
   /** Id of the currently active chat session, or null when none is open.
    *  Threaded from App.tsx → EditorPane → here so the Providers (advanced)
    *  section can call the session-scoped provider endpoints. When null the
@@ -86,7 +87,7 @@ export function SettingsPanel({
 
   // New agent form state
   const [showAddForm, setShowAddForm] = useState(false)
-  const [newAgent, setNewAgent] = useState<Partial<AgentInfo>>({ models: [] })
+  const [newAgent, setNewAgent] = useState<Partial<Agent>>({ models: [] })
   const [newModel, setNewModel] = useState({ id: '', name: '' })
 
   // MCP tab state
@@ -131,7 +132,7 @@ export function SettingsPanel({
 
   const handleAddAgent = async () => {
     if (!newAgent.id || !newAgent.name || !newAgent.command) return
-    await onAddAgent(newAgent as AgentInfo)
+    await onAddAgent(newAgent as Agent)
     setShowAddForm(false)
     setNewAgent({ models: [] })
   }

@@ -88,6 +88,27 @@ func allowPairRequest(r *http.Request) bool {
 	return getPairLimiter(ip).Allow()
 }
 
+// configHost returns the configured daemon host when it is usable as a
+// connectable address — i.e. non-empty and not the 0.0.0.0 wildcard. It returns
+// "" when no config is wired or the host is the wildcard, leaving the caller to
+// fall back to localhost.
+func (s *Server) configHost() string {
+	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Host != "" && s.deps.Config.Host != "0.0.0.0" {
+		return s.deps.Config.Host
+	}
+	return ""
+}
+
+// mustDecodeJSON decodes the request body into v. On error, it writes a 400
+// response and returns false. Callers should return immediately when it returns false.
+func mustDecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := decodeJSON(w, r, v); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return false
+	}
+	return true
+}
+
 // handlePairInitiate creates a new pairing session with QR code and mnemonic.
 func (s *Server) handlePairInitiate(w http.ResponseWriter, r *http.Request) {
 	if !allowPairRequest(r) {
@@ -116,8 +137,8 @@ func (s *Server) handlePairInitiate(w http.ResponseWriter, r *http.Request) {
 	// same convention the CLI uses (cmd/app pairingHost).
 	if req.Host == "" {
 		req.Host = localhost
-		if s.deps.Config != nil && s.deps.Config.Host != "" && s.deps.Config.Host != "0.0.0.0" {
-			req.Host = s.deps.Config.Host
+		if h := s.configHost(); h != "" {
+			req.Host = h
 		}
 	}
 	if req.Port == 0 {
@@ -148,8 +169,7 @@ func (s *Server) handlePairVerifyPasscode(w http.ResponseWriter, r *http.Request
 		Passcode   string `json:"passcode"`
 		DeviceName string `json:"deviceName"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &req) {
 		return
 	}
 
@@ -173,8 +193,7 @@ func (s *Server) handlePairVerifyToken(w http.ResponseWriter, r *http.Request) {
 		Token      string `json:"token"`
 		DeviceName string `json:"deviceName"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &req) {
 		return
 	}
 
@@ -243,8 +262,7 @@ func (s *Server) handleCancelRevocation(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		ActionID string `json:"actionId"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &req) {
 		return
 	}
 	if req.ActionID == "" {
@@ -301,8 +319,7 @@ func (s *Server) handleRegisterWorkspace(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Path string `json:"path"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &req) {
 		return
 	}
 
@@ -364,8 +381,7 @@ func (s *Server) handleCancelWorkspaceRegistration(w http.ResponseWriter, r *htt
 	var req struct {
 		ActionID string `json:"actionId"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &req) {
 		return
 	}
 	if req.ActionID == "" {
@@ -637,8 +653,7 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 // handleUpsertAgent adds or updates an agent.
 func (s *Server) handleUpsertAgent(w http.ResponseWriter, r *http.Request) {
 	var agent acp.AgentInfo
-	if err := decodeJSON(w, r, &agent); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &agent) {
 		return
 	}
 
@@ -794,8 +809,7 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 		ModelID          *string `json:"modelId"`
 		MaxTransferBytes *int    `json:"maxTransferBytes"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &req) {
 		return
 	}
 
@@ -841,8 +855,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		ModelID     string `json:"modelId"`
 		WorkspaceID string `json:"workspaceId"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &req) {
 		return
 	}
 
@@ -866,8 +879,7 @@ func (s *Server) handleSendPrompt(w http.ResponseWriter, r *http.Request) {
 			MimeType string `json:"mimeType"`
 		} `json:"attachments"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &req) {
 		return
 	}
 
@@ -1060,8 +1072,7 @@ func (s *Server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 			Text      string `json:"text"`
 		} `json:"selection"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &req) {
 		return
 	}
 	if req.OpenFiles != nil {
@@ -1097,8 +1108,7 @@ func (s *Server) handleRespondPermission(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Decision string `json:"decision"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !mustDecodeJSON(w, r, &req) {
 		return
 	}
 
