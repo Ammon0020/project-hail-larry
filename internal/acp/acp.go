@@ -998,11 +998,14 @@ func (c *Client) RebindSession(ctx context.Context, sessionID, agentID, modelID 
 
 // SwitchModel changes the model on a live session without restarting the agent
 // process. Uses ACP's session/set_config_option (category "model") when the
-// agent advertises a model config option. Falls back to RebindSession when the
-// agent doesn't support model config options (older agents) or when the
-// transport is not currently live (e.g. closed on daemon shutdown and not yet
-// restarted) — in the latter case a rebind is safe because there is no in-memory
-// state to preserve.
+// agent advertises a model config option. Falls back to RebindSession only when
+// the agent genuinely doesn't support model config options (older agents).
+//
+// If the transport is not currently live (e.g. closed on daemon shutdown and
+// not yet restarted), it is lazily started first — same as SendPrompt does —
+// which runs session/load (or session/new) and re-derives modelConfigID from
+// the agent's advertised config options. Only if modelConfigID is still empty
+// after the handshake do we fall back to rebind.
 //
 // Unlike RebindSession, the live-session path preserves the full conversation
 // context — the agent keeps its in-memory state and just uses the new model for
@@ -1015,11 +1018,24 @@ func (c *Client) SwitchModel(ctx context.Context, sessionID, modelID string) err
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// If the agent doesn't advertise a model config option (either we know
-	// from a prior handshake, or the transport isn't live so we can't tell),
-	// fall back to a rebind with the same agent. This preserves the old
-	// behavior for agents that don't support session/set_config_option.
-	if session.modelConfigID == "" || session.transport == nil {
+	// Lazily (re)start the agent process — sessions loaded from disk after a
+	// daemon restart start without a live transport. Starting it now calls
+	// session/load (or session/new) and re-derives modelConfigID from the
+	// agent's advertised config options. Without this, a post-restart model
+	// switch would fall back to RebindSession (which exports history and starts
+	// a fresh agent session) even though the agent supports
+	// session/set_config_option and could resume cleanly.
+	if session.transport == nil {
+		if err := c.startTransportLocked(ctx, session); err != nil {
+			c.mu.Unlock()
+			return fmt.Errorf("start transport for model switch: %w", err)
+		}
+	}
+
+	// After (re)starting the transport, check whether the agent advertises a
+	// model config option. If not, fall back to rebind — the agent genuinely
+	// doesn't support live model switching.
+	if session.modelConfigID == "" {
 		agentID := session.AgentID
 		c.mu.Unlock()
 		slog.Info("agent does not support model config option; falling back to rebind", "session", sessionID, "model", modelID)
