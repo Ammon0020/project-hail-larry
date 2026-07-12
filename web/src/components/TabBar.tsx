@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileCode, Circle, X, GitCompare, Save, ChevronLeft, ChevronRight, WrapText, RefreshCw, Settings as SettingsIcon } from 'lucide-react'
+import { Circle, X, GitCompare, Save, ChevronLeft, ChevronRight, WrapText, RefreshCw, Settings as SettingsIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { fileIcon } from '@/lib/fileIcon'
 import type { Tab } from '@/types'
 
 /**
@@ -118,7 +119,10 @@ export function TabBar({
                 {tab.kind === 'settings' ? (
                   <SettingsIcon className="w-3.5 h-3.5 text-muted-foreground" />
                 ) : (
-                  <FileCode className="w-3.5 h-3.5 text-yellow-400" />
+                  (() => {
+                    const { icon: Icon, color } = fileIcon(tab.name)
+                    return <Icon className={cn('w-3.5 h-3.5', color)} />
+                  })()
                 )}
                 <span className="max-w-[120px] truncate">{tab.name}</span>
                 {tab.unsaved && tab.kind !== 'settings' && (
