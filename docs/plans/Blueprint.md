@@ -1,620 +1,143 @@
-# Local Agent Interface
+# Local Agent Interface — Product Design Blueprint
 
-## Product Design Blueprint
+> **Version:** 2.8 — design source of truth. ACP-only, agent-agnostic: any ACP-compatible agent works with no provider-specific code. Kept < 200 lines; status lives in `docs/STATUS.md`.
 
-> **Version:** 2.7
->
-> Architecture for the Local Agent Interface. ACP-only, agent-agnostic—any ACP-compatible agent works without provider-specific code.
+## 1. Vision
 
----
+Self-hosted web code editor with AI built in. A host daemon serves a browser-based IDE (VS Code-style layout, CodeMirror 6) to any device on the local network. The app is an **ACP client** that orchestrates external agents — it contains no AI itself.
 
-# 1. Vision
+- Background daemon + CLI on the host; all authoritative state stays on the host.
+- Multiple devices (desktop, laptop, phone) connect as thin clients over LAN.
+- Built-in editor for viewing, editing, and diffing files alongside agent chat.
+- Explicit device pairing required before UI access.
 
-Self-hosted web code editor with AI built in. A host daemon serves a browser-based IDE (VS Code-style layout, CodeMirror 6) to any device on the local network. Devices pair via QR code or four-word passcode. The application is an **ACP client** that orchestrates external agents—it does not contain AI itself.
+**Flow:** `app add-folder .` registers a workspace, `app pair` shows a QR + four-word passcode. First device scans the QR; additional devices open the LAN IP and type the passcode. State is broadcast, so every paired device sees the same chat, tasks, and file tree in real time.
 
-* Background daemon + CLI on the host; all authoritative state stays on the host.
-* Multiple devices (desktop, laptop, phone) connect as thin clients over LAN.
-* Built-in editor for viewing, editing, and diffing files alongside agent chat.
-* Any ACP-compatible agent works with no per-agent integration code.
-* Explicit device pairing required before UI access.
+## 2. Core Principles
 
----
+- **Client ownership** — the client owns the filesystem (within workspace bounds), headless shell execution, workspace/session state, permission decisions, and event history. Agents plan and propose; the client executes approved actions and returns results via ACP.
+- **Agent independence** — the UI never talks to agents directly. Everything flows `User -> Browser UI -> ACP Client Layer -> ACP -> Agent`.
+- **Capability negotiation** — at init, client and agent exchange supported features (sessions, streaming, image/audio, filesystem, shell, MCP, permissions, modes, cancellation). The UI adapts to what was negotiated.
+- **Stateless UI** — the web client never owns session state; authoritative state is server-side, so devices disconnect/reconnect freely.
+- **Event-driven** — every meaningful action is an immutable event (§11); the UI renders from the event stream rather than independent state.
+- **Non-goals (v1):** interactive terminal UI, public-internet/remote access (LAN-only), git merge orchestration, provider-specific agent APIs.
 
-## Product Summary
+## 3. Architecture
 
-**First device:** `app add-folder .` registers the workspace, `app pair` generates a QR code. Scan it → paired → web UI opens. Select a model, type instructions, attach images, watch the agent work—streamed as chat while files update on the host.
+- **Host daemon** — manages workspaces, serves the web UI, owns all files on disk, broadcasts events, runs the ACP Client Layer. Users drive it via the `app` CLI (setup) and web UI (sessions).
+- **Browser UI** (any paired device) — chat, file tree, permissions, settings, session history. Unpaired devices see only a lock screen. Connects over WebSocket/HTTP, LAN only.
+- **ACP Client Layer** — protocol mechanics: start agents, send prompts, stream updates, handle permissions, manage session lifecycle. Business logic stays in the server.
+- **Agents** (Claude Code, Codex CLI, Gemini CLI, Cursor CLI, OpenCode, …) — AI reasoning, tool planning, code generation. They never own the filesystem or run shell commands directly.
 
-**Second device:** Navigate to the local IP → lock screen. Run `app pair`, type the four-word passcode (e.g., *purple-fox-delta-wave*). State is broadcast globally, so the new device immediately shows the same chat, tasks, and file tree.
+## 4. Terminology & Daemon
 
----
+- **Workspace** — a managed project directory (files, git, config, sessions); persists indefinitely.
+- **Session** — one conversation with an agent over ACP (history, agent metadata, event log, ACP connection ref, config). Resumable via ACP `create`/`load`/`list session`.
+- **Agent connection** — the active ACP link to a running agent process, until the session closes or the agent exits.
+- **Worker** — server-side object managing one agent connection: process start, ACP comms, message->event translation, permissions, restart detection, cancellation, cleanup.
+- **Paired client** — a browser holding a valid device credential; multiple may connect at once.
+- **Host daemon** — one per machine; owns all workspace writes and ACP connections. State in `~/.local-agent/`.
 
-# 2. Core Principles
+**Daemon lifecycle:** Install (single binary on PATH) -> Start (`app start`, foreground or `--background`, binds LAN) -> Autostart (opt-in `app install-service`: launchd/systemd/HKCU) -> Running -> Crash (clients reconnect + resync; ACP sessions resume if supported) -> Upgrade (`app stop` -> replace binary -> `app start`; event log + devices persist).
 
-## Client Ownership
+**CLI:** `start`, `stop`, `status`, `add-folder [path]`, `remove-folder`, `list-folders`, `pair`, `devices`, `revoke <id>`, `install-service`/`uninstall-service`, `logs`, `help`.
 
-The client owns:
+## 5. Agent Registration
 
-* Filesystem (within workspace boundaries)
-* Headless shell execution on behalf of agents
-* Workspace state
-* Permission dialogs and approval decisions
-* Session state and event history
+Each registered agent declares: name, version, supported models, ACP version, capabilities, config schema, auth requirements, resume support, and launch command. New agents are added without UI changes (autodetect probes known CLIs).
 
-Agents plan and propose; the client executes approved actions and returns results via ACP.
+## 6–7. ACP Client Layer & Integration
 
----
+The ACP Client Layer implements protocol mechanics (not provider-specific): process launch + transport, session management (create/load/list/close), prompts + streaming, permission requests, capability + auth negotiation, cancellation, and event translation / termination detection / reconnects.
 
-## Agent Independence
+**ACP handles:** session management; prompt exchange & streaming (rendered as thinking/reading/editing/finished); permission requests (`session/request_permission` -> allow-once / allow-always per session or tool / reject-once; no response => agent waits); provider auth; capability negotiation; agent modes (Ask/Plan/Agent); cancellation.
 
-The UI never communicates directly with agent implementations. All interaction flows through ACP:
+**ACP does not handle:** any UI concern — visual design, dialog appearance, explorer/editor layout, themes, diff viewer, chat. Those belong entirely to this app.
 
-```
-User → Browser UI → ACP Client Layer → ACP → AI Agent
-```
+## 8. Permission Manager
 
----
+Owns approval decisions. Receives `session/request_permission`, presents dialogs, returns allow-once / allow-for-session / always-allow-tool / deny, enforces configurable trust policies (e.g. auto-approve workspace reads, always prompt before shell/writes), and keeps an audit log.
 
-## Capability Negotiation
+**Prompt routing:** prompts are **broadcast to all paired devices**; the first response wins and syncs to all clients. **Single-user model** — pairing assumes one user with multiple devices; multi-user is a future concern (see OpenItems).
 
-At init, client and agent exchange capabilities via ACP (sessions, streaming, image/audio, filesystem, shell, MCP, permissions, agent modes, cancellation). The UI adapts to negotiated capabilities. See Section 7.
+## 9–10. Agent & Session Lifecycle
 
----
+- **Agent:** Init (validate config, start process, transport, negotiate caps, register worker) -> Active (prompts, streaming, permissions, events, health monitoring) -> Shutdown (user stop / agent exit / OS kill -> record event, cleanup, close ACP, update state, notify clients).
+- **Session:** independent of agent processes. States: Created -> Starting -> Running -> Waiting for Permission -> Interrupted -> Completed -> Failed -> Archived. If the agent supports resume, a new process reconnects to the session; otherwise history is retained and a new session is created.
 
-## Non-Goals (v1)
+## 11. Event System
 
-* **Interactive terminal UI** — command output appears in the tool timeline, not a shell tab
-* **Public internet / remote access** — LAN-only
-* **Git merge orchestration** — users run git on the host
-* **Provider-specific agent APIs** — ACP is the sole integration path
+Every significant action is an immutable, chronologically appended event; app state is derived from history (simplifies multi-client sync, debugging, future replay). Types include: SessionCreated/Started, PromptSubmitted, ResponseStarted, StreamUpdate, ResponseCompleted, ToolRequested/Started/Completed, ShellCommandStarted/OutputStreamed/Completed, FileRevisionUpdated, PermissionRequested/Granted/Denied, SessionInterrupted/Cancelled, AgentExited, ConnectionRestarted, SessionResumed (plus model-change, file-changed-on-disk, and pending-action events).
 
-Manual shell work uses the host terminal and `app` CLI.
+## 12. Multi-Client Synchronization
 
----
+The server is authoritative; devices are thin clients rendering from the event stream over WebSockets. On reconnect: retrieve session state, sync missing events, resume live streaming, re-present in-flight permission prompts (timeout default 5 min). A newly paired device immediately populates with current chat, tasks, and file tree. File changes propagate via revision tracking + `FileRevisionUpdated`.
 
-## Stateless UI
+## 13. Workspace Management
 
-The web client never owns session state. All authoritative state lives on the server; devices may disconnect and reconnect freely.
+Registered via `app add-folder .`. Each workspace stores project path, display name, git info, available agents, config, and active/archived sessions. Multiple sessions per workspace; agents switchable between sessions; workspace config is agent-independent.
 
----
+## 14. File System Access
 
-## Event Driven
+The host owns all writes within workspace bounds; agents and browsers never write to disk directly. Every file has a monotonic revision that increments on each write; a `FileRevisionUpdated` event updates all clients live.
 
-Every meaningful action becomes an event (see Section 11). The UI renders from the event stream rather than maintaining independent state.
+- **User edits:** save sends content + `expectedRevision`. Match => apply + broadcast. Stale => **three-way merge**: clean merges apply automatically; conflicts open a CodeMirror 6 merge view.
+- **Live agent changes while editing:** the editor shows an indicator without forcing a reload; conflict resolution triggers only on save.
+- **v1 limitation:** full file content sent on every save/event; incremental sync is future work.
 
----
+## 15. Shell Execution
 
-# 3. Architecture
+The host runs approved shell commands on behalf of agents (not an interactive terminal): agent requests via `session/request_permission` -> user prompt -> workspace-scoped subprocess -> stdout/stderr streamed as `ShellOutputStreamed` -> exit code returned via ACP. Output appears in the **tool timeline** as expandable cards. Commands run only within workspace boundaries.
 
-```
-Host Machine
-─────────────────────────
-CLI (app add-folder, app pair, ...)
-Background Daemon
-Workspace files (authoritative)
+## 16. Logging & Diagnostics
 
-        │
-        ▼
-Local Agent Server
-─────────────────────────
-Device pairing & auth
-Event broadcast
-Workspace Manager
-ACP Client Layer
+Separate streams kept out of the user experience: server logs, ACP Client Layer logs, ACP message logs, agent process output (diagnostics), and session event logs.
 
-        │
-        ▼ (WebSocket / HTTP, LAN only)
-Browser UI (any paired device)
-─────────────────────────
-Chat
-File Tree
-Permission Dialogs
-Settings
-Session History
-Agent Selector
+## 17. User Interface Architecture
 
-        │
-        ▼
-ACP Client Layer
-─────────────────────────
-Start agent
-Send prompts
-Receive events
-Handle permissions
-Stream updates
-Manage sessions
+Responsive dashboard (desktop/tablet/mobile); fast, keyboard-friendly, multi-device, agent-independent, minimal, accessible. Capabilities exposed dynamically from ACP negotiation.
 
-        │
-        ▼
-ACP
-        │
-        ▼
-AI Agent
-(Claude Code, Codex CLI, Gemini CLI, Cursor CLI, OpenCode, etc.)
-```
+- **Layout:** unpaired => lock screen. Paired => VS Code-style: activity bar (icon-only: Files, Search; connection status + Settings at bottom), left sidebar (workspace switcher + file tree or search), center tabbed CodeMirror 6 editor (diff/save + status bar), right sidebar agent chat. Mobile: bottom-nav, one panel at a time.
+- **Chat (right sidebar):** harness selector, model selector, history popout, conversation view (streaming, tool timelines, inline permissions — all from events), input composer (text + attachments). Settings render as an editor tab.
+- **Editor:** CodeMirror 6 with modular extensions; renders from `FileRevisionUpdated`; direct editing (`expectedRevision` saves), live viewing, diff view (`@codemirror/merge`).
+- **Running tasks panel:** active workers with agent/model/status/runtime/task/tokens + cancel.
+- **Agent management:** register/remove agents, configure auth, set default models, view caps, test connectivity — isolated from workspace config.
 
-The **host daemon** manages workspaces, serves the web UI, and owns all files on disk.
+## 18. MCP Integration
 
-The **Browser UI** renders chat, file tree, permissions, settings, and session history on any paired device. Unpaired devices see only a lock screen.
+MCP servers are managed by the client and advertised to agents during ACP negotiation (name, status, transport, tools, resources, config). Config is a Claude-compatible `mcpServers` map at `~/.local-agent/mcp.json`; supports local/remote and multiple simultaneous servers. Today the client passes inline stdio/http/sse transports to the agent (capability-filtered); daemon-brokered MCP-over-ACP is blocked on the SDK (see `acp-spec-compliance.md` §4.10).
 
-The **ACP Client Layer** handles protocol mechanics: starting agents, prompts, streaming, permissions, session lifecycle.
+## 19. Authentication
 
-**Agents** handle AI reasoning, tool planning, and code generation. They do not own the filesystem or execute shell commands directly.
+Two independent layers:
 
----
+- **Device pairing** (web-UI access): unpaired => lock screen. First device — `app add-folder .`, then `app pair` shows a QR (URL + one-time token) + four-word mnemonic; scan => credential => paired. Additional devices — open the LAN IP, type the mnemonic. Credentials are unique, revocable, browser-stored, required on all API/WS connections; pairing codes are short-lived and single-use.
+- **Agent auth** (ACP provider auth): API keys, OAuth, local credentials, env vars, or provider-managed login, negotiated before sessions. Never store credentials in plaintext — use OS secure storage where available.
 
-# 4. Terminology
+## 20. Configuration
 
-## Workspace
+Three inheriting scopes (Global -> Workspace -> Session; each may override):
 
-A project directory managed by the client. Contains files, git repo, configuration, and sessions. Workspaces persist indefinitely.
+- **Global** — registered agents, network settings, paired devices, theme, logging, security, default models, permission policies.
+- **Workspace** — project path, preferred agent, env vars, workspace permissions, default MCP servers.
+- **Session** — model, temperature, system prompt, permission mode, agent mode, context limits.
 
----
+**Network discovery:** daemon binds `0.0.0.0` on a configurable port (default `7337` HTTP / `7338` HTTPS). Discovery via mDNS (`app.local`), QR (full URL), `app status` (LAN IP fallback), or manual lock-screen IP entry.
 
-## Session
+## 21. Error Handling
 
-One conversation with an agent over ACP. Contains conversation history, agent metadata, event log, ACP connection reference, and configuration. Sessions may be resumed via ACP (`create session`, `load session`, `list sessions`).
+Categories: agent unavailable, auth failed, ACP comms failure, agent crash, resume unsupported, tool execution failure, network interruption, permission denied. Errors give actionable guidance; recoverable failures offer retry or resume.
 
----
+## 22. Security
 
-## Agent Connection
+LAN-only with mandatory device pairing; the network is not assumed trusted (unpaired devices get nothing). Principles: mandatory pairing, short-lived single-use pairing sessions, revocable per-device credentials, workspace-boundary enforcement, explicit permission prompts, configurable trust policies, secure credential storage, audit logging, host-authoritative writes. Safe for semi-public environments when pairing codes are treated as temporary passwords. See `docs/known-issues.md` for deferred security findings.
 
-The active ACP link between the client and a running agent process. Maintained until the session closes or the agent exits.
+## 23–24. Future Expansion & Philosophy
 
----
+Additive without architectural change: remote hosting, team collaboration, shared workspaces, plugins, agent marketplace, background scheduling, session replay, distributed workers, cloud sync, git merge orchestration, ACP sub-workers, more ACP capabilities. This is an **ACP client and orchestration platform, not an AI platform** — AI reasoning and tool planning belong to the agents.
 
-## Host Daemon
+## 25. Development Phases
 
-Long-running background process on the host. Serves the web UI, manages workspaces, broadcasts events, and runs the ACP Client Layer. Users interact via the `app` CLI (setup) and web UI (agent sessions).
-
-### Daemon Lifecycle
-
-| Phase | Behavior |
-|---|---|
-| **Install** | Single binary added to PATH. State stored in `~/.local-agent/`. |
-| **Start** | `app start` launches the daemon (foreground or `--background`). Binds to the LAN; see Network Discovery. |
-| **Autostart** | Opt-in only via `app install-service` (launchd on macOS, systemd on Linux). Default is manual `app start`. |
-| **Running** | One daemon per machine. Owns all workspace writes and ACP agent connections. |
-| **Crash** | Daemon exits; service manager or user restarts it. Paired clients reconnect via WebSocket and resync events. Active ACP sessions resume if the agent supports it. |
-| **Upgrade** | `app stop` → replace binary → `app start`. Event log and paired devices persist across restarts. |
-
-### Host CLI
-
-```
-app — Local Agent Interface host CLI
-
-Usage: app <command> [options]
-
-Commands:
-  start              Start the background daemon
-  stop               Stop the daemon
-  status             Show URL, LAN IP, port, workspaces, and paired devices
-  add-folder [path]  Register a directory as a workspace (default: current dir)
-  pair               Generate QR code and mnemonic passcode for device pairing
-  devices            List paired devices
-  revoke <id>        Revoke a paired device's access
-  install-service    Install autostart (launchd / systemd; opt-in)
-  logs               Tail daemon logs
-  help               Show this help
-```
-
----
-
-## Paired Client
-
-A browser session on a device that has completed pairing and holds a valid credential. Only paired clients access the UI beyond the lock screen. Multiple may connect simultaneously.
-
----
-
-## Worker
-
-Server-side object managing one agent connection: starts the process, maintains ACP communication, translates messages to events, handles permissions, detects restarts, supports cancellation, and cleans up.
-
----
-
-# 5. Agent Registration
-
-Each registered agent declares: name, version, supported models, ACP version, capabilities, configuration schema, authentication requirements, resume support, and launch command.
-
-New agents can be added without changing the UI.
-
----
-
-# 6. ACP Client Layer
-
-Core integration surface implementing ACP protocol mechanics (not provider-specific):
-
-* Process launch and transport setup
-* Session management (`create`, `load`, `list`, `close`)
-* Prompts (`session/prompt`) and streaming
-* Permission requests (`session/request_permission`)
-* Capability and authentication negotiation
-* Cancellation and interrupt
-* Event translation, termination detection, reconnects
-
-Business logic belongs in the server; this layer handles protocol mechanics.
-
----
-
-# 7. ACP Integration
-
-ACP standardizes nearly everything needed for the Local Agent Interface to talk to an AI coding agent. The ACP Client Layer (Section 6) implements these mechanics.
-
-## What ACP Handles
-
-* **Session management** — create, load, list, close, and cancel running work.
-* **Prompt exchange & streaming** — `User → session/prompt → Agent → streaming updates`; the UI renders progress (thinking, reading, editing, finished) in real time.
-* **Permission requests** — agents send `session/request_permission`; the client returns *allow once*, *allow always* (per session or tool), or *reject once*. If the client never responds, the agent waits.
-* **Authentication** — providers can be logged into before sessions begin.
-* **Capability negotiation** — client and agent exchange supported features (images, audio, filesystem, shell, MCP, session features) at initialization.
-* **Agent modes** — Ask, Plan, and Agent, switchable without protocol changes.
-* **Cancellation** — interrupt a running task, like Ctrl+C.
-
-## What ACP Does Not Handle
-
-ACP does not define UI concerns—visual design, permission dialog appearance, file explorer/editor layout, themes, diff viewer, or chat interface. Those belong entirely to the Local Agent Interface.
-
----
-
-# 8. Permission Manager
-
-Because the client owns approval decisions, the application includes a dedicated Permission Manager.
-
-### Responsibilities
-
-* Receive `session/request_permission` from agents
-* Present permission dialogs to the user
-* Return allow-once, allow-always, or reject-once decisions to the agent
-* Enforce configurable trust policies (e.g., auto-approve reads, always ask before shell commands or writes)
-* Maintain an audit log of approvals and denials
-
-### UI Features
-
-* Allow Once
-* Allow for This Session
-* Always Allow This Tool
-* Deny
-* View full command or change details before deciding
-
-### Policy Examples
-
-* Auto-approve reads within workspace
-* Always prompt before shell commands or file writes
-* Remember decisions per session or per tool type
-
-### Prompt Routing
-
-Permission prompts are **broadcast to all paired devices** simultaneously. Any device may respond; the first response is applied and synchronized to all clients. This lets a user approve a shell command or file write from whichever device is in hand.
-
-**Single-user model:** Pairing assumes one user with multiple devices. If multiple people pair to the same daemon, the first-response-wins model could let one person approve a command another is trying to deny. Multi-user support is a future concern (see OpenItems).
-
----
-
-# 9. Agent Lifecycle
-
-## Initialization
-
-The ACP Client Layer validates configuration, starts the agent process, establishes transport, negotiates capabilities, and registers the worker.
-
----
-
-## Active Operation
-
-The worker receives prompts via `session/prompt`, streams updates to clients, handles permissions, emits events, and monitors connection health. It remains active until the agent exits or the session closes.
-
----
-
-## Shutdown
-
-Triggers: user stops session, agent exits/crashes, OS terminates the process. The worker records the event, cleans up, closes the ACP connection, updates session state, and notifies clients.
-
----
-
-# 10. Session Lifecycle
-
-Sessions are independent of agent processes. An agent may terminate while the session remains available for resumption via ACP (`load session`).
-
-States: Created → Starting → Running → Waiting for Permission → Interrupted → Completed → Failed → Archived.
-
-If the agent supports resume, a new process reconnects to the existing session. Otherwise, history is retained and a new session is created. Resume support is exposed via capability negotiation.
-
----
-
-# 11. Event System
-
-Every significant action is an immutable event. Types include: SessionCreated, SessionStarted, PromptSubmitted, ResponseStarted, StreamUpdate, ResponseCompleted, ToolRequested, ToolStarted, ToolCompleted, ShellCommandStarted, ShellOutputStreamed, ShellCommandCompleted, FileRevisionUpdated, PermissionRequested, PermissionGranted, PermissionDenied, SessionInterrupted, SessionCancelled, AgentExited, ConnectionRestarted, SessionResumed.
-
-Events are appended chronologically. Application state is derived from event history—simplifying multi-client sync, debugging, and future replay.
-
----
-
-# 12. Multi-Client Synchronization
-
-The server is authoritative. Connected devices are thin clients rendering from the event stream via WebSockets.
-
-On reconnect: session state is retrieved, missing events synced, live streaming resumes, and in-flight permission prompts are re-presented (timeout configurable, default 5 min).
-
-Multiple devices observe and interact with the same session simultaneously. A newly paired device immediately populates with current chat, tasks, and file tree. File changes propagate via revision tracking and `FileRevisionUpdated` events.
-
----
-
-# 13. Workspace Management
-
-Registered via `app add-folder .`. Each workspace stores: project path, display name, git info, available agents, configuration, active and archived sessions.
-
-Multiple sessions may exist per workspace. Agents can be switched between sessions. Workspace configuration is agent-independent.
-
----
-
-# 14. File System Access
-
-The host daemon owns the filesystem within workspace boundaries. Agents and browsers never write to disk directly. Agents request permission through ACP; the daemon validates, prompts the user if needed, executes, and returns results.
-
-## Client File Sync
-
-The host executes all file writes: agent operations through ACP, user saves from browser clients. Every file has a monotonic revision number that increments on each write. When a file changes, the host emits a `FileRevisionUpdated` event so all paired clients update their editor view live.
-
-### User Edits
-
-On save, the client sends content plus `expectedRevision`. If revisions match, the host applies and broadcasts. If stale, the host attempts a **three-way merge**:
-- **Clean merge** — applied automatically, no user action.
-- **Conflicts** — client opens a merge UI (CodeMirror 6 merge view) for resolution.
-
-### Live Agent Changes During Editing
-
-When the agent modifies a file being edited, the editor shows an indicator without forcing a reload. Conflict resolution triggers only on save.
-
-**v1 limitation:** Full file content sent on every save/event. Incremental sync is a future optimization.
-
----
-
-# 15. Shell Execution
-
-The host daemon executes approved shell commands on behalf of agents via ACP—not an interactive terminal.
-
-## Flow
-
-1. Agent requests execution via `session/request_permission`.
-2. Permission Manager prompts the user.
-3. On approval, daemon runs the command in a workspace-scoped subprocess.
-4. Stdout/stderr streamed to clients as `ShellOutputStreamed` events.
-5. Exit code returned to agent via ACP.
-
-Output appears in the **tool timeline** as expandable cards (command, success/failure, full output). No interactive terminal in v1. Commands run only within workspace boundaries.
-
----
-
-# 16. Logging and Diagnostics
-
-Levels: server logs, ACP Client Layer logs, ACP message logs, agent process output (diagnostics only), session event logs. Kept separate from the user experience.
-
----
-
-# 17. User Interface Architecture
-
-Responsive dashboard for desktop, tablet, and mobile. Design goals: fast, keyboard-friendly, multi-device, agent-independent, minimal clutter, accessible. Capabilities exposed dynamically based on ACP negotiation.
-
----
-
-## Primary Layout
-
-Unpaired devices see a **lock screen**. Paired devices see a VS Code-style layout:
-
-* **Activity bar** (far left, icon-only) — file explorer, search; connection status and settings at bottom
-* **Left sidebar** (popout) — workspace switcher + file tree, or search
-* **Center editor** — tabbed CodeMirror 6 with diff/save and status bar
-* **Right sidebar** — agent chat with harness/model selectors, chat history, streaming responses, tool timelines, permissions, input
-
-Mobile: bottom-nav layout, one panel at a time. Layout is consistent regardless of active agent.
-
----
-
-## Activity Bar and Left Sidebar
-
-Icon-only navigation: **Files** (workspace switcher + file tree), **Search** (across workspace), **Settings** (devices, theme, config).
-
-Left sidebar shows the selected view. File tree supports expand/collapse, unsaved-change indicators, and active file highlight. On mobile, collapses into a horizontal bar with pill buttons.
-
----
-
-## Workspace View
-
-Displays: project info, current agent, active sessions, recent activity, git branch/status, connected clients.
-
----
-
-## Right Sidebar — Agent Chat
-
-Always visible on desktop alongside the editor:
-
-* **Harness selector** — pick agent
-* **Model selector** — pick model
-* **Chat history popout** — past and active sessions
-* **Conversation view** — streaming responses, tool timelines, inline permissions (rendered from events)
-* **Input composer** — text + attachment for multimodal uploads
-
-On mobile, full-screen view via bottom nav.
-
----
-
-## Editor and File Viewing
-
-**CodeMirror 6** with modular extensions. Clients render from `FileRevisionUpdated` events for live updates. Supports direct editing (with `expectedRevision` saves), live viewing, and diff view (`@codemirror/merge`).
-
----
-
-## Running Tasks Panel
-
-Shows active workers: agent, model, status, runtime, current task, token usage, cancellation controls. Multiple workers may run simultaneously.
-
----
-
-## Agent Management
-
-Register/remove agents, configure auth, set default models, view capabilities, test connectivity. Settings are isolated from workspace config.
-
----
-
-# 18. MCP Integration
-
-MCP servers are managed by the client and advertised to agents during ACP capability negotiation. Each server has: name, connection status, transport, available tools, resources, and configuration.
-
-Supports local, remote, and multiple simultaneous MCP servers, plus dynamic discovery where available.
-
----
-
-# 19. Authentication
-
-Two independent layers: **device pairing** (access to the web UI) and **agent auth** (connecting to AI providers via ACP).
-
----
-
-## Device Pairing
-
-Unpaired requests see only a lock screen.
-
-### First Device (QR Code)
-
-1. `app add-folder .` to register workspace.
-2. `app pair` generates a QR code (URL + one-time token) and four-word mnemonic.
-3. Scan QR → token submitted → device receives a long-lived credential → paired.
-
-Pairing sessions are short-lived and single-use.
-
-### Additional Devices (Mnemonic Passcode)
-
-1. Navigate to daemon's local IP → lock screen.
-2. `app pair` on host → read four-word mnemonic → type it into lock screen.
-3. Device receives credential, UI loads synchronized.
-
-### Device Credentials
-
-Each device gets a unique, revocable credential stored in the browser. Required for all API/WebSocket connections. Revocable from Settings; re-pairing required after revocation or expiry.
-
-### Security Model
-
-No unauthenticated access to workspaces, files, or sessions. Pairing codes expire quickly and work once. See Section 22.
-
----
-
-## Agent Authentication (ACP Provider Auth)
-
-ACP handles auth negotiation before sessions begin. Methods: API keys, OAuth, local credentials, environment variables, provider-managed login.
-
-Agent credentials must never be stored in plaintext; use OS secure credential storage where available.
-
----
-
-# 20. Configuration
-
-Three scopes, inheriting Global → Workspace → Session (each level may override).
-
-## Global Configuration
-
-Registered agents, network settings (bind address, port, mDNS hostname), paired devices, theme, logging, security, default models, permission policies.
-
-### Network Discovery
-
-The daemon binds to **`0.0.0.0`** on a configurable port (default **`7337`**) so all LAN interfaces accept connections.
-
-| Method | How |
-|---|---|
-| **mDNS** | Advertise as `app.local` (Bonjour on macOS, Avahi on Linux) so browsers can use `http://app.local:7337` |
-| **QR code** | `app pair` encodes the full URL (mDNS hostname or LAN IP) |
-| **Manual** | `app status` prints the LAN IP and port as fallback |
-| **Lock screen** | Unpaired clients can enter the host IP manually before pairing |
-
-mDNS is recommended but not required—`app status` always provides a direct IP fallback.
-
----
-
-## Workspace Configuration
-
-Project path, preferred agent, environment variables, workspace permissions, default MCP servers.
-
----
-
-## Session Configuration
-
-Selected model, temperature, system prompt, permission mode, agent mode (Ask/Plan/Agent), context limits.
-
----
-
-# 21. Error Handling
-
-Categories: agent unavailable, auth failed, ACP communication failure, agent crash, session resume unsupported, tool execution failure, network interruption, permission denied.
-
-Errors should provide actionable guidance. Recoverable failures should offer retry or resume.
-
----
-
-# 22. Security
-
-LAN-only with mandatory device pairing. The network is not assumed trusted—unpaired devices get nothing.
-
-Principles: mandatory pairing, short-lived single-use pairing sessions, revocable per-device credentials, workspace boundary enforcement, explicit permission prompts, configurable trust policies, secure credential storage, audit logging, host-authoritative writes.
-
-Safe for semi-public environments when pairing codes are treated as temporary passwords. Remote/internet access out of scope for v1.
-
----
-
-# 23. Future Expansion
-
-Potential: remote hosting, team collaboration, shared workspaces, plugin system, agent marketplace, background scheduling, mobile optimization, analytics, session replay, distributed workers, cloud sync, git merge orchestration, ACP sub-workers, additional ACP capabilities.
-
-Designed to be additive without architectural changes.
-
----
-
-# 24. Design Philosophy
-
-ACP client and orchestration platform—not an AI platform. Owns ACP client role, workspaces, filesystem, shell, permissions, sessions, client sync, and UX. AI reasoning and tool planning belong to the agents.
-
----
-
-# 25. Development Phases
-
-## Phase 1 – Core Infrastructure
-
-* Host daemon and CLI (`app start`, `app stop`, `app status`, `app add-folder`, `app pair`, `app devices`, `app revoke`, `app logs`)
-* Device pairing (QR code + mnemonic passcode, lock screen)
-* Local web server (LAN binding, mDNS discovery)
-* Workspace management
-* Session lifecycle
-* ACP Client Layer (transport, sessions, prompts, streaming)
-* Permission Manager (basic allow/deny)
-* Headless shell execution (workspace-scoped subprocesses, tool timeline output)
-* Single agent support
-* Event system
-* WebSocket synchronization across paired clients
-* CodeMirror 6 editor with diff view and direct editing
-
----
-
-## Phase 2 – Multi-Agent Support
-
-* Agent registry
-* Capability negotiation
-* Multiple simultaneous workers
-* Agent configuration and authentication
-* Session resume support
-* Permission policies and audit log
-* Enhanced diagnostics
-
----
-
-## Phase 3 – Advanced Features
-
-* MCP management
-* Multi-client collaboration
-* Plugin architecture
-* Improved diagnostics
-* Session replay
-* Advanced workspace tools
-* Optional developer terminal (user-initiated manual shell, separate from agent shell execution)
-* UI polish and accessibility improvements
-
----
-
-# Conclusion
-
-ACP-only, agent-agnostic foundation. The client owns workspace resources and permissions; any ACP-compatible agent works through a single integration path.
+- **Phase 1 — Core Infrastructure (done):** daemon + CLI, pairing (QR + mnemonic + lock screen), LAN web server + mDNS, workspace management, session lifecycle, ACP Client Layer, Permission Manager, headless shell execution, single-agent support, event system, WebSocket sync, CodeMirror 6 editor with diff.
+- **Phase 2 — Multi-Agent (partial):** agent registry, capability negotiation, multiple simultaneous workers, agent config/auth, session resume, permission policies + audit log, enhanced diagnostics.
+- **Phase 3 — Advanced (partial):** MCP management, multi-client collaboration, plugin architecture, session replay, advanced workspace tools, optional developer terminal, UI polish + accessibility.

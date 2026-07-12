@@ -59,6 +59,24 @@ When Claude Code fixes the inline-image gap upstream, no change is needed on
 our side — the capability gate will already send the inline `ImageBlock` to any
 agent that advertises image support.
 
+## MCP-over-ACP (P4.10) — blocked on SDK `mcp/message` codegen
+
+Investigated 2026-07-13. Deferred; the working inline MCP transport (client
+passes stdio/http/sse configs to the agent) is retained.
+
+`coder/acp-go-sdk` v0.13.5 (latest) code-generates `mcp/connect`
+(`UnstableConnectMcp`) and `mcp/disconnect` (`UnstableDisconnectMcp`) but **not**
+`mcp/message` — the bidirectional relay that carries the actual inner MCP
+JSON-RPC. `ClientSideConnection.handle` doesn't dispatch inbound `mcp/message`
+(returns `MethodNotFound`), there's no method to send `mcp/message` to the agent,
+the `_`-prefixed extension escape-hatch doesn't cover it, and the underlying
+`*Connection` is unexported. So a functional broker isn't possible without
+forking the SDK or replacing our `ClientSideConnection` usage with a hand-rolled
+`acp.NewConnection` layer — both disproportionate for an unstable protocol no
+mainstream agent advertises (`mcp_capabilities.acp`) yet.
+
+Fix path / unblock signal + full drop-in design: `docs/plans/acp-spec-compliance.md` § 4.10.
+
 ## Security audit — deferred findings (from 2026-07-07 audit)
 
 - **sec-auth-no-authorization-tiers (Medium) — RESOLVED (2026-07-11):**

@@ -69,7 +69,7 @@ Available in `coder/acp-go-sdk v0.13.5` (Go) and/or `@agentclientprotocol/sdk` (
 | Session list | `Agent.ListSessions()` (stable v0.11.7) | ✅ Done | Reconcile after restart (P4.4) |
 | Elicitation | Unstable methods | Future | v2 draft — high interest once stable |
 | NES | Unstable methods | Future | Inline completions |
-| MCP-over-ACP | Unstable methods | Future | Preferred long-term: let harness manage MCP; config UI already exists |
+| MCP-over-ACP | Unstable methods | ⛔ Blocked (SDK) | `mcp/connect`+`mcp/disconnect` wired in v0.13.5 but **`mcp/message` relay is not code-generated** and can't be wired via the stock `ClientSideConnection`. Inline transport retained. Blocker + drop-in design: `docs/plans/acp-spec-compliance.md` §4.10 |
 | Provider mgmt | Unstable methods | ✅ Done | Session-scoped `providers/list\|set\|disable`; REST `/api/sessions/{id}/providers`; Settings → General UI (P4.11) |
 | Tool content helpers | `ToolContent`, `ToolDiffContent`, `ToolTerminalRef` | ✅ N/A | Agent-side only; we are the client |
 | Explicit validation | `Validate()` on requests | ✅ Done | All constructed requests (P4.2) |

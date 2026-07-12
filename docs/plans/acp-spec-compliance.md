@@ -202,9 +202,76 @@ The one practical adoption: typed `AppEvent.stopReason` as a local `StopReason` 
 
 #### 4.10 MCP-over-ACP
 
-**Rationale:** `mcp/connect`, `mcp/disconnect`, `mcp/message` would let the agent talk to MCP servers brokered by the client. Needs an MCP server config UI first.
+**Status:** ⛔ Blocked on SDK (investigated 2026-07-13). Deferred — the working
+inline transport (client passes stdio/http/sse configs to the agent) is retained.
 
-**Affected files:** `internal/acp/transport.go`, `internal/config/`, `internal/server/`, frontend settings.
+**Rationale:** `mcp/connect`, `mcp/disconnect`, `mcp/message` would let the agent
+talk to MCP servers brokered by the *client* (the daemon owns the connection and
+relays MCP JSON-RPC). The MCP server config UI already exists.
+
+**Blocker — `mcp/message` is not wired in `coder/acp-go-sdk` v0.13.5 (latest):**
+
+- `mcp/connect` (`UnstableConnectMcp`) and `mcp/disconnect` (`UnstableDisconnectMcp`)
+  are code-generated as typed client handlers (see `client_gen.go`).
+- **`mcp/message` — the bidirectional relay carrying the actual inner MCP
+  JSON-RPC — is not generated at all.** It appears in `constants_gen.go`
+  (`AgentMethodMcpMessage`, `ClientMethodMcpMessage`) and `meta.unstable.json`,
+  and the request/response/notification types exist (`UnstableMessageMcpRequest`,
+  `UnstableMessageMcpResponse`, `UnstableMessageMcpNotification`), but:
+    - `ClientSideConnection.handle` does **not** dispatch `mcp/message` (inbound
+      agent→client requests return `MethodNotFound`), and
+    - there is **no** `ClientSideConnection` method to *send* `mcp/message` to the
+      agent (client→agent).
+- The extension escape-hatch (`CallExtension`/`HandleExtensionMethod` in
+  `extensions.go`) only routes method names starting with `_`, so `mcp/message`
+  can't ride it. The underlying `*Connection` field is unexported, so we can't
+  call `SendRequest`/`SendNotification` for `mcp/message` from our package either.
+- The SDK's own tests/examples never exercise MCP-over-ACP, and no mainstream
+  agent (Claude Code, Codex, Gemini) advertises `mcp_capabilities.acp` yet.
+
+**Why we did not ship a partial path:** wiring only `connect`/`disconnect` (which
+*are* available) would let a capable agent connect, then fail every subsequent
+tool call with `MethodNotFound` on `mcp/message` — strictly worse than the
+current inline path. And auto-routing over ACP would be inert today regardless,
+since no agent advertises the capability.
+
+**Unblock signal:** an `acp-go-sdk` release that code-generates `mcp/message` on
+`ClientSideConnection` (a sendable method + a `handle` case), OR the SDK exposing
+its `*Connection` / a custom `MethodHandler` override so we can wire it ourselves.
+
+**Drop-in design (implement when unblocked):**
+
+1. **Config plumbing** (`internal/mcp/config.go`): routing is automatic (no
+   per-server flag). Add a `ToACPBrokered(name, cfg, acpId)` that emits
+   `acp.McpServer{Acp: &acp.McpServerAcpInline{Id, Name, Type:"acp"}}`, and split
+   `ToACPSlice` selection: for each enabled server, if the agent advertised
+   `McpCapabilities.Acp` **and** we can broker its transport (stdio first; http/sse
+   later), emit an `Acp` entry and register `acpId → ServerConfig` in a per-session
+   broker map; otherwise fall back to today's inline path (still gated on
+   `caps.Http`/`caps.Sse`).
+2. **Broker** (`internal/mcp/broker.go`, new): per-session component owning the
+   real MCP connections. stdio first: on `mcp/connect(acpId)` spawn the subprocess
+   (reuse `expandEnv`, `cwd`, `env`), assign a `connectionId`, and start a reader
+   goroutine on the child's stdout. Maintain an inner JSON-RPC id map. On
+   `mcp/message` request from the agent: assign an inner id, write the framed
+   JSON-RPC request to stdin, await the matching response, return it as the ACP
+   response. On `mcp/message` notification: write-and-forget. On server-initiated
+   messages from the child (`sampling/createMessage`, `roots/list`, …): forward to
+   the agent via the client→agent `mcp/message`. On `mcp/disconnect(connectionId)`:
+   kill + reap. Feed brokered connections into `internal/mcp/health.go`.
+3. **Transport/handlers** (`internal/acp/transport.go`, `internal/acp/acp.go`):
+   `acpClientImpl` implements `UnstableConnectMcp`/`UnstableDisconnectMcp` (SDK
+   already dispatches these) delegating to the session broker; capture
+   `initResp.AgentCapabilities.McpCapabilities.Acp` alongside the existing
+   `promptCaps`/`providersSupported`; `startTransportLocked` builds the brokered
+   vs. inline split and hands the broker to `impl`; teardown closes the broker with
+   the transport.
+4. **Frontend**: a small "brokered (ACP)" vs. "direct" transport badge in the MCP
+   settings list; no new controls (routing is automatic).
+
+**Affected files:** `internal/acp/transport.go`, `internal/acp/acp.go`,
+`internal/mcp/config.go`, `internal/mcp/broker.go` (new), `internal/mcp/health.go`,
+`web/src/components/SettingsPanel.tsx`.
 
 #### 4.11 Provider management
 
@@ -226,7 +293,7 @@ The one practical adoption: typed `AppEvent.stopReason` as a local `StopReason` 
 
 ## Implementation Notes
 
-- Priority 1, Priority 2, P4 near-term (4.1–4.5), and provider management (4.11) are complete. Remaining Priority 4 future items: session fork/resume/close, elicitation, NES, MCP-over-ACP, audio, ACP-inspector.
+- Priority 1, Priority 2, P4 near-term (4.1–4.5), and provider management (4.11) are complete. MCP-over-ACP (4.10) was investigated 2026-07-13 and is **blocked on the SDK** (`mcp/message` not code-generated) — see 4.10 for the blocker analysis and drop-in design; the working inline MCP transport is retained. Remaining Priority 4 future items: session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - 1.1 and 1.3 were interrelated and implemented together (structured-blocks infrastructure first, then open-files middleware on top).
 - Priority 2 items were each small, isolated changes.
 - Run `go test ./internal/acp/...` and `go vet ./...` after each change. Update `docs/STATUS.md` and `docs/reference/acp/responsibilities.md` to reflect implemented items.
