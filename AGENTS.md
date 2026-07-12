@@ -71,6 +71,16 @@ If the quota runs out, use the small subagent. It's still very powerful and can 
 
 - **Keep `docs/STATUS.md` current.** When you start, modify, or complete a task, update the relevant row in STATUS.md immediately. Mark gaps honestly — "⚠️ Partial" or "⚠️ Stub" over false "✅ Done". Include short notes on what's missing. Compact occasionally. 
 
+## Security
+
+Security is of utmost importance. This daemon serves a browser UI to devices on the local network, executes shell commands, and writes files on behalf of AI agents — a capable attack surface.
+
+- **Periodic security audits:** Run a focused security audit (subagent) at least once per major feature batch or before any release. Audit auth, path traversal, command injection, input validation, secrets, TLS, SQL injection, and DoS. Store findings under `docs/reviews/<date>/`.
+- **Track deferred findings:** Findings not fixed immediately go in `docs/known-issues.md` with severity and a concrete fix path — never silently dropped.
+- **No secrets in logs, configs, or commits.** Device credentials are hashed at rest; never log raw tokens, passcodes, or secrets.
+- **Default to secure:** TLS on by default, bind to 0.0.0.0 only with TLS, reject symlinks in workspace paths, rate-limit unauthenticated endpoints, cap request/response sizes.
+- **When adding new endpoints or file/command surfaces:** Consider the threat model — who can call this (loopback vs. any LAN device vs. any paired device), and what's the worst case if abused.
+
 ## Agent Hints
 - LLM Memory is limited by context length. Long chats can cause context overflow. Keep terminal output concise and focused where possible by using quiet flags, filtering output, and capping linter output to a few errors at a time.
 - When delegating to subagents, provide clear task boundaries and expected outputs
