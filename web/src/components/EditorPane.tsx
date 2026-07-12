@@ -279,7 +279,7 @@ export function EditorPane({
   return (
     <main
       className={cn(
-        'flex-1 flex flex-col min-w-0 h-full bg-editor relative pb-16 lg:pb-0',
+        'flex-1 flex flex-col min-w-0 h-full bg-editor relative pb-16 lg:pb-0 @container',
         visible ? 'flex' : 'hidden',
       )}
     >

@@ -39,7 +39,7 @@ export function MobileNav({
           onClick={() => onSwitchView(view)}
           className={cn(
             'flex flex-col items-center justify-center w-16 h-full transition relative',
-            activeView === view ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
+            activeView === view && !(view === 'editor' && settingsActive) ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
           )}
         >
           {badge && (

@@ -671,10 +671,10 @@ export default function App() {
       )}
       {/* Top Header Bar (Desktop only) */}
       {isDesktop && (
-        <div className="h-9 border-b border-border flex items-center bg-panel shrink-0 select-none">
+        <div className="min-h-[36px] border-b border-border flex items-stretch bg-panel shrink-0 select-none">
           {/* Left section: width matches ActivityBar + LeftSidebar */}
           <div
-            className="flex items-center justify-between pl-2 pr-3 h-full border-r border-border shrink-0"
+            className="flex items-center justify-between pl-2 pr-3 border-r border-border shrink-0"
             style={{ width: leftPanelWidth + 48 }}
           >
             <div className={cn("flex w-full", leftPanelWidth === 0 ? "justify-center" : "justify-start")}>
@@ -700,7 +700,7 @@ export default function App() {
           </div>
 
           {/* Right section: Tabs to the right */}
-          <div className="flex-1 flex items-center min-w-0 h-full">
+          <div className="flex-1 flex items-stretch min-w-0 h-full @container">
             <TabBar
               tabs={openTabs}
               activeTabId={activeTabId}

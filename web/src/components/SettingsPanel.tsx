@@ -16,10 +16,12 @@ import {
   ChevronDown,
   ChevronRight,
   HelpCircle,
+  Menu,
 } from 'lucide-react'
 import type { AgentInfo } from '@/lib/api'
 import { getMcpConfig, putMcpConfig, patchMcpServer } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { getStoredTheme, setTheme, type Theme } from '@/lib/theme'
 
 type McpServerConfig = {
   enabled?: boolean
@@ -65,6 +67,8 @@ export function SettingsPanel({
 }) {
   const [activeTab, setActiveTab] = useState<'agents' | 'mcp' | 'general'>('agents')
   const [isDetecting, setIsDetecting] = useState(false)
+  const [showMobileNav, setShowMobileNav] = useState(false)
+  const [localTheme, setLocalTheme] = useState<Theme>(getStoredTheme())
 
   // New agent form state
   const [showAddForm, setShowAddForm] = useState(false)
@@ -190,9 +194,53 @@ export function SettingsPanel({
     )
 
   return (
-    <div className="h-full flex">
-      {/* Sidebar */}
-      <div className="w-48 bg-activity-bar border-r border-border flex flex-col py-2 shrink-0">
+    <div className="h-full flex flex-col md:flex-row relative">
+      {/* Mobile Header */}
+      <div className="md:hidden flex items-center justify-between p-3 border-b border-border bg-panel shrink-0">
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => setShowMobileNav(!showMobileNav)} 
+            className="p-1.5 hover:bg-accent rounded-md transition"
+            aria-label="Toggle navigation menu"
+            aria-expanded={showMobileNav}
+          >
+            <Menu className="w-5 h-5 text-foreground" />
+          </button>
+          <span className="font-semibold text-sm">
+            {activeTab === 'agents' ? 'Agents & Models' : activeTab === 'mcp' ? 'MCP Servers' : 'General Settings'}
+          </span>
+        </div>
+      </div>
+
+      {/* Mobile Nav Overlay */}
+      <div 
+        className={cn(
+          "md:hidden absolute inset-x-0 bottom-0 top-[53px] z-50 bg-background flex flex-col p-2 transition-all duration-200 ease-out origin-top",
+          showMobileNav ? "opacity-100 scale-y-100" : "opacity-0 scale-y-95 pointer-events-none"
+        )}
+      >
+        <button
+          onClick={() => { setActiveTab('agents'); setShowMobileNav(false) }}
+          className={tabButtonClass(activeTab === 'agents')}
+        >
+          Agents & Models
+        </button>
+        <button
+          onClick={() => { setActiveTab('mcp'); setShowMobileNav(false) }}
+          className={tabButtonClass(activeTab === 'mcp')}
+        >
+          MCP Servers
+        </button>
+        <button
+          onClick={() => { setActiveTab('general'); setShowMobileNav(false) }}
+          className={tabButtonClass(activeTab === 'general')}
+        >
+          General
+        </button>
+      </div>
+
+      {/* Sidebar - Desktop Only */}
+      <div className="hidden md:flex w-48 bg-activity-bar border-r border-border flex-col py-2 shrink-0">
         <button
           onClick={() => setActiveTab('agents')}
           className={tabButtonClass(activeTab === 'agents')}
@@ -493,7 +541,31 @@ export function SettingsPanel({
               <Settings className="w-4 h-4 text-muted-foreground" />
               <h3 className="text-base font-semibold text-foreground">General Settings</h3>
             </div>
-            <p className="text-sm text-muted-foreground">More settings coming soon.</p>
+            
+            {/* Theme Section */}
+            <div className="p-4 bg-panel border border-border rounded-lg space-y-3">
+              <h4 className="font-semibold text-sm text-foreground">Theme</h4>
+              <p className="text-xs text-muted-foreground">Choose the visual appearance of the application.</p>
+              
+              <div className="flex flex-col gap-2 mt-2">
+                {(['dark', 'light', 'system'] as Theme[]).map(t => (
+                  <label key={t} className="flex items-center gap-2 cursor-pointer w-fit">
+                    <input 
+                      type="radio" 
+                      name="theme" 
+                      value={t} 
+                      checked={localTheme === t}
+                      onChange={() => {
+                        setLocalTheme(t)
+                        setTheme(t)
+                      }}
+                      className="text-primary focus:ring-primary h-4 w-4 border-input accent-primary cursor-pointer"
+                    />
+                    <span className="text-sm capitalize text-foreground">{t}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
