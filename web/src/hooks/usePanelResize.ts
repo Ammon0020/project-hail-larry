@@ -30,6 +30,9 @@ interface UsePanelResizeResult {
   hideLeftPanel: () => void
   showLeftPanel: () => void
   toggleLeftPanel: () => void
+  hideRightPanel: () => void
+  showRightPanel: () => void
+  toggleRightPanel: () => void
 }
 
 function readStoredWidth(config: PanelResizeConfig): number {
@@ -50,6 +53,7 @@ export function usePanelResize({
   const [leftWidth, setLeftWidth] = useState(() => readStoredWidth(left))
   const [rightWidth, setRightWidth] = useState(() => readStoredWidth(right))
   const hiddenLeftWidthRef = useRef(left.initialWidth)
+  const hiddenRightWidthRef = useRef(right.initialWidth)
   const dragCleanupRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
@@ -59,7 +63,9 @@ export function usePanelResize({
   }, [left.storageKey, leftWidth])
 
   useEffect(() => {
-    localStorage.setItem(right.storageKey, String(rightWidth))
+    if (rightWidth > 0) {
+      localStorage.setItem(right.storageKey, String(rightWidth))
+    }
   }, [right.storageKey, rightWidth])
 
   useEffect(() => {
@@ -131,6 +137,29 @@ export function usePanelResize({
     })
   }, [left.initialWidth])
 
+  const hideRightPanel = useCallback(() => {
+    setRightWidth((currentWidth) => {
+      if (currentWidth > 0) {
+        hiddenRightWidthRef.current = currentWidth
+      }
+      return 0
+    })
+  }, [])
+
+  const showRightPanel = useCallback(() => {
+    setRightWidth(hiddenRightWidthRef.current ?? right.initialWidth)
+  }, [right.initialWidth])
+
+  const toggleRightPanel = useCallback(() => {
+    setRightWidth((currentWidth) => {
+      if (currentWidth > 0) {
+        hiddenRightWidthRef.current = currentWidth
+        return 0
+      }
+      return hiddenRightWidthRef.current ?? right.initialWidth
+    })
+  }, [right.initialWidth])
+
   return {
     leftWidth,
     rightWidth,
@@ -141,5 +170,8 @@ export function usePanelResize({
     hideLeftPanel,
     showLeftPanel,
     toggleLeftPanel,
+    hideRightPanel,
+    showRightPanel,
+    toggleRightPanel,
   }
 }

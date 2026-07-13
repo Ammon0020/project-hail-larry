@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { X, Wifi, WifiOff } from 'lucide-react'
+import { X, Wifi, WifiOff, Bot } from 'lucide-react'
 import { LockScreen } from '@/components/LockScreen'
 import { ActivityBar } from '@/components/ActivityBar'
 import { LeftSidebar } from '@/components/LeftSidebar'
@@ -88,6 +88,7 @@ export default function App() {
     hideLeftPanel,
     showLeftPanel,
     toggleLeftPanel,
+    toggleRightPanel,
   } = usePanelResize({
     left: {
       initialWidth: 260,
@@ -230,7 +231,8 @@ export default function App() {
   useEffect(() => {
     try {
       // Settings tabs are not persisted — they're synthetic, not files.
-      const persistable = openTabs.filter((t) => t.kind !== 'settings')
+      // Preview tabs are transient and not persisted either.
+      const persistable = openTabs.filter((t) => t.kind !== 'settings' && !t.isPreview)
       localStorage.setItem('lai:openTabs', JSON.stringify(persistable))
     } catch {
       // Ignore serialization errors (e.g. quota exceeded).
@@ -279,7 +281,12 @@ export default function App() {
   // ---- Tab operations ----
   // Defined before the unpaired early return so the keyboard-shortcut
   // useEffect below them is not called conditionally (react-hooks/rules-of-hooks).
-  const handleTabSelect = (id: string) => setActiveTabId(id)
+  const handleTabSelect = (id: string) => {
+    setActiveTabId(id)
+    setOpenTabs((prev) =>
+      prev.map((t) => (t.id === id && t.isPreview ? { ...t, isPreview: false } : t)),
+    )
+  }
 
   /** Opens the settings tab (singleton id 'settings'). If already open,
    *  activates it; otherwise creates and activates it. Settings tabs are
@@ -314,9 +321,64 @@ export default function App() {
     [activeTabId],
   )
 
+  /** Close every tab except the given one (settings tabs are always kept). */
+  const handleCloseOthers = useCallback(
+    (id: string) => {
+      setOpenTabs((prev) => {
+        const next = prev.filter((t) => t.id === id || t.kind === 'settings')
+        if (activeTabId && !next.some((t) => t.id === activeTabId)) {
+          setActiveTabId(next.length > 0 ? next[next.length - 1].id : null)
+        }
+        return next
+      })
+    },
+    [activeTabId],
+  )
+
+  /** Close all saved (non-unsaved) tabs except the given one. Settings tabs
+   *  are always kept. */
+  const handleCloseSaved = useCallback(
+    (id: string) => {
+      setOpenTabs((prev) => {
+        const next = prev.filter((t) => t.unsaved || t.id === id || t.kind === 'settings')
+        if (activeTabId && !next.some((t) => t.id === activeTabId)) {
+          setActiveTabId(next.length > 0 ? next[next.length - 1].id : null)
+        }
+        return next
+      })
+    },
+    [activeTabId],
+  )
+
+  /** Close all tabs to the right of the given tab (settings tabs are kept). */
+  const handleCloseToRight = useCallback(
+    (id: string) => {
+      setOpenTabs((prev) => {
+        const idx = prev.findIndex((t) => t.id === id)
+        if (idx === -1) return prev
+        const next = prev.filter((t, i) => i <= idx || t.kind === 'settings')
+        if (activeTabId && !next.some((t) => t.id === activeTabId)) {
+          setActiveTabId(next.length > 0 ? next[next.length - 1].id : null)
+        }
+        return next
+      })
+    },
+    [activeTabId],
+  )
+
+  const handleCopyPath = useCallback((path: string) => {
+    navigator.clipboard?.writeText(path).catch(() => {})
+  }, [])
+
+  const handleKeepOpen = useCallback((id: string) => {
+    setOpenTabs((prev) => prev.map((t) => (t.id === id ? { ...t, isPreview: false } : t)))
+  }, [])
+
   const handleContentChange = (content: string) => {
     setOpenTabs((prev) =>
-      prev.map((t) => (t.id === activeTabId ? { ...t, content, unsaved: true } : t)),
+      prev.map((t) =>
+        t.id === activeTabId ? { ...t, content, unsaved: true, isPreview: false } : t,
+      ),
     )
   }
 
@@ -466,8 +528,15 @@ export default function App() {
         isBinary: file.isBinary ?? false,
         previewable: file.previewable ?? false,
         workspaceId: backend.activeWorkspace?.id,
+        isPreview: true,
       }
-      setOpenTabs((prev) => [...prev, tab])
+      setOpenTabs((prev) => {
+        const previewIdx = prev.findIndex((t) => t.isPreview)
+        if (previewIdx === -1) return [...prev, tab]
+        const next = prev.slice()
+        next[previewIdx] = tab
+        return next
+      })
       setActiveTabId(path)
       if (!isDesktop) setMobileView('editor')
     } catch (err) {
@@ -550,7 +619,7 @@ export default function App() {
   const sidebarHidden = isDesktop && leftPanelWidth === 0
   const showLeftSidebar = (isDesktop && !sidebarHidden) || mobileView === 'explorer'
   const showEditor = isDesktop || mobileView === 'editor'
-  const showChat = isDesktop || mobileView === 'chat'
+  const showChat = (isDesktop && rightPanelWidth > 0) || mobileView === 'chat'
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background text-foreground font-sans selection:bg-primary/30">
@@ -619,15 +688,38 @@ export default function App() {
 
           {/* Right section: Tabs to the right */}
           <div className="flex-1 flex items-stretch min-w-0 h-full @container">
-            <TabBar
-              tabs={openTabs}
-              activeTabId={activeTabId}
-              onTabSelect={handleTabSelect}
-              onTabClose={handleTabClose}
-              onSave={handleSave}
-              wrap={wrap}
-              onToggleWrap={() => setWrap(!wrap)}
-            />
+            <div className="flex-1 min-w-0 flex items-stretch">
+              <TabBar
+                tabs={openTabs}
+                activeTabId={activeTabId}
+                onTabSelect={handleTabSelect}
+                onTabClose={handleTabClose}
+                onSave={handleSave}
+                wrap={wrap}
+                onToggleWrap={() => setWrap(!wrap)}
+                onCloseOthers={handleCloseOthers}
+                onCloseSaved={handleCloseSaved}
+                onCloseToRight={handleCloseToRight}
+                onCopyPath={handleCopyPath}
+                onCopyRelativePath={handleCopyPath}
+                onKeepOpen={handleKeepOpen}
+              />
+            </div>
+            <button
+              type="button"
+              title={rightPanelWidth > 0 ? "Hide chat panel" : "Show chat panel"}
+              aria-label="Toggle chat panel"
+              aria-pressed={rightPanelWidth > 0}
+              onClick={toggleRightPanel}
+              className={cn(
+                "shrink-0 self-center mr-2 w-7 h-6 rounded flex items-center justify-center transition",
+                rightPanelWidth > 0
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "bg-secondary text-secondary-foreground hover:bg-accent",
+              )}
+            >
+              <Bot className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}
@@ -716,6 +808,13 @@ export default function App() {
         onToggleWrap={() => setWrap(!wrap)}
         onToggleViewMode={handleToggleViewMode}
         isDesktop={isDesktop}
+        workspaceName={backend.activeWorkspace?.name}
+        onCloseOthers={handleCloseOthers}
+        onCloseSaved={handleCloseSaved}
+        onCloseToRight={handleCloseToRight}
+        onCopyPath={handleCopyPath}
+        onCopyRelativePath={handleCopyPath}
+        onKeepOpen={handleKeepOpen}
       />
 
       {/* Resize handle between editor and right chat panel (desktop only) */}

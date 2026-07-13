@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { FileViewer } from '@/components/FileViewer'
 import { TabBar } from './TabBar'
+import { BreadcrumbBar } from './BreadcrumbBar'
 import type { Agent } from '@/types'
 import type { Extension } from '@codemirror/state'
 import type { LanguageSupport } from '@codemirror/language'
@@ -48,6 +49,13 @@ export function EditorPane({
   onToggleWrap,
   onToggleViewMode,
   isDesktop,
+  workspaceName,
+  onCloseOthers,
+  onCloseSaved,
+  onCloseToRight,
+  onCopyPath,
+  onCopyRelativePath,
+  onKeepOpen,
 }: {
   tabs: Tab[]
   activeTabId: string | null
@@ -89,6 +97,16 @@ export function EditorPane({
    *  applies touch-friendly theme tweaks: larger line height, wider gutters,
    *  bigger font, and disables mouse-only selection modes. */
   isDesktop?: boolean
+  /** Display name of the active workspace, shown as the first breadcrumb
+   *  segment. Passed through from App.tsx via backend.activeWorkspace?.name. */
+  workspaceName?: string
+  /** Tab context-menu actions — passed through to TabBar. */
+  onCloseOthers?: (id: string) => void
+  onCloseSaved?: (id: string) => void
+  onCloseToRight?: (id: string) => void
+  onCopyPath?: (path: string) => void
+  onCopyRelativePath?: (path: string) => void
+  onKeepOpen?: (id: string) => void
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
   const mobile = !(isDesktop ?? true)
@@ -386,6 +404,21 @@ export function EditorPane({
           onSave={onSave}
           wrap={wrap}
           onToggleWrap={onToggleWrap}
+          onCloseOthers={onCloseOthers}
+          onCloseSaved={onCloseSaved}
+          onCloseToRight={onCloseToRight}
+          onCopyPath={onCopyPath}
+          onCopyRelativePath={onCopyRelativePath}
+          onKeepOpen={onKeepOpen}
+        />
+      )}
+
+      {/* Breadcrumb bar — shows the active file's path relative to the
+          workspace root, between the tab bar and the editor content. */}
+      {activeTab && activeTab.kind !== 'settings' && (
+        <BreadcrumbBar
+          path={activeTab.path}
+          workspaceName={workspaceName ?? 'workspace'}
         />
       )}
 

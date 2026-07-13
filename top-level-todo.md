@@ -20,10 +20,10 @@ Items are grouped by code area so a developer can stay in one context while work
 
 ## Harness & models
 
-- [ ] **[Medium/High]** Mistral asks for login every server restart. Should stay logged in.
-  - *Auth is per-session in `internal/acp/acp.go` (`startTransportLocked` ~lines 478-493) with no persistence. Need token storage in `internal/config/`, load-before-authenticate, save-after-success, expiry handling. Blocker: need to confirm what tokens Mistral Vibe exposes via the ACP SDK. Security: tokens must not be plaintext or logged.*
-- [ ] **[Small/Medium]** Devin CLI ACP (`devin acp`) — Automatically fetch available models.
-  - *Devin uses hardcoded fallback models (`internal/acp/autodetect.go:117-143`); `providers/list` unsupported. Add a `getDevinModelsFromFile` reading `~/.config/devin/config.json` (Windows: `%APPDATA%\devin\config.json`), mirroring `getCodexModelsFromFile`/`getVibeModelsFromFile`. Blocker: inspect a real config to confirm the model schema.*
+- [ ] **[Medium/High]** ⛔ **Blocked** Mistral asks for login every server restart. Should stay logged in.
+  - *Investigated 2026-07-12: Auth is browser-PKCE per-session in `internal/acp/acp.go:478-493`. The ACP SDK's `AuthenticateResponse` only exposes `Meta map[string]any` — no tokens/cookies — so auth state is opaque inside the SDK's `Connection` and destroyed on daemon restart. `~/.vibe/.env` exists but is empty (no persisted key). Unblocking requires either (a) an ACP SDK change to expose persistable auth state, (b) a Mistral Vibe change to persist its own auth locally, or (c) a daemon-side long-lived auth cache that survives restarts (not possible while tokens are opaque). Logged in `docs/known-issues.md`.*
+- [ ] **[Small/Medium]** ⛔ **Blocked** Devin CLI ACP (`devin acp`) — Automatically fetch available models.
+  - *Investigated 2026-07-12: Devin has no programmatic model enumeration — no `--list-models` flag, no ACP `providers/list` support, and `~/.config/devin/config.json` stores only a single default `agent.model` string (not a list). Models are cloud-sourced and dynamic ("release frequently"). The current hardcoded fallback list (sourced from `--model` help-text examples) is the best local approach. Unblocking requires either a Cognition cloud API endpoint (needs auth + network) or a future Devin CLI flag. See `internal/acp/autodetect.go:117-143`.*
 - [ ] **[Small/Medium]** If models couldn't be fetched on a harness, show a warning icon by the harness name. If the user taps or hovers over the warning it shows the actual warning. Show an icon in the dropdown too.
   - *`AgentInfo.Warning` already flows backend→frontend; `SettingsPanel.tsx:480-485` already renders it. Missing in `web/src/components/chat/WorkspaceBar.tsx:54-78` (native `<select>`). Likely needs a custom dropdown to show per-option icons + tooltip (`ui/tooltip.tsx` exists).*
 

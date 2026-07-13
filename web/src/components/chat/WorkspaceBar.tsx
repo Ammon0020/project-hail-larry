@@ -1,6 +1,7 @@
-import { Folder, Laptop } from 'lucide-react'
+import { AlertTriangle, Folder, Laptop } from 'lucide-react'
 import type { Agent } from '../../types'
 import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 
 interface WorkspaceBarProps {
   /** Agents list for the harness selector. */
@@ -63,6 +64,16 @@ export function WorkspaceBar({
         <span className="pointer-events-none">
           {currentAgent?.name ?? 'Agent'}
         </span>
+        {currentAgent?.warning && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="pointer-events-auto relative z-10 flex items-center text-warning">
+                <AlertTriangle className="w-3 h-3" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{currentAgent.warning}</TooltipContent>
+          </Tooltip>
+        )}
         <select
           value={currentAgentId}
           onChange={(e) => onSelectAgent(e.target.value)}
@@ -71,7 +82,7 @@ export function WorkspaceBar({
         >
           {agents.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {a.warning ? `(!) ${a.name}` : a.name}
             </option>
           ))}
         </select>

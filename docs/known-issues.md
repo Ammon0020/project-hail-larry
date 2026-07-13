@@ -41,6 +41,28 @@ mainstream agent advertises (`mcp_capabilities.acp`) yet.
 
 Fix path / unblock signal + full drop-in design: `docs/plans/acp-spec-compliance.md` § 4.10.
 
+## Mistral Vibe auth does not persist across daemon restarts (Medium)
+
+Investigated 2026-07-12. The user reports Mistral Vibe asks for login every
+server restart. Auth is browser-PKCE per-session in `internal/acp/acp.go`
+(`startTransportLocked`, ~lines 478-493). The ACP SDK
+(`coder/acp-go-sdk` v0.13.5) `AuthenticateResponse` only exposes
+`Meta map[string]any` — no tokens, cookies, or auth state — so the auth state
+is opaque inside the SDK's `ClientSideConnection` and is destroyed when the
+daemon process restarts. `~/.vibe/.env` exists but is empty (no persisted
+key); Mistral Vibe does not persist its own auth locally in a form the daemon
+can reuse.
+
+**Severity:** Medium — user-facing annoyance on every restart, no security
+risk (auth still required each time).
+
+**Fix path / unblock signal:** One of (a) an ACP SDK change exposing
+persistable auth state (tokens/cookies in `AuthenticateResponse`), (b) a
+Mistral Vibe change to persist auth locally and skip the ACP authenticate
+handshake when valid, or (c) a daemon-side approach that keeps auth alive
+across restarts (not possible while tokens are opaque). Track upstream SDK
+releases for (a).
+
 ## Security audit — deferred findings (from 2026-07-07 audit)
 
 - **sec-auth-credentials-in-query-params (Low):** Device credentials are passed

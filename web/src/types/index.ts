@@ -56,6 +56,11 @@ export interface Tab {
    *  shows CodeMirror (default); 'preview' shows the visual FileViewer.
    *  Binary-only files always show FileViewer regardless of this field. */
   viewMode?: 'edit' | 'preview'
+  /** True when the tab is a transient preview (VS Code-style). Opening another
+   *  file replaces the existing preview tab instead of accumulating tabs; the
+   *  first edit or explicit tab click converts it to a persistent tab. Preview
+   *  tabs are not persisted to localStorage. */
+  isPreview?: boolean
 }
 
 /** A registered AI agent (Blueprint Sec 5 — agent registration). */

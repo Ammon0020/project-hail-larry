@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import { Circle, X, GitCompare, Save, ChevronLeft, ChevronRight, WrapText, RefreshCw, Settings as SettingsIcon } from 'lucide-react'
+import { Circle, X, Save, ChevronLeft, ChevronRight, WrapText, RefreshCw, Settings as SettingsIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from '@/lib/fileIcon'
 import type { Tab } from '@/types'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 /**
- * TabBar component — renders open editor tabs, scroll controls, and editor actions (Wrap, Diff, Save).
+ * TabBar component — renders open editor tabs, scroll controls, and editor actions (Wrap, Save).
  * Reusable across the desktop header and the mobile EditorPane.
  */
 export function TabBar({
@@ -17,6 +23,12 @@ export function TabBar({
   wrap = false,
   onToggleWrap,
   showEditorActions = true,
+  onCloseOthers,
+  onCloseSaved,
+  onCloseToRight,
+  onCopyPath,
+  onCopyRelativePath,
+  onKeepOpen,
 }: {
   tabs: Tab[]
   activeTabId: string | null
@@ -26,12 +38,35 @@ export function TabBar({
   wrap?: boolean
   onToggleWrap?: () => void
   showEditorActions?: boolean
+  onCloseOthers?: (id: string) => void
+  onCloseSaved?: (id: string) => void
+  onCloseToRight?: (id: string) => void
+  onCopyPath?: (path: string) => void
+  onCopyRelativePath?: (path: string) => void
+  onKeepOpen?: (id: string) => void
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
+  const canSave = !!activeTab?.unsaved
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
+
+  // Context-menu state — `menuTabId` holds the id of the tab whose right-click
+  // / long-press menu is currently open (null when closed). Controlled mode is
+  // used so normal tab clicks (selection) keep working instead of being
+  // captured by a Radix Trigger.
+  const [menuTabId, setMenuTabId] = useState<string | null>(null)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
+
+  useEffect(() => () => clearLongPress(), [])
 
   const measureScroll = () => {
     const el = scrollRef.current
@@ -103,11 +138,14 @@ export function TabBar({
         >
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId
-            return (
+            const isSettings = tab.kind === 'settings'
+            const canMenu = !isSettings
+            const menuOpen = canMenu && menuTabId === tab.id
+            const tabDiv = (
               <div
                 key={tab.id}
                 data-tab-id={tab.id}
-                title={tab.kind === 'settings' ? tab.name : tab.path}
+                title={isSettings ? tab.name : tab.path}
                 className={cn(
                   'flex items-center gap-2 px-3 h-9 text-sm shrink-0 border-r border-background cursor-pointer select-none',
                   isActive
@@ -115,17 +153,38 @@ export function TabBar({
                     : 'bg-panel text-muted-foreground hover:bg-editor/50 transition',
                 )}
                 onClick={() => onTabSelect(tab.id)}
+                onContextMenu={
+                  canMenu
+                    ? (e) => {
+                        e.preventDefault()
+                        setMenuTabId(tab.id)
+                      }
+                    : undefined
+                }
+                onTouchStart={
+                  canMenu
+                    ? () => {
+                        clearLongPress()
+                        longPressTimer.current = setTimeout(() => {
+                          setMenuTabId(tab.id)
+                        }, 500)
+                      }
+                    : undefined
+                }
+                onTouchEnd={canMenu ? clearLongPress : undefined}
+                onTouchMove={canMenu ? clearLongPress : undefined}
+                onTouchCancel={canMenu ? clearLongPress : undefined}
               >
-                {tab.kind === 'settings' ? (
+                {isSettings ? (
                   <SettingsIcon className="w-3.5 h-3.5 text-muted-foreground" />
                 ) : (
                   <FileIcon name={tab.name} className="w-3.5 h-3.5" />
                 )}
-                <span className="max-w-[120px] truncate">{tab.name}</span>
-                {tab.unsaved && tab.kind !== 'settings' && (
+                <span className={cn('max-w-[120px] truncate', tab.isPreview && 'italic font-normal')}>{tab.name}</span>
+                {tab.unsaved && !isSettings && (
                   <Circle className="w-2 h-2 text-primary fill-primary shrink-0" />
                 )}
-                {tab.changedOnDisk && tab.kind !== 'settings' && (
+                {tab.changedOnDisk && !isSettings && (
                   <>
                     <RefreshCw className="w-3 h-3 text-warning shrink-0" aria-hidden="true" />
                     <span className="sr-only">Changed on disk</span>
@@ -141,6 +200,55 @@ export function TabBar({
                   role="button"
                 />
               </div>
+            )
+            if (!canMenu) return tabDiv
+            return (
+              <DropdownMenu
+                key={tab.id}
+                open={menuOpen}
+                onOpenChange={(o) => {
+                  if (!o) setMenuTabId(null)
+                }}
+              >
+                <DropdownMenuTrigger asChild>
+                  {tabDiv}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onSelect={() => onTabClose(tab.id)}>
+                    Close
+                  </DropdownMenuItem>
+                  {onCloseOthers && (
+                    <DropdownMenuItem onSelect={() => onCloseOthers(tab.id)}>
+                      Close Others
+                    </DropdownMenuItem>
+                  )}
+                  {onCloseSaved && (
+                    <DropdownMenuItem onSelect={() => onCloseSaved(tab.id)}>
+                      Close Saved
+                    </DropdownMenuItem>
+                  )}
+                  {onCloseToRight && (
+                    <DropdownMenuItem onSelect={() => onCloseToRight(tab.id)}>
+                      Close to the Right
+                    </DropdownMenuItem>
+                  )}
+                  {onCopyPath && (
+                    <DropdownMenuItem onSelect={() => onCopyPath(tab.path)}>
+                      Copy Path
+                    </DropdownMenuItem>
+                  )}
+                  {onCopyRelativePath && (
+                    <DropdownMenuItem onSelect={() => onCopyRelativePath(tab.path)}>
+                      Copy Relative Path
+                    </DropdownMenuItem>
+                  )}
+                  {onKeepOpen && tab.isPreview && (
+                    <DropdownMenuItem onSelect={() => onKeepOpen(tab.id)}>
+                      Keep Open
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )
           })}
         </div>
@@ -176,13 +284,17 @@ export function TabBar({
               <WrapText className="w-3.5 h-3.5" />
             </button>
           )}
-          <button className="text-xs font-semibold bg-secondary hover:bg-accent text-secondary-foreground px-2.5 py-1 rounded transition flex items-center gap-1.5">
-            <GitCompare className="w-3 h-3" /> Diff
-          </button>
           {onSave && (
             <button
-              onClick={onSave}
-              className="text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground px-2.5 py-1 rounded flex items-center gap-1.5 transition"
+              type="button"
+              onClick={canSave ? onSave : undefined}
+              aria-disabled={!canSave}
+              className={cn(
+                'text-xs font-semibold px-2.5 py-1 rounded flex items-center gap-1.5 transition',
+                canSave
+                  ? 'bg-primary hover:bg-primary/90 text-primary-foreground'
+                  : 'bg-secondary text-muted-foreground cursor-default opacity-60',
+              )}
             >
               <Save className="w-3 h-3" /> Save
             </button>
