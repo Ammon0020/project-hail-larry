@@ -49,8 +49,8 @@ Items are grouped by code area so a developer can stay in one context while work
 
 - [x] **[Small/Medium]** The bottom bar is only in the editor. It should span the entire bottom of the app.
   - *Done 2026-07-12: Extracted `StatusBar.tsx` component; lifted `fontSize` state to `App.tsx`. On desktop the status bar renders at the app level (full width, over the chat panel); on mobile it stays inside `EditorPane` above the bottom nav.*
-- [ ] **[Medium/Medium]** Add a command palette and handle ctrl+p. Put the button to the right of the agent icon. An "Action items menu".
-  - *`useKeyboardShortcuts` hook exists but has no Ctrl+P handler and no palette. Needs a command registry, a palette dialog component, and quick-open file search. Depends on the agent icon item above for button placement.*
+- [x] **[Medium/Medium]** Add a command palette and handle ctrl+p. Put the button to the right of the agent icon. An "Action items menu".
+  - *Done 2026-07-12: New `CommandPalette.tsx` — Dialog-based palette with file quick-open (substring filter on name+path) and `>` prefix for command mode. Keyboard nav (Arrow Up/Down/Enter/Escape), auto-select first item, auto-focus input. 7 commands: Toggle Sidebar, Toggle Chat Panel, Open Explorer, Open Search, Open Settings, Save File, Close Active Tab. Ctrl+P handler added to `useKeyboardShortcuts`. Command icon button placed right of the agent icon. `fileTree` and `commands` memoized; `openSettingsTab` wrapped in `useCallback`.*
 
 ## Chat
 

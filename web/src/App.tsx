@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { X, Wifi, WifiOff, Bot } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { X, Wifi, WifiOff, Bot, Command, PanelLeft, FolderOpen, Search, Settings, Save } from 'lucide-react'
 import { LockScreen } from '@/components/LockScreen'
+import { CommandPalette, type Command as PaletteCommand } from '@/components/CommandPalette'
 import { ActivityBar } from '@/components/ActivityBar'
 import { LeftSidebar } from '@/components/LeftSidebar'
 import { EditorPane } from '@/components/EditorPane'
@@ -305,7 +306,7 @@ export default function App() {
   /** Opens the settings tab (singleton id 'settings'). If already open,
    *  activates it; otherwise creates and activates it. Settings tabs are
    *  not persisted to localStorage (filtered out in the persistence effect). */
-  const openSettingsTab = () => {
+  const openSettingsTab = useCallback(() => {
     setOpenTabs((prev) => {
       if (prev.some((t) => t.id === 'settings')) return prev
       return [...prev, {
@@ -320,7 +321,7 @@ export default function App() {
       }]
     })
     setActiveTabId('settings')
-  }
+  }, [])
 
   const handleTabClose = useCallback(
     (id: string) => {
@@ -499,23 +500,41 @@ export default function App() {
       e.preventDefault()
       toggleLeftPanel()
     }
+
+    if (mod && !e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+      e.preventDefault()
+      window.dispatchEvent(new CustomEvent('command-palette-open'))
+      return
+    }
   })
+
+  // Convert backend file tree to the component's expected format, preserving
+  // path. Validates `type` at runtime so a malformed backend node cannot
+  // silently become a typed union (AGENTS.md — type safety).
+  const fileTree: FileTreeNode[] = useMemo(() => {
+    const convertNode = (n: { name: string; type: string; path?: string; children?: { name: string; type: string; path?: string; children?: unknown[] }[] }): FileTreeNode => ({
+      name: n.name,
+      type: n.type === 'folder' ? 'folder' : 'file',
+      path: n.path,
+      children: n.children?.map((c) => convertNode(c as typeof n)),
+    })
+    return backend.fileTree.map((n) => convertNode(n))
+  }, [backend.fileTree])
+
+  const commands: PaletteCommand[] = useMemo(() => [
+    { id: 'toggle-sidebar', label: 'Toggle Sidebar', icon: <PanelLeft className="w-4 h-4" />, action: () => toggleLeftPanel() },
+    { id: 'toggle-chat', label: 'Toggle Chat Panel', icon: <Bot className="w-4 h-4" />, action: () => toggleRightPanel() },
+    { id: 'open-explorer', label: 'Open Explorer', icon: <FolderOpen className="w-4 h-4" />, action: () => { setLeftPanel('files'); showLeftPanel() } },
+    { id: 'open-search', label: 'Open Search', icon: <Search className="w-4 h-4" />, action: () => { setLeftPanel('search'); showLeftPanel() } },
+    { id: 'open-settings', label: 'Open Settings', icon: <Settings className="w-4 h-4" />, action: () => openSettingsTab() },
+    { id: 'save-file', label: 'Save File', icon: <Save className="w-4 h-4" />, action: () => handleSave() },
+    { id: 'close-tab', label: 'Close Active Tab', icon: <X className="w-4 h-4" />, action: () => { if (activeTabId) handleTabClose(activeTabId) } },
+  ], [activeTabId, toggleLeftPanel, toggleRightPanel, showLeftPanel, setLeftPanel, openSettingsTab, handleSave, handleTabClose])
 
   // ---- Lock screen for unpaired devices ----
   if (!paired) {
     return <LockScreen onPaired={() => setPaired(true)} />
   }
-
-  // Convert backend file tree to the component's expected format, preserving
-  // path. Validates `type` at runtime so a malformed backend node cannot
-  // silently become a typed union (AGENTS.md — type safety).
-  const convertNode = (n: { name: string; type: string; path?: string; children?: { name: string; type: string; path?: string; children?: unknown[] }[] }): FileTreeNode => ({
-    name: n.name,
-    type: n.type === 'folder' ? 'folder' : 'file',
-    path: n.path,
-    children: n.children?.map((c) => convertNode(c as typeof n)),
-  })
-  const fileTree: FileTreeNode[] = backend.fileTree.map((n) => convertNode(n))
 
   // ---- File operations ----
   const handleFileSelect = async (path: string) => {
@@ -734,6 +753,15 @@ export default function App() {
             >
               <Bot className="w-3.5 h-3.5" />
             </button>
+            <button
+              type="button"
+              title="Command Palette (Ctrl+P)"
+              aria-label="Command Palette"
+              onClick={() => window.dispatchEvent(new CustomEvent('command-palette-open'))}
+              className="shrink-0 self-center mr-2 w-7 h-6 rounded flex items-center justify-center bg-secondary text-secondary-foreground hover:bg-accent transition"
+            >
+              <Command className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}
@@ -931,6 +959,11 @@ export default function App() {
           setMobileView('editor')
         }}
         settingsActive={!isDesktop && mobileView === 'editor' && activeTabId === 'settings'}
+      />
+      <CommandPalette
+        fileTree={fileTree}
+        onFileSelect={handleFileSelect}
+        commands={commands}
       />
     </div>
   )

@@ -418,6 +418,29 @@ const maxFileTreeDepth = 20
 // avoid exhausting memory on workspaces with millions of entries.
 const maxFileTreeNodes = 100000
 
+// noiseDirs are directory names that are excluded from the file tree because
+// they typically contain thousands of generated/vendored files that are not
+// useful to browse. Matches the set used by internal/search.
+var noiseDirs = map[string]bool{
+	"node_modules": true,
+	"vendor":       true,
+	"dist":         true,
+	"build":        true,
+	"target":       true,
+	"bin":          true,
+	"obj":          true,
+	".next":        true,
+	".nuxt":        true,
+	".output":      true,
+	".turbo":       true,
+	".gradle":      true,
+	"__pycache__":  true,
+	".pytest_cache": true,
+	"coverage":     true,
+	"tmp":          true,
+	"cache":        true,
+}
+
 // FileTree returns the file tree for a workspace.
 // Directories are listed first, then files, both alphabetically.
 // Hidden files/directories (starting with .) are excluded. Symlinks are
@@ -479,6 +502,13 @@ func buildFileTree(root, relPath string, depth int, nodeCount *int) ([]interface
 	for _, entry := range entries {
 		// Skip hidden files and directories.
 		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+
+		// Skip known noise directories (node_modules, vendor, build caches, etc.)
+		// to keep the file tree browsable and avoid sending thousands of
+		// generated/vendored files to the frontend.
+		if entry.IsDir() && noiseDirs[strings.ToLower(entry.Name())] {
 			continue
 		}
 
