@@ -50,3 +50,6 @@ func (m *FooMiddleware) messages() *SystemMessages {
 ```
 
 `FirstPromptContextMiddleware` already has this pattern (`messages()` helper) — the others should follow suit and then the constructor guard becomes the single point of defense.
+
+## Resolution (2026-07-12) — WONTFIX
+The codebase has already been refactored to extract per-middleware `ensureMessages()` helpers (the review's recommended Option B), consolidating the nil-guard logic from 15+ duplicated blocks into 6 single helpers; the remaining method-body helper calls are a live defensive accessor pattern (the helper's nil-branch is used by constructors, skipped post-construction), not duplicated dead guards, and removing them would reduce defensiveness for marginal benefit.

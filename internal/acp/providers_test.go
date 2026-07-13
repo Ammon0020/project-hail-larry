@@ -49,6 +49,14 @@ func (m *fileWorkspaceManager) FilePath(_ context.Context, _, _ string) (string,
 
 func (m *fileWorkspaceManager) Remove(_ context.Context, _ string) error { return nil }
 
+func (m *fileWorkspaceManager) WriteFile(_ context.Context, _, relPath, content string, _ int64) (int64, error) {
+	if m.files == nil {
+		m.files = map[string]string{}
+	}
+	m.files[relPath] = content
+	return int64(len(content)), nil
+}
+
 // fileNotFoundError is a minimal sentinel error so ReadFile failures are
 // distinguishable in tests.
 type fileNotFoundError struct{ path string }

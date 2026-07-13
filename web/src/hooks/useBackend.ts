@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, getDeviceCredential, type AppEvent, type WorkspaceInfo, type FileNode, type DeviceCredential, type PendingPermission, type UploadResult, type EditorSelectionInfo } from '@/lib/api'
+import { isSessionNotFound } from '@/lib/errors'
 import type { Attachment, Agent, Session } from '@/types'
 
 /**
@@ -12,16 +13,6 @@ import type { Attachment, Agent, Session } from '@/types'
  * where WebSocket events would otherwise accumulate forever.
  */
 const MAX_EVENTS = 5000
-
-/**
- * Returns true when an error message indicates the targeted session no longer
- * exists in the backend (404 "session not found: sess-…"). Used to recover
- * from a stale activeSessionId persisted in localStorage.
- */
-function isSessionNotFound(message: string): boolean {
-  const lower = message.toLowerCase()
-  return lower.includes('session not found') || lower.includes('not found')
-}
 
 /**
  * useBackend — real backend hook that connects to the Go daemon.

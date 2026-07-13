@@ -62,6 +62,10 @@ func (m *multiRootWorkspaceManager) FilePath(_ context.Context, _, _ string) (st
 	return "", errors.New("not implemented")
 }
 
+func (m *multiRootWorkspaceManager) WriteFile(_ context.Context, _, _, _ string, _ int64) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
 func (m *multiRootWorkspaceManager) Remove(_ context.Context, _ string) error { return nil }
 
 // absPath returns an absolute path that is stable across platforms for use in
@@ -155,7 +159,7 @@ func TestCollectAdditionalDirs(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := NewClient(nil, nil)
+			c := NewClient(ClientConfig{})
 			if tc.workspaces != nil {
 				c.workspaceMgr = &multiRootWorkspaceManager{workspaces: tc.workspaces}
 			}
@@ -188,7 +192,7 @@ func TestResolveACPSessionAdditionalDirs(t *testing.T) {
 
 	t.Run("new session receives additional dirs", func(t *testing.T) {
 		mt := &mockTransport{newSessionResult: "new-1"}
-		c := NewClient(nil, nil)
+		c := NewClient(ClientConfig{})
 		initResp := acpsdk.InitializeResponse{}
 		session := &Session{}
 		id, _, err := c.resolveACPSession(context.Background(), mt, initResp, session, "/ws", dirs)
@@ -211,7 +215,7 @@ func TestResolveACPSessionAdditionalDirs(t *testing.T) {
 			loadSessionResult: "acp-1",
 			newSessionResult:  "new-1",
 		}
-		c := NewClient(nil, nil)
+		c := NewClient(ClientConfig{})
 		initResp := acpsdk.InitializeResponse{
 			AgentCapabilities: acpsdk.AgentCapabilities{LoadSession: true},
 		}
@@ -236,7 +240,7 @@ func TestResolveACPSessionAdditionalDirs(t *testing.T) {
 
 	t.Run("nil dirs pass through to new session", func(t *testing.T) {
 		mt := &mockTransport{newSessionResult: "new-1"}
-		c := NewClient(nil, nil)
+		c := NewClient(ClientConfig{})
 		initResp := acpsdk.InitializeResponse{}
 		session := &Session{}
 		if _, _, err := c.resolveACPSession(context.Background(), mt, initResp, session, "/ws", nil); err != nil {

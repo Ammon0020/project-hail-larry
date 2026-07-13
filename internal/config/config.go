@@ -11,10 +11,10 @@ import (
 	"sync"
 
 	"github.com/adama/local-agent/internal/acp"
+	"github.com/adama/local-agent/internal/mcp"
 )
 
 const (
-	appDataDirPerm = 0700
 	configFilePerm = 0600
 )
 
@@ -241,20 +241,16 @@ func (c *Config) Save() error {
 	return c.saveLocked()
 }
 
-// saveLocked writes the config to disk. The caller must hold c.mu.
+// saveLocked writes the config to disk atomically (temp + Sync + rename).
+// The caller must hold c.mu.
 func (c *Config) saveLocked() error {
-	dir := filepath.Dir(filepath.Join(c.DataDir, "config.json"))
-	if err := os.MkdirAll(dir, appDataDirPerm); err != nil {
-		return err
-	}
-
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
 
 	configPath := filepath.Join(c.DataDir, "config.json")
-	return os.WriteFile(configPath, data, configFilePerm)
+	return mcp.WriteFileAtomic(configPath, data, configFilePerm)
 }
 
 // UpsertAgent adds or updates an agent in the persisted config. It atomically

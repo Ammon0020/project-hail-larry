@@ -307,7 +307,7 @@ func TestResolveACPSession(t *testing.T) {
 				initResp.AgentCapabilities.SessionCapabilities.List = tc.listCapability
 			}
 
-			c := NewClient(nil, nil)
+			c := NewClient(ClientConfig{})
 			gotID, _, err := c.resolveACPSession(context.Background(), mt, initResp, session, "/ws", nil)
 
 			if tc.wantErr {
@@ -343,7 +343,7 @@ func TestResolveACPSession(t *testing.T) {
 // ACP session/delete (with the persisted ACP session ID) before killing the
 // agent process via Close.
 func TestCloseSessionCallsDeleteBeforeKill(t *testing.T) {
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	mt := &mockTransport{deleteSessionErr: nil}
@@ -386,7 +386,7 @@ func TestCloseSessionCallsDeleteBeforeKill(t *testing.T) {
 // TestCloseSessionNoDeleteWithoutID verifies CloseSession skips session/delete
 // when no ACP session ID is persisted (e.g. a freshly-rebound session).
 func TestCloseSessionNoDeleteWithoutID(t *testing.T) {
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	mt := &mockTransport{}
@@ -416,7 +416,7 @@ func TestCloseSessionNoDeleteWithoutID(t *testing.T) {
 // session's transport, invoking session/delete + Close on each, while
 // preserving session metadata so conversations survive a daemon restart.
 func TestCloseAllSessions(t *testing.T) {
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	transports := make([]*mockTransport, 0, 3)
@@ -471,7 +471,7 @@ func TestCloseAllSessions(t *testing.T) {
 // TestCloseAllSessionsEmpty verifies CloseAllSessions is a no-op (no error)
 // when there are no sessions.
 func TestCloseAllSessionsEmpty(t *testing.T) {
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	if err := c.CloseAllSessions(context.Background()); err != nil {
 		t.Fatalf("CloseAllSessions on empty client: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestCloseAllSessionsEmpty(t *testing.T) {
 // TestACPSessionIDPersists verifies the exported ACPSessionID field round-trips
 // through JSON persistence, so a restarted daemon can attempt session/load.
 func TestACPSessionIDPersists(t *testing.T) {
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	c.mu.Lock()
 	c.sessions["sess-x"] = &Session{
 		ID:           "sess-x",
@@ -501,7 +501,7 @@ func TestACPSessionIDPersists(t *testing.T) {
 	c.persistLocked()
 	c.mu.Unlock()
 
-	c2 := NewClient(nil, nil)
+	c2 := NewClient(ClientConfig{})
 	c2.SetStorePath(storePath)
 	if err := c2.LoadConversations(); err != nil {
 		t.Fatalf("LoadConversations: %v", err)

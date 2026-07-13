@@ -138,7 +138,7 @@ func TestGetSession(t *testing.T) {
 	// Build a minimal acp.Client and inject a session through the persistence
 	// layer (LoadConversations) — this avoids spawning a real agent transport,
 	// which CreateSession would require.
-	client := acp.NewClient(nil, nil)
+	client := acp.NewClient(acp.ClientConfig{})
 
 	now := time.Now().UTC().Truncate(time.Second)
 	seed := []acp.Session{{
@@ -210,7 +210,7 @@ func TestGetSession(t *testing.T) {
 // TestGetSession).
 func TestExportSession(t *testing.T) {
 	// Build a minimal acp.Client with one seeded session.
-	client := acp.NewClient(nil, nil)
+	client := acp.NewClient(acp.ClientConfig{})
 	now := time.Now().UTC().Truncate(time.Second)
 	seed := []acp.Session{{
 		ID:        "sess-export-1",

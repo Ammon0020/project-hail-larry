@@ -19,3 +19,6 @@ Replace the custom slice reallocation pattern with a proper zero-allocation circ
 ## Verification
 
 Code inspection of [internal/acp/ringbuffer.go#L23-L31](file:///media/adam/extex/projects/project-hail-larry/internal/acp/ringbuffer.go#L23-L31) shows that the `Write` method appends bytes directly to the end of the slice and then reslices it when it exceeds capacity, leaving the old slice header and underlying array elements to be reallocated/copied.
+
+## Resolution (2026-07-12) — WONTFIX
+The buffer captures low-frequency subagent stderr (not high-frequency streaming) at a tiny 4KB default; the current 8-line slice implementation is correct and readable, while both proposed fixes (new third-party dependency, or a custom wrap-around circular buffer with read/write pointers) add complexity and off-by-one bug surface disproportionate to the theoretical GC benefit on a bounded stderr tail buffer.

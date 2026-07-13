@@ -47,6 +47,10 @@ func (m *fakeWorkspaceManager) FilePath(_ context.Context, _, _ string) (string,
 	return "", errors.New("not implemented")
 }
 
+func (m *fakeWorkspaceManager) WriteFile(_ context.Context, _, _, _ string, _ int64) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
 func (m *fakeWorkspaceManager) Search(_ context.Context, _, _ string, _ search.Options) ([]search.Result, error) {
 	return nil, nil
 }
@@ -421,10 +425,12 @@ func TestSendPrompt_PipelineInjectsOnFirstPromptOnly(t *testing.T) {
 	wm := &fakeWorkspaceManager{
 		workspaces: []interfaces.WorkspaceInfo{{ID: "ws", Path: dir, Name: "ws"}},
 	}
-	client := NewClient(wm, nil)
 	cb := &mockCallbacks{}
-	client.SetCallbacks(cb)
-	client.SetPipeline(NewPromptPipeline(NewFirstPromptContextMiddleware(wm, nil)))
+	client := NewClient(ClientConfig{
+		WorkspaceMgr: wm,
+		Pipeline:     NewPromptPipeline(NewFirstPromptContextMiddleware(wm, nil)),
+		Callbacks:    cb,
+	})
 
 	// We can't call SendPrompt without a real transport (it would try to spawn
 	// an agent). Instead, exercise the pipeline directly to confirm the

@@ -206,6 +206,10 @@ type WorkspaceManager interface {
 	// (PDF, video, audio, etc.) directly to the client.
 	FilePath(ctx context.Context, workspaceID, relPath string) (string, error)
 
+	// WriteFile writes text content using optimistic revision checking and
+	// returns the new content revision.
+	WriteFile(ctx context.Context, workspaceID, relPath, content string, expectedRevision int64) (int64, error)
+
 	// Search runs a workspace-wide content search and returns matching lines.
 	Search(ctx context.Context, workspaceID, pattern string, opts search.Options) ([]search.Result, error)
 }
@@ -403,6 +407,15 @@ type PermissionManager interface {
 	// Called when a session closes so allow_always/allow_session decisions do
 	// not leak across session lifetimes.
 	ClearSession(sessionID string)
+
+	// GetPending returns all currently pending permission requests (for
+	// re-presentation when a client reconnects).
+	GetPending() []PermissionRequest
+
+	// SetCallback registers a function invoked when a new permission
+	// request is created. The server uses this to emit/broadcast events.
+	// Must be called before Request.
+	SetCallback(fn func(PermissionRequest))
 }
 
 // ----------------------------------------------------------------------------

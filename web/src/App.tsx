@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { ChatPanel } from '@/components/ChatPanel'
 import { MobileNav } from '@/components/MobileNav'
 import { useBackend } from '@/hooks/useBackend'
+import { useFileChangeDetection } from '@/hooks/useFileChangeDetection'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { usePanelResize } from '@/hooks/usePanelResize'
 import type { EditorSelectionInfo } from '@/lib/api'
@@ -271,72 +272,7 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [searchResultLine])
 
-  // ---- Live file-change detection (Blueprint Sec 14) ----
-  // React to files changing on disk for files the user has open: the agent
-  // emits 'FileWritten' when it writes via ACP, and the backend fs-watcher
-  // emits 'FileChangedOnDisk' for external edits. Both are handled the same.
-  // A CLEAN open tab (no unsaved edits) is silently refreshed from disk so the
-  // editor shows the new content without a forced full reload; a tab WITH
-  // unsaved edits is flagged (changedOnDisk) so EditorPane shows a "changed on
-  // disk" banner + Reload instead of clobbering the user's work — conflict
-  // resolution otherwise happens on save (three-way merge, Blueprint Sec 14).
-  //
-  // processedFileEventIdRef tracks the last event id handled. On the first run
-  // (once events have loaded) we jump the cursor to the current max id and skip
-  // all pre-existing events, so a page reload does not re-refresh open tabs for
-  // historical writes.
-  const processedFileEventIdRef = useRef<number | null>(null)
-  useEffect(() => {
-    const events = backend.events
-    if (events.length === 0) return
-    const maxId = Math.max(...events.map((e) => e.id ?? 0))
-    if (processedFileEventIdRef.current === null) {
-      processedFileEventIdRef.current = maxId
-      return
-    }
-    const since = processedFileEventIdRef.current
-    if (maxId <= since) return
-    processedFileEventIdRef.current = maxId
-    const active = backend.activeWorkspace
-    const changedPaths = new Set(
-      events
-        .filter(
-          (e) =>
-            (e.id ?? 0) > since &&
-            (e.type === 'FileWritten' || e.type === 'FileChangedOnDisk') &&
-            !!e.target &&
-            (!e.workspaceId || !active || e.workspaceId === active.id),
-        )
-        .map((e) => e.target as string),
-    )
-    if (changedPaths.size === 0) return
-    // Flag open tabs that have unsaved edits; leave their content untouched.
-    // Reconciling editor state with external (websocket) file-change events.
-    setOpenTabs((prev) =>
-      prev.map((t) =>
-        changedPaths.has(t.path) && t.unsaved ? { ...t, changedOnDisk: true } : t,
-      ),
-    )
-    // Silently refresh CLEAN open tabs from disk (async, so not a synchronous
-    // setState in the effect body).
-    for (const tab of openTabs) {
-      if (!changedPaths.has(tab.path) || tab.unsaved) continue
-      backend
-        .readFile(tab.path, tab.workspaceId)
-        .then((file) => {
-          setOpenTabs((prev) =>
-            prev.map((t) =>
-              t.id === tab.id && !t.unsaved
-                ? { ...t, content: file.content, revision: file.revision, isBinary: file.isBinary ?? false, previewable: file.previewable ?? false, changedOnDisk: false }
-                : t,
-            ),
-          )
-        })
-        .catch(() => {})
-    }
-    // backend's methods aren't memoized; key on the event list only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend.events])
+  useFileChangeDetection(backend, openTabs, setOpenTabs)
 
   // ---- Tab operations ----
   // Defined before the unpaired early return so the keyboard-shortcut
@@ -820,28 +756,28 @@ export default function App() {
         }))}
         workspaces={backend.workspaces}
         workspaceId={backend.activeWorkspace?.id ?? ''}
-        onSelectWorkspace={(id) => {
-          const ws = backend.workspaces.find((w) => w.id === id)
-          if (ws) backend.selectWorkspace(ws)
-        }}
         visible={showChat}
         connected={backend.connected}
         isDesktop={isDesktop}
         pendingPermissions={backend.pendingPermissions}
         activeSessionId={activeSessionId}
-        onSendMessage={handleSendMessage}
-        onCreateSession={handleCreateSession}
-        onPermissionResponse={(requestId, decision) =>
-          backend.respondPermission(requestId, decision)
-        }
-        onSelectSession={handleSelectSession}
-        onCancel={(id) => backend.cancelSession(id)}
-        onRenameSession={(id, name) => backend.renameSession(id, name)}
-        onDeleteSession={(id) => backend.deleteSession(id)}
-        onRebindSession={(id, agentId, modelId, maxTransferBytes) => backend.rebindSession(id, agentId, modelId, maxTransferBytes)}
-        onSwitchModel={(sessionId, modelId) => backend.switchModel(sessionId, modelId)}
-        onExportSession={handleExportSession}
-        onUploadFile={(sessionId, file) => backend.uploadFile(sessionId, file)}
+        actions={{
+          onSendMessage: handleSendMessage,
+          onCreateSession: handleCreateSession,
+          onPermissionResponse: backend.respondPermission,
+          onSelectSession: handleSelectSession,
+          onCancel: backend.cancelSession,
+          onRenameSession: backend.renameSession,
+          onDeleteSession: backend.deleteSession,
+          onRebindSession: backend.rebindSession,
+          onSwitchModel: backend.switchModel,
+          onExportSession: handleExportSession,
+          onUploadFile: backend.uploadFile,
+          onSelectWorkspace: (id) => {
+            const workspace = backend.workspaces.find((candidate) => candidate.id === id)
+            if (workspace) backend.selectWorkspace(workspace)
+          },
+        }}
         style={isDesktop ? { width: rightPanelWidth } : undefined}
       />
 

@@ -58,7 +58,7 @@ func (s *mockEventStore) QueryAll(_ context.Context, afterID int64, _ int) ([]in
 func TestConversationPersistAndReload(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "conversations.json")
 
-	c1 := NewClient(nil, nil)
+	c1 := NewClient(ClientConfig{})
 	c1.SetStorePath(storePath)
 
 	// Insert a conversation directly (avoids spawning a real agent process) and
@@ -82,7 +82,7 @@ func TestConversationPersistAndReload(t *testing.T) {
 	}
 
 	// A fresh client loads the persisted conversation.
-	c2 := NewClient(nil, nil)
+	c2 := NewClient(ClientConfig{})
 	c2.SetStorePath(storePath)
 	if err := c2.LoadConversations(); err != nil {
 		t.Fatalf("load: %v", err)
@@ -107,7 +107,7 @@ func TestConversationPersistAndReload(t *testing.T) {
 // TestRebindSessionValidatesAgentModel verifies rebind rejects unknown
 // agent/model and updates the record on success, preserving the id.
 func TestRebindSessionValidatesAgentModel(t *testing.T) {
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	c.RegisterAgent(AgentInfo{
 		ID:     "vibe",
 		Name:   "Mistral Vibe",
@@ -161,7 +161,7 @@ func TestTitleFromPrompt(t *testing.T) {
 func TestCloseAllSessionsPreservesMetadata(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "conversations.json")
 
-	c1 := NewClient(nil, nil)
+	c1 := NewClient(ClientConfig{})
 	c1.SetStorePath(storePath)
 
 	mt := &mockTransport{}
@@ -229,7 +229,7 @@ func TestCloseAllSessionsPreservesMetadata(t *testing.T) {
 	}
 
 	// 5. A fresh client loads the persisted session.
-	c2 := NewClient(nil, nil)
+	c2 := NewClient(ClientConfig{})
 	c2.SetStorePath(storePath)
 	if loadErr := c2.LoadConversations(); loadErr != nil {
 		t.Fatalf("LoadConversations: %v", loadErr)
@@ -486,7 +486,7 @@ func TestRebindSession_QueuesConversationTransfer(t *testing.T) {
 		Type: interfaces.EventStreamUpdate, SessionID: sid, Role: "agent", Content: "Done.",
 	})
 
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	c.RegisterAgent(AgentInfo{
 		ID:     "old-agent",
 		Name:   "Old Agent",
@@ -553,7 +553,7 @@ func TestRebindSession_QueuesConversationTransfer(t *testing.T) {
 // set, RebindSession still succeeds but does not queue a transfer (the new
 // agent starts fresh).
 func TestRebindSession_NoTransferWithoutStore(t *testing.T) {
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	c.RegisterAgent(AgentInfo{
 		ID: "a1", Name: "A1", Models: []AgentModel{{ID: "m1", Name: "M1"}},
 	})

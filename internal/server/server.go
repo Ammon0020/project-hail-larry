@@ -20,13 +20,10 @@ import (
 
 	"github.com/adama/local-agent/internal/acp"
 	"github.com/adama/local-agent/internal/config"
-	"github.com/adama/local-agent/internal/events"
 	"github.com/adama/local-agent/internal/interfaces"
 	"github.com/adama/local-agent/internal/pairing"
-	"github.com/adama/local-agent/internal/permissions"
 	"github.com/adama/local-agent/internal/sync"
 	"github.com/adama/local-agent/internal/uploads"
-	"github.com/adama/local-agent/internal/workspace"
 )
 
 //go:embed all:dist
@@ -43,11 +40,11 @@ const (
 
 // Deps holds all the manager dependencies the server needs.
 type Deps struct {
-	EventStore       *events.Store
+	EventStore       interfaces.EventStore
 	PairingMgr       *pairing.Manager
-	WorkspaceMgr     *workspace.Manager
+	WorkspaceMgr     interfaces.WorkspaceManager
 	ACPClient        *acp.Client
-	PermissionMgr    *permissions.Manager
+	PermissionMgr    interfaces.PermissionManager
 	SyncHub          *sync.Hub
 	Config           *config.Config
 	OpenFilesTracker *acp.OpenFilesTracker

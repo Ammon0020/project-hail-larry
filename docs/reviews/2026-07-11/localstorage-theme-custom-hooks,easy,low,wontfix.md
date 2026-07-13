@@ -22,3 +22,6 @@ Replace these hand-rolled hooks with popular hooks libraries:
 ## Verification
 
 Code inspection of [web/src/hooks/useLocalStorage.ts](file:///media/adam/extex/projects/project-hail-larry/web/src/hooks/useLocalStorage.ts) and [web/src/hooks/useTheme.ts](file:///media/adam/extex/projects/project-hail-larry/web/src/hooks/useTheme.ts) shows custom hook wrappers implementing standard storage-listening and DOM theme class-switching logic.
+
+## Resolution (2026-07-12) — WONTFIX
+Both hooks are small, working, documented, and project-specific (`useTheme` is tightly coupled to `@/lib/theme`); `next-themes` targets Next.js while this project uses Vite, and adding two dependencies for ~77 lines of tested user-facing code risks regressions for no functional gain.

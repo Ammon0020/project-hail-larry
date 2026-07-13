@@ -15,7 +15,7 @@ import (
 // client's map (no CreateSession / startTransportLocked).
 func seedSessionForProviders(t *testing.T, mt *mockTransport) *Client {
 	t.Helper()
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	c.sessions["sess-prov"] = &Session{
 		ID:        "sess-prov",
 		AgentID:   "agent-1",
@@ -88,7 +88,7 @@ func TestClient_ListProviders_ForwardsAndConverts(t *testing.T) {
 }
 
 func TestClient_ListProviders_SessionNotFound(t *testing.T) {
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	_, err := c.ListProviders(context.Background(), "nope")
 	if err == nil {
 		t.Fatalf("expected error for missing session")
@@ -154,7 +154,7 @@ func TestClient_SetProvider_NilHeaders(t *testing.T) {
 }
 
 func TestClient_SetProvider_SessionNotFound(t *testing.T) {
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	err := c.SetProvider(context.Background(), "nope", "main", "openai", "https://x", nil)
 	if err == nil {
 		t.Fatalf("expected error for missing session")
@@ -187,7 +187,7 @@ func TestClient_DisableProvider_Forwards(t *testing.T) {
 }
 
 func TestClient_DisableProvider_SessionNotFound(t *testing.T) {
-	c := NewClient(nil, nil)
+	c := NewClient(ClientConfig{})
 	err := c.DisableProvider(context.Background(), "nope", "main")
 	if err == nil {
 		t.Fatalf("expected error for missing session")

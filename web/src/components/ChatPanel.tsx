@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 
 import { WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UploadResult } from '@/lib/api'
+import { isSessionNotFound } from '@/lib/errors'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatComposer } from './ChatComposer'
 import { ConversationView } from './ConversationView'
@@ -16,19 +17,26 @@ import { useMcpServers } from '@/hooks/useMcpServers'
 import type { AppEvent, Agent, Attachment, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 
-/**
- * Returns true when an error message indicates the active conversation no
- * longer exists in the backend (e.g. "session not found" or the friendly
- * "no longer available" message thrown by useBackend.sendPrompt). Used to
- * reset the UI to the new-chat state instead of showing a raw error.
- */
-function isSessionGone(message: string): boolean {
-  const lower = message.toLowerCase()
-  return (
-    lower.includes('session not found') ||
-    lower.includes('no longer available') ||
-    lower.includes('not found')
-  )
+export interface ChatPanelActions {
+  onSendMessage: (sessionId: string, content: string, attachments?: Attachment[], profile?: string) => Promise<void>
+  onCreateSession: (agentId: string, modelId: string) => Promise<string>
+  onPermissionResponse: (requestId: string, decision: string) => void
+  onSelectSession: (sessionId: string) => void
+  onCancel: (sessionId: string) => void
+  onRenameSession: (sessionId: string, name: string) => void
+  onDeleteSession: (sessionId: string) => void
+  onRebindSession: (sessionId: string, agentId: string, modelId: string, maxTransferBytes?: number) => void
+  /** Switches the model on a live session without restarting the agent process
+   *  (preserves conversation history). Used by handleModelChange for model-only
+   *  switches; onRebindSession is still used for agent (harness) switches. */
+  onSwitchModel: (sessionId: string, modelId: string) => Promise<void>
+  onExportSession: (sessionId: string) => void
+  /** Uploads a file to a session's upload store. Routed through useBackend so
+   *  uploads share the hook's session-recovery semantics instead of bypassing
+   *  it via api.uploadFile directly. */
+  onUploadFile: (sessionId: string, file: File) => Promise<UploadResult>
+  /** Workspace change handler. */
+  onSelectWorkspace: (id: string) => void
 }
 
 /**
@@ -54,19 +62,8 @@ export function ChatPanel({
   isDesktop,
   pendingPermissions,
   activeSessionId,
-  onSendMessage,
-  onCreateSession,
-  onPermissionResponse,
-  onSelectSession,
-  onCancel,
-  onRenameSession,
-  onDeleteSession,
-  onRebindSession,
-  onSwitchModel,
-  onExportSession,
-  onUploadFile,
+  actions,
   workspaceId,
-  onSelectWorkspace,
   style,
 }: {
   events: AppEvent[]
@@ -83,30 +80,27 @@ export function ChatPanel({
   isDesktop: boolean
   pendingPermissions: PendingPermission[]
   activeSessionId: string | null
-  onSendMessage: (sessionId: string, content: string, attachments?: Attachment[], profile?: string) => Promise<void>
-  onCreateSession: (agentId: string, modelId: string) => Promise<string>
-  onPermissionResponse: (requestId: string, decision: string) => void
-  onSelectSession: (sessionId: string) => void
-  onCancel: (sessionId: string) => void
-  onRenameSession: (sessionId: string, name: string) => void
-  onDeleteSession: (sessionId: string) => void
-  onRebindSession: (sessionId: string, agentId: string, modelId: string, maxTransferBytes?: number) => void
-  /** Switches the model on a live session without restarting the agent process
-   *  (preserves conversation history). Used by handleModelChange for model-only
-   *  switches; onRebindSession is still used for agent (harness) switches. */
-  onSwitchModel: (sessionId: string, modelId: string) => Promise<void>
-  onExportSession: (sessionId: string) => void
-  /** Uploads a file to a session's upload store. Routed through useBackend so
-   *  uploads share the hook's session-recovery semantics instead of bypassing
-   *  it via api.uploadFile directly. */
-  onUploadFile: (sessionId: string, file: File) => Promise<UploadResult>
+  actions: ChatPanelActions
   /** Active workspace id. */
   workspaceId: string
-  /** Workspace change handler. */
-  onSelectWorkspace: (id: string) => void
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
   style?: CSSProperties
 }) {
+  const {
+    onSendMessage,
+    onCreateSession,
+    onPermissionResponse,
+    onSelectSession,
+    onCancel,
+    onRenameSession,
+    onDeleteSession,
+    onRebindSession,
+    onSwitchModel,
+    onExportSession,
+    onUploadFile,
+    onSelectWorkspace,
+  } = actions
+
   // Persisted agent/model selections and open-tab ids — restored from
   // localStorage on mount via useLocalStorage, falling back to the first
   // available agent/model when the stored value is missing or no longer valid
@@ -330,7 +324,7 @@ export function ChatPanel({
       setPendingPreviews([])
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to send message'
-      if (isSessionGone(message)) {
+      if (isSessionNotFound(message)) {
         setError('This conversation is no longer available. Start a new chat.')
         onSelectSession('')
       } else {
@@ -383,7 +377,7 @@ export function ChatPanel({
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to upload file'
-      if (isSessionGone(message)) {
+      if (isSessionNotFound(message)) {
         setError('This conversation is no longer available. Start a new chat.')
         onSelectSession('')
       } else {

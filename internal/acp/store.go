@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"strings"
+
+	"github.com/adama/local-agent/internal/mcp"
 )
 
 // conversationStoreFilePerm is the permission for the persisted conversation
@@ -73,7 +75,8 @@ func (c *Client) persistLocked() {
 		log.Printf("acp: marshal conversations: %v", err)
 		return
 	}
-	if err := os.WriteFile(c.storePath, data, conversationStoreFilePerm); err != nil {
+	// Atomic write so a crash mid-persist cannot truncate conversations.json.
+	if err := mcp.WriteFileAtomic(c.storePath, data, conversationStoreFilePerm); err != nil {
 		log.Printf("acp: persist conversations: %v", err)
 	}
 }

@@ -20,3 +20,6 @@ This library provides audited BIP-39 mnemonic generation, handles entropy genera
 ## Verification
 
 Code inspection of [internal/pairing/words.go](file:///media/adam/extex/projects/project-hail-larry/internal/pairing/words.go) shows the copy-pasted static string array, and [internal/pairing/pairing.go#L624-L635](file:///media/adam/extex/projects/project-hail-larry/internal/pairing/pairing.go#L624-L635) shows the custom selection wrapper using `rand.Int`.
+
+## Resolution (2026-07-12) — WONTFIX
+The word list is used only for human-readable pairing passcodes, not cryptographic wallet mnemonics, so BIP-39 compliance is not a requirement; adding a dependency for a static, never-changing word list would introduce supply-chain risk on a security-sensitive package with no functional benefit, and the existing crypto/rand-based selection is correct and minimal.

@@ -15,6 +15,15 @@ import type { PendingPermission } from '@/lib/api'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { ToolExecutionBlock } from './chat/ToolExecutionBlock'
 
+/**
+ * Shared Tailwind prose classes for markdown-rendered chat content (code
+ * blocks, inline code, links). Used by both the user bubble and the agent
+ * StreamUpdate so prose styling stays in sync. Per AGENTS.md, repeated class
+ * patterns are extracted rather than duplicated.
+ */
+const proseClasses =
+  'prose prose-sm prose-invert max-w-none [&_pre]:bg-tool-call [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:p-2 [&_pre]:text-xs [&_pre]:overflow-x-auto [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_a]:text-primary [&_a]:hover:underline'
+
 /** Picks an icon for a tool card based on the ACP tool kind. */
 function toolKindIcon(kind?: string) {
   switch (kind) {
@@ -41,33 +50,15 @@ function optionStyle(kind: string): string {
 }
 
 /**
- * Returns true when a string looks like an opaque generated ID rather than a
- * human-readable label. Detects the bug where a raw tool-call ID leaks into the
- * tool field — including IDs that contain `_`/`-`, which the previous heuristic
- * wrongly treated as real labels: e.g. Claude's "toolu_01H…", OpenAI's
- * "call_abc123", UUIDs, long hex tokens, and "muNNhDHjd"-style random tokens.
- * Mirrors the backend heuristic in internal/acp/transport.go#looksLikeRawID.
- */
-function looksLikeRawId(value?: string): boolean {
-  const v = (value ?? '').trim()
-  if (!v) return true
-  // Multi-word, human-readable labels (containing whitespace) are never IDs.
-  if (/\s/.test(v)) return false
-  // Well-known agent tool-call ID prefixes + opaque alphanumeric token.
-  if (/^(toolu|tooluse|tool_use|toolcall|call|fc)[_-][A-Za-z0-9]+$/i.test(v)) return true
-  // UUID, with or without hyphen separators.
-  if (/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(v)) return true
-  // Long opaque hex token (e.g. SHA-style IDs).
-  if (/^[0-9a-f]{16,}$/i.test(v)) return true
-  // Separator-free short alphanumeric token (classic random ID shape).
-  if (/^[a-zA-Z0-9]{1,24}$/.test(v)) return true
-  return false
-}
-
-/**
  * Derives a human-readable action label for a permission prompt from the tool
- * kind, used as a fallback when the backend tool field is missing or contains
- * a raw opaque ID.
+ * kind, used as a fallback when the backend tool field is missing.
+ *
+ * The backend (internal/acp/transport.go#RequestPermission) authoritatively
+ * sanitizes the tool title before emitting the event: it replaces any opaque
+ * tool-call ID (e.g. "toolu_01H…", "call_abc123", UUIDs, "muNNhDHjd") with a
+ * kind-derived label, so the frontend can trust `event.tool` and does not need
+ * to re-run the raw-ID heuristic. This fallback only covers a missing/empty
+ * tool field.
  */
 function permissionLabelFromKind(kind?: string): string {
   switch (kind) {
@@ -90,11 +81,11 @@ function permissionLabelFromKind(kind?: string): string {
 
 /**
  * Resolves the display label for a permission request event. Prefers the
- * backend-supplied tool title; falls back to a kind-derived label when the
- * tool field is missing or contains a raw opaque ID (the "muNNhDHjd" bug).
+ * backend-supplied tool title (already sanitized of raw IDs by the backend);
+ * falls back to a kind-derived label only when the tool field is missing.
  */
 function permissionToolLabel(tool?: string, toolKind?: string): string {
-  if (tool && !looksLikeRawId(tool)) return tool
+  if (tool) return tool
   return permissionLabelFromKind(toolKind)
 }
 
@@ -132,7 +123,7 @@ function stopReasonLabel(stopReason?: StopReason): string | null {
  *  a sharper bottom-right corner. `error` variant tints with destructive. */
 const userBubble = cva(
   'max-w-[85%] break-words rounded-[18px] rounded-br-[4px] px-3 py-2 text-sm text-foreground ' +
-    'prose prose-sm prose-invert max-w-none [&_pre]:bg-tool-call [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:p-2 [&_pre]:text-xs [&_pre]:overflow-x-auto [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_a]:text-primary [&_a]:hover:underline',
+    proseClasses,
   {
     variants: { state: { normal: 'bg-secondary', error: 'bg-destructive/20' } },
     defaultVariants: { state: 'normal' },
@@ -355,7 +346,7 @@ export function ChatMessageItem({
       const stopLabel = !event.streaming ? stopReasonLabel(event.stopReason) : null
       return (
         <div className="flex justify-start">
-          <div className="prose prose-sm prose-invert max-w-none break-words text-foreground [&_pre]:bg-tool-call [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:p-2 [&_pre]:text-xs [&_pre]:overflow-x-auto [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_a]:text-primary [&_a]:hover:underline">
+          <div className={`break-words text-foreground ${proseClasses}`}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {event.content || ''}
             </ReactMarkdown>

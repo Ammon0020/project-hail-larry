@@ -99,3 +99,20 @@ Fix path / unblock signal + full drop-in design: `docs/plans/acp-spec-compliance
 RESOLVED. The previously-noted test failures (server-api-revocation-registration
 and config-test-unused-import) were from uncommitted WIP that has since been
 completed and committed. All tests and vet now pass clean.
+
+## 2026-07-11 review — deferred
+
+- **acp-client-god-struct (High) — DEFERRED (2026-07-12):** `acp.Client` has
+  grown to ~1,500 lines with 38 methods sharing one mutex; decomposition is
+  too risky for a review-resolution pass. Suggested path: incrementally
+  extract `AgentRegistry`, `SessionStore`, `TransportManager`, and
+  `SessionOrchestrator` behind the existing `Client` facade, adding focused
+  tests and narrowing mutex scopes per extraction.
+- **usebackend-unstable-references (Medium) — DEFERRED (2026-07-12):**
+  `useBackend()` returns ~25 functions recreated on every render (not
+  memoized), causing cascading re-renders and forcing eslint-disable
+  workarounds. Suggested path: introduce a stable actions object via
+  `useRef` + `useMemo` that reads mutable state through refs (extend
+  existing `eventsRef`/`activeWorkspaceRef` pattern), then migrate
+  App.tsx/effect deps to those stable action identities and drop the
+  eslint-disable comments.

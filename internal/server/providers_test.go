@@ -76,7 +76,7 @@ func (s *stubProviderTransport) DisableProvider(_ context.Context, id string) er
 // PairingMgr) so the tests can hit the handlers directly.
 func newProvidersServer(t *testing.T, tr *stubProviderTransport) *Server {
 	t.Helper()
-	client := acp.NewClient(nil, nil)
+	client := acp.NewClient(acp.ClientConfig{})
 	now := time.Now().UTC().Truncate(time.Second)
 	seed := []acp.Session{{
 		ID:        "sess-prov",

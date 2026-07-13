@@ -332,8 +332,9 @@ var (
 // rather than a human-readable action label. Some agents set a permission
 // request's ToolCall.Title to the raw tool-call ID; showing that to the user
 // ("Permission Required / toolu_01H…") is meaningless, so callers fall back to
-// a kind-derived label instead. The frontend mirrors this heuristic as a
-// defensive safety net (see ChatMessageItem.tsx#looksLikeRawId).
+// a kind-derived label instead. This is the authoritative sanitizer: the
+// frontend trusts the sanitized `tool` field emitted in PermissionRequested
+// events and does not re-run this heuristic.
 func looksLikeRawID(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" {

@@ -20,6 +20,7 @@ import (
 	"github.com/adama/local-agent/internal/config"
 	"github.com/adama/local-agent/internal/events"
 	"github.com/adama/local-agent/internal/fswatch"
+	"github.com/adama/local-agent/internal/interfaces"
 	"github.com/adama/local-agent/internal/pairing"
 	"github.com/adama/local-agent/internal/permissions"
 	"github.com/adama/local-agent/internal/server"
@@ -128,8 +129,8 @@ func DefaultConfigOrError() (*Config, error) {
 	}, nil
 }
 
-func mergeAutodetectedAgents(configured, detected []acp.AgentInfo) ([]acp.AgentInfo, bool) {
-	merged := append([]acp.AgentInfo(nil), configured...)
+func mergeAutodetectedAgents(configured, detected []interfaces.AgentInfo) ([]interfaces.AgentInfo, bool) {
+	merged := append([]interfaces.AgentInfo(nil), configured...)
 	changed := false
 
 	for _, detectedAgent := range detected {
@@ -176,8 +177,8 @@ func mergeAutodetectedAgents(configured, detected []acp.AgentInfo) ([]acp.AgentI
 // Entries whose ID does not match a known spec (user-defined custom agents)
 // are always preserved. Returns the filtered slice and whether anything was
 // removed.
-func pruneStaleKnownAgents(agents []acp.AgentInfo) ([]acp.AgentInfo, bool) {
-	pruned := make([]acp.AgentInfo, 0, len(agents))
+func pruneStaleKnownAgents(agents []interfaces.AgentInfo) ([]interfaces.AgentInfo, bool) {
+	pruned := make([]interfaces.AgentInfo, 0, len(agents))
 	removed := false
 	for _, a := range agents {
 		validCommands := acp.ValidCommandsForAgent(a.ID)
@@ -227,7 +228,7 @@ func commandMatchesSpec(cmd string, validCommands []string) bool {
 // accordingly: it sets warningExecutableNotFound when the command cannot be
 // resolved, and clears a previously-set warningExecutableNotFound once the
 // command resolves again. A warning set to any other value is preserved.
-func verifyAgentExecutable(agent acp.AgentInfo) acp.AgentInfo {
+func verifyAgentExecutable(agent interfaces.AgentInfo) interfaces.AgentInfo {
 	if _, statErr := os.Stat(agent.Command); statErr != nil {
 		// fallback to LookPath
 		if _, lpErr := exec.LookPath(agent.Command); lpErr != nil {
@@ -255,6 +256,118 @@ type Daemon struct {
 	syncHub       *sync.Hub
 	fsWatcher     *fswatch.Watcher
 	uploadsMgr    *uploads.Manager
+}
+
+func newACPClient(
+	cfg *Config,
+	workspaceMgr *workspace.Manager,
+	permissionMgr *permissions.Manager,
+	eventStore *events.Store,
+) (*acp.Client, *acp.OpenFilesTracker, string) {
+	// Load externalized system-message templates (header strings + numeric
+	// limits) for the prompt middleware pipeline. Falls back to built-in
+	// defaults when the config file is missing or unreadable.
+	systemMessages, _ := acp.LoadSystemMessages("configs/system-messages.json")
+	// OpenFilesTracker holds the open/recently-edited file paths reported by
+	// the frontend via POST /api/sessions/{id}/context. It starts empty; the
+	// middlewares skip injection until the frontend reports state.
+	openFilesTracker := acp.NewOpenFilesTracker()
+	// ConversationTransferMiddleware queues an exported conversation transcript
+	// for injection into the first prompt of a session rebound to a new agent.
+	// RebindSession calls SetTransfer on it after exporting the prior history.
+	conversationTransfer := acp.NewConversationTransferMiddleware(systemMessages)
+	// ProfileMiddleware injects Code/Ask/Plan system instructions before each
+	// prompt. It is registered in the pipeline and also wired into the ACP
+	// client so the REST handler can set per-session profiles.
+	profileMiddleware := acp.NewProfileMiddleware(systemMessages)
+	// Inject workspace context (file tree, git status, AGENTS.md) into the
+	// first prompt of each session so agents don't shell out to discover files,
+	// plus per-prompt time/open-files/recent-edits context. The conversation
+	// transfer middleware runs after the first-prompt context so the workspace
+	// bundle comes first, then the transferred conversation, then the profile.
+	pipeline := acp.NewPromptPipeline(
+		acp.NewFirstPromptContextMiddleware(workspaceMgr, systemMessages),
+		acp.NewTimeMiddleware(systemMessages),
+		acp.NewOpenFilesMiddleware(openFilesTracker, systemMessages),
+		acp.NewOpenFilesResourceMiddleware(openFilesTracker, workspaceMgr, systemMessages),
+		acp.NewRecentEditsMiddleware(openFilesTracker, systemMessages),
+		conversationTransfer,
+		profileMiddleware,
+	)
+	// MCP server config: load ~/.local-agent/mcp.json at session start and
+	// pass the enabled, capability-filtered server list to the agent on
+	// session/new and session/load. The same path is exposed to the server for
+	// the /api/mcp REST endpoints.
+	mcpConfigPath := filepath.Join(cfg.DataDir, "mcp.json")
+	acpClient := acp.NewClient(acp.ClientConfig{
+		WorkspaceMgr:  workspaceMgr,
+		PermissionMgr: permissionMgr,
+		Pipeline:      pipeline,
+		EventStore:    eventStore,
+		Transfer:      conversationTransfer,
+		McpConfigPath: mcpConfigPath,
+		StorePath:     filepath.Join(cfg.DataDir, "conversations.json"),
+	})
+	acpClient.SetProfileMiddleware(profileMiddleware)
+	if loadErr := acpClient.LoadConversations(); loadErr != nil {
+		log.Printf("WARNING: failed to load conversations: %v", loadErr)
+	}
+	return acpClient, openFilesTracker, mcpConfigPath
+}
+
+func autodetectAndRegisterAgents(appCfg *config.Config, acpClient *acp.Client) {
+	// One-time cleanup migration: prune persisted agent entries whose ID
+	// matches a known agent spec but whose Command is no longer valid for
+	// that spec (e.g. a stale "codex" entry pointing at the bare codex TUI
+	// binary instead of the codex-acp adapter). This runs before autodetect
+	// so the merge below doesn't re-add the stale command from the persisted
+	// copy. Unknown / user-defined agents are always preserved.
+	if pruned, removed := pruneStaleKnownAgents(appCfg.Agents); removed {
+		appCfg.Agents = pruned
+		if saveErr := appCfg.Save(); saveErr != nil {
+			log.Printf("WARNING: failed to persist pruned agent config: %v", saveErr)
+		}
+	}
+
+	// Load persisted agents from config and run autodetection
+	activeAgents, changed := mergeAutodetectedAgents(appCfg.Agents, acp.Autodetect())
+
+	// Verify executables and register
+	for i := range activeAgents {
+		activeAgents[i] = verifyAgentExecutable(activeAgents[i])
+		acpClient.RegisterAgent(activeAgents[i])
+	}
+
+	if changed {
+		appCfg.Agents = activeAgents
+		_ = appCfg.Save()
+	}
+}
+
+func newFilesystemWatcher(srv *server.Server, workspaceMgr *workspace.Manager) *fswatch.Watcher {
+	// Filesystem watcher: detect external file changes (edits made outside the
+	// app) and broadcast EventFileChangedOnDisk through the server's event sink
+	// (the same path as agent writes). The workspace manager notifies it of the
+	// app's own writes (to suppress them) and of workspace add/remove. A watcher
+	// init failure is non-fatal — the daemon still runs, just without external
+	// change detection.
+	fsWatcher, werr := fswatch.New(srv.OnEvent)
+	if werr != nil {
+		log.Printf("WARNING: filesystem watcher unavailable: %v", werr)
+		return nil
+	}
+
+	workspaceMgr.SetOnWrite(fsWatcher.NoteAppWrite)
+	workspaceMgr.SetOnRegister(fsWatcher.AddWorkspace)
+	workspaceMgr.SetOnRemove(fsWatcher.RemoveWorkspace)
+	// Workspaces registered at startup (above) predate the watcher, so add
+	// them now; runtime registrations go through the SetOnRegister hook.
+	if wss, lerr := workspaceMgr.List(context.Background()); lerr == nil {
+		for _, ws := range wss {
+			fsWatcher.AddWorkspace(ws.ID, ws.Path)
+		}
+	}
+	return fsWatcher
 }
 
 // New creates a new Daemon with the given configuration.
@@ -306,82 +419,10 @@ func New(cfg *Config) (*Daemon, error) {
 	}
 
 	permissionMgr := permissions.NewManager()
-	acpClient := acp.NewClient(workspaceMgr, permissionMgr)
-	// Load externalized system-message templates (header strings + numeric
-	// limits) for the prompt middleware pipeline. Falls back to built-in
-	// defaults when the config file is missing or unreadable.
-	systemMessages, _ := acp.LoadSystemMessages("configs/system-messages.json")
-	// OpenFilesTracker holds the open/recently-edited file paths reported by
-	// the frontend via POST /api/sessions/{id}/context. It starts empty; the
-	// middlewares skip injection until the frontend reports state.
-	openFilesTracker := acp.NewOpenFilesTracker()
-	// ConversationTransferMiddleware queues an exported conversation transcript
-	// for injection into the first prompt of a session rebound to a new agent.
-	// RebindSession calls SetTransfer on it after exporting the prior history.
-	conversationTransfer := acp.NewConversationTransferMiddleware(systemMessages)
-	// ProfileMiddleware injects Code/Ask/Plan system instructions before each
-	// prompt. It is registered in the pipeline and also wired into the ACP
-	// client so the REST handler can set per-session profiles.
-	profileMiddleware := acp.NewProfileMiddleware(systemMessages)
-	// Inject workspace context (file tree, git status, AGENTS.md) into the
-	// first prompt of each session so agents don't shell out to discover files,
-	// plus per-prompt time/open-files/recent-edits context. The conversation
-	// transfer middleware runs after the first-prompt context so the workspace
-	// bundle comes first, then the transferred conversation, then the profile.
-	acpClient.SetPipeline(acp.NewPromptPipeline(
-		acp.NewFirstPromptContextMiddleware(workspaceMgr, systemMessages),
-		acp.NewTimeMiddleware(systemMessages),
-		acp.NewOpenFilesMiddleware(openFilesTracker, systemMessages),
-		acp.NewOpenFilesResourceMiddleware(openFilesTracker, workspaceMgr, systemMessages),
-		acp.NewRecentEditsMiddleware(openFilesTracker, systemMessages),
-		conversationTransfer,
-		profileMiddleware,
-	))
-	acpClient.SetProfileMiddleware(profileMiddleware)
-	// Give the client access to the event store (for conversation export on
-	// rebind) and the transfer middleware (so RebindSession can queue the
-	// exported transcript for the new agent's first prompt).
-	acpClient.SetEventStore(eventStore)
-	acpClient.SetConversationTransfer(conversationTransfer)
-	// MCP server config: load ~/.local-agent/mcp.json at session start and
-	// pass the enabled, capability-filtered server list to the agent on
-	// session/new and session/load. The same path is exposed to the server for
-	// the /api/mcp REST endpoints.
-	mcpConfigPath := filepath.Join(cfg.DataDir, "mcp.json")
-	acpClient.SetMcpConfigPath(mcpConfigPath)
-	// Persist conversation metadata so chats are remembered across restarts.
-	acpClient.SetStorePath(filepath.Join(cfg.DataDir, "conversations.json"))
-	if loadErr := acpClient.LoadConversations(); loadErr != nil {
-		log.Printf("WARNING: failed to load conversations: %v", loadErr)
-	}
+	acpClient, openFilesTracker, mcpConfigPath := newACPClient(cfg, workspaceMgr, permissionMgr, eventStore)
 	syncHub := sync.NewHub()
 
-	// One-time cleanup migration: prune persisted agent entries whose ID
-	// matches a known agent spec but whose Command is no longer valid for
-	// that spec (e.g. a stale "codex" entry pointing at the bare codex TUI
-	// binary instead of the codex-acp adapter). This runs before autodetect
-	// so the merge below doesn't re-add the stale command from the persisted
-	// copy. Unknown / user-defined agents are always preserved.
-	if pruned, removed := pruneStaleKnownAgents(appCfg.Agents); removed {
-		appCfg.Agents = pruned
-		if saveErr := appCfg.Save(); saveErr != nil {
-			log.Printf("WARNING: failed to persist pruned agent config: %v", saveErr)
-		}
-	}
-
-	// Load persisted agents from config and run autodetection
-	activeAgents, changed := mergeAutodetectedAgents(appCfg.Agents, acp.Autodetect())
-
-	// Verify executables and register
-	for i := range activeAgents {
-		activeAgents[i] = verifyAgentExecutable(activeAgents[i])
-		acpClient.RegisterAgent(activeAgents[i])
-	}
-
-	if changed && appCfg != nil {
-		appCfg.Agents = activeAgents
-		_ = appCfg.Save()
-	}
+	autodetectAndRegisterAgents(appCfg, acpClient)
 
 	// Per-session uploads store for artifacts attached to prompts (e.g.
 	// images). A failure to initialize is non-fatal — the daemon runs without
@@ -413,27 +454,7 @@ func New(cfg *Config) (*Daemon, error) {
 	// the new ones on the same mux.
 	srv.RegisterPendingActionRoutes()
 
-	// Filesystem watcher: detect external file changes (edits made outside the
-	// app) and broadcast EventFileChangedOnDisk through the server's event sink
-	// (the same path as agent writes). The workspace manager notifies it of the
-	// app's own writes (to suppress them) and of workspace add/remove. A watcher
-	// init failure is non-fatal — the daemon still runs, just without external
-	// change detection.
-	fsWatcher, werr := fswatch.New(srv.OnEvent)
-	if werr != nil {
-		log.Printf("WARNING: filesystem watcher unavailable: %v", werr)
-	} else {
-		workspaceMgr.SetOnWrite(fsWatcher.NoteAppWrite)
-		workspaceMgr.SetOnRegister(fsWatcher.AddWorkspace)
-		workspaceMgr.SetOnRemove(fsWatcher.RemoveWorkspace)
-		// Workspaces registered at startup (above) predate the watcher, so add
-		// them now; runtime registrations go through the SetOnRegister hook.
-		if wss, lerr := workspaceMgr.List(context.Background()); lerr == nil {
-			for _, ws := range wss {
-				fsWatcher.AddWorkspace(ws.ID, ws.Path)
-			}
-		}
-	}
+	fsWatcher := newFilesystemWatcher(srv, workspaceMgr)
 
 	return &Daemon{
 		config:        cfg,

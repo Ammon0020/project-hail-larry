@@ -357,43 +357,52 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ decision }),
     }),
+
+  // ---- MCP config ----
+  // Kept on `api` like the rest of the REST surface. getMcpConfig uses fetch
+  // directly (not apiFetch) so the editor preserves exact mcp.json formatting
+  // on round-trips — apiFetch would re-parse and lose raw text.
+
+  /** GET /api/mcp — returns raw JSON text of mcp.json (or empty envelope). */
+  getMcpConfig: async (): Promise<string> => {
+    const res = await fetch(`${API_BASE}/mcp`, {
+      headers: withAuthHeaders(),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string }
+      throw new Error(body.error || `HTTP ${res.status}`)
+    }
+    return res.text()
+  },
+
+  /** PUT /api/mcp — validates and writes raw JSON. Returns 400 on parse error. */
+  putMcpConfig: async (rawJson: string): Promise<void> => {
+    await apiFetch<unknown>('/mcp', {
+      method: 'PUT',
+      body: rawJson,
+    })
+  },
+
+  /** PATCH /api/mcp/servers/{name} — toggles a single server's enabled flag. */
+  patchMcpServer: async (name: string, enabled: boolean): Promise<void> => {
+    await apiFetch<unknown>(`/mcp/servers/${encodeURIComponent(name)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    })
+  },
+
+  /** GET /api/mcp/status — on-demand health check of all configured MCP servers. */
+  getMcpStatus: (): Promise<McpServerStatus[]> =>
+    apiFetch<McpServerStatus[]>('/mcp/status'),
 }
 
-// ---- MCP config ----
-
-/** GET /api/mcp — returns raw JSON text of mcp.json (or empty envelope).
- *  Uses `fetch` directly (not `apiFetch`) because the body is returned
- *  verbatim so the editor preserves the user's exact formatting on
- *  round-trips — `apiFetch` would re-parse and lose the raw text. Mirrors
- *  `apiFetch`'s same-origin base URL and error handling. */
-export async function getMcpConfig(): Promise<string> {
-  const res = await fetch(`${API_BASE}/mcp`, {
-    headers: withAuthHeaders(),
-  })
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string }
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return res.text()
-}
-
-/** PUT /api/mcp — validates and writes raw JSON. Returns 400 on parse error.
- *  The body is sent as-is (not re-stringified) so the user's formatting
- *  survives the round-trip; the backend parses it only to validate. */
-export async function putMcpConfig(rawJson: string): Promise<void> {
-  await apiFetch<unknown>('/mcp', {
-    method: 'PUT',
-    body: rawJson,
-  })
-}
-
-/** PATCH /api/mcp/servers/{name} — toggles a single server's enabled flag. */
-export async function patchMcpServer(name: string, enabled: boolean): Promise<void> {
-  await apiFetch<unknown>(`/mcp/servers/${encodeURIComponent(name)}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ enabled }),
-  })
-}
+// Thin re-exports so existing `import { getMcpConfig } from '@/lib/api'`
+// call sites (useMcpServers, SettingsPanel) keep working without churn.
+// Prefer `api.getMcpConfig()` for new code.
+export const getMcpConfig = api.getMcpConfig
+export const putMcpConfig = api.putMcpConfig
+export const patchMcpServer = api.patchMcpServer
+export const getMcpStatus = api.getMcpStatus
 
 // ---- MCP health status ----
 
@@ -403,12 +412,6 @@ export interface McpServerStatus {
   enabled: boolean
   status: 'healthy' | 'unhealthy' | 'disabled' | 'unknown'
   error?: string
-}
-
-/** GET /api/mcp/status — on-demand health check of all configured MCP servers.
- *  Called when the McpPopout opens. */
-export async function getMcpStatus(): Promise<McpServerStatus[]> {
-  return apiFetch<McpServerStatus[]>('/mcp/status')
 }
 
 // ---- ACP provider management (session-scoped) ----

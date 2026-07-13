@@ -137,24 +137,29 @@ func Save(path string, f *File) error {
 }
 
 // WriteFileAtomic writes data to path atomically (temp file in the same
-// directory + MkdirAll + Chmod + rename) so a crashed write never leaves a
-// half-written file. The parent directory is created with mode 0700 if
-// missing; the file is written with the given perm (0600 for mcp.json, which
-// may contain secrets). The temp file lives in the same directory so the
-// rename is guaranteed to be on the same filesystem. Exported so the server
-// package can share it (e.g. PUT /api/mcp writes raw request bytes verbatim
-// through this helper to preserve the user's exact formatting).
+// directory + MkdirAll + Chmod + Sync + rename) so a crashed write never
+// leaves a half-written file. The parent directory is created with mode 0700
+// if missing; the file is written with the given perm (0600 for mcp.json /
+// config.json / conversation store, which may contain secrets or app state).
+// The temp file lives in the same directory so the rename is guaranteed to
+// be on the same filesystem. Sync flushes file data and metadata before the
+// rename; the parent directory is synced best-effort so the directory entry
+// is durable on filesystems that require it. Exported so other packages
+// (config, acp, server) can share the same durable write path.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, appDataDirPerm); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, ".mcp.json.*.tmp")
+	// Prefix with the target basename so concurrent writers of different files
+	// in the same directory do not share a single temp-name pattern.
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
 	tmpName := tmp.Name()
 	// Best-effort cleanup if any step below fails before the rename succeeds.
+	// After a successful rename the temp path is gone; Remove is a no-op then.
 	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
@@ -164,11 +169,25 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 		_ = tmp.Close()
 		return fmt.Errorf("chmod temp file: %w", err)
 	}
+	// Flush contents and metadata to stable storage before rename so a power
+	// loss cannot leave a renamed-but-empty/truncated file.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync temp file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp file: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename into place: %w", err)
+	}
+	// Best-effort directory sync so the new dirent is durable. Some platforms
+	// (notably Windows) reject Sync on directories; ignore those errors.
+	// #nosec G304 -- dir is derived from the path argument (a config/state file
+	// path controlled by the application), not user input.
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
 	}
 	return nil
 }

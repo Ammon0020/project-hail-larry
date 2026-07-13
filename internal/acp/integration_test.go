@@ -67,7 +67,7 @@ func buildMockAgent(t *testing.T) string {
 func TestMockAgentFullFlow(t *testing.T) {
 	agentPath := buildMockAgent(t)
 
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	client.RegisterAgent(AgentInfo{
@@ -208,7 +208,7 @@ func TestMockAgentFullFlow(t *testing.T) {
 func TestMockAgentMultiplePrompts(t *testing.T) {
 	agentPath := buildMockAgent(t)
 
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	client.RegisterAgent(AgentInfo{
@@ -261,7 +261,7 @@ func TestRealAgentDevstral(t *testing.T) {
 		t.Skip("Set ACP_TEST_REAL=1 to run real agent tests")
 	}
 
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	// Try to find devstral-small via autodetect.
@@ -352,7 +352,7 @@ func TestRealAgentCodex(t *testing.T) {
 		t.Skip("Set ACP_TEST_REAL=1 to run real agent tests")
 	}
 
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	agents := Autodetect()

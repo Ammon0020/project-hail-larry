@@ -57,21 +57,23 @@ type Client struct {
 	profileMiddleware *ProfileMiddleware
 }
 
-// AgentInfo describes a registered agent harness.
-type AgentInfo struct {
-	ID      string       `json:"id"`
-	Name    string       `json:"name"`
-	Command string       `json:"command"` // launch command (e.g., "claude", "codex")
-	Args    []string     `json:"args,omitempty"`
-	Models  []AgentModel `json:"models"`
-	Warning string       `json:"warning,omitempty"`
+// ClientConfig contains the dependencies and optional settings for an ACP client.
+type ClientConfig struct {
+	WorkspaceMgr  interfaces.WorkspaceManager
+	PermissionMgr interfaces.PermissionManager
+	Pipeline      *PromptPipeline
+	EventStore    interfaces.EventStore
+	Transfer      *ConversationTransferMiddleware
+	McpConfigPath string
+	StorePath     string
+	Callbacks     interfaces.ACPCallbacks
 }
 
+// AgentInfo describes a registered agent harness.
+type AgentInfo = interfaces.AgentInfo
+
 // AgentModel describes a model offered by an agent.
-type AgentModel struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
+type AgentModel = interfaces.AgentModel
 
 // Session lifecycle statuses. These string values are part of the persisted
 // JSON shape (Session.Status) and the wire format sent to the UI, so they must
@@ -177,12 +179,18 @@ const defaultConversationName = "New chat"
 const promptTimeout = 10 * time.Minute
 
 // NewClient creates a new ACP client with no registered agents.
-func NewClient(workspaceMgr interfaces.WorkspaceManager, permMgr interfaces.PermissionManager) *Client {
+func NewClient(cfg ClientConfig) *Client {
 	return &Client{
-		agents:       make(map[string]AgentInfo),
-		sessions:     make(map[string]*Session),
-		workspaceMgr: workspaceMgr,
-		permMgr:      permMgr,
+		agents:        make(map[string]AgentInfo),
+		sessions:      make(map[string]*Session),
+		callbacks:     cfg.Callbacks,
+		workspaceMgr:  cfg.WorkspaceMgr,
+		permMgr:       cfg.PermissionMgr,
+		storePath:     cfg.StorePath,
+		pipeline:      cfg.Pipeline,
+		eventStore:    cfg.EventStore,
+		transfer:      cfg.Transfer,
+		mcpConfigPath: cfg.McpConfigPath,
 	}
 }
 

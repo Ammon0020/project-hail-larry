@@ -36,3 +36,6 @@ Decompose into focused structs behind the same `Client` facade:
 | `TransportManager` | Lazy transport startup, close, transport pool |
 
 Each gets its own mutex scope. `Client` becomes a thin coordinator that delegates.
+
+## Resolution (2026-07-12) — DEFERRED
+Concern still exists and has grown to roughly 1,500 lines with 38 methods sharing one mutex; decomposition is too risky for this pass. Suggested path: incrementally extract AgentRegistry, SessionStore, TransportManager, and SessionOrchestrator behind the existing Client facade, adding focused tests and narrowing mutex scopes per extraction. Tracked in `docs/known-issues.md`.

@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -190,15 +191,24 @@ func parseRgJSON(data []byte, root string, re *regexp.Regexp, max int) ([]Result
 		if len(line) == 0 {
 			continue
 		}
-		// We avoid pulling in encoding/json to keep the package stdlib-only.
-		// Each rg --json record is a single object on one line; we extract the
-		// "type" field to decide whether to parse it as a match.
-		recType := jsonStringValue(line, "type")
-		if recType != "match" {
+		// Each rg --json record is a single object on one line. We decode only
+		// the fields we need with encoding/json (stdlib), which handles escaped
+		// characters and nested objects robustly instead of byte-scanning.
+		var rec rgRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			// Skip malformed lines rather than aborting the whole search.
+			continue
+		}
+		if rec.Type != "match" {
 			continue
 		}
 
-		pathStr := jsonStringValue(line, "path", "text")
+		// ripgrep nests the payload under "data"; the top-level fields are a
+		// fallback for older or alternate emitters that flatten the record.
+		pathStr := rec.Data.Path.Text
+		if pathStr == "" {
+			pathStr = rec.Path.Text
+		}
 		if pathStr == "" {
 			continue
 		}
@@ -209,11 +219,13 @@ func parseRgJSON(data []byte, root string, re *regexp.Regexp, max int) ([]Result
 		// Never surface absolute paths.
 		relPath = filepath.ToSlash(relPath)
 
-		lineNum := jsonIntValue(line, "line_number")
-		lineText := jsonStringValue(line, "lines", "text")
+		lineNum := rec.Data.LineNumber
+		if lineNum == 0 {
+			lineNum = rec.LineNumber
+		}
+		lineText := rec.Data.Lines.Text
 		if lineText == "" {
-			// Some rg versions nest the line under "data"."lines"."text".
-			lineText = jsonNestedStringValue(line, "data", "lines", "text")
+			lineText = rec.Lines.Text
 		}
 
 		// Compute match offsets from the first submatch on the line text. rg
@@ -399,121 +411,27 @@ func globToRegex(glob string) (*regexp.Regexp, error) {
 	return regexp.Compile(sb.String())
 }
 
-// jsonStringValue extracts a string value for a top-level key from a single
-// line of JSON. Nested keys (e.g. "path"."text") may be passed as additional
-// args to descend one level. This avoids a full encoding/json dependency for
-// the rg parser; it is intentionally minimal and only handles the shapes rg
-// emits.
-func jsonStringValue(data []byte, keys ...string) string {
-	for i, key := range keys {
-		needle := []byte(`"` + key + `"`)
-		idx := bytes.Index(data, needle)
-		if idx < 0 {
-			return ""
-		}
-		rest := data[idx+len(needle):]
-		// Find the colon after the key.
-		colon := bytes.IndexByte(rest, ':')
-		if colon < 0 {
-			return ""
-		}
-		rest = rest[colon+1:]
-		// Skip whitespace.
-		rest = bytes.TrimLeft(rest, " \t")
-		if len(rest) == 0 || rest[0] != '"' {
-			// Not a string value; for nested keys, descend into the object.
-			if i < len(keys)-1 {
-				// Find the opening brace of the nested object and continue.
-				objIdx := bytes.IndexByte(rest, '{')
-				if objIdx < 0 {
-					return ""
-				}
-				data = rest[objIdx:]
-				continue
-			}
-			return ""
-		}
-		// Parse the string literal starting at rest[0].
-		rest = rest[1:]
-		var sb strings.Builder
-		for j := 0; j < len(rest); j++ {
-			c := rest[j]
-			if c == '\\' && j+1 < len(rest) {
-				j++
-				switch rest[j] {
-				case '"':
-					sb.WriteByte('"')
-				case '\\':
-					sb.WriteByte('\\')
-				case '/':
-					sb.WriteByte('/')
-				case 'n':
-					sb.WriteByte('\n')
-				case 't':
-					sb.WriteByte('\t')
-				case 'r':
-					sb.WriteByte('\r')
-				case 'b':
-					sb.WriteByte('\b')
-				case 'f':
-					sb.WriteByte('\f')
-				case 'u':
-					if j+4 < len(rest) {
-						if r, err := strconv.ParseUint(string(rest[j+1:j+5]), 16, 32); err == nil {
-							j += 4
-							// rune is int32; guard against overflow for code
-							// points outside the valid Unicode range (<= U+10FFFF).
-							if r <= 0x10FFFF {
-								sb.WriteRune(rune(r))
-							}
-						}
-					}
-				default:
-					sb.WriteByte(rest[j])
-				}
-				continue
-			}
-			if c == '"' {
-				break
-			}
-			sb.WriteByte(c)
-		}
-		return sb.String()
-	}
-	return ""
+// rgRecord models the subset of ripgrep's --json output that parseRgJSON
+// needs. ripgrep nests the per-record payload under "data"; the top-level
+// Path/Lines/LineNumber fields are kept as a fallback for older or alternate
+// emitters that flatten the record.
+type rgRecord struct {
+	Type       string `json:"type"`
+	Data       rgData `json:"data"`
+	Path       rgText `json:"path"`
+	Lines      rgText `json:"lines"`
+	LineNumber int    `json:"line_number"`
 }
 
-// jsonNestedStringValue is a thin wrapper for the common two-level nesting
-// ("data"."text") used by some rg versions for match line content.
-func jsonNestedStringValue(data []byte, keys ...string) string {
-	return jsonStringValue(data, keys...)
+// rgData is the nested payload of a ripgrep match record.
+type rgData struct {
+	Path       rgText `json:"path"`
+	Lines      rgText `json:"lines"`
+	LineNumber int    `json:"line_number"`
 }
 
-// jsonIntValue extracts an integer value for a top-level key from a single
-// line of JSON. Returns 0 when the key is absent or the value is not a number.
-func jsonIntValue(data []byte, key string) int {
-	needle := []byte(`"` + key + `"`)
-	idx := bytes.Index(data, needle)
-	if idx < 0 {
-		return 0
-	}
-	rest := data[idx+len(needle):]
-	colon := bytes.IndexByte(rest, ':')
-	if colon < 0 {
-		return 0
-	}
-	rest = rest[colon+1:]
-	rest = bytes.TrimLeft(rest, " \t")
-	end := 0
-	for end < len(rest) && (rest[end] == '-' || (rest[end] >= '0' && rest[end] <= '9')) {
-		end++
-	}
-	if end == 0 {
-		return 0
-	}
-	v, err := strconv.Atoi(string(rest[:end]))
-	if err != nil {
-		return 0
-	}
-	return v
+// rgText holds a text payload. ripgrep also emits a "bytes" field (base64) for
+// binary content, but we only consume the text form.
+type rgText struct {
+	Text string `json:"text"`
 }

@@ -20,3 +20,6 @@ This library is the industry standard for LRU caches in Go, is fully thread-safe
 ## Verification
 
 Code inspection of [internal/files/files.go](file:///media/adam/extex/projects/project-hail-larry/internal/files/files.go#L209-L280) reveals a hand-rolled LRU cache struct and associated insertion/lookup logic using a custom doubly-linked list.
+
+## Resolution (2026-07-12) — WONTFIX
+The cache is ~70 lines of correct, stdlib-only (`container/list`) code already guarded by `f.mapMu` on every access (thread-safety is a false positive), and replacing it with `hashicorp/golang-lru/v2` would add an external dependency for no real benefit.

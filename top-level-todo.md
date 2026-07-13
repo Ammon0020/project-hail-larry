@@ -12,3 +12,4 @@
 - [ ] Add agent icon on the far right of the top bar, next to the save icon. 
 - [ ] Add a command palette and handle ctrl+p. Put the button to the right of the agent icon. An "Action items menu". 
 - [ ] The bottom bar is only in the editor. It should span the entire bottom of the app. 
+- [ ] Add a bar right below the tabs to show a file's filepath, up to the workspace. So "workspace/folder/file.txt". 

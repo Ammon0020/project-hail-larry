@@ -28,7 +28,7 @@ func (m *mockCallbacks) OnEvent(event interfaces.Event) {
 
 // TestRegisterAndListAgents verifies agent registration and listing.
 func TestRegisterAndListAgents(t *testing.T) {
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	client.RegisterAgent(AgentInfo{
@@ -59,7 +59,7 @@ func TestRegisterAndListAgents(t *testing.T) {
 // TestCreateSession verifies session creation with a valid agent and model.
 func TestCreateSession(t *testing.T) {
 	t.Skip("Requires a mock ACP agent for testing real stdio transport")
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	client.RegisterAgent(AgentInfo{
@@ -85,7 +85,7 @@ func TestCreateSession(t *testing.T) {
 // TestCreateSessionInvalidAgent verifies that creating a session with an unknown agent fails.
 // This fails at the agent lookup before any transport is spawned.
 func TestCreateSessionInvalidAgent(t *testing.T) {
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	_, err := client.CreateSession(ctx, "nonexistent", "model", ".")
@@ -97,7 +97,7 @@ func TestCreateSessionInvalidAgent(t *testing.T) {
 // TestCreateSessionInvalidModel verifies that using an unoffered model fails.
 // This fails at model validation before any transport is spawned.
 func TestCreateSessionInvalidModel(t *testing.T) {
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	client.RegisterAgent(AgentInfo{
@@ -117,7 +117,7 @@ func TestCreateSessionInvalidModel(t *testing.T) {
 // TestSendPrompt verifies that sending a prompt emits an event.
 func TestSendPrompt(t *testing.T) {
 	t.Skip("Requires a mock ACP agent for testing real stdio transport")
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 	cb := &mockCallbacks{}
 	client.SetCallbacks(cb)
@@ -158,7 +158,7 @@ func TestSendPrompt(t *testing.T) {
 // TestSendPromptInvalidSession verifies that sending a prompt to a nonexistent session fails.
 // This fails at session lookup before any transport is touched.
 func TestSendPromptInvalidSession(t *testing.T) {
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	err := client.SendPrompt(ctx, "nonexistent", "hello", nil)
@@ -170,7 +170,7 @@ func TestSendPromptInvalidSession(t *testing.T) {
 // TestCancelSession verifies that cancelling a session updates its status.
 func TestCancelSession(t *testing.T) {
 	t.Skip("Requires a mock ACP agent for testing real stdio transport")
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	client.RegisterAgent(AgentInfo{
@@ -197,7 +197,7 @@ func TestCancelSession(t *testing.T) {
 // TestCloseSession verifies that closing a session removes it.
 func TestCloseSession(t *testing.T) {
 	t.Skip("Requires a mock ACP agent for testing real stdio transport")
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	client.RegisterAgent(AgentInfo{
@@ -224,7 +224,7 @@ func TestCloseSession(t *testing.T) {
 // TestListSessions verifies that all active sessions are listed.
 func TestListSessions(t *testing.T) {
 	t.Skip("Requires a mock ACP agent for testing real stdio transport")
-	client := NewClient(nil, nil)
+	client := NewClient(ClientConfig{})
 	ctx := context.Background()
 
 	client.RegisterAgent(AgentInfo{

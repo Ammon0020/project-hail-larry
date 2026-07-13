@@ -40,3 +40,6 @@ const actions = useMemo(() => ({
 ```
 
 This requires the functions to read current state from refs (which `eventsRef` and `activeWorkspaceRef` already do).
+
+## Resolution (2026-07-12) — DEFERRED
+Full stable-actions refactor of central data hook is high blast-radius and needs careful refs-based redesign (naive useCallback still churns on changing deps; ~25 functions plus mutual callers and run-once mount effect). Suggested path: introduce a stable actions object via useRef + useMemo that reads mutable state through refs (extend existing eventsRef/activeWorkspaceRef pattern), then migrate App.tsx/effect deps to those stable action identities and drop the related eslint-disable workarounds. Tracked in `docs/known-issues.md`.
