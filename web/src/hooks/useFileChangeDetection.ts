@@ -18,9 +18,13 @@ export function useFileChangeDetection(
   setOpenTabs: Dispatch<SetStateAction<Tab[]>>,
 ): void {
   const processedFileEventIdRef = useRef<number | null>(null)
+  // Pull the backend fields used as effect dependencies out of the backend
+  // object so the react-hooks/exhaustive-deps rule sees standalone identifiers
+  // (the backend object is new each render, but events/activeWorkspace/readFile
+  // are stable enough as deps given the processedFileEventIdRef guard).
+  const { activeWorkspace, events, readFile } = backend
 
   useEffect(() => {
-    const events = backend.events
     if (events.length === 0) return
     const maxId = Math.max(...events.map((event) => event.id ?? 0))
     if (processedFileEventIdRef.current === null) {
@@ -30,7 +34,6 @@ export function useFileChangeDetection(
     const since = processedFileEventIdRef.current
     if (maxId <= since) return
     processedFileEventIdRef.current = maxId
-    const activeWorkspace = backend.activeWorkspace
     const changedPaths = new Set(
       events
         .filter(
@@ -54,8 +57,7 @@ export function useFileChangeDetection(
 
     for (const tab of openTabs) {
       if (!changedPaths.has(tab.path) || tab.unsaved) continue
-      backend
-        .readFile(tab.path, tab.workspaceId)
+      readFile(tab.path, tab.workspaceId)
         .then((file) => {
           setOpenTabs((currentTabs) =>
             currentTabs.map((currentTab) =>
@@ -74,7 +76,5 @@ export function useFileChangeDetection(
         })
         .catch(() => {})
     }
-    // useBackend actions are not stable yet; backend.events is the event cursor.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend.events])
+  }, [events, activeWorkspace, readFile, openTabs, setOpenTabs])
 }

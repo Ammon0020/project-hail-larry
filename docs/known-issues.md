@@ -3,34 +3,11 @@
 Gaps and deferred work tracked from review passes. Each entry is a one-line
 note so the next agent can pick it up without re-reading the full review file.
 
-## Web frontend — deferred review findings (from `docs/reviews/2026-07-06/`)
+## Web frontend — deferred review findings (from 2026-07-06 review)
 
-RESOLVED (2026-07-06). All 8 previously-deferred `web-*` findings have been
-fixed as part of the light-theme + shadcn foundation work — see
-`docs/STATUS.md` → Recent Fixes (2026-07-06). Summary of how each was closed:
-
-- **web-app-side-effect-during-render** — `App.tsx` no longer calls
-  `loadSessionEvents` during render; it's in a guarded `useEffect` with a
-  ref-tracked one-time load, and all hooks run before the `if (!paired)` early
-  return.
-- **web-chatpanel-agent-model-restore-race** — restoration computes a local
-  `nextAgent` and derives the model from it (no stale `selectedAgent` read),
-  kept render-time to avoid `set-state-in-effect`.
-- **web-dark-mode-js-class-no-light-theme** — real light palette added in
-  `:root` (dark in `.dark`); `src/lib/theme.ts` + `useTheme` manage
-  `dark | light | system` (default dark), applied by `main.tsx`.
-- **web-dead-ui-mobilesettings-theme-toggle** — the theme toggle is wired to
-  `useTheme` (Dark/Light/System) with active state.
-- **web-eslint-disable-exhaustive-deps-blanket** — file-level disable removed;
-  replaced by a single justified targeted disable on the run-once mount effect.
-- **web-event-log-unbounded-growth** — in-memory event log bounded at
-  `MAX_EVENTS=5000` via a `commitEvents` helper (SQLite remains source of
-  truth; `loadSessionEvents` re-fetches evicted history).
-- **web-raw-palette-colors-not-semantic-tokens** — all components migrated to
-  semantic tokens; intentional status/signal hues (green/red/amber) retained.
-- **web-shadcn-components-not-used** — shadcn primitives installed under
-  `src/components/ui/` (button, select, dialog, dropdown-menu, popover);
-  ChatPanel/SettingsModal now use `Select`/`Dialog`.
+RESOLVED (2026-07-06). All 8 previously-deferred `web-*` findings were fixed
+as part of the light-theme + shadcn foundation work — see `docs/STATUS.md` →
+Recent Fixes (2026-07-06). The original review folder has been removed.
 
 ## Notes
 
@@ -102,17 +79,13 @@ completed and committed. All tests and vet now pass clean.
 
 ## 2026-07-11 review — deferred
 
-- **acp-client-god-struct (High) — DEFERRED (2026-07-12):** `acp.Client` has
-  grown to ~1,500 lines with 38 methods sharing one mutex; decomposition is
-  too risky for a review-resolution pass. Suggested path: incrementally
-  extract `AgentRegistry`, `SessionStore`, `TransportManager`, and
-  `SessionOrchestrator` behind the existing `Client` facade, adding focused
-  tests and narrowing mutex scopes per extraction.
-- **usebackend-unstable-references (Medium) — DEFERRED (2026-07-12):**
-  `useBackend()` returns ~25 functions recreated on every render (not
-  memoized), causing cascading re-renders and forcing eslint-disable
-  workarounds. Suggested path: introduce a stable actions object via
-  `useRef` + `useMemo` that reads mutable state through refs (extend
-  existing `eventsRef`/`activeWorkspaceRef` pattern), then migrate
-  App.tsx/effect deps to those stable action identities and drop the
-  eslint-disable comments.
+RESOLVED (2026-07-12). Both deferred findings are now fixed:
+- **acp-client-god-struct:** agent registry extracted into unexported
+  `agentRegistry` with its own RWMutex behind the `Client` facade; first
+  step of the incremental decomposition. Remaining sub-structs
+  (SessionStore, TransportManager, SessionOrchestrator) are future work
+  but no longer blocking — the registry pattern is validated.
+- **usebackend-unstable-references:** all 26 `useBackend` actions wrapped
+  in `useCallback` with stable deps; 4 `activeWorkspace` reads switched to
+  `activeWorkspaceRef.current`; 3 consumer `eslint-disable` suppressions
+  removed.

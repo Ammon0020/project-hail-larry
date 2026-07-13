@@ -151,6 +151,11 @@ export default function App() {
 
   // Real backend connection
   const backend = useBackend()
+  // Pull the stable action methods used as effect/callback dependencies out of
+  // the backend object so the react-hooks/exhaustive-deps rule sees standalone
+  // stable identifiers (the backend object literal is new each render, but the
+  // action identities it carries are now stable via useCallback in useBackend).
+  const { loadSessionEvents, reportContext, saveFile, readFile } = backend
 
   /** Track viewport changes for responsive layout switching. */
   useEffect(() => {
@@ -204,7 +209,9 @@ export default function App() {
   // pre-marks them loaded — preventing the fetch from racing the in-flight
   // prompt POST (that race made the user's first message flash then vanish).
   // Stale sessions are cleared by the render-time block above, so the effect
-  // simply skips them.
+  // simply skips them. The loadedSessionRef guard ensures each session's
+  // history is fetched at most once, so a stable loadSessionEvents identity
+  // in the deps cannot cause redundant fetches.
   useEffect(() => {
     if (!activeSessionId) {
       loadedSessionRef.current = null
@@ -214,13 +221,9 @@ export default function App() {
     if (!backend.sessions.some((s) => s.id === activeSessionId)) return
     if (loadedSessionRef.current !== activeSessionId) {
       loadedSessionRef.current = activeSessionId
-      backend.loadSessionEvents(activeSessionId)
+      loadSessionEvents(activeSessionId)
     }
-    // backend's methods are recreated each render (not memoized), so we key on
-    // the sessions array + active id rather than the whole backend object to
-    // avoid re-running this effect on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend.sessions, activeSessionId])
+  }, [backend.sessions, activeSessionId, loadSessionEvents])
 
   /** Persist open tabs, active tab, panel, and mobile view so the layout
    *  survives a page reload (UI Spec §6.2 — UI Persistence). */
@@ -249,9 +252,8 @@ export default function App() {
     if (!activeSessionId || !backend.activeWorkspace) return
     const openFiles = openTabs.map((t) => t.path)
     const recentEdits = openTabs.filter((t) => t.unsaved).map((t) => t.path)
-    backend.reportContext(activeSessionId, openFiles, recentEdits, editorSelection)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- backend object is recreated every render; reportContext is debounced internally
-  }, [openTabs, activeSessionId, editorSelection])
+    reportContext(activeSessionId, openFiles, recentEdits, editorSelection)
+  }, [openTabs, activeSessionId, editorSelection, backend.activeWorkspace, reportContext])
 
   useEffect(() => {
     localStorage.setItem('lai:leftPanel', leftPanel)
@@ -322,7 +324,7 @@ export default function App() {
     const tab = openTabs.find((t) => t.id === activeTabId)
     if (!tab) return
     try {
-      const result = await backend.saveFile(tab.path, tab.content, tab.revision, tab.workspaceId)
+      const result = await saveFile(tab.path, tab.content, tab.revision, tab.workspaceId)
       setOpenTabs((prev) =>
         prev.map((t) =>
           t.id === activeTabId
@@ -335,7 +337,7 @@ export default function App() {
       console.error('Save failed:', err)
       setSaveError(err instanceof Error ? err.message : String(err))
     }
-  }, [backend, openTabs, activeTabId])
+  }, [saveFile, openTabs, activeTabId])
 
   /** Reloads a tab's content from disk, discarding local edits. Invoked from
    *  the EditorPane "changed on disk" banner's Reload action. */
@@ -344,7 +346,7 @@ export default function App() {
       const tab = openTabs.find((t) => t.id === tabId)
       if (!tab) return
       try {
-        const file = await backend.readFile(tab.path, tab.workspaceId)
+        const file = await readFile(tab.path, tab.workspaceId)
         setOpenTabs((prev) =>
           prev.map((t) =>
             t.id === tabId
@@ -365,7 +367,7 @@ export default function App() {
         setSaveError(err instanceof Error ? err.message : String(err))
       }
     },
-    [backend, openTabs],
+    [readFile, openTabs],
   )
 
   /** Toggles a text-preview tab between edit (CodeMirror) and preview

@@ -68,6 +68,7 @@ Notes:
 
 - **`session/cancel`** — notification to abort in-progress work. The client MUST respond to any outstanding permission requests with the `"cancelled"` outcome.
 - **`session/delete`** — unstable method to delete a session.
+- **`session/list`** — unstable/optional method to list the agent's known sessions. The client can use this to reconcile its session map.
 - The agent responds to `session/prompt` with a result containing a `stopReason` (e.g. `end_turn`).
 
 ## 4. session/update Notifications

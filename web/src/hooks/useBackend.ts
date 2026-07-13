@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, getDeviceCredential, type AppEvent, type WorkspaceInfo, type FileNode, type DeviceCredential, type PendingPermission, type UploadResult, type EditorSelectionInfo } from '@/lib/api'
 import { isSessionNotFound } from '@/lib/errors'
 import type { Attachment, Agent, Session } from '@/types'
@@ -126,45 +126,10 @@ export function useBackend() {
    * safe: SQLite is the source of truth and loadSessionEvents re-fetches a
    * session's events on demand (see MAX_EVENTS).
    */
-  function commitEvents(next: AppEvent[]) {
+  const commitEvents = useCallback((next: AppEvent[]) => {
     const trimmed = next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next
     eventsRef.current = trimmed
     setEvents(trimmed)
-  }
-
-  // ---- Load initial data on mount ----
-  // This effect must run EXACTLY ONCE on mount: it kicks off the initial data
-  // loads and opens the single WebSocket connection (connectWebSocket recreates
-  // the socket, so re-running it would leak/duplicate connections). The loader
-  // functions and connectWebSocket are stable for our purposes — they read
-  // current values through refs (activeWorkspaceRef, eventsRef, etc.) rather
-  // than captured render state — so listing them as deps would only risk
-  // reconnect-on-every-render without changing behavior. Hence the single
-  // targeted disable below instead of a file-level blanket disable.
-  useEffect(() => {
-    mountedRef.current = true
-    loadWorkspaces()
-    loadAgents()
-    loadDevices()
-    loadEvents()
-    loadSessions()
-    loadPendingPermissions()
-    connectWebSocket()
-    // Reconnect immediately when the network comes back online or the tab
-    // returns to the foreground — these are strong signals that a dropped
-    // socket can now succeed, so we shouldn't wait out the backoff timer.
-    window.addEventListener('online', onOnline)
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => {
-      // Mark unmounted first so ws.onclose (fired by close()) short-circuits
-      // instead of scheduling a reconnect against a torn-down hook.
-      mountedRef.current = false
-      window.removeEventListener('online', onOnline)
-      document.removeEventListener('visibilitychange', onVisibility)
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
-      wsRef.current?.close()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run-once-on-mount: opens the single WebSocket; must not re-run on every render.
   }, [])
 
   // ---- WebSocket connection for real-time events ----
@@ -271,7 +236,11 @@ export function useBackend() {
   }
 
   // ---- Workspace actions ----
-  async function selectWorkspace(ws: WorkspaceInfo) {
+  const selectWorkspace = useCallback(async (ws: WorkspaceInfo) => {
+    // Sync the ref BEFORE setActiveWorkspace so an immediately-following
+    // call (e.g. registerWorkspace awaiting selectWorkspace then creating a
+    // session) sees the new workspace without waiting for the mirror effect.
+    activeWorkspaceRef.current = ws
     setActiveWorkspace(ws)
     // Persist the active workspace by id so it survives a reload.
     localStorage.setItem('lai:activeWorkspace', ws.id)
@@ -280,21 +249,21 @@ export function useBackend() {
     } catch {
       setFileTree([])
     }
-  }
+  }, [])
 
-  async function registerWorkspace(path: string) {
+  const registerWorkspace = useCallback(async (path: string) => {
     const ws = await api.registerWorkspace(path)
     setWorkspaces((prev) => [...prev, ws])
     await selectWorkspace(ws)
     return ws
-  }
+  }, [selectWorkspace])
 
   // ---- Data loading methods ----
-  async function loadWorkspaces() {
+  const loadWorkspaces = useCallback(async () => {
     try {
       const ws = await api.listWorkspaces()
       setWorkspaces(ws)
-      if (ws.length > 0 && !activeWorkspace) {
+      if (ws.length > 0 && !activeWorkspaceRef.current) {
         // Restore the previously active workspace from localStorage if it
         // still exists in the loaded list; otherwise fall back to the first.
         const storedId = localStorage.getItem('lai:activeWorkspace')
@@ -304,7 +273,7 @@ export function useBackend() {
     } catch {
       // Backend not ready yet.
     }
-  }
+  }, [selectWorkspace])
 
   /**
    * Restores the active workspace after a WebSocket reconnect when it was
@@ -321,7 +290,7 @@ export function useBackend() {
    * restarted with different workspace registrations), falls back to the
    * first available workspace so saving still works.
    */
-  async function restoreActiveWorkspace() {
+  const restoreActiveWorkspace = useCallback(async () => {
     if (activeWorkspaceRef.current) return
     try {
       const ws = await api.listWorkspaces()
@@ -333,40 +302,40 @@ export function useBackend() {
     } catch {
       // Backend still not ready; the next reconnect will retry.
     }
-  }
+  }, [selectWorkspace])
 
-  async function loadAgents() {
+  const loadAgents = useCallback(async () => {
     try {
       setAgents(await api.listAgents())
     } catch {
       // No agents registered yet — that's OK.
     }
-  }
+  }, [])
 
-  async function addAgent(agent: Agent) {
+  const addAgent = useCallback(async (agent: Agent) => {
     await api.addAgent(agent)
     await loadAgents()
-  }
+  }, [loadAgents])
 
-  async function deleteAgent(agentId: string) {
+  const deleteAgent = useCallback(async (agentId: string) => {
     await api.deleteAgent(agentId)
     await loadAgents()
-  }
+  }, [loadAgents])
 
-  async function autodetectAgents() {
+  const autodetectAgents = useCallback(async () => {
     const detected = await api.autodetectAgents()
     return detected
-  }
+  }, [])
 
-  async function loadDevices() {
+  const loadDevices = useCallback(async () => {
     try {
       setDevices(await api.listDevices())
     } catch {
       // No devices paired yet.
     }
-  }
+  }, [])
 
-  async function loadEvents() {
+  const loadEvents = useCallback(async () => {
     try {
       // Cursor-based fetch: retrieve events AFTER the highest ID we already
       // hold. On the initial mount eventsRef is empty (afterId=0 → first
@@ -397,23 +366,23 @@ export function useBackend() {
     } catch {
       // Event store may be empty.
     }
-  }
+  }, [commitEvents])
 
-  async function loadSessions() {
+  const loadSessions = useCallback(async () => {
     try {
       setSessions(await api.listSessions())
     } catch {
       // No sessions yet.
     }
-  }
+  }, [])
 
-  async function loadPendingPermissions() {
+  const loadPendingPermissions = useCallback(async () => {
     try {
       setPendingPermissions(await api.getPendingPermissions())
     } catch {
       // None pending.
     }
-  }
+  }, [])
 
   /**
    * Loads events for a specific session from the backend and merges them
@@ -427,7 +396,7 @@ export function useBackend() {
    * higher than the highest fetched ID (they arrived after the fetch started),
    * plus the freshly fetched events.
    */
-  async function loadSessionEvents(sessionId: string) {
+  const loadSessionEvents = useCallback(async (sessionId: string) => {
     try {
       const sessionEvts = await api.getSessionEvents(sessionId, 0, 1000)
       // Merge: keep events from other sessions, plus events for this session
@@ -445,7 +414,7 @@ export function useBackend() {
     } catch {
       // Session may not have events yet.
     }
-  }
+  }, [commitEvents])
 
   // ---- File actions ----
   /**
@@ -453,7 +422,7 @@ export function useBackend() {
    * after a FileWritten event so the explorer reflects agent-created files
    * without a manual refresh.
    */
-  async function refreshFileTree() {
+  const refreshFileTree = useCallback(async () => {
     const ws = activeWorkspaceRef.current
     if (!ws) return
     try {
@@ -461,71 +430,88 @@ export function useBackend() {
     } catch {
       // Workspace may have been removed; leave the tree as-is.
     }
-  }
+  }, [])
 
-  async function readFile(path: string, workspaceId?: string) {
-    const wsId = workspaceId || activeWorkspace?.id || ''
+  const readFile = useCallback(async (path: string, workspaceId?: string) => {
+    const wsId = workspaceId || activeWorkspaceRef.current?.id || ''
     return await api.readFile(wsId, path)
-  }
+  }, [])
 
-  async function saveFile(path: string, content: string, expectedRevision: number, workspaceId?: string) {
-    const wsId = workspaceId || activeWorkspace?.id || ''
-    return await api.saveFile(wsId, path, content, expectedRevision)
-  }
+  const saveFile = useCallback(
+    async (path: string, content: string, expectedRevision: number, workspaceId?: string) => {
+      const wsId = workspaceId || activeWorkspaceRef.current?.id || ''
+      return await api.saveFile(wsId, path, content, expectedRevision)
+    },
+    [],
+  )
 
   // ---- Session actions ----
-  async function createSession(agentId: string, modelId: string) {
-    const wsId = activeWorkspace?.id || ''
+  const createSession = useCallback(async (agentId: string, modelId: string) => {
+    const wsId = activeWorkspaceRef.current?.id || ''
     const session = await api.createSession(agentId, modelId, wsId)
     setSessions((prev) => [...prev, session])
     return session
-  }
+  }, [])
 
-  async function sendPrompt(sessionId: string, content: string, attachments?: Attachment[], profile?: string) {
-    try {
-      await api.sendPrompt(sessionId, content, attachments, profile)
-    } catch (err) {
-      // A stale activeSessionId (e.g. after a daemon restart that wiped
-      // conversations.json, or a deleted session) makes the backend return
-      // 404 "session not found: sess-…". Recover gracefully: clear the
-      // persisted id so the UI resets to the new-chat state, and surface a
-      // friendly message instead of the raw error string.
-      const msg = err instanceof Error ? err.message : String(err)
-      if (isSessionNotFound(msg)) {
-        localStorage.removeItem('lai:activeSessionId')
-        throw new Error('This conversation is no longer available. Start a new chat.', {
-          cause: err,
-        })
+  const sendPrompt = useCallback(
+    async (
+      sessionId: string,
+      content: string,
+      attachments?: Attachment[],
+      profile?: string,
+    ) => {
+      try {
+        await api.sendPrompt(sessionId, content, attachments, profile)
+      } catch (err) {
+        // A stale activeSessionId (e.g. after a daemon restart that wiped
+        // conversations.json, or a deleted session) makes the backend return
+        // 404 "session not found: sess-…". Recover gracefully: clear the
+        // persisted id so the UI resets to the new-chat state, and surface a
+        // friendly message instead of the raw error string.
+        const msg = err instanceof Error ? err.message : String(err)
+        if (isSessionNotFound(msg)) {
+          localStorage.removeItem('lai:activeSessionId')
+          throw new Error('This conversation is no longer available. Start a new chat.', {
+            cause: err,
+          })
+        }
+        throw err
       }
-      throw err
-    }
-  }
+    },
+    [],
+  )
 
   /** Uploads a file to a session's upload store. Thin wrapper around
    *  api.uploadFile so components can call it through the hook and share the
    *  hook's session-recovery semantics. */
-  async function uploadFile(sessionId: string, file: File): Promise<UploadResult> {
+  const uploadFile = useCallback(async (sessionId: string, file: File): Promise<UploadResult> => {
     return await api.uploadFile(sessionId, file)
-  }
+  }, [])
 
-  async function cancelSession(sessionId: string) {
+  const cancelSession = useCallback(async (sessionId: string) => {
     await api.cancelSession(sessionId)
-  }
+  }, [])
 
-  async function renameSession(sessionId: string, name: string) {
-    await api.patchSession(sessionId, { name })
-    await loadSessions()
-  }
+  const renameSession = useCallback(
+    async (sessionId: string, name: string) => {
+      await api.patchSession(sessionId, { name })
+      await loadSessions()
+    },
+    [loadSessions],
+  )
 
-  async function rebindSession(
-    sessionId: string,
-    agentId: string,
-    modelId: string,
-    maxTransferBytes?: number,
-  ) {
-    await api.patchSession(sessionId, { agentId, modelId, maxTransferBytes })
-    await loadSessions()
-  }
+  const rebindSession = useCallback(
+    async (
+      sessionId: string,
+      agentId: string,
+      modelId: string,
+      maxTransferBytes?: number,
+    ) => {
+      await api.patchSession(sessionId, { agentId, modelId, maxTransferBytes })
+      await loadSessions()
+    },
+    [loadSessions],
+  )
 
   /**
    * Switches the model on a live session without restarting the agent process.
@@ -534,10 +520,13 @@ export function useBackend() {
    * turns. Sends a model-only PATCH (no agentId) so the backend routes to
    * SwitchModel instead of RebindSession.
    */
-  async function switchModel(sessionId: string, modelId: string) {
-    await api.patchSession(sessionId, { modelId })
-    await loadSessions()
-  }
+  const switchModel = useCallback(
+    async (sessionId: string, modelId: string) => {
+      await api.patchSession(sessionId, { modelId })
+      await loadSessions()
+    },
+    [loadSessions],
+  )
 
   // Debounce timer for reportContext so rapid tab switches / edits don't
   // flood the backend with context updates.
@@ -550,57 +539,106 @@ export function useBackend() {
    * changes into a single request. The optional selection is the user's
    * current editor selection (sent as a resource block by the backend).
    */
-  function reportContext(
-    sessionId: string,
-    openFiles: string[],
-    recentEdits: string[],
-    selection?: EditorSelectionInfo,
-  ) {
-    if (reportContextTimerRef.current) clearTimeout(reportContextTimerRef.current)
-    reportContextTimerRef.current = setTimeout(async () => {
-      try {
-        await api.reportSessionContext(sessionId, openFiles, recentEdits, selection)
-      } catch {
-        // Non-fatal — context reporting is best-effort.
-      }
-    }, 1000)
-  }
+  const reportContext = useCallback(
+    (
+      sessionId: string,
+      openFiles: string[],
+      recentEdits: string[],
+      selection?: EditorSelectionInfo,
+    ) => {
+      if (reportContextTimerRef.current) clearTimeout(reportContextTimerRef.current)
+      reportContextTimerRef.current = setTimeout(async () => {
+        try {
+          await api.reportSessionContext(sessionId, openFiles, recentEdits, selection)
+        } catch {
+          // Non-fatal — context reporting is best-effort.
+        }
+      }, 1000)
+    },
+    [],
+  )
 
-  async function deleteSession(sessionId: string) {
-    await api.closeSession(sessionId)
-    setSessions((prev) => prev.filter((s) => s.id !== sessionId))
-    // Drop the deleted conversation's events from the local cache. Filtering
-    // only shrinks the list, but route it through commitEvents anyway so every
-    // event-log mutation goes through the single capped path.
-    commitEvents(eventsRef.current.filter((e) => e.sessionId !== sessionId))
-  }
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      await api.closeSession(sessionId)
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId))
+      // Drop the deleted conversation's events from the local cache. Filtering
+      // only shrinks the list, but route it through commitEvents anyway so every
+      // event-log mutation goes through the single capped path.
+      commitEvents(eventsRef.current.filter((e) => e.sessionId !== sessionId))
+    },
+    [commitEvents],
+  )
 
   /** Exports a conversation as a markdown transcript. The backend renders the
    *  full event history into a readable transcript and the api client triggers
    *  a browser download of the resulting text/markdown blob. */
-  async function exportSession(sessionId: string) {
+  const exportSession = useCallback(async (sessionId: string) => {
     await api.exportSession(sessionId)
-  }
+  }, [])
 
   // ---- Pairing actions ----
-  async function verifyPasscode(passcode: string, deviceName: string) {
-    const cred = await api.verifyPasscode(passcode, deviceName)
-    // Store credential in localStorage (Blueprint Sec 19 — browser-stored).
-    // Uses the lai: prefix for consistency with other persisted keys.
-    localStorage.setItem('lai:deviceCredential', JSON.stringify(cred))
-    await loadDevices()
-    return cred
-  }
+  const verifyPasscode = useCallback(
+    async (passcode: string, deviceName: string) => {
+      const cred = await api.verifyPasscode(passcode, deviceName)
+      // Store credential in localStorage (Blueprint Sec 19 — browser-stored).
+      // Uses the lai: prefix for consistency with other persisted keys.
+      localStorage.setItem('lai:deviceCredential', JSON.stringify(cred))
+      await loadDevices()
+      return cred
+    },
+    [loadDevices],
+  )
 
-  async function revokeDevice(deviceId: string) {
+  const revokeDevice = useCallback(async (deviceId: string) => {
     await api.revokeDevice(deviceId)
     setDevices((prev) => prev.filter((d) => d.id !== deviceId))
-  }
+  }, [])
 
   // ---- Permission actions ----
-  async function respondPermission(requestId: string, decision: string) {
+  const respondPermission = useCallback(async (requestId: string, decision: string) => {
     await api.respondPermission(requestId, decision)
-  }
+  }, [])
+
+  // ---- Load initial data on mount ----
+  // This effect must run EXACTLY ONCE on mount: it kicks off the initial data
+  // loads and opens the single WebSocket connection (connectWebSocket recreates
+  // the socket, so re-running it would leak/duplicate connections). The loader
+  // functions and connectWebSocket are stable for our purposes — they read
+  // current values through refs (activeWorkspaceRef, eventsRef, etc.) rather
+  // than captured render state — so listing them as deps would only risk
+  // reconnect-on-every-render without changing behavior. Hence the single
+  // targeted disable below instead of a file-level blanket disable.
+  //
+  // The set-state-in-effect disable is for the same run-once mount pattern:
+  // the loaders are stable useCallbacks that call setState, but they only fire
+  // on mount (not during render), so there is no cascading-render risk.
+  useEffect(() => {
+    mountedRef.current = true
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- run-once-on-mount: seeds initial state via stable loaders; no cascading-render risk since this fires only on mount.
+    loadWorkspaces()
+    loadAgents()
+    loadDevices()
+    loadEvents()
+    loadSessions()
+    loadPendingPermissions()
+    connectWebSocket()
+    // Reconnect immediately when the network comes back online or the tab
+    // returns to the foreground — these are strong signals that a dropped
+    // socket can now succeed, so we shouldn't wait out the backoff timer.
+    window.addEventListener('online', onOnline)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      // Mark unmounted first so ws.onclose (fired by close()) short-circuits
+      // instead of scheduling a reconnect against a torn-down hook.
+      mountedRef.current = false
+      window.removeEventListener('online', onOnline)
+      document.removeEventListener('visibilitychange', onVisibility)
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      wsRef.current?.close()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run-once-on-mount: opens the single WebSocket; must not re-run on every render.
+  }, [])
 
   return {
     // State

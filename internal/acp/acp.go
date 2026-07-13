@@ -31,7 +31,11 @@ import (
 // ACP transport (transport.go) which uses coder/acp-go-sdk for real agent communication.
 type Client struct {
 	mu           sync.Mutex
-	agents       map[string]AgentInfo
+	// registry owns agent registration and model validation behind its own
+	// RWMutex so those operations no longer contend on c.mu. Client methods
+	// delegate to it; the registry never calls back into Client (no lock
+	// inversion).
+	registry      *agentRegistry
 	sessions     map[string]*Session
 	callbacks    interfaces.ACPCallbacks
 	workspaceMgr interfaces.WorkspaceManager
@@ -181,7 +185,7 @@ const promptTimeout = 10 * time.Minute
 // NewClient creates a new ACP client with no registered agents.
 func NewClient(cfg ClientConfig) *Client {
 	return &Client{
-		agents:        make(map[string]AgentInfo),
+		registry:      newAgentRegistry(),
 		sessions:      make(map[string]*Session),
 		callbacks:     cfg.Callbacks,
 		workspaceMgr:  cfg.WorkspaceMgr,
@@ -295,62 +299,17 @@ func (c *Client) loadMcpServersLocked(caps acp.McpCapabilities) ([]acp.McpServer
 
 // RegisterAgent adds an agent to the registry.
 func (c *Client) RegisterAgent(agent AgentInfo) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.agents[agent.ID] = agent
+	c.registry.register(agent)
 }
 
 // RemoveAgent removes an agent from the registry.
 func (c *Client) RemoveAgent(id string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.agents, id)
+	c.registry.remove(id)
 }
 
 // ListAgents returns registered agent harnesses and their models.
 func (c *Client) ListAgents(_ context.Context) ([]interfaces.AgentInfo, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	agents := make([]interfaces.AgentInfo, 0, len(c.agents))
-	for _, a := range c.agents {
-		models := make([]interfaces.AgentModel, 0, len(a.Models))
-		for _, m := range a.Models {
-			models = append(models, interfaces.AgentModel{
-				ID:   m.ID,
-				Name: m.Name,
-			})
-		}
-		agents = append(agents, interfaces.AgentInfo{
-			ID:      a.ID,
-			Name:    a.Name,
-			Models:  models,
-			Warning: a.Warning,
-		})
-	}
-	return agents, nil
-}
-
-// validateAgentModelLocked verifies that agentID is registered and modelID is
-// offered by that agent, returning the resolved AgentInfo. The caller must hold
-// c.mu (it reads c.agents). Used by CreateSession and RebindSession to share
-// the same agent+model validation and error messages.
-func (c *Client) validateAgentModelLocked(agentID, modelID string) (AgentInfo, error) {
-	agent, ok := c.agents[agentID]
-	if !ok {
-		return AgentInfo{}, fmt.Errorf("agent not found: %s", agentID)
-	}
-	modelValid := false
-	for _, m := range agent.Models {
-		if m.ID == modelID {
-			modelValid = true
-			break
-		}
-	}
-	if !modelValid {
-		return AgentInfo{}, fmt.Errorf("model %s not available for agent %s", modelID, agentID)
-	}
-	return agent, nil
+	return c.registry.list(), nil
 }
 
 // CreateSession starts a new agent session.
@@ -360,7 +319,7 @@ func (c *Client) CreateSession(ctx context.Context, agentID, modelID, workspaceI
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if _, err := c.validateAgentModelLocked(agentID, modelID); err != nil {
+	if _, err := c.registry.resolve(agentID, modelID); err != nil {
 		return interfaces.SessionInfo{}, err
 	}
 
@@ -462,7 +421,7 @@ func (c *Client) collectAdditionalDirsLocked(ctx context.Context, primaryID, pri
 // both on initial creation and to lazily (re)start a session loaded from disk or
 // rebound to a different agent/model.
 func (c *Client) startTransportLocked(ctx context.Context, session *Session) error {
-	agent, ok := c.agents[session.AgentID]
+	agent, ok := c.registry.get(session.AgentID)
 	if !ok {
 		return fmt.Errorf("agent not found: %s", session.AgentID)
 	}
@@ -764,6 +723,14 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 	}
 
 	callbacks, pipeline, err := c.preparePromptSessionLocked(ctx, session, sessionID, content)
+	// Capture the transport pointer while still holding c.mu. The prompt
+	// goroutine launched below outlives this lock scope, and
+	// closeTransportLocked (invoked by CloseAllSessions during shutdown) sets
+	// session.transport = nil under c.mu. Reading session.transport inside the
+	// goroutine without the lock would race with that write and could deref nil.
+	// Using the captured `tr` removes the race; a nil check guards the case
+	// where the transport was torn down between unlock and goroutine start.
+	tr := session.transport
 	c.mu.Unlock()
 	if err != nil {
 		return err
@@ -771,7 +738,7 @@ func (c *Client) SendPrompt(ctx context.Context, sessionID, content string, atta
 
 	finalContent, resources := c.runPromptPipeline(ctx, pipeline, session, sessionID, content)
 	c.emitPromptSubmitted(callbacks, sessionID, finalContent, attachments)
-	c.startPromptGoroutine(ctx, callbacks, session, sessionID, finalContent, resources, attachments)
+	c.startPromptGoroutine(ctx, callbacks, session, sessionID, finalContent, resources, attachments, tr)
 
 	return nil
 }
@@ -880,7 +847,10 @@ func (c *Client) emitPromptSubmitted(
 }
 
 // startPromptGoroutine starts the bounded asynchronous prompt call and updates
-// the session and event stream when the agent completes or fails.
+// the session and event stream when the agent completes or fails. The caller
+// must pass `tr`, the transport captured under c.mu before the goroutine was
+// launched; the goroutine must not read session.transport directly because
+// closeTransportLocked may nil it concurrently during shutdown.
 func (c *Client) startPromptGoroutine(
 	ctx context.Context,
 	callbacks interfaces.ACPCallbacks,
@@ -889,6 +859,7 @@ func (c *Client) startPromptGoroutine(
 	content string,
 	resources []ContextResource,
 	attachments []interfaces.Attachment,
+	tr transportLike,
 ) {
 	// Detach from the caller's context (the HTTP request ends when this
 	// method returns) but apply a finite timeout so a hung agent cannot block
@@ -898,6 +869,21 @@ func (c *Client) startPromptGoroutine(
 	promptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), promptTimeout)
 	go func() {
 		defer cancel() // release timer resources when the prompt completes
+		// Transport may have been torn down between unlock and goroutine start.
+		if tr == nil {
+			c.mu.Lock()
+			session.Status = statusFailed
+			c.mu.Unlock()
+			if callbacks != nil {
+				callbacks.OnEvent(interfaces.Event{
+					Type:      interfaces.EventAgentExited,
+					SessionID: sessionID,
+					Timestamp: time.Now().UTC(),
+					Summary:   "agent transport closed before prompt started",
+				})
+			}
+			return
+		}
 		if callbacks != nil {
 			callbacks.OnEvent(interfaces.Event{
 				Type:      interfaces.EventResponseStarted,
@@ -907,15 +893,15 @@ func (c *Client) startPromptGoroutine(
 			})
 		}
 
-		stopReason, err := session.transport.Prompt(promptCtx, session.ACPSessionID, content, resources, attachments)
+		stopReason, err := tr.Prompt(promptCtx, session.ACPSessionID, content, resources, attachments)
 		if err != nil {
 			c.mu.Lock()
 			session.Status = statusFailed
 			// The transport is likely dead; drop it so the next prompt restarts.
-			tail := ""
-			if session.transport != nil {
-				tail = session.transport.StderrTail()
-			}
+			// Read stderr from the captured `tr` (the instance we called) rather
+			// than session.transport, which may already have been nil'd by a
+			// concurrent closeTransportLocked.
+			tail := tr.StderrTail()
 			session.transport = nil
 			session.ACPSessionID = ""
 			c.mu.Unlock()
@@ -1133,7 +1119,7 @@ func (c *Client) RebindSession(ctx context.Context, sessionID, agentID, modelID 
 		return interfaces.SessionInfo{}, fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	agent, err := c.validateAgentModelLocked(agentID, modelID)
+	agent, err := c.registry.resolve(agentID, modelID)
 	if err != nil {
 		return interfaces.SessionInfo{}, err
 	}
@@ -1141,7 +1127,7 @@ func (c *Client) RebindSession(ctx context.Context, sessionID, agentID, modelID 
 	// Capture the old agent's display name before switching, for the transfer
 	// header ("transferred from {agentName}").
 	oldAgentName := ""
-	if oldAgent, ok := c.agents[session.AgentID]; ok {
+	if oldAgent, ok := c.registry.get(session.AgentID); ok {
 		oldAgentName = oldAgent.Name
 	}
 

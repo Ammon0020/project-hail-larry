@@ -888,7 +888,10 @@ func buildPromptBlocks(caps acp.PromptCapabilities, content string, resources []
 		if caps.Image {
 			data, err := os.ReadFile(att.Path)
 			if err != nil {
-				// Fall back to resource link + text hint for this attachment.
+				// Log the read failure so operators can diagnose why an image
+				// attachment arrived as a text hint, then fall back to the
+				// resource-link path rather than failing the whole prompt.
+				slog.Warn("attachment read failed; falling back to resource link", "path", att.Path, "err", err)
 				blocks = append(blocks, acp.ResourceLinkBlock(att.Name, att.URI))
 				blocks = append(blocks, acp.TextBlock(
 					fmt.Sprintf("[Attached image: %s at %s — please read this file to view it]", att.Name, att.URI)))

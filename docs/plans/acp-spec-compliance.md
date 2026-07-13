@@ -1,6 +1,6 @@
 # ACP Spec Compliance Plan
 
-This plan addresses the deviations and gaps identified in the ACP audit (`docs/reviews/2026-07-06/acp-audit.md`), ordered by impact. Each item includes the rationale, the suggested change, and the affected files.
+This plan addresses the deviations and gaps identified in the original ACP audit (2026-07-06, now resolved and removed), ordered by impact. Each item includes the rationale, the suggested change, and the affected files.
 
 ## Completed
 
@@ -300,4 +300,4 @@ its `*Connection` / a custom `MethodHandler` override so we can wire it ourselve
 
 ---
 
-See `docs/reference/acp/spec.md` for the authoritative spec, `docs/reviews/2026-07-06/acp-audit.md` for the original audit, and `docs/reference/acp/responsibilities.md` (now includes an "SDK Features Not Yet Adopted" table). SDK in use: `coder/acp-go-sdk v0.13.5` (Go) and `@agentclientprotocol/sdk` (TypeScript, candidate for P4.1).
+See `docs/reference/acp/spec.md` for the authoritative spec and `docs/reference/acp/responsibilities.md` (now includes an "SDK Features Not Yet Adopted" table). SDK in use: `coder/acp-go-sdk v0.13.5` (Go) and `@agentclientprotocol/sdk` (TypeScript, candidate for P4.1).
