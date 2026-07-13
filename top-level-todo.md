@@ -1,3 +1,5 @@
+# User-noted improvements
+Users write the key missing features they see. 
 - [ ] Devin CLI ACP (`devin acp`) — Automatically fetch available models. 
 - [ ] If models couldn't be fetched on a harness, show a warning icon by the harness name. If the user taps or hovers over the warning it shows the actual warning. Show an icon in the dropdown too.
 - [ ] Mistral asks for login every server restart. Should stay logged in. 

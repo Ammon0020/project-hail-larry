@@ -3,19 +3,6 @@
 Gaps and deferred work tracked from review passes. Each entry is a one-line
 note so the next agent can pick it up without re-reading the full review file.
 
-## Web frontend — deferred review findings (from 2026-07-06 review)
-
-RESOLVED (2026-07-06). All 8 previously-deferred `web-*` findings were fixed
-as part of the light-theme + shadcn foundation work — see `docs/STATUS.md` →
-Recent Fixes (2026-07-06). The original review folder has been removed.
-
-## Notes
-
-- Status-dot colors in `ChatHistory` (`bg-gray-600`, `bg-blue-400`) are kept as
-  intentional signal colors; they read acceptably in both themes.
-- Editor status bar uses fixed `bg-status-bar text-white` (VS Code blue) by
-  design in both themes.
-
 ## Image upload — Claude Code inline-image delivery gap
 
 The image upload flow (Mode B) is implemented per ACP spec: when an agent
@@ -56,36 +43,9 @@ Fix path / unblock signal + full drop-in design: `docs/plans/acp-spec-compliance
 
 ## Security audit — deferred findings (from 2026-07-07 audit)
 
-- **sec-auth-no-authorization-tiers (Medium) — RESOLVED (2026-07-11):**
-  Implemented grace-period-with-broadcast for destructive actions. Device
-  revocation now enters a pending state for a configurable grace period
-  (default 5 min); any connected device can cancel it. Workspace registration
-  via the REST API is disabled by default (`allowRemoteWorkspaceRegistration:
-  false` in config); when enabled, it uses the same grace-period flow. This
-  protects a user whose device is stolen — their other devices see the pending
-  action and can cancel it before it takes effect.
 - **sec-auth-credentials-in-query-params (Low):** Device credentials are passed
   as `deviceId`/`secret` query params on WebSocket/SSE handshakes (browsers
   can't set headers on WS). Acceptable trade-off for direct LAN+TLS, but a
   short-lived single-use WS ticket exchanged via the authenticated REST API
   would eliminate the leakage vector if a reverse proxy is ever placed in
   front.
-
-## Pre-existing test/vet failures (unrelated work-in-progress, 2026-07-08)
-
-RESOLVED. The previously-noted test failures (server-api-revocation-registration
-and config-test-unused-import) were from uncommitted WIP that has since been
-completed and committed. All tests and vet now pass clean.
-
-## 2026-07-11 review — deferred
-
-RESOLVED (2026-07-12). Both deferred findings are now fixed:
-- **acp-client-god-struct:** agent registry extracted into unexported
-  `agentRegistry` with its own RWMutex behind the `Client` facade; first
-  step of the incremental decomposition. Remaining sub-structs
-  (SessionStore, TransportManager, SessionOrchestrator) are future work
-  but no longer blocking — the registry pattern is validated.
-- **usebackend-unstable-references:** all 26 `useBackend` actions wrapped
-  in `useCallback` with stable deps; 4 `activeWorkspace` reads switched to
-  `activeWorkspaceRef.current`; 3 consumer `eslint-disable` suppressions
-  removed.
