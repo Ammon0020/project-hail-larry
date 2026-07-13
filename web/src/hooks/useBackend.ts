@@ -607,15 +607,12 @@ export function useBackend() {
   // functions and connectWebSocket are stable for our purposes — they read
   // current values through refs (activeWorkspaceRef, eventsRef, etc.) rather
   // than captured render state — so listing them as deps would only risk
-  // reconnect-on-every-render without changing behavior. Hence the single
-  // targeted disable below instead of a file-level blanket disable.
-  //
-  // The set-state-in-effect disable is for the same run-once mount pattern:
-  // the loaders are stable useCallbacks that call setState, but they only fire
-  // on mount (not during render), so there is no cascading-render risk.
+  // reconnect-on-every-render without changing behavior. Hence the two
+  // targeted disables below (exhaustive-deps + set-state-in-effect) instead
+  // of a file-level blanket disable.
   useEffect(() => {
     mountedRef.current = true
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- run-once-on-mount: seeds initial state via stable loaders; no cascading-render risk since this fires only on mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- run-once-on-mount: stable loaders call setState but only fire on mount, not during render.
     loadWorkspaces()
     loadAgents()
     loadDevices()
