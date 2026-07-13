@@ -47,8 +47,8 @@ Items are grouped by code area so a developer can stay in one context while work
 
 ## App-level UI
 
-- [ ] **[Small/Medium]** The bottom bar is only in the editor. It should span the entire bottom of the app.
-  - *Status bar lives in `EditorPane.tsx:493-527`; `--status-bar` token in `index.css:26,59`. Lift it to `App.tsx` level so it spans full width on desktop (keep editor-only on mobile).*
+- [x] **[Small/Medium]** The bottom bar is only in the editor. It should span the entire bottom of the app.
+  - *Done 2026-07-12: Extracted `StatusBar.tsx` component; lifted `fontSize` state to `App.tsx`. On desktop the status bar renders at the app level (full width, over the chat panel); on mobile it stays inside `EditorPane` above the bottom nav.*
 - [ ] **[Medium/Medium]** Add a command palette and handle ctrl+p. Put the button to the right of the agent icon. An "Action items menu".
   - *`useKeyboardShortcuts` hook exists but has no Ctrl+P handler and no palette. Needs a command registry, a palette dialog component, and quick-open file search. Depends on the agent icon item above for button placement.*
 

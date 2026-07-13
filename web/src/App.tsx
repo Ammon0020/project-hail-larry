@@ -10,6 +10,7 @@ import { Banner } from '@/components/ui/Banner'
 import { cn } from '@/lib/utils'
 import { ChatPanel } from '@/components/ChatPanel'
 import { MobileNav } from '@/components/MobileNav'
+import { StatusBar } from '@/components/StatusBar'
 import { useBackend } from '@/hooks/useBackend'
 import { useFileChangeDetection } from '@/hooks/useFileChangeDetection'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
@@ -127,6 +128,19 @@ export default function App() {
   }, [activeTabId])
 
   const [wrap, setWrap] = useState(false)
+
+  // Editor font size — persisted to localStorage so the user's zoom preference
+  // survives reloads. Lifted from EditorPane so the StatusBar (rendered at the
+  // app level on desktop, spanning the full width) can read and adjust it.
+  // Defaults to 13px on desktop, 15px on mobile for readability on small screens.
+  const [fontSize, setFontSize] = useState<number>(() => {
+    const stored = localStorage.getItem('lai:editor-font-size')
+    if (stored) return parseInt(stored, 10) || (isDesktop ? 13 : 15)
+    return isDesktop ? 13 : 15
+  })
+  useEffect(() => {
+    localStorage.setItem('lai:editor-font-size', String(fontSize))
+  }, [fontSize])
 
   // Current editor selection, lifted from EditorPane via the
   // onSelectionChange callback so it can be reported to the backend alongside
@@ -815,6 +829,8 @@ export default function App() {
         onCopyPath={handleCopyPath}
         onCopyRelativePath={handleCopyPath}
         onKeepOpen={handleKeepOpen}
+        fontSize={fontSize}
+        onFontSizeChange={setFontSize}
       />
 
       {/* Resize handle between editor and right chat panel (desktop only) */}
@@ -883,6 +899,17 @@ export default function App() {
       />
 
       </div>
+
+      {/* Status Bar (desktop only) — spans the full app width, sitting below the
+       *  editor + chat shell and above the (desktop-hidden) mobile nav. On
+       *  mobile the StatusBar is rendered inside EditorPane instead. */}
+      {isDesktop && (
+        <StatusBar
+          activeTab={openTabs.find((t) => t.id === activeTabId) || null}
+          fontSize={fontSize}
+          onFontSizeChange={setFontSize}
+        />
+      )}
 
       {/* Mobile Bottom Nav (hidden on desktop) */}
       <MobileNav

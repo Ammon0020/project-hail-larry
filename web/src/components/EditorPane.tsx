@@ -13,11 +13,12 @@ import { LanguageDescription, bracketMatching, foldGutter, indentOnInput, indent
 import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Prec, EditorSelection } from '@codemirror/state'
-import { GitBranch, CircleAlert, TriangleAlert, FileText, RefreshCw, ZoomIn, ZoomOut, Eye, Code } from 'lucide-react'
+import { TriangleAlert, FileText, RefreshCw, Eye, Code } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { FileViewer } from '@/components/FileViewer'
+import { StatusBar } from '@/components/StatusBar'
 import { TabBar } from './TabBar'
 import { BreadcrumbBar } from './BreadcrumbBar'
 import type { Agent } from '@/types'
@@ -56,6 +57,8 @@ export function EditorPane({
   onCopyPath,
   onCopyRelativePath,
   onKeepOpen,
+  fontSize,
+  onFontSizeChange,
 }: {
   tabs: Tab[]
   activeTabId: string | null
@@ -107,21 +110,16 @@ export function EditorPane({
   onCopyPath?: (path: string) => void
   onCopyRelativePath?: (path: string) => void
   onKeepOpen?: (id: string) => void
+  /** Editor font size in px, lifted to App.tsx so the StatusBar (which on
+   *  desktop lives outside this pane) can read and adjust it. Persisted to
+   *  localStorage by App.tsx. */
+  fontSize: number
+  /** Font-size updater. Receives a state-updater function so callers can do
+   *  clamped increments/decrements (e.g. `s => Math.max(8, s - 1)`). */
+  onFontSizeChange: (fn: (s: number) => number) => void
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
   const mobile = !(isDesktop ?? true)
-
-  // Editor font size — persisted to localStorage so the user's zoom preference
-  // survives reloads. Adjustable via +/- buttons in the status bar. Defaults to
-  // 13px on desktop, 15px on mobile for better readability on small screens.
-  const [fontSize, setFontSize] = useState<number>(() => {
-    const stored = localStorage.getItem('lai:editor-font-size')
-    if (stored) return parseInt(stored, 10) || (mobile ? 15 : 13)
-    return mobile ? 15 : 13
-  })
-  useEffect(() => {
-    localStorage.setItem('lai:editor-font-size', String(fontSize))
-  }, [fontSize])
 
   // Keep a ref to the latest onSave so the memoized CodeMirror Ctrl+S keybinding
   // always calls the fresh closure. Without this, the keybinding captures the
@@ -523,41 +521,16 @@ export function EditorPane({
         )}
       </div>
 
-      {/* Status Bar (Blueprint Sec 17) */}
-      <div className="flex items-center justify-between bg-status-bar text-white text-[10px] md:text-[11px] px-3 py-0.5 shrink-0">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1"><GitBranch className="w-3 h-3" /> main</span>
-          <span className="hidden md:flex items-center gap-1"><CircleAlert className="w-3 h-3" /> 0 errors</span>
-          <span className="hidden md:flex items-center gap-1"><TriangleAlert className="w-3 h-3" /> 0 warnings</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {activeTab?.kind !== 'settings' && !activeTab?.isBinary && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setFontSize((s) => Math.max(8, s - 1))}
-                className="p-0.5 hover:bg-white/10 rounded transition"
-                aria-label="Decrease font size"
-                title="Decrease font size"
-              >
-                <ZoomOut className="w-3 h-3" />
-              </button>
-              <span className="tabular-nums w-7 text-center">{fontSize}</span>
-              <button
-                onClick={() => setFontSize((s) => Math.min(32, s + 1))}
-                className="p-0.5 hover:bg-white/10 rounded transition"
-                aria-label="Increase font size"
-                title="Increase font size"
-              >
-                <ZoomIn className="w-3 h-3" />
-              </button>
-            </div>
-          )}
-          <span className="hidden md:inline">{activeTab?.kind === 'settings' ? 'Settings' : (activeTab?.language || 'Plain Text')}</span>
-          <span className="hidden md:inline">UTF-8</span>
-          <span className="hidden md:inline">LF</span>
-          <span>Ln 1, Col 1</span>
-        </div>
-      </div>
+      {/* Status Bar (Blueprint Sec 17) — on desktop it is rendered at the app
+       *  level by App.tsx so it spans the full width (including over the chat
+       *  panel). On mobile it stays inside this pane, above the bottom nav. */}
+      {mobile && (
+        <StatusBar
+          activeTab={activeTab}
+          fontSize={fontSize}
+          onFontSizeChange={onFontSizeChange}
+        />
+      )}
     </main>
   )
 }
