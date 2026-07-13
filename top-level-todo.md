@@ -11,12 +11,12 @@ Items are grouped by code area so a developer can stay in one context while work
 
 ## Quick wins (cleanup & polish)
 
-- [ ] **[Trivial/High]** Remove diff button. It doesn't make sense there. What would you diff against?
-  - *Stub button in `web/src/components/TabBar.tsx` (~line 179) has no handler. Delete button + `GitCompare` import.*
-- [ ] **[Trivial/High]** Gray out save button unless edits have been made.
-  - *Save button in `TabBar.tsx` (~line 182). `Tab.unsaved` already exists (`web/src/types/index.ts:28`); just gate the disabled state + styling on `activeTab.unsaved`.*
-- [ ] **[Trivial/High]** Add agent icon on the far right of the top bar, next to the save icon.
-  - *Top bar in `web/src/App.tsx:590-633`; save icon in `TabBar.tsx`. Agent selection currently lives in `WorkspaceBar.tsx` — add an icon button that opens/links to it.*
+- [x] **[Trivial/High]** Remove diff button. It doesn't make sense there. What would you diff against?
+  - *Done 2026-07-12: Deleted button + `GitCompare` import from `TabBar.tsx`.*
+- [x] **[Trivial/High]** Gray out save button unless edits have been made.
+  - *Done 2026-07-12: `TabBar.tsx` — `canSave = !!activeTab?.unsaved`; muted/opacity-60 + `aria-disabled` when no edits.*
+- [x] **[Trivial/High]** Add agent icon on the far right of the top bar, next to the save icon.
+  - *Done 2026-07-12: `Bot` icon in `App.tsx` top bar. Now toggles the right chat panel (primary when visible, secondary when hidden) via `toggleRightPanel` added to `usePanelResize.ts`.*
 
 ## Harness & models
 
@@ -24,17 +24,17 @@ Items are grouped by code area so a developer can stay in one context while work
   - *Investigated 2026-07-12: Auth is browser-PKCE per-session in `internal/acp/acp.go:478-493`. The ACP SDK's `AuthenticateResponse` only exposes `Meta map[string]any` — no tokens/cookies — so auth state is opaque inside the SDK's `Connection` and destroyed on daemon restart. `~/.vibe/.env` exists but is empty (no persisted key). Unblocking requires either (a) an ACP SDK change to expose persistable auth state, (b) a Mistral Vibe change to persist its own auth locally, or (c) a daemon-side long-lived auth cache that survives restarts (not possible while tokens are opaque). Logged in `docs/known-issues.md`.*
 - [ ] **[Small/Medium]** ⛔ **Blocked** Devin CLI ACP (`devin acp`) — Automatically fetch available models.
   - *Investigated 2026-07-12: Devin has no programmatic model enumeration — no `--list-models` flag, no ACP `providers/list` support, and `~/.config/devin/config.json` stores only a single default `agent.model` string (not a list). Models are cloud-sourced and dynamic ("release frequently"). The current hardcoded fallback list (sourced from `--model` help-text examples) is the best local approach. Unblocking requires either a Cognition cloud API endpoint (needs auth + network) or a future Devin CLI flag. See `internal/acp/autodetect.go:117-143`.*
-- [ ] **[Small/Medium]** If models couldn't be fetched on a harness, show a warning icon by the harness name. If the user taps or hovers over the warning it shows the actual warning. Show an icon in the dropdown too.
-  - *`AgentInfo.Warning` already flows backend→frontend; `SettingsPanel.tsx:480-485` already renders it. Missing in `web/src/components/chat/WorkspaceBar.tsx:54-78` (native `<select>`). Likely needs a custom dropdown to show per-option icons + tooltip (`ui/tooltip.tsx` exists).*
+- [x] **[Small/Medium]** If models couldn't be fetched on a harness, show a warning icon by the harness name. If the user taps or hovers over the warning it shows the actual warning. Show an icon in the dropdown too.
+  - *Done 2026-07-12: `WorkspaceBar.tsx` — `AlertTriangle` icon + tooltip (`relative z-10` so it's reachable over the overlay select); `(!)` prefix on dropdown options for warned agents.*
 
 ## Tabs
 
-- [ ] **[Small/Medium]** Add a bar right below the tabs to show a file's filepath, up to the workspace. So "workspace/folder/file.txt".
-  - *No breadcrumb exists. `Tab.path` is relative to workspace root; `WorkspaceHeader.tsx:12` has the workspace root. New compact component placed between `TabBar` and editor content; handle long-path truncation.*
-- [ ] **[Medium/Medium]** When opening a file from the explorer, italicize the tab's name. If they click on another file, replace the previous tab with the new file. This way if they click a ton of files trying to find something they don't end up with a hundred files. Think of the way vs code handles files. Then the moment they make a change, unitalicize and keep that open. Sort of like a buffer tab?
-  - *No preview/persistent distinction today (`types/index.ts:22-59`, `App.tsx:445-476` always appends). Add `isPreview` to `Tab`; replace preview tab on new open; flip to persistent on first content change; italic style in `TabBar.tsx:104-145`.*
-- [ ] **[Medium/Medium]** Add a tab right click menu. Close, close others, close saved, close to the right, copy path, copy relative path, keep open, etc. Mobile friendly.
-  - *No `onContextMenu` anywhere, but `ui/dropdown-menu.tsx` is used in `ChatTabBar.tsx`. Add `onContextMenu` to `TabBar.tsx:117` tabs; implement actions (close already exists). Mobile: long-press trigger.*
+- [x] **[Small/Medium]** Add a bar right below the tabs to show a file's filepath, up to the workspace. So "workspace/folder/file.txt".
+  - *Done 2026-07-12: New `BreadcrumbBar.tsx` component with `Folder` icon on the workspace segment + `ChevronRight` separators; wired into `EditorPane.tsx` (new `workspaceName` prop from `App.tsx`).*
+- [x] **[Medium/Medium]** When opening a file from the explorer, italicize the tab's name. If they click on another file, replace the previous tab with the new file. This way if they click a ton of files trying to find something they don't end up with a hundred files. Think of the way vs code handles files. Then the moment they make a change, unitalicize and keep that open. Sort of like a buffer tab?
+  - *Done 2026-07-12: `isPreview` field on `Tab`; `handleFileSelect` replaces the existing preview tab in-place; `handleContentChange`/`handleTabSelect` convert preview→persistent; italic styling in `TabBar.tsx`; preview tabs excluded from localStorage.*
+- [x] **[Medium/Medium]** Add a tab right click menu. Close, close others, close saved, close to the right, copy path, copy relative path, keep open, etc. Mobile friendly.
+  - *Done 2026-07-12: Controlled `DropdownMenu` with `DropdownMenuTrigger asChild` on each tab; right-click (desktop) + long-press 500ms (mobile). 7 actions wired in `App.tsx` + passed through `EditorPane.tsx` to both desktop and mobile TabBars. Note: Copy Path and Copy Relative Path both copy the relative path (absolute path needs a backend change to expose workspace root).*
 - [ ] **[Large/Low]** Make tabs draggable. Mobile friendly (hold for a moment until highlighted then drag).
   - *No drag-and-drop lib in `web/package.json`. Needs a dep (e.g. `@dnd-kit/core`), reorder logic on the tabs array, and touch long-press-to-drag. Adds ~50KB bundle.*
 

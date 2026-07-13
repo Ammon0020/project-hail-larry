@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, FolderCode } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /**
@@ -29,9 +29,11 @@ export function BreadcrumbBar({
     >
       {all.map((seg, i) => {
         const isLast = i === all.length - 1
+        const isWorkspace = i === 0
         return (
           <span key={i} className="flex items-center gap-0.5 min-w-0">
             {i > 0 && <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />}
+            {isWorkspace && <FolderCode className="w-3 h-3 text-primary shrink-0" strokeWidth={1.5} />}
             <span
               className={cn(
                 'truncate',
