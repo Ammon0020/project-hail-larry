@@ -65,8 +65,9 @@ let api = Router::new()
     .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 ```
 
-Rate limiting for pairing endpoints: `tower::limit::rate` or `governor`
-middleware — replaces `withPairRateLimit`.
+Rate limiting for pairing endpoints: use a bounded `governor`/tower-governor
+policy keyed by client IP. Do not use `tower::limit::rate`; validate the chosen
+integration and Go-equivalent limits in S-ARCH/S-CONTRACT.
 
 ## WebSocket (replaces `nhooyr.io/websocket` + `sync.Hub`)
 
@@ -101,7 +102,11 @@ axum_server::bind_tls(addr, config).serve(app.into_make_service()).await?;
 ```
 
 For dual HTTP+HTTPS listeners (the app runs both when TLS enabled), spawn
-two `tokio::spawn` tasks — one for each listener — and await both.
+two coordinated tasks from one cancellation root. Before creating TLS config,
+install exactly one selected rustls `CryptoProvider`; mixed provider features
+can otherwise cause runtime selection failures. S-ARCH must choose and test
+whether to use community-maintained `axum-server` or an explicit
+`tokio-rustls` accept loop.
 
 ## Static / Embedded Frontend (replaces `go:embed` + `http.FileServer`)
 

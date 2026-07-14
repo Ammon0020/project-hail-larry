@@ -1,6 +1,6 @@
 # Story S-WORKSPACE: Workspace Manager
 
-> **Phase:** 3 | **Depends on:** S-FILES, S-SEARCH | **Go source:** `internal/workspace/` (750 lines)
+> **Phase:** 3 | **Depends on:** S-FILES, S-SEARCH, S-PATHUTIL | **Go source:** `internal/workspace/` (750 lines)
 
 ## Summary
 
@@ -19,10 +19,11 @@ serving), `Search` (delegates to S-SEARCH).
 ## Rust Implementation
 
 - File tree: `walkdir` crate, apply ignore patterns
-- Binary detection: `infer` crate (magic bytes) or check for null bytes
+- Binary detection: `infer` magic-byte detection, preserving the existing
+  text-preview extension behavior.
 - Previewable flag: port the extension list (SVG, OBJ, CSV, etc.)
-- Git info: `std::process::Command` or `gix` crate (consider lightweight
-  git branch detection without full git lib)
+- Git info: invoke the existing `git` CLI with fixed arguments and bounded,
+  redacted output; do not add a full Git library during the parity port.
 - Implements `WorkspaceManager` trait from S-INTERFACES
 - Port tests
 

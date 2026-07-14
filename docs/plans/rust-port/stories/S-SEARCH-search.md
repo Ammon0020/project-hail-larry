@@ -1,6 +1,6 @@
 # Story S-SEARCH: Workspace Content Search
 
-> **Phase:** 2 | **Depends on:** — | **Go source:** `internal/search/` (437 lines)
+> **Phase:** 2 | **Depends on:** S-INTERFACES | **Go source:** `internal/search/` (437 lines)
 
 ## Summary
 
@@ -16,8 +16,9 @@ matching lines with line numbers and context.
 ## Rust Implementation
 
 - Regex: `regex` crate
-- File walking: `walkdir` crate (or `ignore` crate which handles
-  `.gitignore` natively — consider for better ignore matching)
+- File walking: use the `ignore` crate, configured to preserve the current
+  explicit ignored-directory behavior before opting into any new `.gitignore`
+  semantics.
 - Ignore patterns: port the ignore list (`node_modules`, `.git`, `.next`,
   `dist`, `build`, `out`, `coverage`, `vendor`)
 - Read files with `std::fs::read_to_string`, skip binary files

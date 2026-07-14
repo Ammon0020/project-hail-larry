@@ -14,10 +14,10 @@ conn.pragma_update(None, "journal_mode", "WAL")?;
 conn.pragma_update(None, "busy_timeout", 5000)?;
 ```
 
-The Go code uses `MaxOpenConns(1)` to serialize writes. In Rust, wrap a
-single `Connection` in `std::sync::Mutex` (or `tokio::sync::Mutex` if held
-across await points) and spawn DB ops on `tokio::task::spawn_blocking` to
-avoid blocking the async runtime:
+The Go code uses `MaxOpenConns(1)` to serialize writes. In Rust, put the
+single connection behind a dedicated blocking database boundary and run DB ops
+in `tokio::task::spawn_blocking`; callers must never hold a mutex across
+`.await`. This preserves write ordering while avoiding async-runtime blocking:
 
 ```rust
 let db = Arc::new(Mutex::new(conn));
@@ -134,8 +134,10 @@ let mut watcher = notify::recommended_watcher(|res: Result<Event, _>| {
 watcher.watch(path, RecursiveMode::Recursive)?;
 ```
 
-The `internal/fswatch` package (353 lines) maps cleanly — `notify` is the
-standard Rust cross-platform watcher with the same event model as fsnotify.
+The `internal/fswatch` package maps cleanly — `notify` is the standard Rust
+cross-platform watcher. Prefer its maintained debouncer companion over a
+hand-rolled sleep loop. Preserve the current suppression and event semantics
+through contract tests before adopting additional watcher behavior.
 
 ## Fetching Live Docs
 

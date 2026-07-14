@@ -1,6 +1,6 @@
 # Story S-FSWATCH: On-Disk Change Detection
 
-> **Phase:** 2 | **Depends on:** — | **Go source:** `internal/fswatch/` (353 lines)
+> **Phase:** 2 | **Depends on:** S-EVENTS | **Go source:** `internal/fswatch/` (353 lines)
 
 ## Summary
 
@@ -18,8 +18,10 @@ itself (via a "recently written" set with TTL).
 
 - `notify` crate (replaces `fsnotify`) — see
   `docs/rust-ecosystem/data-and-concurrency.md`
-- Debounce: `tokio::time::sleep` or a debounce channel
-- Suppress app writes: `DashMap<PathBuf, Instant>` with TTL cleanup
+- Use a maintained `notify` debouncer rather than a hand-rolled sleep loop.
+- Subscribe to narrow app-write/workspace lifecycle notifications for
+  suppression and root updates; do not add workspace setter callbacks.
+- Suppress app writes with bounded TTL state and explicit cleanup.
   (recently-written set)
 - Recursive watch: `notify::RecursiveMode::Recursive`
 - Port `watcher_test.go`

@@ -29,6 +29,7 @@
 - [ ] **Multi-user vs multi-device** — decided multi-device/single-user; multi-user/team collaboration remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector (see `acp-spec-compliance.md`).
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
+- [ ] **Rust backend port** — plan hardened; begin Phase 0 only: architecture decisions, ACP SDK spike, and Go/Rust contract harness before service implementation.
 
 ## Blocked
 
@@ -36,6 +37,7 @@
 
 ## Recent Changes (2026-07)
 
+- **07-13** — Hardened Rust-port plan: added Phase 0 architecture/ACP/contract gates, existing-state migration story, split ACP implementation stories, corrected service dependencies, and parity-first security/release requirements. No Rust implementation started.
 - **07-12** — Resolved 2026-07-11 review backlog (22 findings): 12 fixed, 7 wontfix, 2 deferred (now resolved). Key fixes: atomic+durable file writes (config/store/mcp), `PermissionManager` interface completed + `server.Deps` switched to interfaces, `acp.Client` constructor refactored to `ClientConfig` (eliminated 6 `Set*` temporal-coupling calls), custom JSON parser in search replaced with `encoding/json`, magic-byte detection replaced with `http.DetectContentType`, daemon wiring extracted into focused helpers, `useFileChangeDetection` hook extracted from App.tsx, ChatPanel props consolidated into `ChatPanelActions` facade, shared `isSessionNotFound` helper, MCP config functions moved onto `api` object, markdown prose classes deduplicated, dead frontend raw-ID heuristic removed. Deferred then resolved: `agentRegistry` extracted from `acp.Client` (dedicated `RWMutex`, Client facade preserved), `useBackend` actions stabilized with `useCallback` and 3 consumer `eslint-disable` suppressions removed. Verified: `go test -race ./internal/acp`, `go vet ./...`, `go test ./...`, `npm run lint`, `npm run build` all pass. Wontfix: LRU cache, ring buffer, BIP-39 word list, localStorage/theme hooks, duplicate-frontend-types (already resolved), system-messages nil-guard (already refactored).
 - **07-12** — Resolved 2026-07-06 review backlog (9 remaining findings, all ACP-related): attachment translation tests added, silent readfile error now logged, session-transport data race fixed (capture transport under lock before goroutine), 4 audit doc fixes (spec ref, user_message_chunk wording, Gap/Deviation labels, permission key 4-tuple), session/list added to spec.md.
 - **07-13** — Binary file previews: raw file endpoint (`GET /api/workspaces/{id}/raw`), FileViewer component with PDF/DOCX/STL/video/audio/image viewers. Three.js + mammoth dynamically imported.

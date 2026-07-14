@@ -1,6 +1,6 @@
 # Story S-SYNC: WebSocket Sync Hub
 
-> **Phase:** 4 | **Depends on:** S-EVENTS | **Go source:** `internal/sync/` (347 lines)
+> **Phase:** 4 | **Depends on:** S-EVENTS, S-PAIRING | **Go source:** `internal/sync/` (347 lines)
 
 ## Summary
 
@@ -17,13 +17,14 @@ timeout), broadcast to all clients, reconnection sync.
 
 - `axum::extract::ws` for WebSocket (see
   `docs/rust-ecosystem/web-framework.md`)
-- Hub: `DashMap<ClientId, mpsc::Sender<Message>>` for client registry
-- Broadcast: `tokio::sync::broadcast::Sender<Event>` — each client
-  subscribes to a receiver
+- Use a bounded broadcast channel for durable events and track only
+  connection-specific state needed for shutdown.
+- A lagged receiver must explicitly resynchronize from the event store rather
+  than silently losing events.
 - Keepalive: `tokio::time::interval(30s)` ping task per client
 - Auth: `AuthChecker` callback (delegates to S-PAIRING) — gate handshake
-- Reconnection: client sends last event ID → server replays missing via
-  S-EVENTS `Query`/`QueryAll`, then switches to live broadcast
+- Reconnection: subscribe first, replay events after the supplied cursor,
+  deduplicate by durable event ID, then continue with live broadcast.
 - Cancellation: `CancellationToken` for hub shutdown
 
 ## Acceptance Criteria
@@ -34,4 +35,6 @@ timeout), broadcast to all clients, reconnection sync.
 - [ ] Reconnection sync: missing events replayed on reconnect
 - [ ] Unpaired devices rejected at handshake
 - [ ] Hub shutdown drains all connections
+- [ ] Slow/lagged clients resynchronize without silent event loss
+- [ ] Replay-to-live handoff cannot omit or duplicate durable event IDs
 - [ ] `cargo test sync` passes

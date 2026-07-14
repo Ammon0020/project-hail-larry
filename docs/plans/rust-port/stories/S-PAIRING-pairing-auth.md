@@ -1,6 +1,6 @@
 # Story S-PAIRING: QR + Mnemonic Pairing & Auth
 
-> **Phase:** 3 | **Depends on:** S-CONFIG | **Go source:** `internal/pairing/` (1,190 lines)
+> **Phase:** 3 | **Depends on:** S-CONFIG, S-MIGRATE | **Go source:** `internal/pairing/` (1,190 lines)
 
 ## Summary
 
@@ -20,8 +20,9 @@ mnemonic generation (BIP-39-style word list), device credential hashing
 - Mnemonic: port the word list + generation logic (pure string ops)
 - Credential hashing: `sha2::Sha256`, `hex` crate
 - Random bytes: `rand` crate (`OsRng` for cryptographic randomness)
-- TTL: `tokio::time::Instant` + background expiry sweep task
-- Grace-period revocation: `CancellationToken` per pending revocation
+- Persisted expiry uses a wall-clock timestamp compatible with existing state;
+  use monotonic time only for in-process delays.
+- Grace-period revocation: `CancellationToken` per pending revocation.
 - **Security: never log raw tokens/passcodes** — port the same care
 - Port all tests
 
@@ -42,5 +43,7 @@ This is a security-critical package. Ensure:
 - [ ] Sliding-TTL expiry works
 - [ ] Grace-period revocation (any device can cancel)
 - [ ] Auth validation (Bearer header + WS query params)
+- [ ] Constant-time credential comparisons are used
 - [ ] No raw secrets in logs
+- [ ] Existing Go-created device credential state remains valid through S-MIGRATE
 - [ ] `cargo test pairing` passes

@@ -22,17 +22,19 @@ the `cc` requirement for bundled SQLite.
 
 - `build.sh` (Linux/macOS): `npm run build` in `web/`, then `cargo build --release`
 - `build.ps1` (Windows): same, PowerShell syntax
-- Optional `build.rs`: assert `internal/server/dist/` exists, fail with
-  clear "run npm run build first" message if missing
+- Required `build.rs`: assert `internal/server/dist/` exists and fail with a
+  clear "run npm run build first" message if missing.
+- Pin supported Rust/toolchain and dependency versions after S-ARCH, commit the
+  lockfile, and record dependency-age/security review in release CI.
 
 ### Cross-compilation
 
 - Linux → Linux: trivial (`cargo build --target x86_64-unknown-linux-gnu`)
-- Linux → Windows: `rustup target add x86_64-pc-windows-msvc` + `cargo-xwin`
-  or `cross` (Docker-based, handles linker)
-- Linux → macOS: `rustup target add aarch64-apple-darwin` + osxcross (or
-  build on macOS CI runner)
-- CI: use GitHub Actions matrix with native runners per platform
+- Windows release artifacts build and test on native Windows CI; local
+  cross-compilation is a contributor convenience, not the release guarantee.
+- macOS: build on native macOS CI runners; define universal-binary and
+  signing/notarization policy rather than relying on Linux cross-compilation.
+- CI: use native Linux, macOS, and Windows runners for release artifacts.
 
 ### CGO / C compiler
 
@@ -45,7 +47,8 @@ at build time. Document this in README. For Windows MSVC, needs the
 - [ ] `./build.sh` produces working binary on Linux
 - [ ] `.\build.ps1` produces working binary on Windows
 - [ ] Frontend assets embedded (binary serves UI without `dist/` on disk)
-- [ ] Cross-compilation: Linux → Windows binary works
-- [ ] Cross-compilation: Linux → macOS binary works (or CI on macOS)
+- [ ] Windows release artifact builds and passes smoke tests on native Windows CI
+- [ ] macOS release artifact builds and passes smoke tests on native macOS CI
+- [ ] Required build.rs asset check fails clearly when frontend dist is missing
 - [ ] Release binaries stripped (`strip = true` in `[profile.release]`)
 - [ ] `cc` requirement documented

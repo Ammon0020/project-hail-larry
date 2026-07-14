@@ -1,175 +1,148 @@
 # Epic: Convert Go Backend to Rust
 
-> **Status:** Planning. **Owner:** —. **Estimate:** see Difficulty section.
+> **Status:** Planning hardening. **Owner:** —. **Estimate:** Moderate-hard; implementation starts only after Phase 0 gates pass.
 > Library references: `docs/rust-ecosystem/`. Stories: `stories/`.
 
 ## Goal
 
 Replace the Go daemon (`cmd/app/` + `internal/`) with a Rust implementation
-using official/well-maintained crates, keeping the React frontend and all
-external behavior (REST API, WebSocket protocol, ACP integration, CLI
-commands, file layout) identical. The frontend must not change; only the
-backend binary and its build process change.
+while preserving the React frontend, REST API, WebSocket protocol, CLI
+behavior, and upgradeability of existing `~/.local-agent/` state. Internal
+architecture may improve when it is protected by explicit wire and migration
+compatibility tests.
 
 ## Scope
 
 **In scope:**
-- All 17 `internal/` packages → Rust modules
-- `cmd/app/` CLI → `clap` subcommands
-- `cmd/mockagent/` test helper → Rust (or keep as Go for ACP testing)
-- Build scripts (`build.sh` / `build.ps1`) → cargo-based
-- All 37 Go test files → Rust tests
+- All current backend capabilities, CLI commands, and platform services
+- Contract fixtures for REST, WebSocket, CLI, and serialized shared types
+- A safe migration/read-compatibility path for existing user state
+- Rust-native internal boundaries: typed errors/events, constructor-complete
+  wiring, per-session cancellation, and ordered event persistence/publication
 
 **Out of scope:**
-- Frontend (`web/`) — unchanged, still `npm run build` → `dist/`
-- ACP spec itself — we consume it via the Rust SDK
-- New features — this is a port, not a rewrite of behavior
+- Frontend feature changes or wire-protocol redesign
+- A persistence-format redesign during the initial port
+- New product capabilities
 
-## Current Codebase Size
+## Architecture Decisions
 
-| Package | Go lines (non-test) | Story |
-|---|---|---|
-| `internal/acp/` | 5,066 | [S-ACP](stories/S-ACP-acp-client.md) |
-| `internal/server/` | 2,382 | [S-SERVER](stories/S-SERVER-http-api.md) |
-| `internal/pairing/` | 1,190 | [S-PAIRING](stories/S-PAIRING-pairing-auth.md) |
-| `internal/daemon/` | 773 | [S-DAEMON](stories/S-DAEMON-lifecycle.md) |
-| `internal/workspace/` | 750 | [S-WORKSPACE](stories/S-WORKSPACE-workspace.md) |
-| `internal/mcp/` | 535 | [S-MCP](stories/S-MCP-mcp-config.md) |
-| `internal/search/` | 437 | [S-SEARCH](stories/S-SEARCH-search.md) |
-| `internal/interfaces/` | 434 | [S-INTERFACES](stories/S-INTERFACES-traits.md) |
-| `internal/events/` | 395 | [S-EVENTS](stories/S-EVENTS-event-store.md) |
-| `internal/permissions/` | 368 | [S-PERMISSIONS](stories/S-PERMISSIONS-permissions.md) |
-| `internal/fswatch/` | 353 | [S-FSWATCH](stories/S-FSWATCH-file-watcher.md) |
-| `internal/sync/` | 347 | [S-SYNC](stories/S-SYNC-websocket-hub.md) |
-| `internal/shell/` | 320 | [S-SHELL](stories/S-SHELL-shell-executor.md) |
-| `internal/config/` | 311 | [S-CONFIG](stories/S-CONFIG-config.md) |
-| `internal/files/` | 254 | [S-FILES](stories/S-FILES-file-sync-merge.md) |
-| `internal/uploads/` | 244 | [S-UPLOADS](stories/S-UPLOADS-uploads.md) |
-| `internal/pathutil/` | 44 | [S-PATHUTIL](stories/S-PATHUTIL-path-utils.md) |
-| `cmd/app/` | ~600 | [S-CLI](stories/S-CLI-cli.md) |
-| **Total** | **~13,600 non-test** | |
+- **Single Cargo package, focused modules.** Start with `src/{app,acp,api,
+  config,events,files,...}`. Extract crates only for a proven dependency cycle,
+  external reuse, or materially harmful compile time.
+- **Compatibility before consolidation.** Preserve existing config, SQLite,
+  uploads, and JSON file semantics first. Consolidating stores into SQLite is a
+  separately planned post-port migration, not an implicit rewrite change.
+- **Constructor-only wiring.** Services receive narrow dependencies at
+  construction; no post-construction `Set*` callbacks. Commands use direct
+  typed service dependencies. A narrow event publisher is only for persisted
+  app events and subscriber notification, not a general command bus.
+- **Stable wire adapter.** Rust uses typed internal event/error models, but a
+  dedicated adapter must produce the existing JSON shapes exactly.
+- **Event ordering.** Persist an event before publishing it. Reconnection
+  subscribes, replays from the durable cursor, then deduplicates by event ID
+  while switching to live delivery.
+- **Task ownership.** Each ACP session owns its cancellation token, child
+  process/process tree, and spawned tasks. No lock is held across `.await`.
+- **Security defaults.** Preserve loopback Origin/CSRF checks, WS Origin
+  checks, path/symlink containment, size caps, and bounded pairing rate
+  limiting. LAN cleartext must remain an explicit insecure opt-in.
 
-## Difficulty Assessment: Moderate-Hard
+## Phase Gates
 
-**Overall: feasible and well-de-risked, but substantial.** This is not a
-weekend project — it's a full backend rewrite of ~13,600 lines across 17
-packages. However, several factors make it significantly easier than it
-first appears:
+### Phase 0: De-risk and freeze the contract
 
-### What makes it feasible (de-risked)
+- S-ARCH: resolve package layout, MSRV, current crate API choices, logging
+  location, and release strategy.
+- S-ACP-SPIKE: prove the current ACP Rust SDK against mock and a real agent:
+  initialize, prompt streaming, file/shell callbacks, cancellation, auth, and
+  MCP relay capability.
+- S-CONTRACT: capture Go REST/WS/CLI/serialization fixtures and run a
+  side-by-side differential harness using isolated data directories.
 
-1. **Official Rust ACP SDK exists** (`agentclientprotocol/rust-sdk`). The
-   single biggest risk — "is there a Rust ACP client SDK?" — is resolved.
-   The Go code's heaviest package (`acp/`, 5,066 lines) has a direct
-   official counterpart. See `docs/rust-ecosystem/acp-rust-sdk.md`.
+**Exit gate:** current SDK APIs are verified, the compatibility harness runs in
+CI, and the Rust implementation has a published contract target before service
+porting begins.
 
-2. **Clean interface boundaries already exist.** `internal/interfaces/`
-   (434 lines) defines `EventStore`, `WorkspaceManager`, `ACPClient`,
-   `PermissionManager`, `FileSync` as Go interfaces. These map 1:1 to Rust
-   traits. The architecture is already "define interfaces, don't implement
-   another lane's code" — exactly the trait-oriented design Rust wants.
+### Phase 1: Foundation and existing-state safety
 
-3. **Every Go dependency has a mature Rust equivalent.** No exotic or
-   niche libraries. See `docs/rust-ecosystem/README.md` mapping table —
-   all "High" confidence.
+- S-PATHUTIL and S-CONFIG start independently. S-INTERFACES follows
+  S-PATHUTIL; S-EVENTS follows S-INTERFACES; S-MIGRATE follows S-CONFIG,
+  S-EVENTS, and S-CONTRACT.
+- Search DTOs move to shared types so interfaces do not depend on search.
 
-4. **Frontend is untouched.** The React app talks REST + WebSocket over a
-   stable JSON protocol. As long as the Rust server emits the same JSON
-   shapes and routes, the frontend doesn't know or care what language the
-   backend is.
+**Exit gate:** existing Go-created state opens safely; typed shared models
+serialize identically; durable event IDs and replay semantics are tested.
 
-5. **The codebase is well-tested.** 37 test files provide a behavioral
-   spec to port against — each test documents expected behavior.
+### Phase 2: Core host services
 
-### What makes it hard (risk areas)
+- S-SEARCH, S-FILES, S-SHELL, S-FSWATCH, S-UPLOADS, S-PERMISSIONS
+- Each service adds its Go test inventory and property tests where appropriate
+  (path handling, merge, and protocol parsing).
 
-1. **ACP SDK API surface differs.** The Go SDK has the app implement a
-   `Client` interface (callbacks). The Rust SDK uses a handler-registration
-   pattern (`.on_receive_request()`). The transport layer
-   (`transport.go`, 1,000+ lines) needs a rewrite, not a line-by-line port.
-   **Risk: Medium.** Mitigation: the logic (translate ACP updates → events)
-   is the same; only the wiring changes.
+### Phase 3: Agent and workspace integration
 
-2. **Concurrency model shift.** Go's goroutine-per-request + channels →
-   Tokio async tasks + `mpsc`/`broadcast` channels. This is well-trodden
-   but requires care around `Send`/`Sync` bounds and not holding
-   sync mutexes across `.await`. **Risk: Low-Medium.**
+- S-MCP, S-PAIRING, S-WORKSPACE
+- S-ACP-CORE unblocks S-ACP-STREAM, S-ACP-CONTEXT, and S-ACP-PROVIDERS;
+  S-ACP-AUTODETECT depends only on shared configuration and may run in parallel.
 
-3. **CGO for SQLite.** The Go build uses pure-Go SQLite (`modernc`). Rust's
-   `rusqlite` (bundled) compiles SQLite C source, requiring a C compiler.
-   Acceptable for a self-hosted daemon but adds a build dependency.
-   **Risk: Low.** Mitigation: `rusqlite` "bundled" feature handles it; just
-   needs `cc` in the build environment.
+### Phase 4: Network surface and composition
 
-4. **Platform-specific service install.** systemd/launchd/HKCU logic uses
-   Go build tags → Rust `#[cfg(target_os)]`. Straightforward but tedious,
-   and Windows service install may need a crate (`windows-service`).
-   **Risk: Low.**
-
-5. **Three-way merge** (`files.go`, 254 lines). The merge logic is
-   algorithmic (diff3-style). Port carefully with tests. **Risk: Low.**
-
-6. **Cross-compilation for releases.** Go cross-compiles trivially
-   (`GOOS=windows go build`). Rust needs `rustup target add` + a cross
-   linker (`cross` or `cargo-xwin` for Windows-from-Linux). **Risk: Low**
-   (build tooling, not code).
-
-## Execution Strategy
-
-Port bottom-up by dependency layer, testing each layer before building on
-it. Run Go and Rust daemons side-by-side during migration, comparing API
-responses to catch behavioral drift.
-
-### Phase 1: Foundation (no external I/O)
-- S-PATHUTIL → S-INTERFACES → S-CONFIG → S-EVENTS
-
-### Phase 2: Core services
-- S-FILES → S-SHELL → S-SEARCH → S-FSWATCH → S-UPLOADS → S-PERMISSIONS
-
-### Phase 3: External integration
-- S-ACP (the big one) → S-MCP → S-PAIRING → S-WORKSPACE
-
-### Phase 4: Server & wiring
 - S-SYNC → S-SERVER → S-DAEMON → S-CLI
 
-### Phase 5: Build & release
-- Build scripts, cross-compilation, platform services, final E2E
+### Phase 5: Release validation
+
+- S-BUILD, native Linux/macOS/Windows release CI, migration fixtures, contract
+  suite, and real-agent E2E.
 
 ## Story Index
 
 | Story | Title | Phase | Depends on |
-|---|---|---|---|
-| [S-PATHUTIL](stories/S-PATHUTIL-path-utils.md) | Path traversal & symlink utils | 1 | — |
-| [S-INTERFACES](stories/S-INTERFACES-traits.md) | Shared trait definitions | 1 | S-PATHUTIL |
-| [S-CONFIG](stories/S-CONFIG-config.md) | Config storage (TOML) | 1 | — |
+|---|---|---:|---|
+| [S-ARCH](stories/S-ARCH-architecture.md) | Architecture and dependency decisions | 0 | — |
+| [S-ACP-SPIKE](stories/S-ACP-SPIKE-sdk-proof.md) | ACP SDK proof of capability | 0 | S-ARCH |
+| [S-CONTRACT](stories/S-CONTRACT-compatibility.md) | Go/Rust contract differential harness | 0 | — |
+| [S-PATHUTIL](stories/S-PATHUTIL-path-utils.md) | Path traversal and symlink utilities | 1 | — |
+| [S-INTERFACES](stories/S-INTERFACES-traits.md) | Shared wire types, traits, and errors | 1 | S-PATHUTIL |
+| [S-CONFIG](stories/S-CONFIG-config.md) | Config storage | 1 | — |
 | [S-EVENTS](stories/S-EVENTS-event-store.md) | SQLite event store | 1 | S-INTERFACES |
-| [S-FILES](stories/S-FILES-file-sync-merge.md) | Revision tracking + 3-way merge | 2 | S-PATHUTIL |
+| [S-MIGRATE](stories/S-MIGRATE-existing-state.md) | Existing state compatibility/migration | 1 | S-CONFIG, S-EVENTS, S-CONTRACT |
+| [S-SEARCH](stories/S-SEARCH-search.md) | Workspace content search | 2 | S-INTERFACES |
+| [S-FILES](stories/S-FILES-file-sync-merge.md) | Revision tracking and three-way merge | 2 | S-PATHUTIL, S-INTERFACES |
 | [S-SHELL](stories/S-SHELL-shell-executor.md) | Workspace subprocess runner | 2 | S-PATHUTIL |
-| [S-SEARCH](stories/S-SEARCH-search.md) | Workspace content search | 2 | — |
-| [S-FSWATCH](stories/S-FSWATCH-file-watcher.md) | On-disk change detection | 2 | — |
-| [S-UPLOADS](stories/S-UPLOADS-uploads.md) | File upload store | 2 | — |
-| [S-PERMISSIONS](stories/S-PERMISSIONS-permissions.md) | Permission manager | 2 | S-EVENTS |
-| [S-ACP](stories/S-ACP-acp-client.md) | ACP client (Rust SDK) | 3 | S-INTERFACES, S-SHELL, S-FILES, S-PERMISSIONS |
-| [S-MCP](stories/S-MCP-mcp-config.md) | MCP config + health | 3 | — |
-| [S-PAIRING](stories/S-PAIRING-pairing-auth.md) | QR + mnemonic pairing | 3 | S-CONFIG |
-| [S-WORKSPACE](stories/S-WORKSPACE-workspace.md) | Workspace manager | 3 | S-FILES, S-SEARCH |
-| [S-SYNC](stories/S-SYNC-websocket-hub.md) | WebSocket sync hub | 4 | S-EVENTS |
-| [S-SERVER](stories/S-SERVER-http-api.md) | HTTP server + REST API | 4 | all above |
-| [S-DAEMON](stories/S-DAEMON-lifecycle.md) | Daemon lifecycle + wiring | 4 | S-SERVER |
-| [S-CLI](stories/S-CLI-cli.md) | CLI (clap) commands | 4 | S-DAEMON |
-| [S-BUILD](stories/S-BUILD-build-release.md) | Build scripts, embed, cross-compile | 5 | S-CLI |
+| [S-FSWATCH](stories/S-FSWATCH-file-watcher.md) | On-disk change detection | 2 | S-EVENTS |
+| [S-UPLOADS](stories/S-UPLOADS-uploads.md) | File upload store | 2 | S-PATHUTIL |
+| [S-PERMISSIONS](stories/S-PERMISSIONS-permissions.md) | Permission manager | 2 | S-EVENTS, S-INTERFACES |
+| [S-MCP](stories/S-MCP-mcp-config.md) | MCP configuration and health | 3 | S-CONFIG |
+| [S-PAIRING](stories/S-PAIRING-pairing-auth.md) | QR pairing and device auth | 3 | S-CONFIG, S-MIGRATE |
+| [S-WORKSPACE](stories/S-WORKSPACE-workspace.md) | Workspace manager | 3 | S-FILES, S-SEARCH, S-PATHUTIL |
+| [S-ACP-CORE](stories/S-ACP-CORE-session-transport.md) | ACP sessions and transport handlers | 3 | S-ACP-SPIKE, S-EVENTS, S-FILES, S-SHELL, S-PERMISSIONS |
+| [S-ACP-STREAM](stories/S-ACP-STREAM-events.md) | ACP updates to ordered app events | 3 | S-ACP-CORE, S-CONTRACT |
+| [S-ACP-CONTEXT](stories/S-ACP-CONTEXT-conversation.md) | Context, conversation, terminal, profiles | 3 | S-ACP-CORE, S-EVENTS, S-CONFIG |
+| [S-ACP-PROVIDERS](stories/S-ACP-PROVIDERS-providers.md) | Provider management | 3 | S-ACP-CORE |
+| [S-ACP-AUTODETECT](stories/S-ACP-AUTODETECT-registry.md) | Agent registry and autodetection | 3 | S-CONFIG |
+| [S-SYNC](stories/S-SYNC-websocket-hub.md) | WebSocket sync hub | 4 | S-EVENTS, S-PAIRING |
+| [S-SERVER](stories/S-SERVER-http-api.md) | HTTP, TLS, REST, and WS wiring | 4 | S-CONTRACT, S-MIGRATE, S-SYNC, all service stories |
+| [S-DAEMON](stories/S-DAEMON-lifecycle.md) | Lifecycle and composition root | 4 | S-SERVER, all service stories |
+| [S-CLI](stories/S-CLI-cli.md) | CLI commands | 4 | S-DAEMON |
+| [S-BUILD](stories/S-BUILD-build-release.md) | Build, embed, and release | 5 | S-CLI |
 
-## Verification Per Story
+## Superseded Story
 
-Each story is "done" when:
-1. Rust module compiles and passes `cargo test` for that module
-2. `cargo clippy` is clean
-3. Behavior matches the Go equivalent (verified via ported tests)
-4. Story file updated with completion notes
+`stories/S-ACP-acp-client.md` is retained as the source inventory and split-work
+index only. It is not an implementation dependency; use the six ACP successor
+stories in this epic instead.
 
-## Open Questions
+## Verification Standards
 
-- [ ] Keep `cmd/mockagent/` as Go (for ACP conformance testing) or port too?
-- [ ] Use `rusqlite` (sync + spawn_blocking) or `sqlx` (async) for SQLite?
-- [ ] Does the Rust ACP SDK have the `mcp/message` relay (Go SDK gap)?
-- [ ] Single crate or workspace with sub-crates per module?
+A story is complete only when its mapped Go tests and any new contract tests
+pass, `cargo fmt --check`, `cargo clippy -- -D warnings`, and the relevant
+Rust tests pass. Phase gates additionally require the S-CONTRACT differential
+suite. Final completion requires native release CI and the state-migration
+fixtures to pass on all supported platforms.
+
+## Deferred Optimization Candidates
+
+After contract parity: SQLite read concurrency, durable permission policy and
+audit records, and consolidation of conversation/device metadata into SQLite.
+These are intentionally not part of the initial behavior-preserving port.

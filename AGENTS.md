@@ -54,41 +54,31 @@ docs/                    → see ## Docs section below
 - Client owns filesystem, shell execution, permissions, and session state
 - UI never communicates directly with agent implementations
 - Agents plan and propose; the client executes approved actions
-- Stay in your lane — define interfaces, don't implement another agent's code
+- Stay in your lane — define interfaces, don't jump tasks, but note the issues to the user.
 - Use maintainable code and architecture. Avoid bloated fixes and repeated code. Avoid letting the code get longer and longer with each fix. Use occasional subagents to explore optimizations to the code.
 
 ## Subagents
 
-Task delegation to specialized subagents is a core workflow and saves time. For non-trivial features, decompose the work and delegate rather than doing everything serially in one context. Each subagent's description (auto-inserted into the prompt) states which difficulty tier and task type it's suited for — match subtasks to the right tier and dispatch them, in parallel where possible, rather than working through everything yourself.
+Delegate tasks to subagents when appropriate to save context in your own chat. Switch to the small agent it the quota runs out.
 
-Note that if commands are rejected in succession on a subagent, it's likely because only certain commands are auto-approved. Subagents should skip them and tell the parent. 
-
-If the quota runs out, use the small subagent. It's still very powerful and can handle most tasks. Trivial will continue to function as well. 
-
-## Agent Hints
-- LLM Memory is limited by context length. Long chats can cause context overflow. Keep terminal output concise and focused where possible by using quiet flags, filtering output, and capping linter output to a few errors at a time.
-- When delegating to subagents, provide clear task boundaries and expected outputs
+## Context Management
+- Keep terminal output concise by using quiet flags, filtering output, and capping linter output to a few errors at a time.
 
 ## Development Standards
 
-- **Build:** Build with `.\build.ps1` (Windows) or `./build.sh` (Linux/macOS). Both build the frontend, re-embed `internal/server/dist`, then compile the Go binary. `internal/server/dist/` is gitignored, so a frontend build must run before `go build` can embed assets (a fresh checkout also needs `npm install` in `web/`).
-- **Test:** Run tests and linting before marking a task complete — `go test ./...`, `go vet ./...`, `npm run build`. Use quiet flags where possible to only get essential output.
+- **Building:** Linux/macOS: `./build.sh`, Windows: `.\build.ps1`. Builds frontend and backend at once.
+- **Testing and Linting:** Run tests and linting before marking a task complete — `go test ./...`, `go vet ./...`, `npm run build`, `golangci-lint run`, `eslint`.
 - **Stay on task:** If a test fails in another task, note it in `docs/known-issues.md` and move on
 - **Plans:** Must be a summary (see `docs/plans/Blueprint.md`) or executable in one branch under a single work item (see `docs/plans/`)
 - **No inline CSS or hard-to-read styling:** Use Tailwind classes and keep styles in components. Use `cva` for elements with 2+ visual variants; leave one-off styles inline.
-- **Use linters:**
-  - `golangci-lint` for Go
-  - `eslint` for JavaScript/TypeScript
 - **Keep `docs/STATUS.md` current.** When you start, modify, or complete a task, update the relevant row in STATUS.md immediately. Mark gaps honestly — "⚠️ Partial" or "⚠️ Stub" over false "✅ Done". Include short notes on what's missing. Compact occasionally. 
-- **Suggest git commit messages:** At the end of each task, suggest a commit message that summarizes the changes.
+- **Suggest git commit messages:** At the end of each task, suggest a commit message and testing steps.
 
 ## Security
 
 Security is of utmost importance. This daemon serves a browser UI to devices on the local network, executes shell commands, and writes files on behalf of AI agents — a capable attack surface.
 
 - **Periodic security audits:** Run a focused security audit (subagent) at least once per major feature batch or before any release. Audit auth, path traversal, command injection, input validation, secrets, TLS, SQL injection, and DoS. Store findings under `docs/reviews/<date>/`.
-- **Track deferred findings:** Findings not fixed immediately go in `docs/known-issues.md` with severity and a concrete fix path — never silently dropped.
-- **No secrets in logs, configs, or commits.** Device credentials are hashed at rest; never log raw tokens, passcodes, or secrets.
 - **Default to secure:** TLS on by default, bind to 0.0.0.0 only with TLS, reject symlinks in workspace paths, rate-limit unauthenticated endpoints, cap request/response sizes.
 - **When adding new endpoints or file/command surfaces:** Consider the threat model — who can call this (loopback vs. any LAN device vs. any paired device), and what's the worst case if abused.
 

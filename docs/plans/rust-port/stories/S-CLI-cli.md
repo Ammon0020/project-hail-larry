@@ -20,9 +20,10 @@ specific service install/uninstall.
 - Platform service: `#[cfg(target_os)]` modules
   - Linux: systemd unit generation + install
   - macOS: launchd plist generation + install
-  - Windows: HKCU registry entry (or `windows-service` crate)
-- `start --background`: daemonize (fork + detach on Unix, or use
-  `daemonize` crate; on Windows, spawn detached process)
+  - Windows: preserve the existing HKCU registry entry behavior; do not add a
+    Windows service manager during the parity port.
+- `start --background`: use small platform modules with native process APIs;
+  avoid a daemonization crate unless S-ARCH finds a tested cross-platform need.
 - Port service tests
 
 ## Acceptance Criteria

@@ -1,6 +1,6 @@
 # Story S-SERVER: HTTP Server & REST API
 
-> **Phase:** 4 | **Depends on:** all other service stories | **Go source:** `internal/server/` (2,382 lines)
+> **Phase:** 4 | **Depends on:** S-CONTRACT, S-MIGRATE, S-SYNC, all service stories | **Go source:** `internal/server/` (2,382 lines)
 
 ## Summary
 
@@ -17,16 +17,21 @@ middleware (`requireAuth`), rate limiting (`withPairRateLimit`), TLS
 
 ## Rust Implementation
 
-- `axum` framework (see `docs/rust-ecosystem/web-framework.md`)
-- `AppState` replaces `Deps` — `Arc` of all manager traits
-- Routes: 40+ routes mapping 1:1 from Go's `s.mux.HandleFunc` patterns
-- Auth middleware: `tower` middleware checking Bearer header / query params
-- Rate limiting: `tower::limit` or `governor` for pairing endpoints
-- TLS: `axum-server` with `RustlsConfig`, self-signed cert via `rcgen`
-- Dual listeners: `tokio::spawn` HTTP + HTTPS tasks
-- Embedded frontend: `rust-embed` (see `docs/rust-ecosystem/build-and-embed.md`)
-- SPA fallback: serve `index.html` for unmatched routes
-- Port `server_test.go`, `api_test.go`, `dual_test.go`
+- `axum` router and tower middleware (see `docs/rust-ecosystem/web-framework.md`).
+- `AppState` contains explicitly constructed narrow services; do not require
+  trait-object indirection where a concrete service is sufficient.
+- Routes: 40+ routes map 1:1 from Go patterns and are verified by S-CONTRACT.
+- Auth middleware preserves Bearer/query auth, loopback bypass, mutating
+  request Origin checks, and WebSocket Origin checks.
+- Rate limiting uses a bounded governor-based policy for pairing endpoints.
+- TLS deliberately selects one rustls crypto provider before listener startup;
+  the Phase 0 decision selects `axum-server` or `tokio-rustls` serving.
+- Dual listeners: coordinated `tokio::spawn` HTTP + HTTPS tasks with one
+  cancellation root.
+- Embedded frontend: `rust-embed`; SPA fallback serves `index.html` only after
+  API and static-asset route handling.
+- Apply request and response size caps plus timeouts/concurrency limits as
+  documented layers, then port server/API/dual tests.
 
 ## Route Inventory (from server.go)
 
@@ -46,11 +51,12 @@ middleware (`requireAuth`), rate limiting (`withPairRateLimit`), TLS
 
 - [ ] All 40+ routes respond with identical JSON shapes to Go server
 - [ ] Auth middleware rejects unpaired devices (except pairing routes)
-- [ ] Rate limiting on pairing endpoints
+- [ ] Bounded governor rate limiting matches the Go pairing policy values
 - [ ] TLS with auto-generated self-signed cert
 - [ ] Dual HTTP (:7337) + HTTPS (:7338) listeners
 - [ ] Embedded frontend served with SPA fallback
 - [ ] WebSocket endpoint wired to S-SYNC hub
-- [ ] Request/response size caps enforced
+- [ ] Request/response size caps and timeout/concurrency limits match contract fixtures
+- [ ] Loopback CSRF/Origin and WebSocket Origin behavior match Go fixtures
 - [ ] `cargo test server` passes
 - [ ] Side-by-side: Rust server passes same API tests as Go server

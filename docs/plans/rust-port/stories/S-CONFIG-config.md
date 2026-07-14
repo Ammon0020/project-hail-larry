@@ -16,9 +16,10 @@ storage.
 ## Rust Implementation
 
 - Use `toml` + `serde` for serialization (replaces `pelletier/go-toml/v2`)
-- Atomic writes: write to `config.toml.tmp` → `fs::rename` (atomic on same
-  filesystem). Use `std::fs` or `tokio::fs`
-- Config dir: `dirs::config_dir()` or `std::env::var("HOME")` + `.local-agent/`
+- Atomic writes: temp file in the same directory → fsync file → rename → fsync
+  parent directory where supported; preserve existing permissions.
+- Preserve the established `~/.local-agent/` location and Go TOML field names.
+  Do not substitute platform config directories during a compatibility port.
 - Port `config_test.go`
 
 ## Acceptance Criteria
@@ -26,4 +27,5 @@ storage.
 - [ ] Config round-trips through TOML without data loss
 - [ ] Atomic write (temp + rename) — no corruption on crash
 - [ ] `cargo test config` passes
-- [ ] Config file format compatible (or documented migration path)
+- [ ] Config file format is compatible, or S-MIGRATE provides a tested atomic migration
+- [ ] Existing file permissions and unknown compatible fields are not silently weakened or lost

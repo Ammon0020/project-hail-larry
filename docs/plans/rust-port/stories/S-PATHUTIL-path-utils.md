@@ -14,11 +14,12 @@ checks used by workspace, files, shell, and server packages.
 
 ## Rust Implementation
 
-- Module: `pathutil` (or `src/pathutil.rs`)
+- Module: `pathutil`.
 - Use `std::path::{Path, PathBuf}`, `std::fs::canonicalize`
 - Symlink containment: walk path components, reject if resolved path
   escapes workspace root
-- Port all tests from `pathutil_test.go` (if exists — check)
+- Port `pathutil_test.go` and add property/fuzz cases for arbitrary relative
+  paths, symlink chains, non-UTF8 paths, and TOCTOU-sensitive failures.
 
 ## Acceptance Criteria
 

@@ -18,8 +18,12 @@ output via channels, enforces workspace path bounds, handles signals.
 - Stream stdout/stderr: `tokio::process::Child::stdout()` → read lines
   via `tokio::io::BufReader` → send to channel
 - CWD enforcement: validate against workspace root via S-PATHUTIL
-- Cancellation: `CancellationToken` → `child.kill()` on cancel
-- Exit code: `child.wait().await` → `ExitStatus::code()`
+- Cancellation: a per-command `CancellationToken` terminates the spawned
+  process group/tree, not merely the immediate child; provide equivalent
+  Unix and Windows implementations behind `#[cfg]`.
+- Exit code: `child.wait().await` → `ExitStatus::code()`.
+- Bound captured/streamed output and test cancellation races so a noisy or
+  orphaned command cannot exhaust memory or survive daemon shutdown.
 - Port `shell_test.go`
 
 ## Acceptance Criteria

@@ -17,13 +17,16 @@ Port the append-only event log backed by SQLite (WAL mode). Implements
 
 - Use `rusqlite` (bundled feature) — see
   `docs/rust-ecosystem/data-and-concurrency.md`
-- Single `Connection` wrapped in `std::sync::Mutex`, DB ops via
-  `tokio::task::spawn_blocking` (SQLite calls are blocking)
-- PRAGMAs: `journal_mode=WAL`, `busy_timeout=5000`
-- Schema: same as Go (`events` table with id, type, session_id, timestamp,
-  payload JSON)
-- Implements `EventStore` trait from S-INTERFACES
-- Port `events_test.go`
+- A dedicated blocking database boundary owns the single `rusqlite`
+  connection; callers never hold a DB lock across `.await`.
+- PRAGMAs: `journal_mode=WAL`, `busy_timeout=5000`.
+- Schema, column types, indexes, IDs, and payload encoding exactly match the
+  Go-created database fixture owned by S-MIGRATE.
+- Append assigns the durable monotonic ID before `EventPublisher` makes the
+  event visible to subscribers. The sync handoff is subscribe → replay →
+  deduplicate by ID → live delivery.
+- Implements the narrow event-store/publisher contracts from S-INTERFACES.
+- Port `events_test.go` and add concurrent append/replay ordering tests.
 
 ## Acceptance Criteria
 
@@ -34,3 +37,5 @@ Port the append-only event log backed by SQLite (WAL mode). Implements
 - [ ] Retention pruning works
 - [ ] `cargo test events` passes
 - [ ] No SQLite lock contention under concurrent appends
+- [ ] Persist-before-publish ordering and reconnect replay handoff are tested
+- [ ] Opens the Go-created event DB fixture without schema or payload drift

@@ -1,6 +1,6 @@
 # Story S-UPLOADS: File Upload Store
 
-> **Phase:** 2 | **Depends on:** — | **Go source:** `internal/uploads/` (244 lines)
+> **Phase:** 2 | **Depends on:** S-PATHUTIL | **Go source:** `internal/uploads/` (244 lines)
 
 ## Summary
 

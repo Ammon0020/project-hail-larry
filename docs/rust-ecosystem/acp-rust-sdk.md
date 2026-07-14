@@ -6,8 +6,11 @@
 
 This is the **critical dependency** — the entire `internal/acp/` package
 (5,066 lines) is built on the Go SDK (`coder/acp-go-sdk`). An official Rust
-SDK exists, which makes the port feasible. The API surface differs from Go,
-so the transport layer needs a rewrite, not a line-by-line port.
+SDK makes the port feasible, but its multi-crate API and generated schema can
+change quickly. The snippets below are conceptual mapping notes only; S-ACP-
+SPIKE must verify the current crates, MSRV, process/stdio helpers, auth flow,
+and MCP relay before implementation. The transport requires a rewrite, not a
+line-by-line port.
 
 ## What the Go SDK Provides (current usage)
 
@@ -20,7 +23,7 @@ The Go code uses `coder/acp-go-sdk` for:
 - Provider management: `providers/list`, `providers/set`, `providers/disable` (unstable)
 - MCP relay: `mcp/connect`, `mcp/disconnect` (the `mcp/message` relay is a known SDK gap)
 
-## Rust SDK API Surface
+## Conceptual Rust SDK API Surface (verify in S-ACP-SPIKE)
 
 The Rust SDK uses a **builder + handler** pattern rather than Go's interface
 implementation model:
@@ -105,8 +108,9 @@ connection.serve_with(transport).await?;
 
 5. **MCP relay gap** — the Go SDK doesn't code-generate `mcp/message` (only
    `mcp/connect`/`disconnect`), which is a known blocker (see STATUS.md).
-   Check whether the Rust SDK has the same gap — it may have fuller schema
-   coverage since it's generated from the same JSON Schema.
+   S-ACP-SPIKE must prove current Rust SDK relay support with an integration
+   test; if absent, retain the inline transport workaround behind an isolated
+   adapter rather than assuming schema coverage.
 
 6. **PKCE auth** — the Go code does ACP agent auth (PKCE) in `auth_method`.
    The Rust SDK may handle this differently; verify the auth flow maps.

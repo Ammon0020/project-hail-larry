@@ -1,6 +1,6 @@
 # Story S-FILES: File Sync & Three-Way Merge
 
-> **Phase:** 2 | **Depends on:** S-PATHUTIL | **Go source:** `internal/files/` (254 lines)
+> **Phase:** 2 | **Depends on:** S-PATHUTIL, S-INTERFACES | **Go source:** `internal/files/` (254 lines)
 
 ## Summary
 
@@ -16,14 +16,15 @@ revision.
 
 ## Rust Implementation
 
-- Per-file locks: `DashMap<String, Arc<tokio::sync::Mutex<()>>>` or
-  `HashMap<String, Arc<Mutex<()>>>` under a short-lived map lock
+- Per-file locks: a bounded/cleaned `DashMap<String, Arc<tokio::sync::Mutex<()>>>`;
+  lock entries must not grow indefinitely with arbitrary file paths.
 - LRU cache: `lru` crate (replaces hand-rolled `container/list` LRU)
-- Three-way merge: port the diff3-style algorithm directly — it's pure
-  string logic. Consider `diffs` or `similar` crate for diff primitives if
-  the hand-rolled algorithm is complex
-- 48-bit content hash: `sha2::Sha256` truncated, or `blake3`
-- Port `files_test.go` (merge edge cases are critical)
+- Use the `similar` crate for diff primitives; keep reconciliation logic small
+  and explicitly test the existing diff3 semantics.
+- Preserve the existing 48-bit hash algorithm and output exactly until a
+  versioned state migration deliberately changes it.
+- Port `files_test.go` and add property tests for non-overlapping edits,
+  conflicting edits, and revision/cache bounds.
 
 ## Acceptance Criteria
 

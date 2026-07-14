@@ -73,6 +73,9 @@ async fn create_session(&self, agent_id: &str) -> Result<Session, AppError> {
 
 `tracing-subscriber` for formatting. Structured fields replace slog's
 key-value pairs. `#[instrument]` auto-logs function entry/exit with args.
+Use `tracing-appender` (or an equivalently reviewed non-blocking writer) for
+rolling files at `~/.local-agent/logs/`; redact credentials, passcodes, bearer
+tokens, and file contents.
 
 ## Platform Service Install (replaces Go build tags)
 
@@ -111,57 +114,22 @@ target triples installed via `rustup target add` and potentially a cross
 linker. For Windows-from-Linux, `cargo-xwin` or `cross` (Docker-based)
 simplifies this. This is a build-tooling task, not a code change.
 
-## Cargo.toml Dependencies (starting point)
+## Cargo.toml Dependencies (decision checklist)
 
-```toml
-[dependencies]
-# Async runtime
-tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-futures-util = "0.3"
+Do not copy an unverified version list into `Cargo.toml`. S-ARCH creates the
+pinned manifest and lockfile after checking current documentation and the
+repository minimum-release-age policy. It must include only required crates:
 
-# Web framework
-axum = { version = "0.8", features = ["ws"] }
-axum-server = { version = "0.7", features = ["tls-rustls"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "cors", "limit"] }
+- Tokio, tokio-util, axum, tower, tower-http, and one reviewed TLS serving path
+- the current official ACP core plus its verified Tokio/process and MCP helpers
+- rusqlite with bundled SQLite, serde/serde_json/toml, clap, and rust-embed
+- governor-based rate limiting, rcgen, tracing-appender, and the chosen rustls
+  crypto provider
+- notify plus a maintained debouncer, lru, similar, ignore, infer, subtle, and
+  the image support needed by QR PNG rendering
+- platform-gated service/process dependencies only where implementation needs
+  them; avoid `tower-http` filesystem serving when rust-embed owns static files
 
-# ACP
-agent_client_protocol = "0.1"  # verify latest from crates.io
-
-# Database
-rusqlite = { version = "0.32", features = ["bundled"] }
-
-# Serialization
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.8"
-
-# CLI
-clap = { version = "4", features = ["derive"] }
-
-# Embed
-rust-embed = "8"
-
-# Utilities
-uuid = { version = "1", features = ["v4"] }
-notify = "6"
-qrcode = "0.14"
-lru = "0.12"
-rand = "0.8"
-sha2 = "0.10"
-hex = "0.4"
-base64 = "0.22"
-regex = "1"
-
-# Error handling
-anyhow = "1"
-thiserror = "1"
-
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-```
-
-> Verify latest versions on crates.io before pinning. Prefer versions
-> published at least 7 days ago (per AGENTS.md dependency policy).
+Record each selected version, MSRV impact, license/security review, and the
+reason it is needed in the S-ARCH completion notes. The committed lockfile is
+the reproducible source of truth.
