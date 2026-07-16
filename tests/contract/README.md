@@ -171,9 +171,88 @@ manager and every CLI invocation reads/writes inside that dir. This is what
 makes the harness self-contained and is what the future Rust runner will use to
 isolate the Rust daemon against the same seed config.
 
-## What is NOT here yet
+## Rust black-box differential runner (`tests/contract_runner/`)
 
-The Rust-side differential runner is a **future story**. This package only
-captures and checks in the Go fixtures. When the Rust daemon exists, a sibling
-runner will boot it with the same `LOCAL_AGENT_STATE_DIR` + seed config, replay
-the captured sequences, and diff against `golden/`.
+The Rust runner is a `cargo test` integration test that boots a backend binary
+(Go or Rust) as a subprocess, replays the same request sequences captured by
+the Go harness, applies the same redactions, and compares responses against the
+checked-in golden fixtures. It is completely backend-agnostic — it only
+interacts via the external API (HTTP, WebSocket, CLI subprocess).
+
+### Running
+
+```sh
+# Test against the Go backend (default — builds go binary, boots it, runs all tests):
+cargo test --test contract_runner -- --nocapture
+
+# Test against the Rust backend:
+CONTRACT_BACKEND=rust cargo test --test contract_runner -- --nocapture
+
+# Use a pre-built binary instead of building:
+CONTRACT_BINARY=/path/to/local-agent cargo test --test contract_runner
+
+# Keep the state dir for debugging:
+CONTRACT_KEEP_STATE=1 cargo test --test contract_runner
+```
+
+### What the runner tests
+
+- **REST** (45 tests): every `golden/rest/*.json` fixture is replayed as an
+  HTTP request. The redacted response is compared — semantic JSON for
+  object/array bodies, exact bytes for error text and non-JSON content types.
+  Envelope fields (method, path, status, contentType) are always compared
+  exactly.
+- **WebSocket** (2 tests): origin rejection (403 for cross-origin requests)
+  and connection success (101 Switching Protocols + ping/pong). Auth
+  rejection and event broadcast are skipped (require non-loopback or
+  in-process broadcast triggering — see Known Limitations below).
+- **CLI** (13 tests): every `golden/cli/*.txt` fixture is replayed as a CLI
+  subprocess invocation. The redacted stdout/stderr/exit envelope is compared.
+  The `devices` and `revoke` cases pair a device through the live API first so
+  the commands have a real target.
+- **DTO** (3 tests): the JSON shapes from API responses are structurally
+  compared against `golden/dto/*.json` fixtures to verify field names and
+  omitempty behavior. The comparison is bidirectional with omitempty
+  tolerance — fields that the API omits when empty are not required to be
+  present.
+
+### Known limitations
+
+- **`rest_agents_autodetect_ok` is ignored** (`#[ignore]`). The golden fixture
+  captures machine-specific autodetected agents (Claude Code, Codex, Cursor,
+  etc.) from the generation machine. The runner deliberately neutralizes
+  autodetect (`PATH=/dev/null`, `HOME=/dev/null`) for reproducibility, so
+  `/api/agents/autodetect` returns an empty list. This test can only be run via
+  the Go in-process harness.
+- **WebSocket auth rejection is not tested**. It requires a non-loopback TCP
+  connection, which the runner can't simulate (the server's loopback auth
+  bypass always applies).
+- **WebSocket event broadcast is not tested**. It requires driving in-process
+  `server.OnEvent` calls, which is not possible black-box. The runner could
+  trigger events via API calls (e.g., create a session), but the resulting
+  events would differ from the synthetic fixture events.
+- **CLI `pair` box padding is normalized**. The `pair` command draws a Unicode
+  box whose padding depends on the random passcode length. After redaction
+  both sides have `<REDACTED_PASSCODE>` but different amounts of trailing
+  whitespace. The runner collapses runs of 2+ spaces to a single space for
+  this case so the comparison is stable.
+- **CLI `devices` and `revoke` device IDs are redacted before comparison**.
+  The device ID is a random 32-char hex string generated during pairing. The
+  golden fixture contains the raw ID from the generation machine. The runner
+  redacts the device ID in both the actual and expected output before
+  comparison.
+
+### Backend selection
+
+- `CONTRACT_BACKEND=go` (default): builds `go build -o /tmp/contract-local-agent
+  ./cmd/app` and runs `local-agent start`.
+- `CONTRACT_BACKEND=rust`: uses `target/debug/local_agent` (or
+  `CONTRACT_BINARY` override) and runs `local_agent start`.
+- `CONTRACT_BINARY=/path/to/binary`: overrides the binary path for either
+  backend. The runner uses this directly without building.
+
+The runner sets `LOCAL_AGENT_STATE_DIR` to an isolated temp dir, writes a seed
+`config.json` (same shape as the Go harness), and starts the backend with
+`<binary> start`. It polls `/health` until the backend is ready (up to 30s),
+then runs the tests. On shutdown it kills the subprocess and cleans up the
+temp dir (unless `CONTRACT_KEEP_STATE` is set).

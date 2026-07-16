@@ -1,4 +1,4 @@
-.PHONY: all build-frontend build-backend build test lint lint-rust vet clean
+.PHONY: all build-frontend build-backend build test test-contract lint lint-rust vet clean
 
 # Build the frontend and copy it into the Go embed directory.
 build-frontend:
@@ -17,6 +17,11 @@ build: build-frontend build-backend
 test:
 	go test ./...
 	cd web && npm run build
+
+# Run the black-box contract differential runner against the Go backend.
+# Use CONTRACT_BACKEND=rust to test against the Rust backend instead.
+test-contract:
+	cargo test --test contract_runner -- --nocapture
 
 # Run golangci-lint (cross-platform: Windows, macOS, Linux).
 lint:

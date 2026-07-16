@@ -19,12 +19,19 @@ use regex::Regex;
 use std::collections::HashMap;
 
 /// Stable placeholder strings. These must match the Go redactor exactly.
+/// Some are not referenced directly (they're produced by regex replacement)
+/// but are exported for documentation and potential future use.
+#[allow(dead_code)]
 pub const REDACTED_PATH: &str = "<REDACTED_PATH>";
+#[allow(dead_code)]
 pub const REDACTED_TIMESTAMP: &str = "<REDACTED_TIMESTAMP>";
+#[allow(dead_code)]
 pub const REDACTED_ID: &str = "<REDACTED_ID>";
 pub const REDACTED_TOKEN: &str = "<REDACTED_TOKEN>";
 pub const REDACTED_PASSCODE: &str = "<REDACTED_PASSCODE>";
+#[allow(dead_code)]
 pub const REDACTED_PID: &str = "<REDACTED_PID>";
+#[allow(dead_code)]
 pub const REDACTED_PORT: &str = "<REDACTED_PORT>";
 pub const REDACTED_WORKSPACE_ID: &str = "<REDACTED_WORKSPACE_ID>";
 pub const REDACTED_DEVICE_ID: &str = "<REDACTED_DEVICE_ID>";
@@ -80,7 +87,7 @@ impl Redactor {
         }
         self.paths.push(prefix.to_string());
         // Sort longest-first so the most specific prefix wins during replacement.
-        self.paths.sort_by(|a, b| b.len().cmp(&a.len()));
+        self.paths.sort_by_key(|b| std::cmp::Reverse(b.len()));
     }
 
     /// Redact a string: apply secrets, paths, and regex patterns in order.
@@ -97,32 +104,56 @@ impl Redactor {
             result = result.replace(prefix, REDACTED_PATH);
         }
 
-        // 3. Timestamps.
+        // 3. Scrub token/secret/secretHash/passcode JSON fields BEFORE the
+        //    hex_id_re runs. This is critical: the pairing token is a long hex
+        //    string that would be replaced with <REDACTED_ID> by hex_id_re,
+        //    but the golden fixture expects <REDACTED_TOKEN>. By scrubbing
+        //    these fields first, the token value is replaced with
+        //    <REDACTED_TOKEN> before hex_id_re can touch it.
+        //
+        //    The Go in-process harness registers the token as a secret during
+        //    capture (registerPairingSecrets), so its ScrubUnregisteredTokens
+        //    runs after hex_id_re as a defense-in-depth backstop. The black-box
+        //    runner can't register the token (it doesn't parse the response
+        //    before redacting), so it must scrub these fields first.
+        result = self.scrub_secret_fields(&result);
+
+        // 4. Timestamps.
         result = self.timestamp_re.replace_all(&result, REDACTED_TIMESTAMP).to_string();
 
-        // 4. Long hex IDs.
+        // 5. Long hex IDs.
         result = self.hex_id_re.replace_all(&result, REDACTED_ID).to_string();
 
-        // 5. PIDs.
+        // 6. PIDs.
         result = self.pid_re.replace_all(&result, "PID <REDACTED_PID>").to_string();
 
-        // 6. Ports.
+        // 7. Ports.
         result = self.port_re.replace_all(&result, "Port:      <REDACTED_PORT>").to_string();
 
-        // 7. CLI passcodes.
+        // 8. CLI passcodes (Passcode: word-word-word-word format).
         result = self.passcode_re.replace_all(&result, "Passcode: <REDACTED_PASSCODE>").to_string();
-
-        // 8. Defense-in-depth: scrub unregistered token/secret/secretHash fields.
-        result = self.scrub_unregistered_tokens(&result);
 
         result
     }
 
-    /// Scrub any remaining token/secret/secretHash JSON fields that were not
-    /// explicitly registered. Mirrors `ScrubUnregisteredTokens` in the Go code.
-    fn scrub_unregistered_tokens(&self, s: &str) -> String {
-        self.hex_token_re
+    /// Scrub token/secret/secretHash/passcode JSON fields that were not
+    /// explicitly registered. This runs BEFORE hex_id_re so that token values
+    /// are replaced with <REDACTED_TOKEN> (matching the golden fixtures)
+    /// rather than <REDACTED_ID>.
+    fn scrub_secret_fields(&self, s: &str) -> String {
+        // Scrub token/secret/secretHash fields with ≥16-char values.
+        let result = self
+            .hex_token_re
             .replace_all(s, r#""$1":"<REDACTED_TOKEN>""#)
+            .to_string();
+
+        // Scrub passcode fields (four-word mnemonic: word-word-word-word).
+        // These are temporary secrets that must not appear in fixtures.
+        let passcode_json_re =
+            Regex::new(r#""passcode"\s*:\s*"([a-z]+-[a-z]+-[a-z]+-[a-z]+)""#)
+                .expect("valid passcode JSON regex");
+        passcode_json_re
+            .replace_all(&result, r#""passcode":"<REDACTED_PASSCODE>""#)
             .to_string()
     }
 }
@@ -214,10 +245,23 @@ mod tests {
     }
 
     #[test]
-    fn test_unregistered_token_scrub() {
+    fn test_token_field_scrub_before_hex_id() {
+        // A token that is ≥20 hex chars would be replaced by <REDACTED_ID> if
+        // hex_id_re ran first. The redactor scrubs token fields first so the
+        // result is <REDACTED_TOKEN>, matching the golden fixtures.
         let r = Redactor::new();
-        let input = r#"{"token":"abcdefghijklmnop"}"#;
+        let input = r#"{"token":"aabbccddeeff00112233445566778899"}"#;
         let output = r.redact(input);
         assert!(output.contains(REDACTED_TOKEN));
+        assert!(!output.contains(REDACTED_ID));
+    }
+
+    #[test]
+    fn test_passcode_json_field_scrub() {
+        let r = Redactor::new();
+        let input = r#"{"passcode":"juice-army-pioneer-digital"}"#;
+        let output = r.redact(input);
+        assert!(output.contains(REDACTED_PASSCODE));
+        assert!(!output.contains("juice-army-pioneer-digital"));
     }
 }

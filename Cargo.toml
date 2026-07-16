@@ -165,6 +165,9 @@ regex = "1.11"
 # (origin rejection, auth success, event broadcast). Replaces nhooyr.io/websocket
 # from the Go harness. Verified 2026-07-16.
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
+# futures-utils: SinkExt/StreamExt for splitting the WS stream in the contract
+# runner's connection-success test. Verified 2026-07-16.
+futures-util = "0.3"
 
 # Lint policy — authoritative levels enforced by `cargo build`/`cargo test`/
 # `cargo clippy` and IDE check-on-save, not just by `cargo clippy -- -D warnings`.

@@ -19,9 +19,8 @@
 
 use std::time::Duration;
 
-use anyhow::Context;
-use tokio_tungstenite::tungstenite::handshake::client::generate_key;
-use tokio_tungstenite::tungstenite::http::Request;
+use futures_util::{SinkExt, StreamExt};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::harness::BackendHarness;
@@ -32,19 +31,21 @@ pub async fn test_origin_rejection(harness: &BackendHarness) {
     let ws_url = format!("ws://127.0.0.1:{}/ws", harness.port);
 
     // Build a WS upgrade request with a cross-origin Origin header.
-    let req = Request::builder()
-        .method("GET")
-        .uri("/ws")
-        .header("Host", format!("127.0.0.1:{}", harness.port))
-        .header("Upgrade", "websocket")
-        .header("Connection", "Upgrade")
-        .header("Sec-WebSocket-Key", generate_key())
-        .header("Sec-WebSocket-Version", "13")
-        .header("Origin", "http://evil.example.com")
-        .header("Sec-WebSocket-Protocol", "jsonrpc")
-        .header("Authorization", "Bearer dummy:dummy")
-        .body(())
-        .expect("build WS request");
+    // IntoClientRequest parses the ws:// URL into a proper HTTP request with
+    // Host, Upgrade, Connection, Sec-WebSocket-Key, and Sec-WebSocket-Version
+    // headers set automatically. We then override the Origin to a cross-origin
+    // value to trigger the server's origin check.
+    let mut req = ws_url
+        .into_client_request()
+        .expect("parse ws:// URL into client request");
+    req.headers_mut().insert(
+        "Origin",
+        "http://evil.example.com".parse().expect("valid Origin header"),
+    );
+    req.headers_mut().insert(
+        "Authorization",
+        "Bearer dummy:dummy".parse().expect("valid Authorization header"),
+    );
 
     // Attempt the connection. The server should reject the upgrade before the
     // WS handshake completes, returning an HTTP error (403) instead.
@@ -83,19 +84,17 @@ pub async fn test_connection_success(harness: &BackendHarness) {
     // Build a WS upgrade request with a same-origin Origin header (matching
     // the server's host). This mirrors what a same-origin browser WS handshake
     // would send.
-    let req = Request::builder()
-        .method("GET")
-        .uri("/ws")
-        .header("Host", &host)
-        .header("Upgrade", "websocket")
-        .header("Connection", "Upgrade")
-        .header("Sec-WebSocket-Key", generate_key())
-        .header("Sec-WebSocket-Version", "13")
-        .header("Origin", format!("http://{host}"))
-        .header("Sec-WebSocket-Protocol", "jsonrpc")
-        .header("Authorization", "Bearer dummy:dummy")
-        .body(())
-        .expect("build WS request");
+    let mut req = ws_url
+        .into_client_request()
+        .expect("parse ws:// URL into client request");
+    req.headers_mut().insert(
+        "Origin",
+        format!("http://{host}").parse().expect("valid Origin header"),
+    );
+    req.headers_mut().insert(
+        "Authorization",
+        "Bearer dummy:dummy".parse().expect("valid Authorization header"),
+    );
 
     let (ws_stream, response) = match tokio_tungstenite::connect_async(req).await {
         Ok(conn) => conn,
@@ -114,12 +113,14 @@ pub async fn test_connection_success(harness: &BackendHarness) {
     );
 
     // Verify we can send and receive a ping/pong (connection is alive).
-    use futures_util::{SinkExt, StreamExt};
     let (mut write, mut read) = ws_stream.split();
 
     // Send a Ping frame.
     let ping_payload = vec![1u8, 2, 3];
-    write.send(Message::Ping(ping_payload.clone())).await.expect("send ping");
+    write
+        .send(Message::Ping(ping_payload.clone().into()))
+        .await
+        .expect("send ping");
 
     // Wait for a Pong response (or any frame) within a timeout.
     let frame = tokio::time::timeout(Duration::from_secs(5), read.next())

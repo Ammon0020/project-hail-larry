@@ -62,7 +62,7 @@ const CLI_CASES: &[CliCase] = &[
     CliCase { name: "start_help", args: &["start", "--help"] },
     CliCase { name: "install_service_help", args: &["install-service", "--help"] },
     CliCase { name: "uninstall_service_help", args: &["uninstall-service", "--help"] },
-};
+];
 
 /// Find a CLI case by name.
 fn find_case(name: &str) -> Option<&'static CliCase> {
@@ -91,18 +91,37 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
         let _ = std::fs::remove_file(&pid_file);
     }
 
-    // For the "revoke" case, pair a device first so the revoke command has a
-    // real target. The device ID is passed as an extra argument.
+    // For the "devices" and "revoke" cases, pair a device first so the
+    // commands have a real target. The Go harness pairs a device via
+    // pairDeviceForCLI before running CLI commands; the black-box runner does
+    // the same via the live API. For "revoke", the device ID is passed as an
+    // extra argument.
     let mut args: Vec<String> = case.args.iter().map(|s| s.to_string()).collect();
+    let paired_device_id: Option<String> = if name == "devices" || name == "revoke" {
+        Some(pair_device_for_cli(harness).await)
+    } else {
+        None
+    };
     if name == "revoke" {
-        let device_id = pair_device_for_cli(harness).await;
-        args.push(device_id);
+        args.push(paired_device_id.clone().unwrap());
     }
 
-    // Run the CLI command.
+    // Run the CLI command. The working directory is set to
+    // tests/contract/go-fixtures/ to match the Go harness's behavior — the
+    // Go harness runs CLI commands from that directory, so relative paths in
+    // CLI args (like add-folder's "tests/contract/fixtures/seed-workspace")
+    // resolve differently than they would from the repo root. This affects
+    // the "Workspace registered" vs "already registered" message and the
+    // redacted absolute path in the output.
+    let cli_cwd = harness
+        .repo_root
+        .join("tests")
+        .join("contract")
+        .join("go-fixtures");
     let output = tokio::process::Command::new(&harness.binary_path)
         .args(&args)
         .env("LOCAL_AGENT_STATE_DIR", &harness.state_dir)
+        .current_dir(&cli_cwd)
         .output()
         .await
         .with_context(|| format!("run CLI command: {} {args:?}", harness.binary_path.display()))
@@ -119,13 +138,17 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let exit_code = output.status.code().unwrap_or(-1);
 
-    // Build the redactor.
+    // Build the redactor. Register the workspace ID as a secret so it is
+    // replaced with <REDACTED_WORKSPACE_ID> in CLI output (e.g. list-folders
+    // prints "ID\tname\tpath" lines that contain the workspace ID).
+    let ws_id = harness.workspace_id().await;
     let mut redactor = Redactor::new();
-    redactor.register_path(&harness.state_dir);
+    redactor.register_path(harness.state_dir.to_str().unwrap());
     if let Ok(home) = std::env::var("HOME") {
         redactor.register_path(&home);
     }
-    redactor.register_path(&harness.repo_root);
+    redactor.register_path(harness.repo_root.to_str().unwrap());
+    redactor.register_secret(&ws_id, crate::redactor::REDACTED_WORKSPACE_ID);
     redactor.register_secret(
         &format!("127.0.0.1:{}", harness.port),
         "127.0.0.1:<REDACTED_PORT>",
@@ -134,6 +157,14 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
         &format!("localhost:{}", harness.port),
         "localhost:<REDACTED_PORT>",
     );
+    // Register the paired device ID (if any) so it is redacted in CLI output.
+    // The full 32-char hex ID is replaced with <REDACTED_DEVICE_ID> by the
+    // registered secret (matching the golden fixture). The `devices` table
+    // shows only the first 12 chars (below the hex_id_re threshold of 20),
+    // which is handled by redact_device_id_in_table before comparison.
+    if let Some(ref dev_id) = paired_device_id {
+        redactor.register_secret(dev_id, crate::redactor::REDACTED_DEVICE_ID);
+    }
 
     // Format the envelope (same shape as go-fixtures/cli.go formatCLIEnvelope).
     let envelope = format_cli_envelope(&args, exit_code, &stdout, &stderr, &redactor);
@@ -144,93 +175,51 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
         .with_context(|| format!("read golden fixture {}", fixture_path.display()))
         .expect("read golden fixture");
 
-    // The golden fixture was redacted by the Go harness. The runner's redacted
-    // output should match exactly (CLI envelopes are compared byte-for-byte
-    // per the README).
-    //
-    // However, the `revoke` case has a machine-specific device ID in the
-    // command line (the `$ app revoke <deviceID>` line). The Go harness
-    // redacts the device ID in the output, but the command line itself
-    // contains the raw ID. The runner needs to redact the command line too.
-    // The Go redactor registers the device ID as a secret, so it is replaced
-    // with <REDACTED_DEVICE_ID> in the output. But the golden fixture's
-    // command line shows the raw (short) device ID prefix, not the full ID.
-    //
-    // For the revoke case, the golden fixture has "$ app revoke <full-id>" but
-    // the redactor replaces the full ID with <REDACTED_DEVICE_ID>. Wait —
-    // looking at the golden fixture, the command line shows the full device ID
-    // (e.g. "68e778d32b4d52b41bdf6d744ecfe585"), not a redacted version. This
-    // is because the Go harness formats the envelope BEFORE redaction for the
-    // command line, then redacts the full text.
-    //
-    // Actually, looking at formatCLIEnvelope in cli.go, the entire envelope
-    // (including the command line) is redacted. So the device ID in the
-    // command line should be redacted too. But the golden fixture shows the
-    // raw ID... Let me re-check.
-    //
-    // The Go redactor registers the device ID as a secret with placeholder
-    // <REDACTED_DEVICE_ID>. But the hex_id_re also replaces ≥20-char hex
-    // strings with <REDACTED_ID>. The device ID is 32 hex chars, so it would
-    // be replaced by <REDACTED_ID> by the regex, not by the registered secret.
-    // The registered secret replacement happens first, so it should be
-    // <REDACTED_DEVICE_ID>. But looking at the golden fixture:
-    //
-    // "$ app revoke 68e778d32b4d52b41bdf6d744ecfe585"
-    //
-    // The device ID is NOT redacted! This means the Go harness does NOT
-    // redact the command line. Let me re-read formatCLIEnvelope...
-    //
-    // Looking at cli.go formatCLIEnvelope: it writes "$ app {args}" first,
-    // then redacts stdout and stderr separately. The command line is NOT
-    // redacted. So the golden fixture has the raw device ID in the command
-    // line.
-    //
-    // This is a portability issue — the device ID is machine-specific (it's
-    // a random hex string generated during pairing). The golden fixture will
-    // never match the runner's output because the device IDs are different.
-    //
-    // For the revoke case, I need to handle this specially. The simplest
-    // approach: skip the command line comparison for the revoke case, or
-    // redact the device ID in the command line before comparison.
-    //
-    // Actually, the best approach is to redact the entire envelope (including
-    // the command line) in the runner, and also fix the Go harness to redact
-    // the command line. But the user said "only change code in the tests."
-    // The go-fixtures ARE test code, so I can fix them.
-    //
-    // But wait — I already regenerated the golden fixtures. If I fix the Go
-    // harness now, I need to regenerate again. Let me do that.
-    //
-    // Actually, let me take a different approach for now: for the revoke case,
-    // I'll redact the device ID in the command line before comparison. This
-    // way I don't need to regenerate the golden fixtures again.
-    //
-    // Hmm, but the golden fixture has the raw device ID. If I redact it in
-    // the runner, the runner's output will have <REDACTED_ID> but the golden
-    // fixture has the raw ID. They won't match.
-    //
-    // The cleanest fix: update the Go harness to redact the command line too,
-    // then regenerate. Let me do that after creating all the runner modules.
+    // Some CLI outputs contain box-drawing art (e.g. the `pair` command draws
+    // a Unicode box with the passcode, URL, QR path, and expiry). The box
+    // padding is calculated from the ACTUAL passcode length, but the golden
+    // fixture was generated with a different random passcode. After redaction
+    // both sides have <REDACTED_PASSCODE> but different amounts of trailing
+    // whitespace. Normalize runs of 2+ spaces to a single space for the `pair`
+    // case so the comparison is stable.
+    let actual_normalized = if name == "pair" {
+        normalize_box_whitespace(&envelope)
+    } else {
+        envelope.clone()
+    };
+    let expected_normalized = if name == "pair" {
+        normalize_box_whitespace(&expected)
+    } else {
+        expected.clone()
+    };
 
+    // The "devices" and "revoke" cases contain machine-specific device IDs
+    // that differ between the golden fixture (generated on one machine) and
+    // the runner (random each run). Redact the device IDs in both the actual
+    // and expected output before comparison so the match is stable.
     if name == "revoke" {
-        // The revoke case has a machine-specific device ID in the command line
-        // that can't be matched exactly. Compare with the device ID redacted
-        // in both the actual and expected output.
-        let actual_redacted = redact_device_id_in_cmdline(&envelope);
-        let expected_redacted = redact_device_id_in_cmdline(&expected);
+        let actual_redacted = redact_device_id_in_cmdline(&actual_normalized);
+        let expected_redacted = redact_device_id_in_cmdline(&expected_normalized);
         if actual_redacted != expected_redacted {
             eprintln!("[contract] FAIL: {name}");
             eprintln!("--- expected ---\n{expected_redacted}");
             eprintln!("--- actual ---\n{actual_redacted}");
             panic!("CLI case {name} mismatch (device ID redacted for comparison)");
         }
-    } else {
-        if envelope != expected {
+    } else if name == "devices" {
+        let actual_redacted = redact_device_id_in_table(&actual_normalized);
+        let expected_redacted = redact_device_id_in_table(&expected_normalized);
+        if actual_redacted != expected_redacted {
             eprintln!("[contract] FAIL: {name}");
-            eprintln!("--- expected ---\n{expected}");
-            eprintln!("--- actual ---\n{envelope}");
-            panic!("CLI case {name} mismatch");
+            eprintln!("--- expected ---\n{expected_redacted}");
+            eprintln!("--- actual ---\n{actual_redacted}");
+            panic!("CLI case {name} mismatch (device ID redacted for comparison)");
         }
+    } else if actual_normalized != expected_normalized {
+        eprintln!("[contract] FAIL: {name}");
+        eprintln!("--- expected ---\n{expected_normalized}");
+        eprintln!("--- actual ---\n{actual_normalized}");
+        panic!("CLI case {name} mismatch");
     }
 
     eprintln!("[contract] PASS: {name} (exit: {exit_code})");
@@ -271,6 +260,27 @@ fn redact_device_id_in_cmdline(text: &str) -> String {
     // Match "$ app revoke " followed by a 32-char hex string.
     let re = regex::Regex::new(r"\$ app revoke [a-f0-9]{32}").expect("valid regex");
     re.replace_all(text, "$ app revoke <REDACTED_ID>").to_string()
+}
+
+/// Normalize whitespace in box-drawing output for stable comparison. The `pair`
+/// command draws a Unicode box whose padding depends on the random passcode
+/// length. After redaction both sides have <REDACTED_PASSCODE> but different
+/// amounts of trailing spaces. This function collapses runs of 2+ spaces to a
+/// single space so the comparison is stable regardless of passcode length.
+fn normalize_box_whitespace(text: &str) -> String {
+    let re = regex::Regex::new(r" {2,}").expect("valid whitespace regex");
+    re.replace_all(text, " ").to_string()
+}
+
+/// Redact the device ID in the `devices` CLI table output. The table shows
+/// the first 12 chars of the device ID in the first column. Replace any
+/// 12-char hex string that appears at the start of a data row with
+/// <REDACTED_ID> so the comparison is stable across runs.
+fn redact_device_id_in_table(text: &str) -> String {
+    // Match a 12-char hex string at the start of a line followed by whitespace
+    // (the device ID column in the table).
+    let re = regex::Regex::new(r"(?m)^([a-f0-9]{12})\s").expect("valid regex");
+    re.replace_all(text, "<REDACTED_ID> ").to_string()
 }
 
 /// Pair a device through the live API so the `revoke` CLI command has a real

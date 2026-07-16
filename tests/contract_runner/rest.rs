@@ -21,7 +21,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 use reqwest::Method;
 
 use crate::compare;
@@ -129,11 +129,11 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
 
     // Build the redactor with the run's known secrets and paths.
     let mut redactor = Redactor::new();
-    redactor.register_path(&harness.state_dir);
+    redactor.register_path(harness.state_dir.to_str().unwrap());
     if let Ok(home) = std::env::var("HOME") {
         redactor.register_path(&home);
     }
-    redactor.register_path(&harness.repo_root);
+    redactor.register_path(harness.repo_root.to_str().unwrap());
     redactor.register_secret(&ws_id, crate::redactor::REDACTED_WORKSPACE_ID);
     // Register the ephemeral port so it is redacted in responses.
     redactor.register_secret(
@@ -163,7 +163,7 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
             .header("Content-Type", "application/json");
     }
 
-    let resp = req.send().await.with_context(|| format!("send request {case.method} {url}"))
+    let resp = req.send().await.with_context(|| format!("send request {} {url}", case.method))
         .expect("send HTTP request");
 
     let status = resp.status().as_u16();
@@ -174,6 +174,24 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
         .unwrap_or("")
         .to_string();
     let body = resp.text().await.expect("read response body");
+
+    // For pairing endpoints, extract secrets (token, passcode) from the
+    // response body and register them with the redactor BEFORE redacting.
+    // This ensures all occurrences of the token (including in URL query
+    // strings like "url":"http://...?token=<TOKEN>") are replaced with
+    // <REDACTED_TOKEN>, matching the golden fixtures. The Go in-process
+    // harness does this via registerPairingSecrets; the black-box runner
+    // parses the JSON response instead.
+    if case.path.contains("/api/pair/") && status == 200 {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
+            if let Some(token) = val.get("token").and_then(|v| v.as_str()) {
+                redactor.register_secret(token, crate::redactor::REDACTED_TOKEN);
+            }
+            if let Some(passcode) = val.get("passcode").and_then(|v| v.as_str()) {
+                redactor.register_secret(passcode, crate::redactor::REDACTED_PASSCODE);
+            }
+        }
+    }
 
     // Redact the response body.
     let redacted_body = redactor.redact(&body);
@@ -201,5 +219,5 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
         panic!("REST case {name} body mismatch: {e}");
     }
 
-    eprintln!("[contract] PASS: {name} ({case.method} {actual_path} → {status})");
+    eprintln!("[contract] PASS: {name} ({} {actual_path} → {status})", case.method);
 }

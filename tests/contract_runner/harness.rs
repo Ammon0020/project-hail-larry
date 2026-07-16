@@ -287,11 +287,18 @@ async fn start_backend(binary: &Path, state_dir: &Path, backend: &str) -> Result
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
 
-    // For the Go backend, clear PATH so autodetect doesn't find machine-specific
-    // agents. The Rust backend will need similar treatment once autodetect is
-    // implemented. The binary path is absolute so it doesn't need PATH.
+    // For the Go backend, neutralize autodetect so only the fixture-agent from
+    // config.json appears in /api/agents. Autodetect checks PATH first, then
+    // falls back to absolute searchPaths that expand ~ to $HOME. Setting both
+    // PATH and HOME to empty/non-existent paths makes findFirstCommand return
+    // "" for every agent spec, so no machine-specific agents are registered.
+    // The binary path is absolute so it doesn't need PATH.
+    //
+    // The Rust backend will need similar treatment once autodetect is
+    // implemented.
     if backend == "go" {
         cmd.env("PATH", "/dev/null");
+        cmd.env("HOME", "/dev/null");
     }
 
     cmd.spawn().context("failed to spawn backend subprocess")

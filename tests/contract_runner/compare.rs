@@ -61,10 +61,7 @@ pub fn should_compare_semantically(content_type: &str, body: &str) -> bool {
     if !content_type.contains("application/json") {
         return false;
     }
-    match serde_json::from_str::<Value>(body) {
-        Ok(Value::Object(_) | Value::Array(_)) => true,
-        _ => false,
-    }
+    matches!(serde_json::from_str::<Value>(body), Ok(Value::Object(_) | Value::Array(_)))
 }
 
 /// Compare two strings exactly. Returns Ok(()) if equal, Err(diff) otherwise.
