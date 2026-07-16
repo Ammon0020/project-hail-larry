@@ -44,12 +44,14 @@
 //! - **WebSocket**: origin rejection (403) and connection success. Auth
 //!   rejection and event broadcast are skipped (require non-loopback or
 //!   in-process broadcast triggering — see known limitations in the README).
-//! - **CLI**: every golden/cli/*.txt fixture is replayed as a CLI subprocess
-//!   invocation and the redacted stdout/stderr/exit envelope is compared
-//!   exactly.
 //! - **DTO**: the JSON shapes from API responses are structurally compared
 //!   against golden/dto/*.json fixtures to verify field names and omitempty
 //!   behavior.
+//!
+//! CLI tests are intentionally excluded — the CLI is a thin client over the
+//! REST API, and its output formatting (box-drawing, table layouts, help text)
+//! is presentation, not contract. The REST + WS + DTO tests cover the actual
+//! API contract surface that the Rust port must replicate.
  
 // Integration tests are separate crates. The main crate's lint policy denies
 // unwrap/expect/panic/print_stdout/etc. for production code. Test code
@@ -58,7 +60,6 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 #![allow(clippy::dbg_macro)]
  
-mod cli;
 mod compare;
 mod dto;
 mod harness;
@@ -465,119 +466,11 @@ async fn ws_connection_success() {
     ws::test_connection_success(&h).await;
     h.shutdown().await;
 }
- 
-// ---------------------------------------------------------------------------
-// CLI tests — one per golden/cli/*.txt fixture
-// ---------------------------------------------------------------------------
- 
-#[tokio::test]
-async fn cli_root_help() {
-    banner("CLI: root_help");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "root_help").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_status() {
-    banner("CLI: status");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "status").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_add_folder() {
-    banner("CLI: add_folder");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "add_folder").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_list_folders() {
-    banner("CLI: list_folders");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "list_folders").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_remove_folder_not_found() {
-    banner("CLI: remove_folder_not_found");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "remove_folder_not_found").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_pair() {
-    banner("CLI: pair");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "pair").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_devices() {
-    banner("CLI: devices");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "devices").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_revoke() {
-    banner("CLI: revoke");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "revoke").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_logs() {
-    banner("CLI: logs");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "logs").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_stop_not_running() {
-    banner("CLI: stop_not_running");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "stop_not_running").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_start_help() {
-    banner("CLI: start_help");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "start_help").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_install_service_help() {
-    banner("CLI: install_service_help");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "install_service_help").await;
-    h.shutdown().await;
-}
- 
-#[tokio::test]
-async fn cli_uninstall_service_help() {
-    banner("CLI: uninstall_service_help");
-    let h = BackendHarness::start().await;
-    cli::run_case(&h, "uninstall_service_help").await;
-    h.shutdown().await;
-}
- 
+
 // ---------------------------------------------------------------------------
 // DTO shape tests
 // ---------------------------------------------------------------------------
- 
+
 #[tokio::test]
 async fn dto_workspace_info_shape() {
     banner("DTO: workspace_info shape");

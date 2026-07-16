@@ -34,6 +34,7 @@ pub const REDACTED_PID: &str = "<REDACTED_PID>";
 #[allow(dead_code)]
 pub const REDACTED_PORT: &str = "<REDACTED_PORT>";
 pub const REDACTED_WORKSPACE_ID: &str = "<REDACTED_WORKSPACE_ID>";
+#[allow(dead_code)]
 pub const REDACTED_DEVICE_ID: &str = "<REDACTED_DEVICE_ID>";
 
 /// Redactor scrubs secrets and absolute paths out of fixture text.

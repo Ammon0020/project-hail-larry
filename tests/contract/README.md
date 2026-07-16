@@ -206,15 +206,16 @@ CONTRACT_KEEP_STATE=1 cargo test --test contract_runner
   and connection success (101 Switching Protocols + ping/pong). Auth
   rejection and event broadcast are skipped (require non-loopback or
   in-process broadcast triggering — see Known Limitations below).
-- **CLI** (13 tests): every `golden/cli/*.txt` fixture is replayed as a CLI
-  subprocess invocation. The redacted stdout/stderr/exit envelope is compared.
-  The `devices` and `revoke` cases pair a device through the live API first so
-  the commands have a real target.
 - **DTO** (3 tests): the JSON shapes from API responses are structurally
   compared against `golden/dto/*.json` fixtures to verify field names and
   omitempty behavior. The comparison is bidirectional with omitempty
   tolerance — fields that the API omits when empty are not required to be
   present.
+
+CLI tests are intentionally excluded. The CLI is a thin client over the REST
+API, and its output formatting (box-drawing, table layouts, help text) is
+presentation, not contract. The REST + WS + DTO tests cover the actual API
+contract surface that the Rust port must replicate.
 
 ### Known limitations
 
@@ -231,16 +232,11 @@ CONTRACT_KEEP_STATE=1 cargo test --test contract_runner
   `server.OnEvent` calls, which is not possible black-box. The runner could
   trigger events via API calls (e.g., create a session), but the resulting
   events would differ from the synthetic fixture events.
-- **CLI `pair` box padding is normalized**. The `pair` command draws a Unicode
-  box whose padding depends on the random passcode length. After redaction
-  both sides have `<REDACTED_PASSCODE>` but different amounts of trailing
-  whitespace. The runner collapses runs of 2+ spaces to a single space for
-  this case so the comparison is stable.
-- **CLI `devices` and `revoke` device IDs are redacted before comparison**.
-  The device ID is a random 32-char hex string generated during pairing. The
-  golden fixture contains the raw ID from the generation machine. The runner
-  redacts the device ID in both the actual and expected output before
-  comparison.
+- **CLI tests are not included**. The CLI is a thin client over the REST API.
+  Its output formatting (box-drawing, table layouts, help text) is
+  presentation, not contract. The Go in-process harness still captures CLI
+  fixtures (`golden/cli/`) for documentation, but the runner doesn't test
+  them.
 
 ### Backend selection
 
