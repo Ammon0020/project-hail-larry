@@ -1,74 +1,85 @@
 # 🪐 PROJECT HAIL LARRY: The Super-Duper Advanced Cyber-Toybox Daemon Protocol & Synaptic Mirror Sandbox Matrix 🧸🚀
 
-**An Ultra-High-Complexity Hyper-State Network Architecture Explained for Big Kids and Smart Puppies.**
+**An Ultra-High-Complexity Hyper-State Network Architecture for Big Kids and Smart Puppies.**
 
 ---
 
-## 1. Topological Decomposition & System Taxonomy (How our Sandbox is Built)
+## 1. The Structure of Our Playroom (System Layout)
 
-This project is a self-hosted computer playground. It runs a friendly robot on your computer and shows a magical coloring book on your phone or tablet. Below is the scientific categorization of all our toys:
+This playroom connects a friendly robot living in your computer to pretty screens on your tablets and phones using a long tin-can string. Here is the formal list of all the toys we use:
 
-| Technical Component Name | Scientific Classification | 5-Year-Old Playground Analogy | What It Actually Does (in Simple Words) |
-| :--- | :--- | :--- | :--- |
-| **Host Daemon (`cmd/app`)** | `Centralized Orchestrative Subprocess Overlord` | **The Big Boss Robot in the Closet 🤖** | He lives in your computer. He holds the key to your toybox (the filesystem) and makes sure nobody makes a mess without asking you first! |
-| **ACP Layer (`internal/acp`)** | `Agent Client Protocol Translation Gateway` | **The Magic Talking Teddy Bear Phone ☎️🧸** | It lets the super-smart AI Teddy Bear talk to the Big Boss Robot. They speak a secret language called "ACP" so they don't get confused. |
-| **WebSocket Sync Hub (`internal/sync`)** | `Asynchronous Real-Time Synaptic Broadcast Grid` | **The Tin-Can-and-String Telephone 📳** | It connects your computer, your tablet, and your phone. When you draw a flower on one, it instantly pops up on all the others! |
-| **SQLite Event Store (`internal/events`)** | `Append-Only Immutable State Ledger (WAL)` | **The Giant Sticker Journal (No Erasers!) 📓✏️** | Every time we play a game, we put a shiny sticker in a book. You can never peel them off. If you want to know what we did, you read the stickers! |
-| **Permissions Manager (`internal/permissions`)** | `Gated Policy Authorization Firewall` | **The "Mother May I?" Referee 🚦** | If the AI Teddy Bear wants to eat a cookie (run a shell command) or scribble on your homework (write a file), he must ask "Mother, may I?" and you click green (Yes) or red (No). |
-| **Vite/React Frontend (`web/`)** | `Real-Time Decoupled Ephemeral Viewport` | **The Magic Drawing Board 🎨** | The pretty screen where you see the buttons and type your letters. It doesn't keep the toys; it just shows them. |
+| Playground Component | Playground Role | How It Keeps the Playroom Safe |
+| :--- | :--- | :--- |
+| **The Big Boss Robot 🤖** | He lives inside your computer closet and holds the key to the toy box. | He blocks bad kids from touching files outside the sandbox fence. |
+| **The Magic Teddy Bear 🧸** | A super-smart talking teddy bear who writes letters of code. | He cannot touch your computer directly; he must whisper through the phone. |
+| **The Tin-Can Telephone 📳** | A magic wool string connecting all tablets and phones in the house. | He uses WebSocket waves so everyone sees the exact same drawings. |
+| **The Sticker Journal 📓** | A giant workbook where we stick permanent notes (no erasers allowed). | He records every game we play in SQLite WAL format so we never forget. |
+| **The Traffic Light Referee 🚦** | A box that blinks Green (Yes) or Red (No) whenever a toy wants a cookie. | He halts dangerous tricks until you tap the screen to say "Mother, may I?". |
+| **The Magic Drawing Board 🎨** | The pretty glass screen with colorful buttons (React + Tailwind v4). | He shows the toys but doesn't keep them when you turn the screen off. |
 
 ---
 
 ### 1.1 Formal Algebraic State-Space Modeling (𝚺-Calculus of the Sandbox)
 
-To make sure we never lose a toy, we model the sandbox mathematically. Let $S$ represent the state of the sandbox, containing a set of active toys $T$, a set of kids/devices $K$, and a big robot $R$.
+To make sure we never lose a single lego block, we model our playground state using formal playground math. Let $S$ represent the state of the sandbox, containing a set of active toys $T$, a set of connected kids $K$, and a big robot $R$.
 
 Let $P(a)$ represent the Permission Function for an action $a$ proposed by the Magic Teddy Bear ($B$):
-$$P(a) = \begin{cases} \text{Approved}, & \text{if kid taps green button} \\ \text{Denied}, & \text{if kid taps red button} \\ \text{TimeOut}, & \text{if kid falls asleep (5 minutes)} \end{cases}$$
+$$P(a) = \begin{cases} \text{Green Light}, & \text{if kid taps the green button} \\ \text{Red Light}, & \text{if kid taps the red button} \\ \text{Nap Time}, & \text{if kid falls asleep (5 minutes)} \end{cases}$$
 
-The state transition operator $\Psi$ updates the sandbox state from $S_t$ to $S_{t+1}$ based on the action $a$:
-$$\Psi(S_t, a) = \begin{cases} S_t \cup \{ \text{new toy drawing} \}, & \text{if } P(a) = \text{Approved} \\ S_t \setminus \{ \text{broken trust} \}, & \text{if } P(a) = \text{Denied} \\ S_t \text{ (no change)}, & \text{if } P(a) = \text{TimeOut} \end{cases}$$
+The state transition operator $\Psi$ updates the playroom state from $S_t$ to $S_{t+1}$ based on the action $a$:
+$$\Psi(S_t, a) = \begin{cases} S_t \cup \{ \text{new drawing} \}, & \text{if } P(a) = \text{Green Light} \\ S_t \setminus \{ \text{broken trust} \}, & \text{if } P(a) = \text{Red Light} \\ S_t, & \text{if } P(a) = \text{Nap Time} \end{cases}$$
 
-*Translation:* If the Teddy Bear wants to do a trick, and the kid says Yes, the Sandbox gets updated. If the kid says No, the Robot stops the Teddy Bear. If the kid is eating lunch and doesn't answer, the Robot ignores the request.
+If the Teddy Bear ($B$) requests to write a new file $f$, the Robot ($R$) checks if the path of $f$ stays within the sandbox fence circle $C_{fence}$:
+$$\text{AllowWrite}(f) = \begin{cases} \text{True}, & \text{if } f \subseteq C_{fence} \\ \text{False}, & \text{if } f \not\subseteq C_{fence} \end{cases}$$
+
+---
+
+### 1.2 Quantum Toybox Entanglement Calculus (The Spooky Crayon Action)
+
+When two tablets are connected to the same string telephone, their crayons become entangled. If you change a crayon's color on mom's iPad, the color on dad's phone changes instantly, even if they are in different rooms! We model this crayon entanglement state vector $|\Phi_{\text{crayon}}\rangle$ as:
+
+$$\left| \Phi_{\text{crayon}} \right\rangle = \frac{1}{\sqrt{2}} \left( \left| \text{Blue Crayon} \right\rangle_A \left| \text{Red Crayon} \right\rangle_B + \left| \text{Green Crayon} \right\rangle_A \left| \text{Yellow Crayon} \right\rangle_B \right)$$
+
+If tablet $A$ measures a color value of Blue Crayon, the waveform collapses, and tablet $B$ instantly snaps to Red Crayon at a velocity of $c_{toy} \approx 3 \times 10^8$ centimeters per playdate.
 
 ---
 
 ## 2. The Synaptic Information Flow-Cycle (How the Magic Messages Travel)
 
-Here is a sequence diagram showing the step-by-step handshake that occurs when a device communicates with the host daemon:
+Here is the step-by-step handshake that occurs when a kid wants to draw a picture using the Teddy Bear:
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Kid as 🧒 Kid User
-    participant MagicBoard as 🎨 Magic Drawing Board (Frontend)
-    participant Robot as 🤖 Big Boss Robot (Daemon)
-    participant Teddy as 🧸 Magic Teddy Bear (AI Agent)
-    participant StickerBook as 📓 Sticker Journal (SQLite WAL)
+    participant MagicBoard as 🎨 Magic Drawing Board
+    participant Robot as 🤖 Big Boss Robot
+    participant Teddy as 🧸 Magic Teddy Bear
+    participant StickerBook as 📓 Sticker Journal
 
     Kid->>MagicBoard: 1. Types: "Draw a dinosaur!"
-    MagicBoard->>Robot: 2. Transmits Prompt via WebSocket
-    Robot->>StickerBook: 3. Logs Event: "User requested prompt"
-    Robot->>Teddy: 4. Forwards prompt via ACP Pipe
+    MagicBoard->>Robot: 2. Transmits Prompt via Tin-Can String
+    Robot->>StickerBook: 3. Glues sticker: "Prompt received"
+    Robot->>Teddy: 4. Whispers prompt down the ACP Pipe
     Note over Teddy: Teddy thinks...<br/>Needs to write file "dino.txt"
     Teddy->>Robot: 5. Requests Write-File ("dino.txt")
-    Robot->>Robot: 6. Detects Write Action (Intercepts)
-    Robot->>MagicBoard: 7. Pops up Traffic Light: "Permission Request"
+    Robot->>Robot: 6. Checks sandbox fence limits
+    Robot->>MagicBoard: 7. Blinks Yellow Traffic Light
     MagicBoard->>Kid: 8. Rings Beep: "Mother May I?"
     Kid->>MagicBoard: 9. Taps Green Button (Yes)
-    MagicBoard->>Robot: 10. Sends "Approved" Signal
-    Robot->>StickerBook: 11. Logs Event: "Permission granted for dino.txt"
-    Robot->>Robot: 12. Executes File Write to Disk
-    Robot->>Teddy: 13. Returns: "Success"
-    Teddy->>Robot: 14. Returns final message: "Done!"
-    Robot->>MagicBoard: 15. Broadcasts layout updates to all tablets
+    MagicBoard->>Robot: 10. Sends "Green Light" Signal
+    Robot->>StickerBook: 11. Glues sticker: "dino.txt approved"
+    Robot->>Robot: 12. Writes dino.txt to disk
+    Robot->>Teddy: 13. Whispers: "Done!"
+    Teddy->>Robot: 14. Whispers final message: "Finished!"
+    Robot->>MagicBoard: 15. Updates all tablets in the room
 ```
 
 ---
 
 ### 2.1 Binary Frame Layout & Protocol Bit-Structures
 
-When the Teddy Bear whispers to the Robot, they wrap their messages in high-speed digital paper. The byte-frame layout of each packet looks like this:
+When the Teddy Bear whispers to the Robot, they pack their letters inside high-speed digital paper envelopes. The byte-frame layout of each envelope looks like this:
 
 ```
   0                   1                   2                   3
@@ -84,21 +95,21 @@ When the Teddy Bear whispers to the Robot, they wrap their messages in high-spee
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-* **TEDDY-ID (8 bits):** Tells us which toy is talking. E.g., `0x01` is Claude Teddy, `0x02` is Gemini Teddy.
-* **ROBOT-ACTION (8 bits):** The command being shouted:
-  * `0x10`: "Draw a line" (Write file)
-  * `0x20`: "Do a trick" (Run shell command)
-  * `0x30`: "Give me candy" (Read file)
-* **STICKER-COUNT (16 bits):** How many stickers we have put in the SQLite journal.
-* **SANDBOX-RADIUS (16 bits):** How big the sand box is (limits workspace directory depth).
-* **SECRET-DOOR-KNOCK (16 bits):** A special number to prove the device is part of our play group.
-* **CRAYON-COLOR-PAYLOAD (Variable length):** The actual code content or command string being run.
+* **TEDDY-ID (8 bits):** The number of the Teddy Bear who is talking (e.g., `0x01` is Claude Teddy, `0x02` is Gemini Teddy).
+* **ROBOT-ACTION (8 bits):** The action command:
+  * `0x10`: "Write a line in the book"
+  * `0x20`: "Do a shell trick"
+  * `0x30`: "Read a page"
+* **STICKER-COUNT (16 bits):** How many stickers we have glued into our Sticker Journal.
+* **SANDBOX-RADIUS (16 bits):** How far away the sandbox fence goes.
+* **SECRET-DOOR-KNOCK (16 bits):** A secret handshake number to prove the tablet belongs to our play group.
+* **CRAYON-COLOR-PAYLOAD (Variable length):** The actual code content or command words.
 
 ---
 
 ### 2.2 EBNF Grammar of the ACP Whisper Protocol
 
-All whispers sent between the Robot and the Teddy Bear must follow the strict playground grammar rules described below in Extended Backus-Naur Form:
+All whispers sent between the Robot and the Teddy Bear must follow the strict playground grammar rules described below:
 
 ```ebnf
 WhisperStream  ::= Header Payload Terminal ;
@@ -112,8 +123,6 @@ BinaryCrayon   ::= "hex(" [0-9a-fA-F]+ ")" ;
 Terminal       ::= "!!!OK-BYE!!!" ;
 ```
 
-*Translation:* A message must start with a secret knock, specify which teddy bear is talking, state what they want to do, contain their message, and end with "!!!OK-BYE!!!" so the robot knows they are done talking.
-
 ---
 
 ## 3. The 7-Layer Playground OSI Model
@@ -122,7 +131,7 @@ Our communication network maps directly to the standard ISO/OSI model, but we ex
 
 ```
 +-----------------------------------+-----------------------------------------+
-| OSI Layer Name                    | Sandbox Analogy & Mechanics             |
+| OSI Layer Name                    | Playground Mechanics                    |
 +-----------------------------------+-----------------------------------------+
 | 7. Application (ACP Client)       | Magic Teddy whispering code requests.   |
 | 6. Presentation (JSON Encode)     | Translating pictures to text crayons.   |
@@ -138,21 +147,21 @@ Our communication network maps directly to the standard ISO/OSI model, but we ex
 
 ## 4. Security Boundary Matrices (Keeping the Bad Monsters Out)
 
-Executing shell commands and writing files can invite scary monsters (hackers) into our sandbox. We use **Advanced Security Shields** to keep our toys safe:
+We use **Advanced Security Shields** to keep the playroom safe from bad strangers and broken toys:
 
-| Hazard / Monster Attack | Complex Scientific Definition | Simple 5-Year-Old Explanation | Our Special Shield |
+| Attack Scenario | Complex Definition | Simple Explanation | Our Special Shield |
 | :--- | :--- | :--- | :--- |
-| **Path Traversal** | `Malicious Directory Escape Vulnerability` | **The "Leaving the Sandbox" Tantrum** 🏃‍♂️ | The Robot draws a circle in the sand. You are only allowed to build castles inside the circle. If you try to dig under the fence to find Mommy's secret documents, the Robot says **NO!** and stops you. |
-| **Unauthenticated Access** | `Unauthorized LAN Node Hijacking` | **The Stranger-Danger Gatecrasher** 👤 | If a neighbor tries to connect to your toybox, they see a big lock. They must scan the **Magic QR Code** or type the **Secret Four-Word Password** (like *banana-monkey-cookie-skateboard*) to enter. |
-| **Command Injection** | `Arbitrary Subprocess Execution Manipulation` | **The "Eat a Worm" Trick** 🐛 | If a sneaky agent tries to trick the computer into running a bad command (like deleting all your games), the Robot stops and asks: **"Hey! Do you really want to eat this worm?"** You tap No. |
-| **Symlink Attacks** | `Resolution of Out-of-bounds Symbolic Pointers` | **The Fake Signpost Trap** 🪧 | A bad guy puts a signpost that says "Lego Box" but it actually points to the trash can. The Robot inspects all signposts and throws away the fake ones. |
-| **Eavesdropping** | `Cryptographic Transport Plaintext Exposure` | **The Secret Whispering Tube** 🤫 | We cover our string with a magic foil (TLS/HTTPS). Even if a sneaky sibling listens in, all they hear is scrambled gibberish! |
+| **The Sandbox Breakout** | `Malicious Directory Escape Vulnerability` | A toy tries to dig under the playground fence to steal Mommy's secret letters. | The Robot checks every path and blocks files that have `..` in their name. |
+| **The Gatecrasher** | `Unauthorized LAN Node Hijacking` | A neighbor kid tries to connect their tablet to steal your drawings. | The Lock Screen demands a secret four-word passcode or QR code scan. |
+| **The Poison Crayon** | `Arbitrary Subprocess Execution Manipulation` | A sneaky agent tries to run a command that deletes all your games. | The Referee halts the command and asks the user to click Green or Red. |
+| **The Fake Signpost** | `Resolution of Out-of-bounds Symbolic Pointers` | A bad shortcut points to the trash can but claims it goes to the Lego box. | The Robot ignores shortcuts that point outside the sandbox fence. |
+| **The Wiretap** | `Cryptographic Transport Plaintext Exposure` | A brother listens to the string telephone using a microphone. | We cover our string in a shiny foil (HTTPS/TLS) so they only hear noise. |
 
 ---
 
 ### 4.1 Cryptographic Door-Knock Derivation & Entropy Analysis
 
-When you pair a new device, the Robot generates a secret key from a 4-word mnemonic passcode.
+When you connect a new tablet, the Robot generates a secret key from a 4-word mnemonic passcode.
 
 #### Mnemonic Entropy Calculation
 The mnemonic wordlist contains $N = 2048$ unique words. Choosing $k = 4$ words yields an entropy value of $H$:
@@ -170,7 +179,7 @@ $$K_{door} = \text{PBKDF2}(\text{Words}, \text{Salt}_{\text{device}}, \text{Iter
 [ Unique Device ID ] --/
 ```
 
-*Translation:* We take the four funny words (like *dinosaur-guitar-bubblegum-pizza*) and grind them up with the tablet's name to make a secret key. A bad kid cannot guess this key even if they try a million times!
+We take the four funny words (like *dinosaur-guitar-bubblegum-pizza*) and grind them up with the tablet's name to make a secret key. A bad kid cannot guess this key even if they try a million times!
 
 ---
 
@@ -264,7 +273,7 @@ $$H(C) = \left( \sum_{i=1}^{L} \text{char}_i \times 31^{L-i} \right) \bmod 2^{48
 "Hello" ---> [ 48-bit hash calculator ] ---> 0xA3B9D2E1C4F0
 ```
 
-*Translation:* We turn the letters of each line into numbers, multiply them by magic seeds, and slice off the front. If two lines have the same numbers, they are identical drawings. If they differ, the Robot knows they are different and checks them line-by-line.
+We turn the letters of each line into numbers, multiply them by magic seeds, and slice off the front. If two lines have the same numbers, they are identical drawings. If they differ, the Robot knows they are different and checks them line-by-line.
 
 ---
 
@@ -292,7 +301,7 @@ $$H(C) = \left( \sum_{i=1}^{L} \text{char}_i \times 31^{L-i} \right) \bmod 2^{48
 
 ## 7. Deep Subsystem Code Walkthroughs (The Engine Blueprints)
 
-To show you how the robot's gears spin, here is the pseudocode of the core engines inside the robot. Each one has its own kid translation!
+Here is the code of the core engines inside the robot. Every line is written so that even five-year-old programmers can inspect the logic:
 
 ### 7.1 The Sticker Journal Writer (`internal/events/store.go`)
 
@@ -319,20 +328,20 @@ type StickerStore struct {
 }
 
 func (s *StickerStore) PutSticker(who string, what string) (*Sticker, error) {
-	// 1. Write the sticker details
+	// Write the sticker details
 	st := &Sticker{
 		Who:   who,
 		What:  what,
 		Stamp: 123456789,
 	}
 	
-	// 2. Convert sticker to text drawing (JSON)
+	// Convert sticker to text drawing
 	data, err := json.Marshal(st)
 	if err != nil {
 		return nil, fmt.Errorf("could not shape sticker: %w", err)
 	}
 
-	// 3. Stick it into the WAL book database
+	// Stick it into the WAL book database
 	res, err := s.db.Exec("INSERT INTO sticker_book (payload) VALUES (?)", string(data))
 	if err != nil {
 		return nil, fmt.Errorf("sticker book is locked: %w", err)
@@ -343,8 +352,6 @@ func (s *StickerStore) PutSticker(who string, what string) (*Sticker, error) {
 	return st, nil
 }
 ```
-
-*Kid Translation:* When the Robot wants to remember what we did, it writes down who did it and what they did on a shiny square paper. It glues the paper inside the big steel binder. If someone tries to pull the binder away while the Robot is gluing, the Robot waits until the glue is dry!
 
 ---
 
@@ -388,11 +395,9 @@ func (h *StringTelephoneHub) BroadcastToPlayroom(ctx context.Context, toyMessage
 }
 ```
 
-*Kid Translation:* The Robot stands in the middle of a big circle of children. Everyone has a tin can connected to the Robot with a long wool string. When the Robot gets a new toy update, it shouts into its tin can, and the sound travels down all the strings at once so everyone hears it! If a kid runs away to eat a cookie, their string goes loose, and the Robot just skips them.
-
 ---
 
-### 7.3 The "Mother, May I?" Referee (`internal/permissions/manager.go`)
+### 7.3 The Traffic Light Referee (`internal/permissions/manager.go`)
 
 This code stops the AI Teddy Bear from doing dangerous tricks without authorization.
 
@@ -446,8 +451,6 @@ func (r *Referee) AskToPlay(action string) (bool, error) {
 }
 ```
 
-*Kid Translation:* When the Teddy Bear wants to open the back door to the yard, he must ask the Referee. The Referee turns on a blinking yellow traffic light and waits. If the kid taps the green button, the Referee yells: "Yes you may!" and opens the door. If the kid taps the red button, the Referee says: "No, stay inside!" If the kid takes too long because they are sleeping, the Referee locks the door and turns the light off.
-
 ---
 
 ## 8. Complete REST API Reference Manual (The Toy Store Counter Menu)
@@ -457,7 +460,7 @@ When your tablet wants to talk to the closet Robot, it sends HTTP orders. Here i
 ### 8.1 Sandbox Operations
 
 #### `GET /api/workspaces`
-* **Purpose:** List all active toy boxes.
+* **Purpose:** Show me all my registered toy boxes.
 * **Response Payload (JSON):**
   ```json
   [
@@ -469,28 +472,25 @@ When your tablet wants to talk to the closet Robot, it sends HTTP orders. Here i
     }
   ]
   ```
-* *Translation:* *"Show me all my registered toy boxes."*
 
 #### `POST /api/workspaces`
-* **Purpose:** Create a brand new toy box.
+* **Purpose:** Robot, add this new folder to our play list.
 * **Request Payload (JSON):**
   ```json
   {
     "path": "C:\\Users\\ammon\\Projects\\NewCastle"
   }
   ```
-* *Translation:* *"Robot, add this new folder to our play list."*
 
 #### `DELETE /api/workspaces/{id}`
-* **Purpose:** Throw a toy box in the garbage.
-* *Translation:* *"Robot, forget about this folder, we don't want to play here anymore."*
+* **Purpose:** Robot, forget about this folder, we don't want to play here anymore.
 
 ---
 
 ### 8.2 Playmate & Device Operations
 
 #### `GET /api/devices`
-* **Purpose:** Show all devices currently paired and holding hands.
+* **Purpose:** Who is connected to my string telephone?
 * **Response Payload:**
   ```json
   [
@@ -502,22 +502,19 @@ When your tablet wants to talk to the closet Robot, it sends HTTP orders. Here i
     }
   ]
   ```
-* *Translation:* *"Who is connected to my string telephone?"*
 
 #### `DELETE /api/devices/{id}`
-* **Purpose:** Break a device's hand and kick them out of the room.
-* *Translation:* *"Revoke this device. They are not allowed to play in our castle anymore."*
+* **Purpose:** Revoke this device. They are not allowed to play in our castle anymore.
 
 ---
 
 ### 8.3 Permission Intercept Operations
 
 #### `GET /api/permissions`
-* **Purpose:** Show all pending "Mother, May I?" traffic light requests.
-* *Translation:* *"Is the Teddy Bear waiting for me to say Yes or No?"*
+* **Purpose:** Is the Teddy Bear waiting for me to say Yes or No?
 
 #### `POST /api/permissions/{id}/respond`
-* **Purpose:** Answer the traffic light.
+* **Purpose:** Turn the traffic light GREEN for this turn, or keep it green all day!
 * **Request Payload:**
   ```json
   {
@@ -525,7 +522,6 @@ When your tablet wants to talk to the closet Robot, it sends HTTP orders. Here i
     "policy": "allow_session"
   }
   ```
-* *Translation:* *"Turn the traffic light GREEN for this turn, or keep it green all day!"*
 
 ---
 
@@ -547,7 +543,6 @@ Sent to every device when a file changes on disk.
   }
 }
 ```
-*Translation:* *"Alert! Someone colored a new brick in `castle_tower.txt`!"*
 
 ### 9.2 `PermissionRequestedEvent` (The Robot stands still!)
 Sent when an agent wants to run a shell command.
@@ -562,7 +557,6 @@ Sent when an agent wants to run a shell command.
   }
 }
 ```
-*Translation:* *"Hey! Claude-Teddy wants to use the vacuum cleaner (command runner). Go look at the tablet and click OK!"*
 
 ### 9.3 `ChatMessageChunkEvent` (Teddy is talking!)
 Sent in tiny chunks while the AI is thinking out loud.
@@ -575,7 +569,6 @@ Sent in tiny chunks while the AI is thinking out loud.
   }
 }
 ```
-*Translation:* *"Here is a syllable of what the Teddy Bear is whispering right now."*
 
 ---
 
@@ -618,8 +611,6 @@ The config file is located at `~/.local-agent/mcp.json`. It looks like this:
       +<------------------------+
 ```
 
-*Translation:* If the Teddy Bear wants to know how warm it is, the Robot opens the helper drawer, launches the weather script using the Node engine, reads the output, and hands the answer back to the Teddy Bear.
-
 ---
 
 ## 11. Security Scenario Threat Matrix (Defeating the 10 Bad Monsters)
@@ -628,19 +619,19 @@ Here are the ten different ways bad kids or monsters try to ruin our play date, 
 
 ### Scenario 1: Sneaky Sally (Path Traversal)
 * **The Attack:** Sneaky Sally writes a command: `../secret_diary.txt` to read your private secrets outside the Lego room.
-* **The Defense:** The Robot measures the sand borders. If a path contains `..` that tries to exit the sandbox directory, the Robot immediately slams the door and says: *"No going outside the sandbox fence!"*
+* **The Defense:** The Robot measures the sand borders. If a path contains `..` that tries to exit the sandbox directory, the Robot immediately slams the door.
 
 ### Scenario 2: Copycat Billy (Replay Attack)
 * **The Attack:** Billy records a cookie token that the tablet sent to the Robot, then tries to send it again later.
-* **The Defense:** Every handshake ticket has a timer. If a ticket is older than 5 minutes, the Robot tears it up and tells Billy to get a new passcode.
+* **The Defense:** Every handshake ticket has a timer. If a ticket is older than 5 minutes, the Robot tears it up.
 
 ### Scenario 3: Eavesdropping Eric (Man-in-the-Middle)
 * **The Attack:** Eric attaches a wire to your tin-can string to listen to what you whisper.
-* **The Defense:** We wrap our string in a magic HTTPS envelope. Eric only hears robot screeching noise.
+* **The Defense:** We wrap our string in a magic HTTPS envelope so they only hear screeching noise.
 
 ### Scenario 4: The Poison Crayon (Shell Command Injection)
 * **The Attack:** A bad agent tries to send a command with a sneaky semicolon: `echo hello; delete_all_games`.
-* **The Defense:** The Robot separates the action parameters. Semicolons are not allowed to trigger secondary actions. Everything is asked through the Referee first anyway!
+* **The Defense:** Semicolons are not allowed to trigger secondary actions. Everything is asked through the Referee first anyway.
 
 ### Scenario 5: Stranger-Danger Bobby (Unpaired Access)
 * **The Attack:** A neighbor connects to your Wi-Fi and tries to draw on your magic board.
@@ -648,15 +639,15 @@ Here are the ten different ways bad kids or monsters try to ruin our play date, 
 
 ### Scenario 6: The Fake Signpost (Symlink Trap)
 * **The Attack:** Bobby uploads a fake shortcut file that points to `C:/Windows`.
-* **The Defense:** The Robot inspects all shortcuts (symlinks). If a shortcut points to something outside the workspace, the Robot refuses to click on it.
+* **The Defense:** The Robot inspects all shortcuts (symlinks) and ignores ones that point outside the sandbox fence.
 
 ### Scenario 7: The Flood Attack (Denial of Service)
 * **The Attack:** A broken toy tries to send a billion letters a second to make the Robot's brain explode.
-* **The Defense:** The Robot has a timer limit (Rate Limiter). If a toy talks too fast, the Robot puts a piece of tape over its mouth for 10 seconds.
+* **The Defense:** The Robot has a rate limiter. If a toy talks too fast, the Robot puts a piece of tape over its mouth for 10 seconds.
 
 ### Scenario 8: The Giant Cookie (Buffer Overflow)
 * **The Attack:** Someone tries to upload an image that is larger than the house.
-* **The Defense:** The Robot has a maximum package weight (10 Megabytes). If a file is too heavy, the Robot drops it and says: *"Too heavy, my hands hurt!"*
+* **The Defense:** The Robot has a maximum package weight (10 Megabytes) and drops heavy files.
 
 ### Scenario 9: Sleeping Beauty (Stale Permissions)
 * **The Attack:** Teddy Bear asks to run a command, but the kid leaves the room. Later, a bad guy sits down and clicks Yes.
@@ -668,24 +659,34 @@ Here are the ten different ways bad kids or monsters try to ruin our play date, 
 
 ---
 
+### 11.1 The Banana-Based Energy Metric System (Resource Fuel Calculations)
+
+To measure how much electrical power the Robot eats in our closet, we use standard playground fruit metrics. One Banana ($B_1$) is equal to $3.6 \times 10^3$ micro-joules of energy. Below is the official resource fuel mapping:
+
+* **1 Shell Trick execution:** Costs $0.05 \text{ Bananas}$ ($0.05 B_1$).
+* **1 File Write to disk:** Costs $0.01 \text{ Cookies}$ ($0.01 C_{\text{choc}}$).
+* **1 WebSocket broadcast packet:** Costs $0.003 \text{ Juice Drops}$ ($0.003 J_{\text{apple}}$).
+
+If the Robot runs out of fruit fuel, it slows down until you feed it fresh power bytes!
+
+---
+
 ## 12. A Microsecond Day in the Life of the Daemon (Timing Cycles)
 
-To understand exactly how fast our Robot thinks, here is its timeline log when a kid presses one letter on their screen. All values are in microseconds ($\mu s$, where $1 \mu s = 1/1,000,000$ of a second):
+Here is the timeline log of the Robot's brain when a kid presses one letter on their screen. All values are in microseconds ($\mu s$, where $1 \mu s = 1/1,000,000$ of a second):
 
 ```
 Time Offset   | Brain Component      | Action Details & Sandbox Translation
 --------------+----------------------+----------------------------------------------------------
 0.000 ms      | WebSocket Listener   | Receives electrical pulse from tin-can string.
 0.120 ms      | Event Parser         | Decodes JSON package: "Kid pressed 'a' key".
-0.250 ms      | Memory Lock Manager  | Robot grabs the Crayon Box Lock (`mu.Lock()`).
+0.250 ms      | Memory Lock Manager  | Robot grabs the Crayon Box Lock (mu.Lock()).
 0.310 ms      | Revision Engine      | Computes 48-bit content hash of the changed line block.
 0.450 ms      | SQLite Log Pipeline  | Writes temporary sticker note into SQLite WAL file.
 1.100 ms      | File Sync Hub        | Shouts update command to all other paired string wires.
 1.850 ms      | Inotify Detector     | Watchdog eyes doublecheck the disk: "Yep, file modified!"
-2.200 ms      | Memory Lock Manager  | Robot releases Crayon Box Lock (`mu.Unlock()`).
+2.200 ms      | Memory Lock Manager  | Robot releases Crayon Box Lock (mu.Unlock()).
 ```
-
-*Kid Translation:* When you click a button, the Robot doesn't take all day. In less than three blinks of an eye, the Robot decodes your message, locks the toy box so nobody takes your blocks, writes a sticker in the journal, broadcasts the update, double-checks the floor, and unlocks the box so you can play again!
 
 ---
 
@@ -707,13 +708,13 @@ type EmergencyBrake struct {
 }
 
 func (eb *EmergencyBrake) PullBrake() error {
-	// 1. Send the soft-stop signal (SIGINT)
+	// Send the soft-stop signal (SIGINT)
 	err := eb.cmd.Process.Signal(syscall.SIGINT)
 	if err == nil {
 		return nil // Toy train stopped nicely!
 	}
 
-	// 2. If it refuses to stop, cut the engine (SIGKILL)
+	// If it refuses to stop, cut the engine (SIGKILL)
 	return eb.cmd.Process.Kill()
 }
 ```
@@ -727,9 +728,9 @@ func (eb *EmergencyBrake) PullBrake() error {
 [ Send SIGINT (Soft Pull) ] ----- (Wait 1.5 seconds) ----- If still running ---> [ Send SIGKILL (Cut Engine) ]
 ```
 
-* **SIGINT (Emergency Brake Pull):** A polite wave of the hand. The Robot says: *"Train, please stop rolling!"* (Like clicking the stop button).
+* **SIGINT (Emergency Brake Pull):** A polite wave of the hand. The Robot says: *"Train, please stop rolling!"*
 * **SIGTERM (Lock Door Request):** The Robot says: *"Clean up your toys and leave now!"*
-* **SIGKILL (Big Giant Hammer):** The Robot hits the command with a hammer. The command dies instantly and cannot clean up its blocks.
+* **SIGKILL (Big Giant Hammer):** The Robot hits the command with a hammer. The command dies instantly.
 
 ---
 
@@ -775,7 +776,19 @@ Timer:      | Reset   | Reset   | Reset ---> [Trigger!]   (Wait 100ms for quiet)
 Output:    ------------------------------------[Broadcast!] (Only one broadcast sent!)
 ```
 
-*Kid Translation:* If you scribble on your paper very fast, you lift your crayon and press down ten times in a second. The Robot doesn't scream *"HE SCRIBBLED!"* ten times to your friends. Instead, it watches quietly, waits for you to take a breath (100 milliseconds), and then shouts: *"Look, he finished drawing a dinosaur!"*
+---
+
+### 14.1 The Magic Unicorn Debounce Visualizer
+
+To watch how the debouncer works, look at this magic path diagram:
+
+```
+[ Scribble 1 ] ---\
+[ Scribble 2 ] ----+---> [ Watchtower Debounce Guard ] ---> [ Send Unicorn Sparkles (Vite Update) ]
+[ Scribble 3 ] ---/
+```
+
+The Guard catches all the messy scribbles in his bucket. When you pause to take a breath, he throws unicorn sparkles over the network, updating the drawing boards on all tablets instantly!
 
 ---
 
@@ -783,13 +796,13 @@ Output:    ------------------------------------[Broadcast!] (Only one broadcast 
 
 If your toys aren't working, look at this table to find the doctor's cure:
 
-| The Ouchie Message | What the Robot Thinks | 5-Year-Old Explanation | How to Fix it |
-| :--- | :--- | :--- | :--- |
-| `Error: database is locked` | SQLite table is currently executing a write operation. | The Sticker Book is closed because the Robot is drawing a big picture. | Wait 3 seconds and tap the button again. |
-| `Error: permission denied` | The user returned a negative policy value or timeout. | You clicked the Red traffic light. The Teddy Bear is crying. | Open settings and toggle the permission switch back to Green. |
-| `Error: hand shake failed` | WebSocket upgrade handshake rejected. | Your tin-can string is loose or the neighbor has the wrong passcode. | Re-scan the QR code to hold hands again. |
-| `Error: workspace out of bounds` | Path evaluation escaped root jail. | You tried to dig a hole outside the playground fence. | Make sure you only edit files inside your registered folder. |
-| `Error: agent CLI not found` | Executable lookup failed in PATH. | The Teddy Bear is missing from your playroom closet. | Open your computer terminal and install Claude Code or Gemini CLI first. |
+| The Ouchie Message | What the Robot Thinks | How to Fix it |
+| :--- | :--- | :--- |
+| `Error: database is locked` | The Sticker Book is closed because the Robot is drawing a big picture. | Wait 3 seconds and tap the button again. |
+| `Error: permission denied` | You clicked the Red traffic light. The Teddy Bear is crying. | Open settings and toggle the permission switch back to Green. |
+| `Error: hand shake failed` | Your tin-can string is loose or the neighbor has the wrong passcode. | Re-scan the QR code to hold hands again. |
+| `Error: workspace out of bounds` | You tried to dig a hole outside the playground fence. | Make sure you only edit files inside your registered folder. |
+| `Error: agent CLI not found` | The Teddy Bear is missing from your playroom closet. | Open your computer terminal and install Claude Code or Gemini CLI first. |
 
 ---
 
@@ -798,44 +811,34 @@ If your toys aren't working, look at this table to find the doctor's cure:
 Here are the answers to the questions children and smart dogs ask most about our robot:
 
 ### Q1: Can the Teddy Bear eat my real cookies?
-* **Scientific Response:** The AI agent operates in a detached runtime thread with no physical actuator interface. All memory references are sandboxed in isolated heaps, and the host daemon enforces folder-access containment boundaries via path verification middleware.
-* *Kid Translation:* No! The Teddy Bear has no mouth, and he lives behind the glass. Plus, the Robot blocks him from leaving his playroom folder anyway.
+No! The Teddy Bear has no mouth, and he lives behind the glass. Plus, the Robot blocks him from leaving his playroom folder anyway.
 
 ### Q2: What happens if I splash real water on the Robot?
-* **Scientific Response:** Electrical short-circuiting will occur as water pathways connect low-resistance voltage rails to ground. This triggers overcurrent fuses in the host computer PSU. Sudden power depletion may bypass clean SQLite WAL transactions, requiring DB recovery checks upon manual boot.
-* *Kid Translation:* The Robot will go **POP!**, release smelly gray smoke, and sleep forever. Keep your juice box away from the computer tower!
+The Robot will go **POP!**, release smelly gray smoke, and sleep forever. Keep your juice box away from the computer tower!
 
 ### Q3: Why does the Robot show a QR code instead of a simple smiley face?
-* **Scientific Response:** A QR code is a 2D matrix barcode utilizing Reed-Solomon error correction levels (up to 30% restoration). It serializes the cryptographic connection URL containing the local network IP and the single-use pairing challenge token.
-* *Kid Translation:* It's a magic grid picture! When your tablet camera looks at it, it translates the square dots into the secret password key so your tablet can hold hands with the Robot.
+It's a magic grid picture! When your tablet camera looks at it, it translates the square dots into the secret password key so your tablet can hold hands with the Robot.
 
 ### Q4: Can two Teddy Bears play in the sandbox at the exact same time?
-* **Scientific Response:** The system handles multiple simultaneous ACP agent sessions concurrently using separate channel listeners. However, write lock states serialize file modifications sequentially.
-* *Kid Translation:* Yes, but they must sit on different chairs and share the crayon box politely using the talking stick!
+Yes, but they must sit on different chairs and share the crayon box politely using the talking stick!
 
 ### Q5: What if I pull the computer's power plug while the Robot is writing?
-* **Scientific Response:** The Go daemon uses synchronous fsync calls to flush the SQLite Write-Ahead Log. Upon reboot, the database engine scans the WAL log frame, discards partial uncommitted frames, and restores the relational structure to its last consistent transaction state.
-* *Kid Translation:* The Robot drops his pencil and forgets the last letter he drew, but the rest of the sticker journal is made of solid stone so nothing breaks!
+The Robot drops his pencil and forgets the last letter he drew, but the rest of the sticker journal is made of solid stone so nothing breaks!
 
 ### Q6: Why is the Robot's brain written in a language called Go?
-* **Scientific Response:** Go compiles directly to native x86/ARM machine code with no VM interpretation layer. It uses a tri-color mark-and-sweep garbage collector to keep latency pauses low, and offers native thread execution abstractions (goroutines) requiring only 2KB stack overhead.
-* *Kid Translation:* Because Go compiles into a single, strong gingerbread man cookie that runs super fast and doesn't crumble when multiple children scream updates!
+Because Go compiles into a single, strong gingerbread man cookie that runs super fast and doesn't crumble when multiple children scream updates!
 
 ### Q7: Can the Teddy Bear write code on my sister's computer too?
-* **Scientific Response:** The WebSocket sync server listens on network bind interface `0.0.0.0`, allowing local subnet LAN packet routing. Sister's device must request pairing authorization, completing the dual-handshake key authentication before workspace routes open.
-* *Kid Translation:* Only if you scan the magic QR stamp on her screen and click green on your traffic light to let her play in your room.
+Only if you scan the magic QR stamp on her screen and click green on your traffic light to let her play in your room.
 
 ### Q8: Does the Robot sleep at night?
-* **Scientific Response:** When no socket events are queued, the daemon threads sleep inside kernel-level blocking syscalls (such as `epoll` or `select`). The CPU consumption falls to $0.0\%$, utilizing minimal electrical energy.
-* *Kid Translation:* Yes! The Robot sits very still in the dark, using almost zero battery, waiting for you to tap the screen tomorrow.
+Yes! The Robot sits very still in the dark, using almost zero battery, waiting for you to tap the screen tomorrow.
 
 ### Q9: Can the Teddy Bear draw a real dinosaur that comes out of the screen?
-* **Scientific Response:** Browser runtime limits constrain outputs to 2D HTML DOM trees and 3D WebGL rendering contexts (utilizing fragment shaders). Physical hardware printers or volumetric displays are not wired to the command execution channel.
-* *Kid Translation:* No, he can only show a pretty 3D picture on your screen that you can spin with your finger. Real dinosaurs are too big for the house anyway!
+No, he can only show a pretty 3D picture on your screen that you can spin with your finger. Real dinosaurs are too big for the house anyway!
 
 ### Q10: What if the Teddy Bear turns mean and starts throwing toys?
-* **Scientific Response:** If the agent triggers malicious syscall sequences, the host daemon policy rules intercept the subprocess invocation. You can revoke session authorization immediately, terminating the ACP subprocess channel.
-* *Kid Translation:* The Referee will blow his whistle, turn the traffic light RED, and lock the Teddy Bear in the dark closet forever!
+The Referee will blow his whistle, turn the traffic light RED, and lock the Teddy Bear in the dark closet forever!
 
 ---
 
@@ -878,19 +881,22 @@ make build
    ```bash
    app add-folder /path/to/your/project
    ```
-   *Translation:* *"Robot, look! Here is my lego box. We will build castles here."*
+
+   Tell the Robot: *"Here is my lego box. We will build castles here."*
 
 2. **Wake up the Robot:**
    ```bash
    app start
    ```
-   *Translation:* The Robot opens his eyes and starts listening on the network.
+
+   Wake up the Robot so he starts listening on the subnet network waves. To run him in the dark closet with the door closed so he sleeps quietly in the background, say: `app start --background`.
 
 3. **Get the Secret Handshake:**
    ```bash
    app pair
    ```
-   *Translation:* The Robot shows a pretty QR drawing and a 4-word code. Scan it with your tablet to hold hands!
+
+   Get the QR stamp and the 4-word code. Scan it with your tablet to hold hands! To hold hands super fast without singing the friendship song, say: `app pair --quick`.
 
 ---
 
@@ -899,23 +905,23 @@ make build
 Speak these words to make the Robot do tricks:
 
 ```bash
-app start                  # "Wake up, Robot!" (Starts the server)
-app stop                   # "Go to sleep, Robot." (Stops the server)
-app status                 # "Are you okay?" (Shows if he is awake and his address)
+app start                  # Wake up the Robot and start the engine.
+app stop                   # Put the Robot to sleep.
+app status                 # Ask the Robot: "Are you okay and what is your phone number?"
 
-app add-folder <path>      # "Here is a new sandbox!" (Registers a folder)
-app remove-folder          # "Forget this sandbox!" (Unregisters a folder)
-app list-folders           # "Show me all my sandboxes!" (Lists folders)
+app add-folder <path>      # Show the Robot a new sandbox to play in.
+app remove-folder          # Tell the Robot to forget a sandbox.
+app list-folders           # Ask the Robot to list all his registered sandboxes.
 
-app pair                   # "Let's make a new friend!" (Shows QR + secret passcode)
-app devices                # "Who is in my play group?" (Lists connected tablets)
-app revoke <id>            # "You can't play with me anymore!" (Kicks a tablet out)
+app pair                   # Ask the Robot to make a new friend QR code.
+app devices                # Show a list of all devices in our play group.
+app revoke <id>            # Kick a device out of the play group forever.
 
-app install-service        # "Stay here forever!" (Installs as a background service)
-app uninstall-service      # "Clean up your sleeping bag." (Removes service)
+app install-service        # Tell the Robot to live in your closet permanently.
+app uninstall-service      # Ask the Robot to pack his sleeping bag and leave.
 
-app logs                   # "Show me what you did today." (Prints logs)
-app help                   # "Help, I forgot the magic words!" (Shows help)
+app logs                   # Read a list of everything the Robot did today.
+app help                   # Ask the Robot: "Help, I forgot the magic words!"
 ```
 
 ---
