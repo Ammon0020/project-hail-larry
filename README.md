@@ -6,7 +6,7 @@
 
 ## 1. The Structure of Jimmy's Retroville Lab (System Layout)
 
-This secret clubhouse laboratory connects Goddard (who lives inside Jimmy's computer closet) to holographic screens on all tablets, communicators, and Sheen's action-figure sensors using a long, quantum-entangled tin-can string. Here is the formal list of all the toys we use in the lab:
+This secret clubhouse laboratory connects Goddard (who lives inside Jimmy's computer closet) to holographic screens on all tablets, communicators, and Sheen's action-figure sensors using a long, quantum-entangled radio string. Here is the list of all the components we use in the lab:
 
 | Lab Component | Retroville Role | How It Keeps the Lab Safe |
 | :--- | :--- | :--- |
@@ -19,67 +19,46 @@ This secret clubhouse laboratory connects Goddard (who lives inside Jimmy's comp
 
 ---
 
-### 1.1 Formal Algebraic State-Space Modeling (𝚺-Calculus of the Retroville Lab)
+### 1.1 Formal Lab Modeling (The Logic of the Retroville Lab)
 
-To make sure we never lose a single invention blueprint, we model our lab state using formal playroom mathematics. Let $S$ represent the state of the Retroville Lab, containing a set of active inventions $I$, a set of connected kids $K$ (where $K = \{\text{Jimmy}, \text{Carl}, \text{Sheen}, \text{Cindy}, \text{Libby}\}$), and Goddard's daemon system $G$.
+To make sure we never lose a single invention blueprint, we model our lab state using simple logic rules. Let's imagine the state of our Retroville Lab as a giant box containing a set of active inventions, a set of connected kids (Jimmy, Carl, Sheen, Cindy, and Libby), and Goddard's daemon system.
 
-Let $P(a)$ represent the Permission Function for an action $a$ proposed by the Neuro-Link Band ($B$):
-$$P(a) = \begin{cases} \text{Green Light}, & \text{if Jimmy taps the green button} \\ \text{Red Light}, & \text{if Cindy taps the red button to ruin the fun} \\ \text{Nap Time}, & \text{if Carl falls asleep eating a pie (5 minutes)} \end{cases}$$
+Here is the Permission Rule for any action proposed by the Neuro-Link Band:
+* **Green Light (YES):** If Jimmy taps the green button to let the band write a file.
+* **Red Light (NO):** If Cindy taps the red button to ruin the fun and block the file.
+* **Nap Time (WAIT):** If Carl falls asleep eating a pie, the lab pauses for 5 minutes.
 
-The state transition operator $\Psi$ updates the lab state from $S_t$ to $S_{t+1}$ based on the action $a$:
-$$\Psi(S_t, a) = \begin{cases} S_t \cup \{ \text{new gadget} \}, & \text{if } P(a) = \text{Green Light} \\ S_t \setminus \{ \text{broken trust} \}, & \text{if } P(a) = \text{Red Light} \\ S_t, & \text{if } P(a) = \text{Nap Time} \end{cases}$$
+Whenever the Neuro-Link Band requests to write a new blueprint file, Goddard checks the borders:
+* **Allow the write** if the file stays inside the lab directory.
+* **Block the write** if the file tries to escape outside the lab boundaries.
 
-If the Neuro-Link Band ($B$) requests to write a new file $f$, Goddard ($G$) checks if the path of $f$ stays within the lab fence circle $C_{lab}$:
-$$\text{AllowWrite}(f) = \begin{cases} \text{True}, & \text{if } f \subseteq C_{lab} \\ \text{False}, & \text{if } f \not\subseteq C_{lab} \end{cases}$$
-
-When Jimmy gets a "Brain Blast!", we apply a projection operator $P_{\text{blast}}$ to collapse the confused ideas into a single working invention:
-$$P_{\text{blast}} = | \text{Brain Blast!} \rangle \langle \text{Brain Blast!} |$$
+When Jimmy gets a "Brain Blast!", all of his messy and confused ideas are instantly sorted and squeezed into a single working invention blueprint!
 
 ---
 
 ### 1.2 Goddard's Quantum Entanglement Calculus (The Spooky Purple Flurp Action)
 
-When two communicators are connected to the same string telephone, their memory bits become quantum-entangled. If you change the screen color on Jimmy's terminal in the clubhouse, the color on Carl's device changes instantly, even if he is hiding in his bedroom from his mom's llama! We model this joint state vector $|\Phi_{\text{Goddard}}\rangle$ in the Hilbert space $\mathcal{H}_A \otimes \mathcal{H}_B$:
+When two communicators are connected to the same radio line, their memory bits become quantum-entangled. If you change the screen color on Jimmy's terminal in the clubhouse, the color on Carl's device changes instantly, even if he is hiding in his bedroom from his mom's llama! It's like having two magic toys that are secretly holding hands—if you tickle one, the other one laughs immediately!
 
-$$\left| \Phi_{\text{Goddard}} \right\rangle = \frac{1}{\sqrt{2}} \left( \left| \text{Option 1: Play Dead} \right\rangle_A \left| \text{Option 2: Fly Mode} \right\rangle_B + \left| \text{Option 2: Fly Mode} \right\rangle_A \left| \text{Option 3: Explode} \right\rangle_B \right)$$
+Here are the quantum physics secrets that make our lab gadgets work:
 
-If Jimmy's device measures a state of Option 1 (Play Dead), the wave function collapses, and Carl's device instantly snaps to Option 2 (Fly Mode) at a speed of $c_{\text{neutron}} \approx 3 \times 10^8$ meters per second, which is faster than Sheen can say "Ultra Lord!"
-
-Let's look at the deep quantum physics equations that make our lab gadgets work:
-
-#### 1.2.1 Wavefunction Compression (The Shrink Ray Formula)
-Jimmy's Neutronic Shrink Ray shrinks objects (like his parents, or Carl's lunch) by locally scaling down the Planck constant:
-$$\hbar \to \hbar_{\text{tiny}} = \frac{\hbar}{\alpha}$$
-According to the Bohr radius equation:
-$$a_0 = \frac{4\pi \varepsilon_0 \hbar^2}{m_e e^2}$$
-By shrinking the Planck constant, the radius of the electron orbits $a_0$ shrinks by a factor of $\alpha^2$. According to the Heisenberg Uncertainty Principle:
-$$\Delta x \cdot \Delta p \ge \frac{\hbar_{\text{tiny}}}{2}$$
-Because $\hbar_{\text{tiny}}$ is super small, the spatial uncertainty $\Delta x$ of the atoms can become tiny without making their momentum uncertainty $\Delta p$ expand, preventing the shrunken object from heating up and exploding.
-* **5-Year-Old Explanation:** The Shrink Ray takes the big, fluffy clouds that make up atoms and tells them to squeeze together very tightly like kids hiding under a small blanket, without making them wiggle so hard that they blow up!
+#### 1.2.1 Wavefunction Compression (The Shrink Ray)
+Jimmy's Neutronic Shrink Ray shrinks objects (like his parents, or Carl's lunch) by compressing the space inside atoms.
+* **How it works:** Think of atoms as big, fluffy cotton balls. The Shrink Ray tells the clouds of electrons to squeeze together very tightly, like kids hiding under a small blanket. This makes the clouds super small and packs the atoms closer together, so the whole toy shrinks to the size of a bean without blowing up!
 
 #### 1.2.2 Quantum Tunneling (The Book Accelerator & Clubhouse Door Escape)
-The Book Accelerator shoots books directly into Jimmy's brain using quantum tunneling. When a data packet tries to cross a thick wall (potential barrier $V_0$) with energy $E < V_0$, its WKB transmission probability $T$ is:
-$$T \approx \exp\left( -2 \int_0^L \frac{\sqrt{2m(V(x) - E)}}{\hbar} dx \right)$$
-By using Goddard's high-frequency clock, we modulate the virtual mass $m$ of the data packet down to almost zero ($m \to 0$), which makes the exponential term close to 1 ($T \to 1$).
-* **5-Year-Old Explanation:** If Goddard wants to walk through the closed wooden door of the lab, he turns his body into tiny light waves. These waves are so thin that they can slide through the microscopic cracks in the wood blocks, popping out on the other side as a happy file!
+The Book Accelerator shoots books directly into Jimmy's brain using quantum tunneling.
+* **How it works:** If Goddard wants to walk through the closed wooden door of the lab, he turns his data messages into tiny, super-fast light waves. These waves are so thin that they can slide through the microscopic cracks in the wood blocks of the clubhouse door, just like water drops sliding through a sieve, popping out on the other side as a happy file!
 
 #### 1.2.3 Quantum Superposition of Goddard's Brain
-Goddard's options are stored in a superposition state:
-$$|\Psi_{\text{Goddard}}\rangle = c_1 |\text{Play Dead}\rangle + c_2 |\text{Fly Mode}\rangle + c_3 |\text{Explode and Reassemble}\rangle$$
-where $|c_1|^2 + |c_2|^2 + |c_3|^2 = 1$.
-Until Jimmy shouts a command, Goddard exists in all three states at once.
-* **5-Year-Old Explanation:** Goddard is a magic robot doggy. When he doesn't know what to do, he is running, playing dead, and blowing up all at the same time like an invisible rainbow cloud. But when Jimmy yells "Brain Blast!", the cloud collapses and Goddard does the exact trick Jimmy wants.
+Goddard's options are stored in a superposition state.
+* **How it works:** Goddard is a magic robot doggy. When he doesn't know what to do, he exists in a fuzzy cloud of options—he is running, playing dead, and blowing up all at the same time! But the moment Jimmy yells "Brain Blast!" or calls out a command, the cloud disappears and Goddard collapses into the exact single trick Jimmy needs.
 
 #### 1.2.4 The Quantum Zeno Effect (Sheen's Ultra Lord Freeze)
-When Sheen stares at the computer screen without blinking, he performs continuous measurements at interval $\Delta t \to 0$. The probability of the system changing state over time $t$ with Hamiltonian $\hat{H}$ is:
-$$P(t) = \cos^{2N}\left(\frac{t}{N\tau}\right) \approx 1 - \frac{t^2}{N\tau^2} \xrightarrow{N \to \infty} 1$$
-* **5-Year-Old Explanation:** If Sheen stares at his Ultra Lord action figure without blinking even once, the action figure is not allowed to move or change its color. The universe gets so nervous under Sheen's big eyes that it keeps everything exactly the same!
+* **How it works:** If Sheen stares at his Ultra Lord action figure without blinking even once, the action figure is not allowed to move or change its state. Because Sheen keeps checking it again and again every millisecond, the universe gets too nervous to change anything, keeping the toy frozen in the same spot!
 
 #### 1.2.5 Environmental Decoherence (Carl's Allergy Phase Noise)
-When we connect devices, Carl's asthma or llama allergies can throw sneeze particles into the air. This environment state $|E\rangle$ interacts with the density matrix $\rho_{AB}$:
-$$\rho_{AB} \otimes |E_0\rangle\langle E_0| \xrightarrow{\text{sneeze}} \sum_i p_i |i\rangle\langle i| \otimes |E_i\rangle\langle E_i|$$
-This wipes out the off-diagonal quantum phase terms, turning our magical quantum superposition into boring classical ones.
-* **5-Year-Old Explanation:** When Carl sneezes, he throws dirty pollen dust into the air. This dust bumps into our clean invisible laser beams, making them lose their glowing colors and turn into boring old normal electricity. We use a protective shield to keep Carl's sneezes away from the wires!
+* **How it works:** When Carl sneezes, he throws dirty pollen dust into the air. This dust bumps into our clean, invisible network laser beams. This makes the laser beams lose their glowing colors and turn into boring old normal wire currents, separating our magic entangled toys. We use a protective shield to keep Carl's sneezes away from the network lines!
 
 ---
 
@@ -116,135 +95,91 @@ sequenceDiagram
 
 ---
 
-### 2.1 Binary Frame Layout & Protocol Bit-Structures
+### 2.1 The Magic Envelope Layout (Binary Frame Layout)
 
-When the Neuro-Link Band whispers to Goddard, they pack their letters inside high-speed digital paper envelopes. The byte-frame layout of each envelope looks like this:
+When the Neuro-Link Band whispers to Goddard, they pack their letters inside high-speed digital paper envelopes. The layout of each envelope looks like this:
 
 ```
-  0                   1                   2                   3
-  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
- +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- |  NEUTRONIC-ID |  GADGET-ACTION|         JOURNAL-COUNT         |
- +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- |         LAB-RADIUS            |   MNEMONIC-BRAIN-BLAST-KNOCK  |
- +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- |                                                               |
- +                      FLURP-COLOR-PAYLOAD                      +
- |                                                               |
- +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++--------------------------------------------------------------+
+| [ Who is talking (8 bits) ]  [ What to do (8 bits) ]         |
++--------------------------------------------------------------+
+| [ How many notes we wrote in our journal (16 bits) ]         |
++--------------------------------------------------------------+
+| [ Lab Circle Size (16 bits) ] [ Secret Knock (16 bits) ]     |
++--------------------------------------------------------------+
+| [ The actual message or drawing words (Variable size) ]      |
++--------------------------------------------------------------+
 ```
 
-* **NEUTRONIC-ID (8 bits):** The number of the Neuro-Link Band that is talking (e.g., `0x01` is Claude-Band, `0x02` is Gemini-Band).
-* **GADGET-ACTION (8 bits):** The action command:
-  * `0x10`: "Write a line in the journal"
-  * `0x20`: "Do a hover-car trick"
-  * `0x30`: "Read a blueprint page"
-* **JOURNAL-COUNT (16 bits):** How many entries we have glued into our Lab Journal.
-* **LAB-RADIUS (16 bits):** How far away the lab fence goes.
-* **MNEMONIC-BRAIN-BLAST-KNOCK (16 bits):** A secret handshake number to prove the communicator belongs to our clubhouse.
-* **FLURP-COLOR-PAYLOAD (Variable length):** The actual code content or command words.
+* **Who is talking:** The number of the Neuro-Link Band (e.g., number 1 is Claude-Band, number 2 is Gemini-Band).
+* **What to do:** The action command (like "Write a line in the journal", "Do a hover-car trick", or "Read a page").
+* **Journal Count:** How many entries we have glued into our Lab Journal.
+* **Lab Circle Size:** How far away the lab fence goes.
+* **Secret Knock:** A secret handshake number to prove the communicator belongs to our clubhouse.
+* **Message Payload:** The actual code content or command words.
 
 ---
 
-### 2.2 EBNF Grammar of the Neutronic Voice Command Protocol
+### 2.2 The Secret Sentence Rules (EBNF Grammar of the Protocol)
 
-All whispers sent between Goddard and the Neuro-Link Band must follow the strict playground grammar rules described below:
+All whispers sent between Goddard and the Neuro-Link Band must follow the strict sentence rules described below:
 
-```ebnf
-VoiceCommandStream ::= Header Payload Terminal ;
-Header             ::= SecretKnock ClientID MessageType ;
-SecretKnock        ::= "brain-blast-knock" [a-zA-Z0-9]+ ;
-ClientID           ::= "inventor-" ( "jimmy" | "goddard" | "carl" | "sheen" | "cindy" | "libby" ) ;
-MessageType        ::= "BRAIN_BLAST" | "RUN_GADGET" | "SHRINK_PARENT" | "LLAMA_ALARM" | "MERGE_CONFLICT" ;
-Payload            ::= TextMessage | BinaryFlurp ;
-TextMessage        ::= '"' [^"]* '"' ;
-BinaryFlurp        ::= "flurp(" [0-9a-fA-F]+ ")" ;
-Terminal           ::= "!!!GOTTA-BLAST!!!" ;
-```
+* **A Secret Sentence** is made of: A Magic Knock + Who is talking + What we want to do + A Message + A Goodbye!
+  * **A Magic Knock** must start with: `"brain-blast-knock"` followed by letters or numbers.
+  * **Who is talking** must be one of these: `"inventor-jimmy"`, `"inventor-goddard"`, `"inventor-carl"`, `"inventor-sheen"`, `"inventor-cindy"`, or `"inventor-libby"`.
+  * **What we want to do** must be one of these: `"BRAIN_BLAST"`, `"RUN_GADGET"`, `"SHRINK_PARENT"`, `"LLAMA_ALARM"`, or `"MERGE_CONFLICT"`.
+  * **A Message** is either: Text inside quotes or a secret soda color like `flurp(blue)`.
+  * **A Goodbye** is always: `"!!!GOTTA-BLAST!!!"`
 
 ---
 
 ## 3. The 7-Layer Retroville Communication Stack
 
-Our communication network maps directly to the standard ISO/OSI model, but we explain it with Retroville lab terminology:
+Our communication network works like a stack of cake layers:
 
-| OSI Layer Name | Retroville Mechanics |
+| Layer Number & Name | How It Works in Our Lab |
 | :--- | :--- |
-| **7. Application (ACP Client)** | The Neuro-Link Band whispering code requests. |
-| **6. Presentation (JSON Encode)** | Translating holograms to text codes. |
-| **5. Session (WebSocket Connection)** | Holding the intergalactic communicator frequency tight. |
-| **4. Transport (TCP Packets)** | Making sure lego blocks arrive in order. |
-| **3. Network (LAN IPv4/IPv6 Routing)** | Knowing whether the communicator is in Carl's house or Sheen's room. |
-| **2. Data Link (Ethernet/Wi-Fi)** | Light waves flashing code in the dark. |
-| **1. Physical (Copper & Airwaves)** | Physical copper wires & radio waves. |
+| **7. Application** | The talking headband asking to build toys. |
+| **6. Presentation** | Turning our drawings into code letters. |
+| **5. Session** | Holding the communicator radio link tight. |
+| **4. Transport** | Making sure toy blocks arrive in the right order. |
+| **3. Network** | Knowing which kid's room the communicator is in. |
+| **2. Data Link** | Light waves flashing messages in the dark. |
+| **1. Physical** | The actual wires and airwaves we send signals through. |
 
 ---
 
-## 4. Goddard's Protection Protocols (Defeating the Yolkians & Cindy's Pranks)
+## 4. Defeating the Yolkians & Cindy's Pranks (Security Matrix)
 
 We use **Advanced security shields** to keep the lab safe from bad alien invaders and snooping girls:
 
-| Attack Scenario | Complex Definition | Simple Explanation | Goddard's Secret Shield |
-| :--- | :--- | :--- | :--- |
-| **The Yolkian Invasion** | `Malicious Directory Escape Vulnerability` | King Goobot tries to dig under the lab fence to steal Jimmy's secret blueprints. | Goddard checks every path and blocks files that have `..` in their name. |
-| **Cindy's Wiretap** | `Unauthorized LAN Node Hijacking` | Cindy Vortex tries to connect her communicator to steal your homework. | The Lock Screen demands a secret four-word passcode or QR code scan. |
-| **The Sentient Burger** | `Arbitrary Subprocess Execution Manipulation` | McSpanky's robotic hamburger tries to run a command to delete the clubhouse. | The Vocoder halts the command and asks the inventor to tap Green or Red. |
-| **The Fake Signpost** | `Resolution of Out-of-bounds Symbolic Pointers` | Carl uploads a fake shortcut file that points to his llama pen instead of the lab. | Goddard ignores shortcuts that point outside the lab boundaries. |
-| **The Libby Blast** | `Cryptographic Transport Plaintext Exposure` | Libby plays her music so loud that it shakes the network signals. | We cover our signals in a shiny foil (HTTPS/TLS) so they only hear static. |
+| Attack Scenario | What the Bad Guy/Monster Tries to Do | Goddard's Secret Shield |
+| :--- | :--- | :--- |
+| **The Yolkian Invasion** | King Goobot tries to dig a secret tunnel under the lab fence using a sneaky path like `../secret_formula.txt` to steal Jimmy's blueprints. | Goddard checks every path and blocks files that have `..` in their name. |
+| **Cindy's Wiretap** | Cindy Vortex tries to connect her communicator to our network to spy on Jimmy's blueprints. | The Lock Screen demands a secret four-word passcode or a QR stamp check. |
+| **The Sentient Burger** | McSpanky's robotic hamburger tries to run a command to delete the entire clubhouse folder. | The Vocoder halts the command and waits for Jimmy to click Green or Red. |
+| **The Fake Signpost** | Carl uploads a fake shortcut that points to his llama pen instead of the lab folder. | Goddard ignores all shortcuts that point outside the lab boundaries. |
+| **The Libby Blast** | Libby plays her music so loud that it shakes the network signals, letting snooping kids listen in. | We wrap our signals in a shiny foil (HTTPS/TLS) so they only hear static noise. |
 
 ---
 
-### 4.1 Cryptographic Goddard-Knock Derivation & Entropy Analysis
+### 4.1 Secret Handshake Key Mixing
 
-When you connect a new tablet, Goddard generates a secret key from a 4-word mnemonic passcode (like `goddard-play-dead-pie-llama`).
+When you connect a new tablet, Goddard generates a secret key from a 4-word passcode (like `goddard-play-dead-pie-llama`).
 
-#### Mnemonic Entropy Calculation
-The mnemonic wordlist contains $N = 2048$ unique words. Choosing $k = 4$ words yields an entropy value of $H$:
-$$H = \log_2(N^k) = \log_2(2048^4) = 4 \times 11 = 44 \text{ bits of structural entropy}$$
-
-This represents $2^{44} \approx 17.59 \text{ trillion}$ unique combinations!
-
-#### Cryptographic Key Derivation Function
-To stretch the entropy and defeat brute-force guessers (like Cindy's calculations), we run the passcode through a key mixer:
-$$K_{door} = \text{PBKDF2}(\text{Words}, \text{Salt}_{\text{device}}, \text{Iterations} = 4096, \text{KeyLength} = 256)$$
-
-```
-[ 4-Word Passcode ] ---\
-                       +---> [ PBKDF2 HMAC-SHA256 Mixer ] ---> [ Secret Goddard-Knock Key ]
-[ Unique Device ID ] --/
-```
-
-We take the four funny words and grind them up with the device's name to make a secret key. A Yolkian spaceship cannot guess this key even if they try a million times!
+Choosing 4 words from our list of 2048 words gives us over **17 trillion** unique combinations! Goddard takes these four words, mixes them up with the tablet's name, and grinds them together in a digital blender to create a secret key. A Yolkian spaceship cannot guess this key even if they try a million times!
 
 ---
 
-### 4.2 State Machine Formalism of Goddard Pairing
+### 4.2 How Devices Join the Lab (State Machine)
 
-A device goes through a state machine to prove it's a friend. Below is the state transition matrix:
+A device goes through a step-by-step game to prove it's a friend:
 
-```
-            +------------------+
-            |                  |
-            v                  | Revoked
-    +---------------+  Pairing +-------------+
-    |   LOCKED      |--------->| PIN_PENDING |
-    +---------------+          +-------------+
-            ^                         |
-            | Bad Key                 | Correct Pin
-            |                         v
-    +---------------+          +-------------+
-    |   REJECTED    |<---------| AUTHORIZED  |
-    +---------------+          +-------------+
-```
-
-| Current State | Input / Event Trigger | Transition Condition | Target State | Action Taken |
-| :--- | :--- | :--- | :--- | :--- |
-| **LOCKED** | Device Connects | No credential found | **LOCKED** | Show Lock Screen |
-| **LOCKED** | User clicks "Pair" | Generate QR code | **PIN_PENDING** | Display 4-word passcode |
-| **PIN_PENDING**| Passcode Input | Incorrect PIN typed | **REJECTED** | Lock device out for 60s |
-| **PIN_PENDING**| Passcode Input | Correct PIN typed | **AUTHORIZED** | Write device credential file |
-| **AUTHORIZED** | Expiry Clock | Time exceeds TTL | **LOCKED** | Revoke session tokens |
-| **AUTHORIZED** | User Revocation | Admin revokes device | **LOCKED** | Erase database credential |
+1. **LOCKED:** The tablet connects but has no secret key. Goddard shows the Lock Screen.
+2. **PIN_PENDING:** Jimmy clicks "Pair" to display the 4-word passcode.
+3. **AUTHORIZED:** The kid types the correct code. Goddard saves the device key and lets them play.
+4. **REJECTED:** If the wrong code is typed, the device is locked out for one minute.
+5. **LOCKED AGAIN:** If a device is disconnected or revoked, Goddard erases its key and locks it out.
 
 ---
 
@@ -281,38 +216,32 @@ docs/                    📚 The Retroville Library (specifications and bluepri
 
 ---
 
-## 6. File Synchronicity & Three-Way Merge Calculus (Sheen vs. Carl Disputes)
+## 6. File Synchronicity (Sheen vs. Carl Disputes)
 
 When Carl and Sheen edit the same blueprint at the exact same time, Goddard uses a three-way merge to glue their inputs together.
 
-### 6.1 Conflict Resolution Logic Grid
+### 6.1 Conflict Resolution rules
 
-This truth table explains how Goddard's Merge Engine acts under various edit collisions:
+This table explains what Goddard's Merge Engine does when Carl and Sheen edit the same file:
 
-| Carl Action | Sheen Action | Base File Content | Final Merged File Output | Resolution Mechanism |
+| Carl Action | Sheen Action | Base File | Final Merged File | What Goddard Does |
 | :--- | :--- | :--- | :--- | :--- |
-| No Change | Draw Ultra Lord | Empty Page | **Draw Ultra Lord** | Auto-Accept Sheen |
-| Draw Llama | No Change | Empty Page | **Draw Llama** | Auto-Accept Carl |
-| Draw Llama | Draw Ultra Lord | Empty Page | **CONFLICT!** 🚨 | Vocoder prompter blows whistle (Manual selection) |
-| Erase Text | Erase Text | Text Present | **Erase Text** | Consensus (Erase accepted) |
-| Change spelling| Change spelling| "Goddard" | **CONFLICT!** 🚨 | Manual select (Which block is it?) |
+| No Change | Draw Ultra Lord | Empty Page | **Draw Ultra Lord** | Accepts Sheen's drawing. |
+| Draw Llama | No Change | Empty Page | **Draw Llama** | Accepts Carl's drawing. |
+| Draw Llama | Draw Ultra Lord | Empty Page | **CONFLICT!** 🚨 | Vocoder blows whistle and asks Jimmy. |
+| Erase Text | Erase Text | Text Present | **Erase Text** | Erases it since both kids wanted to. |
+| Change spelling| Change spelling| "Goddard" | **CONFLICT!** 🚨 | Asks Jimmy which spelling is correct. |
 
 ---
 
-### 6.2 The 48-Bit Content Hashing Math
+### 6.2 The Magic Line-Code Maker (48-Bit Hashing)
 
-To compare files quickly without reading every single letter, we compute a 48-bit hash $H(C)$ for each line block using:
-$$H(C) = \left( \sum_{i=1}^{L} \text{char}_i \times 31^{L-i} \right) \bmod 2^{48}$$
-
-```
-"Goddard" ---> [ 48-bit hash calculator ] ---> 0x51A8D3E4F6C2
-```
-
-We turn the letters of each line into numbers, multiply them by magic seeds, and slice off the front. If two lines have the same numbers, they are identical drawings. If they differ, Goddard knows they are different and checks them line-by-line.
+To compare files quickly without reading every single letter, Goddard turns the letters of each line into a short number code (a hash!).
+* **How it works:** Think of it like a magic box: you slide a line of words like `"Goddard"` in, and the box turns the letters into a short code like `99`. If two lines produce the same code, Goddard knows they are identical drawings without having to look at every single letter!
 
 ---
 
-### 6.3 Diff Engine Trace Algorithm
+### 6.3 Diff Engine Decision Tree
 
 ```
                  [ Clean Base Blueprint ]
@@ -322,9 +251,9 @@ We turn the letters of each line into numbers, multiply them by magic seeds, and
              (Line 12: "Llama")    (Line 12: "UltraLord")
                       \            /
                        \          /
-                    [ Compare Hashes ]
+                    [ Compare Codes ]
                             |
-               Does Hash(Carl) == Hash(Sheen)?
+               Do the line codes match?
                       /          \
                Yes   /            \ No
                     v              v
@@ -336,7 +265,7 @@ We turn the letters of each line into numbers, multiply them by magic seeds, and
 
 ## 7. Deep Subsystem Code Walkthroughs (Goddard's Source Code)
 
-Here is the code of the core engines inside Goddard. Every line is written so that even five-year-old programmers can inspect the logic:
+Here is the code of the core engines inside Goddard, with simple comments explaining how they work:
 
 ### 7.1 The Lab Journal Writer (`internal/events/journal.go`)
 
@@ -351,11 +280,12 @@ import (
 	"fmt"
 )
 
+// This is the sticker we stick in our journal
 type JournalEntry struct {
-	ID       int64  `json:"id"`
-	Inventor string `json:"inventor"`
-	Gadget   string `json:"gadget"`
-	Stamp    int64  `json:"stamp"`
+	ID       int64  `json:"id"`       // The sticker number
+	Inventor string `json:"inventor"` // Who made the toy
+	Gadget   string `json:"gadget"`   // The name of the toy
+	Stamp    int64  `json:"stamp"`    // When we made the toy
 }
 
 type JournalStore struct {
@@ -363,20 +293,20 @@ type JournalStore struct {
 }
 
 func (s *JournalStore) PutEntry(inventor string, gadget string) (*JournalEntry, error) {
-	// Write the gadget details
+	// 1. Create a new sticker record
 	st := &JournalEntry{
 		Inventor: inventor,
 		Gadget:   gadget,
 		Stamp:    1782398400,
 	}
 	
-	// Convert entry to JSON text bytes
+	// 2. Convert the sticker into text bytes
 	data, err := json.Marshal(st)
 	if err != nil {
 		return nil, fmt.Errorf("could not shape journal entry: %w", err)
 	}
 
-	// Stick it into the WAL book database
+	// 3. Glue the sticker into our journal book database
 	res, err := s.db.Exec("INSERT INTO lab_journal (payload) VALUES (?)", string(data))
 	if err != nil {
 		return nil, fmt.Errorf("lab journal is locked: %w", err)
@@ -831,7 +761,7 @@ The Guard catches all the messy scribbles in his bucket. When you pause to take 
 
 If your gadgets aren't working, look at this table to find the cure:
 
-| Goddard Ouchie Message | What Goddard Thinks | How to Fix it |
+| Goddard Error Message | What Went Wrong in the Lab | How to Fix It |
 | :--- | :--- | :--- |
 | `Error: database is locked` | The Lab Journal is closed because Goddard is drawing a big blueprint. | Wait 3 seconds and tap the button again. |
 | `Error: permission denied` | Cindy Vortex tapped the Red prompter button. Goddard is whimpering. | Open settings and toggle the permission switch back to Green. |
@@ -843,7 +773,7 @@ If your gadgets aren't working, look at this table to find the cure:
 
 ## 16. Retron-7000 Lab FAQ
 
-Here are the answers to the questions kids and llama owners ask most about our robot:
+Here are the answers to the questions kid-inventors ask most about our robot dog system:
 
 ### Q1: Can Goddard eat my real chocolate cookies?
 No! Goddard is a robot doggy. He has no organic stomach, and he lives behind the glass screen. Plus, he only eats virtual dog biscuits and Purple Flurp bytes!
@@ -883,7 +813,7 @@ Before we can start playing, we have to mix our ingredients and bake the code!
 
 ### Kitchen Prerequisites (What you need)
 
-| Lab Tool | Version Required | 5-Year-Old Explanation |
+| Lab Tool | Version Required | What It Does for Our Gadget |
 | :--- | :--- | :--- |
 | [Go](https://go.dev/dl/) | 1.26+ | The magic flour that makes our robot dog big and strong. |
 | [Node.js](https://nodejs.org/) | 20+ (with npm) | The cookie cutter that shapes our pretty holographic screens. |
