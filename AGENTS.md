@@ -98,7 +98,7 @@ Security is of utmost importance. This daemon serves a browser UI to devices on 
 
 - **[AGENTS.md](AGENTS.md)** — Core agent rules and coordinating information (this file)
 - **[docs/plans/Blueprint.md](docs/plans/Blueprint.md)** — Core agent design and mutual understanding of the app (the design source of truth)
-- **[docs/STATUS.md](docs/STATUS.md)** — Central task-level implementation status, checklists, and active codebase gaps. Never over 150 lines. 
+- **[docs/STATUS.md](docs/STATUS.md)** — Central task-level implementation status, checklists, and active codebase gaps. Never over 150 lines. Focus on meaningful changes.
 - `docs/known-issues.md` — Deferred review findings and tracked gaps
 - `docs/development/TechStack.md` — Technology choices and library list
 - `docs/reference/<topic>/` — Stable reference material for external standards and tools we conform to (e.g. `reference/acp/` for the Agent Client Protocol spec)
