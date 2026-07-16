@@ -1,0 +1,11 @@
+$ app start --help
+exit: 0
+--- stdout ---
+Start the Local Agent Interface daemon
+
+Usage:
+  app start [flags]
+
+Flags:
+  -h, --help   help for start
+--- stderr ---

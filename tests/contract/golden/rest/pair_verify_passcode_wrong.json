@@ -1,0 +1,7 @@
+{
+  "method": "POST",
+  "path": "/api/pair/verify-passcode",
+  "status": 401,
+  "contentType": "application/json",
+  "body": "{\"error\":\"invalid or expired passcode\"}\n"
+}

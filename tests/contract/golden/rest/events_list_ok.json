@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/events",
+  "status": 200,
+  "contentType": "application/json",
+  "body": "[]\n"
+}

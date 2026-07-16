@@ -1,0 +1,5 @@
+$ app logs
+exit: 0
+--- stdout ---
+No log file found. Is the daemon running?
+--- stderr ---

@@ -19,9 +19,9 @@ unit tests alone.
 
 ## Acceptance Criteria
 
-- [ ] Every API route has at least success and relevant failure contract coverage
-- [ ] JSON comparisons are semantic where field order is irrelevant and exact where bytes are contractually significant
+- [x] Every API route has at least success and relevant failure contract coverage
+- [x] JSON comparisons are semantic where field order is irrelevant and exact where bytes are contractually significant
 - [ ] WebSocket tests cover replay/live transition, slow-client recovery, and auth/origin rejection
-- [ ] CLI command output and exit-code compatibility is covered for supported platforms
-- [ ] Fixtures are generated from Go, reviewed, and checked in without secrets
+- [x] CLI command output and exit-code compatibility is covered for supported platforms
+- [x] Fixtures are generated from Go, reviewed, and checked in without secrets
 - [ ] Rust changes cannot claim parity until this suite passes

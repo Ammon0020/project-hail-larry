@@ -1,0 +1,6 @@
+$ app pair
+exit: 1
+--- stdout ---
+--- stderr ---
+pairing failed (HTTP 429): {"error":"pairing rate limit exceeded, try again later"}
+

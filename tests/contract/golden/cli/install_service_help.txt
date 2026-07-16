@@ -1,0 +1,11 @@
+$ app install-service --help
+exit: 0
+--- stdout ---
+Register the daemon as a user service that starts on boot
+
+Usage:
+  app install-service [flags]
+
+Flags:
+  -h, --help   help for install-service
+--- stderr ---

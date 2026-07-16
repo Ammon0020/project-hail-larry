@@ -1,0 +1,2 @@
+{"dir":"send","note":"broadcast 0 via server.OnEvent"}
+{"dir":"recv","type":"text","event":{"id":1,"type":"StreamUpdate","sessionId":"fixture-session","timestamp":"\u003cREDACTED_TIMESTAMP\u003e","role":"agent","content":"fixture broadcast 0","executeAt":"\u003cREDACTED_TIMESTAMP\u003e"}}

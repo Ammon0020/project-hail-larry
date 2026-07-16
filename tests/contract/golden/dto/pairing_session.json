@@ -1,0 +1,10 @@
+{
+  "id": "fixture-session-id",
+  "token": "\u003cREDACTED_TOKEN\u003e",
+  "passcode": "\u003cREDACTED_PASSCODE\u003e",
+  "url": "http://localhost:7337?token=\u003cREDACTED_TOKEN\u003e",
+  "qrPath": "\u003cREDACTED_PATH\u003e/qr.png",
+  "createdAt": "<REDACTED_TIMESTAMP>",
+  "expiresAt": "<REDACTED_TIMESTAMP>",
+  "used": false
+}

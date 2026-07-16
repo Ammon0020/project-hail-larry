@@ -1,0 +1,146 @@
+[package]
+name = "local_agent"
+version = "0.1.0"
+edition = "2021"
+# MSRV — verified against installed stable 2025-12-08 (S-ARCH).
+rust-version = "1.92.0"
+description = "Self-hosted web code editor with AI built in (Rust port of the Go daemon)."
+license = "AGPL-3.0"
+publish = false
+# Default binary is `local_agent` (mirrors Go `cmd/app`). The library target
+# enables integration tests and contract fixtures to import internal modules.
+default-run = "local_agent"
+
+[lib]
+name = "local_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "local_agent"
+path = "src/main.rs"
+
+[dependencies]
+# --- Async runtime ---
+# tokio: multi-threaded runtime maps to Go's GOMAXPROCS scheduler; required by
+# axum, tower-http, and the ACP Rust SDK. Verified 2026-07-15.
+tokio = { version = "1.47", features = ["full"] }
+# tokio-util: CancellationToken replaces Go context.Context cancellation
+# (data-and-concurrency.md). Verified 2026-07-15.
+tokio-util = { version = "0.7.16", features = ["rt"] }
+
+# --- Web framework ---
+# axum: routing, middleware, and built-in WebSocket (replaces net/http +
+# nhooyr.io/websocket). v0.8 line per web-framework.md. Verified 2026-07-15.
+axum = { version = "0.8", features = ["ws", "macros"] }
+# tower: Service/Layer primitives consumed by axum middleware composition.
+# Verified 2026-07-15.
+tower = { version = "0.5", features = ["util"] }
+# tower-http: CORS, limit, trace layers (replaces hand-rolled middleware).
+# Verified 2026-07-15.
+tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+# tower_governor: IP-keyed rate limiting for unauthenticated endpoints (e.g.
+# pairing). Recommended in web-framework.md over tower::limit::rate.
+# Verified 2026-07-15.
+tower_governor = "0.7"
+# governor: the underlying rate-limit core. Imported directly for the
+# `NoOpMiddleware` type alias used in our `IpGovernorLayer` type alias.
+# Verified 2026-07-15.
+governor = "0.8"
+
+# --- TLS ---
+# rustls: TLS serving path. aws-lc-rs provider chosen over ring because it is
+# the rustls default provider, has FIPS validation path, and is recommended by
+# the rustls maintainers for new deployments. Exactly one provider is installed
+# at startup (src/app/tls.rs). Verified 2026-07-15.
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "logging", "std", "tls12"] }
+# tokio-rustls: async TLS accept loop wrapper around rustls. Verified 2026-07-15.
+tokio-rustls = "0.26"
+
+# --- HTTP client ---
+# reqwest: outbound HTTPS for ACP auth (PKCE) and agent provider callbacks.
+# rustls-tls avoids pulling OpenSSL. Verified 2026-07-15.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# --- Serialization ---
+# serde + serde_json: replaces encoding/json. Verified 2026-07-15.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# toml: replaces pelletier/go-toml/v2 for config files. Verified 2026-07-15.
+toml = "0.8"
+
+# --- Storage ---
+# rusqlite (bundled): SQLite event store. Bundled feature compiles SQLite C
+# source (needs cc at build time, no runtime dep). data-and-concurrency.md
+# recommends rusqlite over sqlx for the append/query event store pattern.
+# Verified 2026-07-15.
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# --- Logging / tracing ---
+# tracing + tracing-subscriber: structured async-aware logging (replaces
+# log/slog). Verified 2026-07-15.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+# tracing-appender: non-blocking rolling file appender for ~/.local-agent/logs/
+# (build-and-embed.md). Verified 2026-07-15.
+tracing-appender = "0.2"
+
+# --- CLI ---
+# clap (derive): replaces spf13/cobra. Verified 2026-07-15.
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# --- Error handling ---
+# anyhow: ad-hoc error wrapping (Go fmt.Errorf %w). Verified 2026-07-15.
+anyhow = "1.0"
+# thiserror: typed domain errors. Verified 2026-07-15.
+thiserror = "2.0"
+
+# --- ACP SDK ---
+# agent-client-protocol: official Rust ACP SDK (replaces coder/acp-go-sdk).
+# v1.2.0 pinned 2026-07-15 by S-ACP-SPIKE. Default features cover the stable
+# v1 protocol surface (initialize, session lifecycle, streaming, tool
+# callbacks, permission requests). The `unstable_mcp_over_acp` feature is
+# required to code-generate the mcp/connect / mcp/disconnect / mcp/message
+# relay methods; `unstable` enables other draft operations used by the Go
+# client (provider management, session fork). MSRV 1.92.0 compatible.
+agent-client-protocol = { version = "1.2.0", features = ["unstable", "unstable_mcp_over_acp"] }
+
+[dev-dependencies]
+# async-process: used by S-ACP-SPIKE (`tests/spike_acp.rs`) to spawn the
+# mockagent with PID tracking for the cancellation/teardown test. The SDK's
+# `AcpAgent` uses it internally; the streams implement `futures::io` traits
+# required by `agent_client_protocol::ByteStreams`. Verified 2026-07-15.
+async-process = "2.5.0"
+# tempfile: scratch workspace dirs for S-PATHUTIL traversal/symlink tests and
+# S-CONFIG atomic-write / round-trip tests so they never touch the developer's
+# real filesystem. Verified 2026-07-15.
+tempfile = "3.27.0"
+# tokio test macro for async unit tests. Verified 2026-07-15.
+tokio-test = "0.4"
+
+# Lint policy — authoritative levels enforced by `cargo build`/`cargo test`/
+# `cargo clippy` and IDE check-on-save, not just by `cargo clippy -- -D warnings`.
+# CI runs `cargo clippy --all-targets -- -D warnings`; the deny levels below stay
+# consistent with that. Add new deny lints only after verifying the tree is clean.
+[lints.rust]
+# Parity with CI's `-D warnings`: any rustc warning is a build failure.
+warnings = "deny"
+
+[lints.clippy]
+# Default group baseline (correctness + suspicious + style + complexity + perf).
+all = "deny"
+# Restriction lints — enforce daemon-grade discipline. This process serves the
+# LAN and executes shell commands on behalf of agents, so panics and stray
+# debug output are unacceptable in non-test code. All entries below were
+# verified clean across `--all-targets` on 2026-07-15 before being denied.
+dbg_macro = "deny"        # no `dbg!()` — use `tracing`
+print_stdout = "deny"     # no `println!` — use `tracing`
+print_stderr = "deny"     # no `eprintln!` — use `tracing`
+todo = "deny"             # no shipped `todo!()` stubs
+unimplemented = "deny"    # no `unimplemented!()`
+panic = "deny"            # no `panic!()` — return `Result` instead
+unwrap_used = "deny"      # no `.unwrap()` — can panic; use `?` or `let Ok(..) = ..`
+expect_used = "deny"      # no `.expect()` — same rationale as `unwrap_used`
+# Aspirational pedantic lints (missing_errors_doc, missing_panics_doc,
+# must_use_candidate, doc_markdown) are NOT denied yet: 4 findings exist today
+# (see docs/known-issues.md). Deny them once those are fixed. Adding them as
+# `warn` here would be escalated to errors by CI's blanket `-D warnings`.

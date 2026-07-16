@@ -1,0 +1,7 @@
+{
+  "method": "POST",
+  "path": "/api/pair/verify-token",
+  "status": 401,
+  "contentType": "application/json",
+  "body": "{\"error\":\"invalid or expired token\"}\n"
+}

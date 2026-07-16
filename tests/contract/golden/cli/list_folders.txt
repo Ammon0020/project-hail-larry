@@ -1,0 +1,5 @@
+$ app list-folders
+exit: 0
+--- stdout ---
+66c9bb27f0c7a337	seed-workspace	/media/adam/extex/projects/project-hail-larry/tests/contract/fixtures/seed-workspace
+--- stderr ---

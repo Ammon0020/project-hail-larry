@@ -23,7 +23,7 @@ checks used by workspace, files, shell, and server packages.
 
 ## Acceptance Criteria
 
-- [ ] `cargo test pathutil` passes
-- [ ] Path traversal attempts rejected (e.g. `../../etc/passwd`)
-- [ ] Symlinks pointing outside workspace root rejected
-- [ ] No panics on edge cases (empty path, root path, non-UTF8)
+- [x] `cargo test pathutil` passes (20 tests)
+- [x] Path traversal attempts rejected (e.g. `../../etc/passwd`)
+- [x] Symlinks pointing outside workspace root rejected
+- [x] No panics on edge cases (empty path, root path, non-UTF8)

@@ -1,0 +1,7 @@
+{
+  "method": "POST",
+  "path": "/api/sessions",
+  "status": 400,
+  "contentType": "application/json",
+  "body": "{\"error\":\"agent not found: no-such-agent\"}\n"
+}

@@ -1,0 +1,5 @@
+$ app add-folder tests/contract/fixtures/seed-workspace
+exit: 0
+--- stdout ---
+Workspace registered: /media/adam/extex/projects/project-hail-larry/tests/contract/go-fixtures/tests/contract/fixtures/seed-workspace
+--- stderr ---

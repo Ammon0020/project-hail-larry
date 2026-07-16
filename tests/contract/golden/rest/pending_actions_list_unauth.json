@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/pending-actions",
+  "status": 401,
+  "contentType": "application/json",
+  "body": "{\"error\":\"unauthorized\"}\n"
+}

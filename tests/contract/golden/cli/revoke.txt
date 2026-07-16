@@ -1,0 +1,6 @@
+$ app revoke 
+exit: 1
+--- stdout ---
+--- stderr ---
+revoke failed (HTTP 404): 404 page not found
+

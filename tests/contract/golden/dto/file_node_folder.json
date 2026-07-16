@@ -1,0 +1,12 @@
+{
+  "name": "src",
+  "type": "folder",
+  "path": "src",
+  "children": [
+    {
+      "name": "greet.txt",
+      "type": "file",
+      "path": "src/greet.txt"
+    }
+  ]
+}

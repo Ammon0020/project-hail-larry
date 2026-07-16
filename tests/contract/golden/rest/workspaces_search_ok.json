@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/workspaces/66c9bb27f0c7a337/search?q=hello",
+  "status": 400,
+  "contentType": "application/json",
+  "body": "{\"error\":\"missing 'pattern' query parameter\"}\n"
+}

@@ -1,0 +1,7 @@
+{
+  "method": "PUT",
+  "path": "/api/mcp",
+  "status": 400,
+  "contentType": "application/json",
+  "body": "{\"error\":\"invalid mcp config JSON: invalid character 'n' looking for beginning of object key string\"}\n"
+}

@@ -1,0 +1,5 @@
+$ app remove-folder nonexistent-id
+exit: 1
+--- stdout ---
+--- stderr ---
+workspace not found: nonexistent-id

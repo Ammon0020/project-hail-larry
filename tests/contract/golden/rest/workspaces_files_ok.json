@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/workspaces/66c9bb27f0c7a337/files",
+  "status": 200,
+  "contentType": "application/json",
+  "body": "[{\"name\":\"src\",\"type\":\"folder\",\"path\":\"src\",\"children\":[{\"name\":\"greet.txt\",\"type\":\"file\",\"path\":\"src/greet.txt\"}]}]\n"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "main",
+  "required": true,
+  "supported": [
+    "anthropic",
+    "openai"
+  ],
+  "current": {
+    "apiType": "anthropic",
+    "baseUrl": "https://api.anthropic.com"
+  }
+}

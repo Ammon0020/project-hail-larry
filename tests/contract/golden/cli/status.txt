@@ -1,0 +1,10 @@
+$ app status
+exit: 0
+--- stdout ---
+Status:   Running (PID 800296)
+Host:      127.0.0.1
+Port:      45869
+Data:      <REDACTED_PATH>
+Workspaces: 1
+  - /media/adam/extex/projects/project-hail-larry/tests/contract/fixtures/seed-workspace
+--- stderr ---

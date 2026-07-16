@@ -1,4 +1,4 @@
-.PHONY: all build-frontend build-backend build test lint vet clean
+.PHONY: all build-frontend build-backend build test lint lint-rust vet clean
 
 # Build the frontend and copy it into the Go embed directory.
 build-frontend:
@@ -21,6 +21,11 @@ test:
 # Run golangci-lint (cross-platform: Windows, macOS, Linux).
 lint:
 	golangci-lint run
+
+# Run cargo clippy (Rust). Deny levels come from [lints] in Cargo.toml;
+# -D warnings matches CI so local runs catch the same bar.
+lint-rust:
+	cargo clippy --all-targets -- -D warnings
 
 # Run go vet.
 vet:

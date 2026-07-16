@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/workspaces/66c9bb27f0c7a337/file?path=README.md",
+  "status": 404,
+  "contentType": "application/json",
+  "body": "{\"error\":\"stat file: lstat /media/adam/extex/projects/project-hail-larry/tests/contract/fixtures/seed-workspace/README.md: no such file or directory\"}\n"
+}

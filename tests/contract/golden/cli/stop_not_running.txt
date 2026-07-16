@@ -1,0 +1,5 @@
+$ app stop
+exit: 1
+--- stdout ---
+--- stderr ---
+daemon is not running

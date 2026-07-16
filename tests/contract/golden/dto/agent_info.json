@@ -1,0 +1,15 @@
+{
+  "id": "fixture-agent",
+  "name": "Fixture Agent",
+  "command": "fixture-agent-binary",
+  "args": [
+    "--acp"
+  ],
+  "models": [
+    {
+      "id": "fixture-model",
+      "name": "Fixture Model"
+    }
+  ],
+  "warning": "Executable not found in PATH"
+}

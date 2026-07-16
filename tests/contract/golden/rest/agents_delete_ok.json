@@ -1,0 +1,7 @@
+{
+  "method": "DELETE",
+  "path": "/api/agents/fixture-agent",
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"status\":\"deleted\"}\n"
+}

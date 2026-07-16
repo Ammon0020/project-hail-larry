@@ -1,0 +1,7 @@
+{
+  "method": "DELETE",
+  "path": "/api/sessions/nonexistent",
+  "status": 404,
+  "contentType": "application/json",
+  "body": "{\"error\":\"session not found: nonexistent\"}\n"
+}

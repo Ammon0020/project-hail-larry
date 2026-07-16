@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/sessions/nonexistent/export",
+  "status": 404,
+  "contentType": "application/json",
+  "body": "{\"error\":\"session not found: nonexistent\"}\n"
+}

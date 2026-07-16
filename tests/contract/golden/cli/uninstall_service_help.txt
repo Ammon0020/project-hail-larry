@@ -1,0 +1,11 @@
+$ app uninstall-service --help
+exit: 0
+--- stdout ---
+Remove the system service registered by install-service
+
+Usage:
+  app uninstall-service [flags]
+
+Flags:
+  -h, --help   help for uninstall-service
+--- stderr ---

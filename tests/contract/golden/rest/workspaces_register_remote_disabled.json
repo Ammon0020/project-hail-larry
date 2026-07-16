@@ -1,0 +1,7 @@
+{
+  "method": "POST",
+  "path": "/api/workspaces",
+  "status": 403,
+  "contentType": "application/json",
+  "body": "{\"error\":\"Remote workspace registration is disabled. Use 'app add-folder \\u003cpath\\u003e' on the host, or set allowRemoteWorkspaceRegistration: true in config.\"}\n"
+}

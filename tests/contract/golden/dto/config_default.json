@@ -1,0 +1,27 @@
+{
+  "port": 7337,
+  "host": "0.0.0.0",
+  "dataDir": "\u003cREDACTED_PATH\u003e",
+  "dbPath": "\u003cREDACTED_PATH\u003e/local-agent.db",
+  "workspaces": [
+    "\u003cREDACTED_PATH\u003e/seed-workspace"
+  ],
+  "agents": [
+    {
+      "id": "fixture-agent",
+      "name": "Fixture Agent",
+      "command": "fixture-agent-binary",
+      "models": [
+        {
+          "id": "fixture-model",
+          "name": "Fixture Model"
+        }
+      ]
+    }
+  ],
+  "tlsEnabled": true,
+  "tlsCertDir": "\u003cREDACTED_PATH\u003e/tls",
+  "pairingTtlSeconds": 300,
+  "credentialInactivityTtlSeconds": 2592000,
+  "revocationGracePeriodSeconds": 300
+}

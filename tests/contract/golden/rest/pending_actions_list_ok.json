@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/pending-actions",
+  "status": 200,
+  "contentType": "application/json",
+  "body": "[]\n"
+}

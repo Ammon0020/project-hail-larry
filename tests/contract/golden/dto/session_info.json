@@ -1,0 +1,10 @@
+{
+  "id": "fixture-session",
+  "name": "Fixture Session",
+  "status": "ready",
+  "agentId": "fixture-agent",
+  "modelId": "fixture-model",
+  "workspace": "\u003cREDACTED_PATH\u003e",
+  "createdAt": "<REDACTED_TIMESTAMP>",
+  "updatedAt": "<REDACTED_TIMESTAMP>"
+}

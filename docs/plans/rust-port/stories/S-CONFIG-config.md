@@ -24,8 +24,8 @@ storage.
 
 ## Acceptance Criteria
 
-- [ ] Config round-trips through TOML without data loss
-- [ ] Atomic write (temp + rename) — no corruption on crash
-- [ ] `cargo test config` passes
+- [x] Config round-trips through TOML without data loss
+- [x] Atomic write (temp + rename) — no corruption on crash
+- [x] `cargo test config` passes
 - [ ] Config file format is compatible, or S-MIGRATE provides a tested atomic migration
-- [ ] Existing file permissions and unknown compatible fields are not silently weakened or lost
+- [x] Existing file permissions and unknown compatible fields are not silently weakened or lost

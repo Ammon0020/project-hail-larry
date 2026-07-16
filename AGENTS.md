@@ -67,7 +67,7 @@ Delegate tasks to subagents when appropriate to save context in your own chat. S
 ## Development Standards
 
 - **Building:** Linux/macOS: `./build.sh`, Windows: `.\build.ps1`. Builds frontend and backend at once.
-- **Testing and Linting:** Run tests and linting before marking a task complete — `go test ./...`, `go vet ./...`, `npm run build`, `golangci-lint run`, `eslint`.
+- **Testing and Linting:** Run tests and linting before marking a task complete — `go test ./...`, `go vet ./...`, `npm run build`, `golangci-lint run`, `eslint`. For Rust: `cargo test --all-targets`, `cargo clippy --all-targets -- -D warnings` (or `make lint-rust`), `cargo fmt --check`. Lint deny levels are authoritative in `[lints]` in `Cargo.toml` — `cargo build`/`cargo test` enforce the same bar as CI without needing extra flags.
 - **Stay on task:** If a test fails in another task, note it in `docs/known-issues.md` and move on
 - **Plans:** Must be a summary (see `docs/plans/Blueprint.md`) or executable in one branch under a single work item (see `docs/plans/`)
 - **No inline CSS or hard-to-read styling:** Use Tailwind classes and keep styles in components. Use `cva` for elements with 2+ visual variants; leave one-off styles inline.

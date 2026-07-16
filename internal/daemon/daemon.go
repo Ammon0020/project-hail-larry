@@ -470,6 +470,25 @@ func New(cfg *Config) (*Daemon, error) {
 	}, nil
 }
 
+// Server returns the fully-wired HTTP server. It is exposed so the
+// compatibility fixture harness (tests/contract/) can exercise the real
+// handler chain in-process — including the daemon's manager wiring — without
+// binding TCP ports or running the blocking Start loop. Callers that only need
+// the http.Handler should use srv.Handler(). The returned server is shared;
+// do not call its lifecycle methods while the daemon is running via Start.
+func (d *Daemon) Server() *server.Server {
+	return d.server
+}
+
+// Close releases all daemon resources (filesystem watcher, pairing manager,
+// HTTP server, sync hub, ACP sessions, event store, uploads) without going
+// through the signal-driven Start path. It is intended for in-process users
+// such as the compatibility fixture harness, which constructs the daemon via
+// New but never calls Start. It is safe to call multiple times.
+func (d *Daemon) Close() {
+	d.cleanup()
+}
+
 // Start runs the daemon until the context is cancelled or a signal is received.
 // It writes a PID file to the data directory for stop/status commands.
 func (d *Daemon) Start(ctx context.Context) error {

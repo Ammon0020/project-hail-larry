@@ -1,0 +1,35 @@
+{
+  "id": 42,
+  "type": "ToolCompleted",
+  "sessionId": "fixture-session",
+  "timestamp": "<REDACTED_TIMESTAMP>",
+  "role": "agent",
+  "content": "fixture content",
+  "tool": "read_text_file",
+  "target": "src/greet.txt",
+  "summary": "fixture summary",
+  "command": "ls -la",
+  "cwd": "\u003cREDACTED_PATH\u003e",
+  "options": [
+    "allow_always",
+    "allow_session",
+    "deny"
+  ],
+  "requestId": "fixture-request",
+  "toolKind": "read",
+  "toolCallId": "fixture-tool-call",
+  "thought": true,
+  "exitCode": 7,
+  "stopReason": "end_turn",
+  "workspaceId": "\u003cREDACTED_WORKSPACE_ID\u003e",
+  "attachments": [
+    {
+      "id": "fixture-upload",
+      "name": "screenshot.png",
+      "mimeType": "image/png",
+      "path": "\u003cREDACTED_PATH\u003e/uploads/screenshot.png"
+    }
+  ],
+  "executeAt": "<REDACTED_TIMESTAMP>",
+  "deviceName": "fixture-device"
+}

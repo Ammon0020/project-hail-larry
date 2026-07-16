@@ -1,0 +1,5 @@
+$ app devices
+exit: 0
+--- stdout ---
+No paired devices. Use 'app pair' to pair a device.
+--- stderr ---

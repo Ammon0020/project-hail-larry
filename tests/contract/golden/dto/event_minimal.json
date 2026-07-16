@@ -1,0 +1,9 @@
+{
+  "id": 1,
+  "type": "PromptSubmitted",
+  "sessionId": "fixture-session",
+  "timestamp": "<REDACTED_TIMESTAMP>",
+  "role": "user",
+  "content": "hello",
+  "executeAt": "<REDACTED_TIMESTAMP>"
+}

@@ -1,0 +1,9 @@
+{
+  "id": "fixture-action",
+  "type": "revocation",
+  "deviceId": "\u003cREDACTED_DEVICE_ID\u003e",
+  "deviceName": "fixture-device",
+  "requestedBy": "\u003cREDACTED_DEVICE_ID\u003e",
+  "requestedAt": "<REDACTED_TIMESTAMP>",
+  "executeAt": "<REDACTED_TIMESTAMP>"
+}

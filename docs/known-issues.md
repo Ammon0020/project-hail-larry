@@ -63,6 +63,26 @@ handshake when valid, or (c) a daemon-side approach that keeps auth alive
 across restarts (not possible while tokens are opaque). Track upstream SDK
 releases for (a).
 
+## Clippy pedantic — 4 findings to ratchet to deny (Low)
+
+Investigated 2026-07-15. The `[lints.clippy]` table in `Cargo.toml` denies
+`clippy::all` plus a curated set of restriction lints (no panics, no
+`unwrap`/`expect`, no `dbg!`/`println!`/`eprintln!`, no `todo!`/`unimplemented!`)
+in non-test code. The tree is clean under that policy.
+
+Four `clippy::pedantic` findings exist today and are intentionally NOT denied
+yet (denying them as `warn` would be escalated to errors by CI's blanket
+`-D warnings`). Fix these, then add them to `[lints.clippy]` as `"deny"`:
+
+- `src/lib.rs:12` — `doc_markdown`: item in documentation missing backticks
+- `src/app/logging.rs:26` — `missing_errors_doc`: `Result`-returning fn lacks
+  `# Errors` section
+- `src/app/tls.rs:26` — `missing_errors_doc`: same
+- `src/app/rate_limit.rs:38,52` — `must_use_candidate`: two fns could have
+  `#[must_use]`
+
+Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic`
+
 ## Security audit — deferred findings (from 2026-07-07 audit)
 
 - **sec-auth-credentials-in-query-params (Low):** Device credentials are passed

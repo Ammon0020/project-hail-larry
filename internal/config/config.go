@@ -16,7 +16,30 @@ import (
 
 const (
 	configFilePerm = 0600
+
+	// stateDirEnvVar is the environment variable that, when set, overrides the
+	// default ~/.local-agent state directory. This is used by the compatibility
+	// fixture harness (tests/contract/) to run the daemon and CLI against an
+	// isolated state directory without touching the user's real config. When
+	// unset, the default ~/.local-agent path is used (existing behavior).
+	stateDirEnvVar = "LOCAL_AGENT_STATE_DIR"
 )
+
+// resolvedStateDir returns the state directory the config should use. When the
+// LOCAL_AGENT_STATE_DIR environment variable is set, its value is used
+// verbatim; otherwise the default ~/.local-agent path is derived from the
+// user's home directory. This is the single override point consulted by both
+// DefaultOrError and Load so the CLI and daemon agree on the state directory.
+func resolvedStateDir() (string, error) {
+	if dir := os.Getenv(stateDirEnvVar); dir != "" {
+		return dir, nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("determine user home directory: %w", err)
+	}
+	return filepath.Join(homeDir, ".local-agent"), nil
+}
 
 // Config is the persistent application configuration.
 type Config struct {
@@ -104,11 +127,10 @@ func Default() *Config {
 // home directory cannot be determined. Use this instead of Default when the
 // caller can surface the error to the user.
 func DefaultOrError() (*Config, error) {
-	homeDir, err := os.UserHomeDir()
+	dataDir, err := resolvedStateDir()
 	if err != nil {
-		return nil, fmt.Errorf("determine user home directory: %w", err)
+		return nil, err
 	}
-	dataDir := filepath.Join(homeDir, ".local-agent")
 
 	return &Config{
 		Port:       7337,
@@ -144,16 +166,17 @@ func DefaultOrError() (*Config, error) {
 	}, nil
 }
 
-// Load reads the config from ~/.local-agent/config.json.
-// Returns Default() if the file doesn't exist.
+// Load reads the config from <stateDir>/config.json, where <stateDir> is the
+// LOCAL_AGENT_STATE_DIR env var when set, otherwise ~/.local-agent. Returns
+// Default() if the file doesn't exist.
 func Load() (*Config, error) {
-	homeDir, err := os.UserHomeDir()
+	stateDir, err := resolvedStateDir()
 	if err != nil {
 		return nil, err
 	}
-	configPath := filepath.Join(homeDir, ".local-agent", "config.json")
+	configPath := filepath.Join(stateDir, "config.json")
 
-	data, err := os.ReadFile(configPath) //nolint:gosec // configPath is constructed from the current user's home directory.
+	data, err := os.ReadFile(configPath) //nolint:gosec // configPath is constructed from the resolved state directory.
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No config file yet — return defaults. Home dir was already
