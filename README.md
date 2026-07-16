@@ -1,311 +1,275 @@
-# 🪐 PROJECT HAIL LARRY: The Super-Duper Advanced Cyber-Toybox Daemon Protocol & Synaptic Mirror Sandbox Matrix 🧸🚀
+# 🪐 PROJECT HAIL LARRY (Retron-7000 Edition): The Super-Duper Advanced Neutronic Cyber-Lab Daemon Protocol & Goddard Quantum Mirror Sandbox Matrix 🐕🚀
 
-**An Ultra-High-Complexity Hyper-State Network Architecture for Big Kids and Smart Puppies.**
+**An Ultra-High-Complexity Hyper-State Quantum Network Architecture for Retroville Inventors and Genius Puppies.**
 
 ---
 
-## 1. The Structure of Our Playroom (System Layout)
+## 1. The Structure of Jimmy's Retroville Lab (System Layout)
 
-This playroom connects a friendly robot living in your computer to pretty screens on your tablets and phones using a long tin-can string. Here is the formal list of all the toys we use:
+This secret clubhouse laboratory connects Goddard (who lives inside Jimmy's computer closet) to holographic screens on all tablets, communicators, and Sheen's action-figure sensors using a long, quantum-entangled radio string. Here is the list of all the components we use in the lab:
 
-| Playground Component | Playground Role | How It Keeps the Playroom Safe |
+| Lab Component | Retroville Role | How It Keeps the Lab Safe |
 | :--- | :--- | :--- |
-| **The Big Boss Robot 🤖** | He lives inside your computer closet and holds the key to the toy box. | He blocks bad kids from touching files outside the sandbox fence. |
-| **The Magic Teddy Bear 🧸** | A super-smart talking teddy bear who writes letters of code. | He cannot touch your computer directly; he must whisper through the phone. |
-| **The Tin-Can Telephone 📳** | A magic wool string connecting all tablets and phones in the house. | He uses WebSocket waves so everyone sees the exact same drawings. |
-| **The Sticker Journal 📓** | A giant workbook where we stick permanent notes (no erasers allowed). | He records every game we play in SQLite WAL format so we never forget. |
-| **The Traffic Light Referee 🚦** | A box that blinks Green (Yes) or Red (No) whenever a toy wants a cookie. | He halts dangerous tricks until you tap the screen to say "Mother, may I?". |
-| **The Magic Drawing Board 🎨** | The pretty glass screen with colorful buttons (React + Tailwind v4). | He shows the toys but doesn't keep them when you turn the screen off. |
+| **Goddard (Robot Dog) 🐕** | He lives inside your computer closet and holds the key to the invention drawer. | He blocks bad kids (like Cindy Vortex or Yolkians) from touching files outside the sandbox fence. |
+| **The Neuro-Link Band 🧠** | A super-smart headband that whispers ideas and writes code letters. | It cannot touch your computer directly; it must whisper through Goddard's audio ports. |
+| **The Intergalactic Communicator 📡** | A high-frequency radio link connecting all tablets and screens in Retroville. | He uses WebSocket waves so Carl, Sheen, and Jimmy see the exact same drawings. |
+| **The Lab Journal 📓** | A giant workbook where we stick permanent notes (no erasers allowed, written in ink). | He records every experiment in SQLite WAL format so we never forget our formulas. |
+| **The Vocoder Voice Prompter 🚦** | A command box that blinks Green (Yes) or Red (No) before Goddard runs any crazy gadget. | He halts dangerous tricks until you tap the screen to say "Mother, may I?" or "Goddard, play dead!". |
+| **The Holographic Invention Screen 🎨** | The pretty glass screen with colorful buttons (React 19 + Tailwind v4 + shadcn/ui). | He shows the toy drafts but doesn't keep them when you turn the power off. |
 
 ---
 
-### 1.1 Formal Algebraic State-Space Modeling (𝚺-Calculus of the Sandbox)
+### 1.1 Formal Lab Modeling (The Logic of the Retroville Lab)
 
-To make sure we never lose a single lego block, we model our playground state using formal playground math. Let $S$ represent the state of the sandbox, containing a set of active toys $T$, a set of connected kids $K$, and a big robot $R$.
+To make sure we never lose a single invention blueprint, we model our lab state using simple logic rules. Let's imagine the state of our Retroville Lab as a giant box containing a set of active inventions, a set of connected kids (Jimmy, Carl, Sheen, Cindy, and Libby), and Goddard's daemon system.
 
-Let $P(a)$ represent the Permission Function for an action $a$ proposed by the Magic Teddy Bear ($B$):
-$$P(a) = \begin{cases} \text{Green Light}, & \text{if kid taps the green button} \\ \text{Red Light}, & \text{if kid taps the red button} \\ \text{Nap Time}, & \text{if kid falls asleep (5 minutes)} \end{cases}$$
+Here is the Permission Rule for any action proposed by the Neuro-Link Band:
+* **Green Light (YES):** If Jimmy taps the green button to let the band write a file.
+* **Red Light (NO):** If Cindy taps the red button to ruin the fun and block the file.
+* **Nap Time (WAIT):** If Carl falls asleep eating a pie, the lab pauses for 5 minutes.
 
-The state transition operator $\Psi$ updates the playroom state from $S_t$ to $S_{t+1}$ based on the action $a$:
-$$\Psi(S_t, a) = \begin{cases} S_t \cup \{ \text{new drawing} \}, & \text{if } P(a) = \text{Green Light} \\ S_t \setminus \{ \text{broken trust} \}, & \text{if } P(a) = \text{Red Light} \\ S_t, & \text{if } P(a) = \text{Nap Time} \end{cases}$$
+Whenever the Neuro-Link Band requests to write a new blueprint file, Goddard checks the borders:
+* **Allow the write** if the file stays inside the lab directory.
+* **Block the write** if the file tries to escape outside the lab boundaries.
 
-If the Teddy Bear ($B$) requests to write a new file $f$, the Robot ($R$) checks if the path of $f$ stays within the sandbox fence circle $C_{fence}$:
-$$\text{AllowWrite}(f) = \begin{cases} \text{True}, & \text{if } f \subseteq C_{fence} \\ \text{False}, & \text{if } f \not\subseteq C_{fence} \end{cases}$$
-
----
-
-### 1.2 Quantum Toybox Entanglement Calculus (The Spooky Crayon Action)
-
-When two tablets are connected to the same string telephone, their crayons become entangled. If you change a crayon's color on mom's iPad, the color on dad's phone changes instantly, even if they are in different rooms! We model this crayon entanglement state vector $|\Phi_{\text{crayon}}\rangle$ as:
-
-$$\left| \Phi_{\text{crayon}} \right\rangle = \frac{1}{\sqrt{2}} \left( \left| \text{Blue Crayon} \right\rangle_A \left| \text{Red Crayon} \right\rangle_B + \left| \text{Green Crayon} \right\rangle_A \left| \text{Yellow Crayon} \right\rangle_B \right)$$
-
-If tablet $A$ measures a color value of Blue Crayon, the waveform collapses, and tablet $B$ instantly snaps to Red Crayon at a velocity of $c_{toy} \approx 3 \times 10^8$ centimeters per playdate.
+When Jimmy gets a "Brain Blast!", all of his messy and confused ideas are instantly sorted and squeezed into a single working invention blueprint!
 
 ---
 
-## 2. The Synaptic Information Flow-Cycle (How the Magic Messages Travel)
+### 1.2 Goddard's Quantum Entanglement Calculus (The Spooky Purple Flurp Action)
 
-Here is the step-by-step handshake that occurs when a kid wants to draw a picture using the Teddy Bear:
+When two communicators are connected to the same radio line, their memory bits become quantum-entangled. If you change the screen color on Jimmy's terminal in the clubhouse, the color on Carl's device changes instantly, even if he is hiding in his bedroom from his mom's llama! It's like having two magic toys that are secretly holding hands—if you tickle one, the other one laughs immediately!
+
+Here are the quantum physics secrets that make our lab gadgets work:
+
+#### 1.2.1 Wavefunction Compression (The Shrink Ray)
+Jimmy's Neutronic Shrink Ray shrinks objects (like his parents, or Carl's lunch) by compressing the space inside atoms.
+* **How it works:** Think of atoms as big, fluffy cotton balls. The Shrink Ray tells the clouds of electrons to squeeze together very tightly, like kids hiding under a small blanket. This makes the clouds super small and packs the atoms closer together, so the whole toy shrinks to the size of a bean without blowing up!
+
+#### 1.2.2 Quantum Tunneling (The Book Accelerator & Clubhouse Door Escape)
+The Book Accelerator shoots books directly into Jimmy's brain using quantum tunneling.
+* **How it works:** If Goddard wants to walk through the closed wooden door of the lab, he turns his data messages into tiny, super-fast light waves. These waves are so thin that they can slide through the microscopic cracks in the wood blocks of the clubhouse door, just like water drops sliding through a sieve, popping out on the other side as a happy file!
+
+#### 1.2.3 Quantum Superposition of Goddard's Brain
+Goddard's options are stored in a superposition state.
+* **How it works:** Goddard is a magic robot doggy. When he doesn't know what to do, he exists in a fuzzy cloud of options—he is running, playing dead, and blowing up all at the same time! But the moment Jimmy yells "Brain Blast!" or calls out a command, the cloud disappears and Goddard collapses into the exact single trick Jimmy needs.
+
+#### 1.2.4 The Quantum Zeno Effect (Sheen's Ultra Lord Freeze)
+* **How it works:** If Sheen stares at his Ultra Lord action figure without blinking even once, the action figure is not allowed to move or change its state. Because Sheen keeps checking it again and again every millisecond, the universe gets too nervous to change anything, keeping the toy frozen in the same spot!
+
+#### 1.2.5 Environmental Decoherence (Carl's Allergy Phase Noise)
+* **How it works:** When Carl sneezes, he throws dirty pollen dust into the air. This dust bumps into our clean, invisible network laser beams. This makes the laser beams lose their glowing colors and turn into boring old normal wire currents, separating our magic entangled toys. We use a protective shield to keep Carl's sneezes away from the network lines!
+
+---
+
+## 2. The Synaptic Brain-Blast Flow-Cycle (How the Magic Messages Travel)
+
+Here is the step-by-step handshake that occurs when Jimmy wants to draw an invention using the Neuro-Link Band:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Kid as 🧒 Kid User
-    participant MagicBoard as 🎨 Magic Drawing Board
-    participant Robot as 🤖 Big Boss Robot
-    participant Teddy as 🧸 Magic Teddy Bear
-    participant StickerBook as 📓 Sticker Journal
+    actor Jimmy as 🧒 Jimmy (Inventor)
+    participant Screen as 🎨 Holographic Screen
+    participant Goddard as 🐕 Goddard Daemon
+    participant Band as 🧠 Neuro-Link Band
+    participant Journal as 📓 Lab Journal
 
-    Kid->>MagicBoard: 1. Types: "Draw a dinosaur!"
-    MagicBoard->>Robot: 2. Transmits Prompt via Tin-Can String
-    Robot->>StickerBook: 3. Glues sticker: "Prompt received"
-    Robot->>Teddy: 4. Whispers prompt down the ACP Pipe
-    Note over Teddy: Teddy thinks...<br/>Needs to write file "dino.txt"
-    Teddy->>Robot: 5. Requests Write-File ("dino.txt")
-    Robot->>Robot: 6. Checks sandbox fence limits
-    Robot->>MagicBoard: 7. Blinks Yellow Traffic Light
-    MagicBoard->>Kid: 8. Rings Beep: "Mother May I?"
-    Kid->>MagicBoard: 9. Taps Green Button (Yes)
-    MagicBoard->>Robot: 10. Sends "Green Light" Signal
-    Robot->>StickerBook: 11. Glues sticker: "dino.txt approved"
-    Robot->>Robot: 12. Writes dino.txt to disk
-    Robot->>Teddy: 13. Whispers: "Done!"
-    Teddy->>Robot: 14. Whispers final message: "Finished!"
-    Robot->>MagicBoard: 15. Updates all tablets in the room
+    Jimmy->>Screen: 1. Types: "Build a hover-car!"
+    Screen->>Goddard: 2. Transmits command via Neutronic Communicator
+    Goddard->>Journal: 3. Glues sticker: "Command received"
+    Goddard->>Band: 4. Whispers prompt down the ACP Pipe
+    Note over Band: Band thinks...<br/>Needs to write blueprint "hover.go"
+    Band->>Goddard: 5. Requests Write-File ("hover.go")
+    Goddard->>Goddard: 6. Checks lab drawer limits
+    Goddard->>Screen: 7. Blinks Vocoder Voice Prompter Yellow
+    Screen->>Jimmy: 8. Rings Alarm: "Brain Blast Permission Required"
+    Jimmy->>Screen: 9. Taps Green Button (Gotta Blast!)
+    Screen->>Goddard: 10. Sends "Gotta Blast" Confirmation
+    Goddard->>Journal: 11. Glues sticker: "hover.go approved"
+    Goddard->>Goddard: 12. Writes hover.go to disk
+    Goddard->>Band: 13. Whispers: "Done!"
+    Band->>Goddard: 14. Whispers final message: "Finished!"
+    Goddard->>Screen: 15. Updates all screens in Retroville
 ```
 
 ---
 
-### 2.1 Binary Frame Layout & Protocol Bit-Structures
+### 2.1 The Magic Envelope Layout (Binary Frame Layout)
 
-When the Teddy Bear whispers to the Robot, they pack their letters inside high-speed digital paper envelopes. The byte-frame layout of each envelope looks like this:
+When the Neuro-Link Band whispers to Goddard, they pack their letters inside high-speed digital paper envelopes. The layout of each envelope looks like this:
 
 ```
-  0                   1                   2                   3
-  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
- +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- |   TEDDY-ID    |  ROBOT-ACTION |         STICKER-COUNT         |
- +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- |        SANDBOX-RADIUS         |       SECRET-DOOR-KNOCK       |
- +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- |                                                               |
- +                      CRAYON-COLOR-PAYLOAD                     +
- |                                                               |
- +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++--------------------------------------------------------------+
+| [ Who is talking (8 bits) ]  [ What to do (8 bits) ]         |
++--------------------------------------------------------------+
+| [ How many notes we wrote in our journal (16 bits) ]         |
++--------------------------------------------------------------+
+| [ Lab Circle Size (16 bits) ] [ Secret Knock (16 bits) ]     |
++--------------------------------------------------------------+
+| [ The actual message or drawing words (Variable size) ]      |
++--------------------------------------------------------------+
 ```
 
-* **TEDDY-ID (8 bits):** The number of the Teddy Bear who is talking (e.g., `0x01` is Claude Teddy, `0x02` is Gemini Teddy).
-* **ROBOT-ACTION (8 bits):** The action command:
-  * `0x10`: "Write a line in the book"
-  * `0x20`: "Do a shell trick"
-  * `0x30`: "Read a page"
-* **STICKER-COUNT (16 bits):** How many stickers we have glued into our Sticker Journal.
-* **SANDBOX-RADIUS (16 bits):** How far away the sandbox fence goes.
-* **SECRET-DOOR-KNOCK (16 bits):** A secret handshake number to prove the tablet belongs to our play group.
-* **CRAYON-COLOR-PAYLOAD (Variable length):** The actual code content or command words.
+* **Who is talking:** The number of the Neuro-Link Band (e.g., number 1 is Claude-Band, number 2 is Gemini-Band).
+* **What to do:** The action command (like "Write a line in the journal", "Do a hover-car trick", or "Read a page").
+* **Journal Count:** How many entries we have glued into our Lab Journal.
+* **Lab Circle Size:** How far away the lab fence goes.
+* **Secret Knock:** A secret handshake number to prove the communicator belongs to our clubhouse.
+* **Message Payload:** The actual code content or command words.
 
 ---
 
-### 2.2 EBNF Grammar of the ACP Whisper Protocol
+### 2.2 The Secret Sentence Rules (EBNF Grammar of the Protocol)
 
-All whispers sent between the Robot and the Teddy Bear must follow the strict playground grammar rules described below:
+All whispers sent between Goddard and the Neuro-Link Band must follow the strict sentence rules described below:
 
-```ebnf
-WhisperStream  ::= Header Payload Terminal ;
-Header         ::= SecretKnock ClientID MessageType ;
-SecretKnock    ::= "knock-knock" [a-zA-Z0-9]+ ;
-ClientID       ::= "teddy-" ( "claude" | "gemini" | "codex" | "custom" ) ;
-MessageType    ::= "PROMPT" | "EXECUTE" | "REWRITE" | "MERGE_CONFLICT" ;
-Payload        ::= TextMessage | BinaryCrayon ;
-TextMessage    ::= '"' [^"]* '"' ;
-BinaryCrayon   ::= "hex(" [0-9a-fA-F]+ ")" ;
-Terminal       ::= "!!!OK-BYE!!!" ;
-```
+* **A Secret Sentence** is made of: A Magic Knock + Who is talking + What we want to do + A Message + A Goodbye!
+  * **A Magic Knock** must start with: `"brain-blast-knock"` followed by letters or numbers.
+  * **Who is talking** must be one of these: `"inventor-jimmy"`, `"inventor-goddard"`, `"inventor-carl"`, `"inventor-sheen"`, `"inventor-cindy"`, or `"inventor-libby"`.
+  * **What we want to do** must be one of these: `"BRAIN_BLAST"`, `"RUN_GADGET"`, `"SHRINK_PARENT"`, `"LLAMA_ALARM"`, or `"MERGE_CONFLICT"`.
+  * **A Message** is either: Text inside quotes or a secret soda color like `flurp(blue)`.
+  * **A Goodbye** is always: `"!!!GOTTA-BLAST!!!"`
 
 ---
 
-## 3. The 7-Layer Playground OSI Model
+## 3. The 7-Layer Retroville Communication Stack
 
-Our communication network maps directly to the standard ISO/OSI model, but we explain it with sandbox terminology:
+Our communication network works like a stack of cake layers:
 
-```
-+-----------------------------------+-----------------------------------------+
-| OSI Layer Name                    | Playground Mechanics                    |
-+-----------------------------------+-----------------------------------------+
-| 7. Application (ACP Client)       | Magic Teddy whispering code requests.   |
-| 6. Presentation (JSON Encode)     | Translating pictures to text crayons.   |
-| 5. Session (WebSocket Connection) | Holding the tin cans string tight.      |
-| 4. Transport (TCP Packets)        | Making sure blocks arrive in order.     |
-| 3. Network (LAN IPv4/IPv6 Routing)| Knowing whose house the tablet is in.   |
-| 2. Data Link (Ethernet/Wi-Fi)     | Flashlights flashing code in the dark.  |
-| 1. Physical (Copper & Airwaves)   | Physical wire strings & radio waves.    |
-+-----------------------------------+-----------------------------------------+
-```
+| Layer Number & Name | How It Works in Our Lab |
+| :--- | :--- |
+| **7. Application** | The talking headband asking to build toys. |
+| **6. Presentation** | Turning our drawings into code letters. |
+| **5. Session** | Holding the communicator radio link tight. |
+| **4. Transport** | Making sure toy blocks arrive in the right order. |
+| **3. Network** | Knowing which kid's room the communicator is in. |
+| **2. Data Link** | Light waves flashing messages in the dark. |
+| **1. Physical** | The actual wires and airwaves we send signals through. |
 
 ---
 
-## 4. Security Boundary Matrices (Keeping the Bad Monsters Out)
+## 4. Defeating the Yolkians & Cindy's Pranks (Security Matrix)
 
-We use **Advanced Security Shields** to keep the playroom safe from bad strangers and broken toys:
+We use **Advanced security shields** to keep the lab safe from bad alien invaders and snooping girls:
 
-| Attack Scenario | Complex Definition | Simple Explanation | Our Special Shield |
-| :--- | :--- | :--- | :--- |
-| **The Sandbox Breakout** | `Malicious Directory Escape Vulnerability` | A toy tries to dig under the playground fence to steal Mommy's secret letters. | The Robot checks every path and blocks files that have `..` in their name. |
-| **The Gatecrasher** | `Unauthorized LAN Node Hijacking` | A neighbor kid tries to connect their tablet to steal your drawings. | The Lock Screen demands a secret four-word passcode or QR code scan. |
-| **The Poison Crayon** | `Arbitrary Subprocess Execution Manipulation` | A sneaky agent tries to run a command that deletes all your games. | The Referee halts the command and asks the user to click Green or Red. |
-| **The Fake Signpost** | `Resolution of Out-of-bounds Symbolic Pointers` | A bad shortcut points to the trash can but claims it goes to the Lego box. | The Robot ignores shortcuts that point outside the sandbox fence. |
-| **The Wiretap** | `Cryptographic Transport Plaintext Exposure` | A brother listens to the string telephone using a microphone. | We cover our string in a shiny foil (HTTPS/TLS) so they only hear noise. |
-
----
-
-### 4.1 Cryptographic Door-Knock Derivation & Entropy Analysis
-
-When you connect a new tablet, the Robot generates a secret key from a 4-word mnemonic passcode.
-
-#### Mnemonic Entropy Calculation
-The mnemonic wordlist contains $N = 2048$ unique words. Choosing $k = 4$ words yields an entropy value of $H$:
-$$H = \log_2(N^k) = \log_2(2048^4) = 4 \times 11 = 44 \text{ bits of structural entropy}$$
-
-This represents $2^{44} \approx 17.59 \text{ trillion}$ unique secret handshake combinations!
-
-#### Cryptographic Key Derivation Function
-To stretch the entropy and defeat brute-force guessers, we run the passcode through a key mixer:
-$$K_{door} = \text{PBKDF2}(\text{Words}, \text{Salt}_{\text{device}}, \text{Iterations} = 4096, \text{KeyLength} = 256)$$
-
-```
-[ 4-Word Passcode ] ---\
-                       +---> [ PBKDF2 HMAC-SHA256 Mixer ] ---> [ Secret Door-Knock Key ]
-[ Unique Device ID ] --/
-```
-
-We take the four funny words (like *dinosaur-guitar-bubblegum-pizza*) and grind them up with the tablet's name to make a secret key. A bad kid cannot guess this key even if they try a million times!
+| Attack Scenario | What the Bad Guy/Monster Tries to Do | Goddard's Secret Shield |
+| :--- | :--- | :--- |
+| **The Yolkian Invasion** | King Goobot tries to dig a secret tunnel under the lab fence using a sneaky path like `../secret_formula.txt` to steal Jimmy's blueprints. | Goddard checks every path and blocks files that have `..` in their name. |
+| **Cindy's Wiretap** | Cindy Vortex tries to connect her communicator to our network to spy on Jimmy's blueprints. | The Lock Screen demands a secret four-word passcode or a QR stamp check. |
+| **The Sentient Burger** | McSpanky's robotic hamburger tries to run a command to delete the entire clubhouse folder. | The Vocoder halts the command and waits for Jimmy to click Green or Red. |
+| **The Fake Signpost** | Carl uploads a fake shortcut that points to his llama pen instead of the lab folder. | Goddard ignores all shortcuts that point outside the lab boundaries. |
+| **The Libby Blast** | Libby plays her music so loud that it shakes the network signals, letting snooping kids listen in. | We wrap our signals in a shiny foil (HTTPS/TLS) so they only hear static noise. |
 
 ---
 
-### 4.2 State Machine Formalism of Device Pairing
+### 4.1 Secret Handshake Key Mixing
 
-A device goes through a state machine to prove it's a friend. Below is the state transition matrix:
+When you connect a new tablet, Goddard generates a secret key from a 4-word passcode (like `goddard-play-dead-pie-llama`).
 
-```
-           +------------------+
-           |                  |
-           v                  | Revoked
-   +---------------+  Pairing +-------------+
-   |   LOCKED      |--------->| PIN_PENDING |
-   +---------------+          +-------------+
-           ^                         |
-           | Bad Key                 | Correct Pin
-           |                         v
-   +---------------+          +-------------+
-   |   REJECTED    |<---------| AUTHORIZED  |
-   +---------------+          +-------------+
-```
-
-| Current State | Input / Event Trigger | Transition Condition | Target State | Action Taken |
-| :--- | :--- | :--- | :--- | :--- |
-| **LOCKED** | Device Connects | No credential found | **LOCKED** | Show Lock Screen |
-| **LOCKED** | User clicks "Pair" | Generate QR code | **PIN_PENDING** | Display 4-word passcode |
-| **PIN_PENDING**| Passcode Input | Incorrect PIN typed | **REJECTED** | Lock device out for 60s |
-| **PIN_PENDING**| Passcode Input | Correct PIN typed | **AUTHORIZED** | Write device credential file |
-| **AUTHORIZED** | Expiry Clock | Time exceeds TTL | **LOCKED** | Revoke session tokens |
-| **AUTHORIZED** | User Revocation | Admin revokes device | **LOCKED** | Erase database credential |
+Choosing 4 words from our list of 2048 words gives us over **17 trillion** unique combinations! Goddard takes these four words, mixes them up with the tablet's name, and grinds them together in a digital blender to create a secret key. A Yolkian spaceship cannot guess this key even if they try a million times!
 
 ---
 
-## 5. The Map of the Castle (Project Layout)
+### 4.2 How Devices Join the Lab (State Machine)
+
+A device goes through a step-by-step game to prove it's a friend:
+
+1. **LOCKED:** The tablet connects but has no secret key. Goddard shows the Lock Screen.
+2. **PIN_PENDING:** Jimmy clicks "Pair" to display the 4-word passcode.
+3. **AUTHORIZED:** The kid types the correct code. Goddard saves the device key and lets them play.
+4. **REJECTED:** If the wrong code is typed, the device is locked out for one minute.
+5. **LOCKED AGAIN:** If a device is disconnected or revoked, Goddard erases its key and locks it out.
+
+---
+
+## 5. The Map of Jimmy's Lab (Project Layout)
 
 Here is where all the secret gears and levers live in our toy castle:
 
 ```
-cmd/app/                 🏰 The Castle Gate (where you type commands to enter)
+cmd/app/                 🏰 The Lab Entrance (where you type commands under the clubhouse)
 internal/
-  daemon/                🧠 The Main Brain (wires all the toy managers together)
-  server/                📡 The Megaphone (broadcasts web page, API, and WebSockets)
+  daemon/                🧠 Goddard's Daemon (wires all the gadget managers together)
+  server/                📡 The Transceiver (broadcasts web page, API, and WebSockets)
   config/                🗃️ The Memory Box (stores settings in ~/.local-agent/)
-  events/                📓 The Sticker Journal (SQLite append-only records)
+  events/                📓 The Lab Journal (SQLite append-only records)
   pairing/               🤝 The Secret Handshake Office (generates QR codes and keys)
-  workspace/             📦 The Lego Box (manages your project folders)
-  acp/                   🗣️ The Magic Teddy Translator (talks to external AI tools)
-  permissions/           🚦 The Permission Traffic Light (checks if it's OK to write)
-  sync/                  🧵 The Tin-Can Telephone Wire (keeps all screens in sync)
+  workspace/             📦 The Blueprint Box (manages your workspace folders)
+  acp/                   🗣️ The Neuro-Link Translator (talks to external AI tools)
+  permissions/           🚦 The Vocoder Prompter (checks if it's OK to write)
+  sync/                  🧵 The Communicator Wire (keeps all screens in sync)
   files/                 📝 The Writing Desk (merges edits and tracks revisions)
-  shell/                 🔨 The Tool Shed (runs commands safely inside your sandbox)
-  fswatch/               👀 The Eye-in-the-Sky (watches files on disk for changes)
-  mcp/                   🏥 The Toy Doctor (manages helper tool servers)
-  search/                🔍 The Magnifying Glass (finds lost toys in your code)
+  shell/                 🔨 The Tool Shed (runs commands safely inside Goddard's sandbox)
+  fswatch/               👀 Goddard's Ear-Wiggle (watches files on disk for changes)
+  mcp/                   🏥 The Gadget Doctor (manages helper tool servers)
+  search/                🔍 The Magnifying Glass (finds lost files in your code)
   uploads/               📥 The Slide (lets you slide images and papers into the app)
-  interfaces/            🧬 The Toy Blueprints (shared shapes of code)
-web/                     🎨 The Magic Drawing Board (React 19 + Vite 8 + Tailwind v4)
-  src/components/        🧱 Individual Lego Blocks (UI components)
-  src/hooks/             🎣 Magic Fishing Rods (hooks to grab backend state)
-  src/lib/               🩹 First-Aid Kit (API client and helper logic)
-  src/types/             🏷️ Label Maker (TypeScript types)
-docs/                    📚 The Castle Library (specifications and blueprints)
+  interfaces/            🧬 The Blueprints (shared shapes of Go code)
+web/                     🎨 Holographic Screen (React 19 + Vite 8 + Tailwind v4)
+  src/components/        🧱 Individual UI Elements (React components)
+  src/hooks/             🎣 Data Fetching Hooks (hooks to grab backend state)
+  src/lib/               🩹 First-Aid Helpers (API client and helper logic)
+  src/types/             🏷️ TS Type Declarations (TypeScript types)
+docs/                    📚 The Retroville Library (specifications and blueprints)
 ```
 
 ---
 
-## 6. File Synchronicity & Three-Way Merge Calculus
+## 6. File Synchronicity (Sheen vs. Carl Disputes)
 
-When two kids draw on the same page at the exact same time, the Robot uses a three-way merge to glue their drawings together. 
+When Carl and Sheen edit the same blueprint at the exact same time, Goddard uses a three-way merge to glue their inputs together.
 
-### 6.1 Conflict Resolution Logic Grid
+### 6.1 Conflict Resolution rules
 
-This truth table explains how the Merge Engine acts under various edit collisions:
+This table explains what Goddard's Merge Engine does when Carl and Sheen edit the same file:
 
-| Kid 1 Action | Kid 2 Action | Base File Content | Final Merged File Output | Resolution Mechanism |
+| Carl Action | Sheen Action | Base File | Final Merged File | What Goddard Does |
 | :--- | :--- | :--- | :--- | :--- |
-| No Change | Draw a Cat | Empty Page | **Draw a Cat** | Auto-Accept Kid 2 |
-| Draw a Dog | No Change | Empty Page | **Draw a Dog** | Auto-Accept Kid 1 |
-| Draw a Dog | Draw a Cat | Empty Page | **CONFLICT!** 🚨 | Referee blows whistle (Manual selection) |
-| Erase Text | Erase Text | Text Present | **Erase Text** | Consensus (Erase accepted) |
-| Change spelling| Change spelling| "Lego" | **CONFLICT!** 🚨 | Manual select (Which block is it?) |
+| No Change | Draw Ultra Lord | Empty Page | **Draw Ultra Lord** | Accepts Sheen's drawing. |
+| Draw Llama | No Change | Empty Page | **Draw Llama** | Accepts Carl's drawing. |
+| Draw Llama | Draw Ultra Lord | Empty Page | **CONFLICT!** 🚨 | Vocoder blows whistle and asks Jimmy. |
+| Erase Text | Erase Text | Text Present | **Erase Text** | Erases it since both kids wanted to. |
+| Change spelling| Change spelling| "Goddard" | **CONFLICT!** 🚨 | Asks Jimmy which spelling is correct. |
 
 ---
 
-### 6.2 The 48-Bit Content Hashing Math
+### 6.2 The Magic Line-Code Maker (48-Bit Hashing)
 
-To compare files quickly without reading every single letter, we compute a 48-bit hash $H(C)$ for each line block using:
-$$H(C) = \left( \sum_{i=1}^{L} \text{char}_i \times 31^{L-i} \right) \bmod 2^{48}$$
-
-```
-"Hello" ---> [ 48-bit hash calculator ] ---> 0xA3B9D2E1C4F0
-```
-
-We turn the letters of each line into numbers, multiply them by magic seeds, and slice off the front. If two lines have the same numbers, they are identical drawings. If they differ, the Robot knows they are different and checks them line-by-line.
+To compare files quickly without reading every single letter, Goddard turns the letters of each line into a short number code (a hash!).
+* **How it works:** Think of it like a magic box: you slide a line of words like `"Goddard"` in, and the box turns the letters into a short code like `99`. If two lines produce the same code, Goddard knows they are identical drawings without having to look at every single letter!
 
 ---
 
-### 6.3 Diff Engine Trace Algorithm
+### 6.3 Diff Engine Decision Tree
 
 ```
-                  [ Clean Base Document ]
-                       /           \
-                      /             \
-             [ User Modifies ]     [ Agent Modifies ]
-             (Line 12: "Red")      (Line 12: "Blue")
-                      \             /
-                       \           /
-                    [ Compare Hashes ]
+                 [ Clean Base Blueprint ]
+                       /          \
+                      /            \
+             [ Carl Modifies ]     [ Sheen Modifies ]
+             (Line 12: "Llama")    (Line 12: "UltraLord")
+                      \            /
+                       \          /
+                    [ Compare Codes ]
                             |
-               Does Hash(User) == Hash(Agent)?
-                      /           \
-               Yes   /             \ No
-                    v               v
+               Do the line codes match?
+                      /          \
+               Yes   /            \ No
+                    v              v
              [ Auto-Merge ]    [ Trigger Conflict ]
-             (Apply changes)   (Ask kid for help)
+             (Apply changes)   (Ask Jimmy for help)
 ```
 
 ---
 
-## 7. Deep Subsystem Code Walkthroughs (The Engine Blueprints)
+## 7. Deep Subsystem Code Walkthroughs (Goddard's Source Code)
 
-Here is the code of the core engines inside the robot. Every line is written so that even five-year-old programmers can inspect the logic:
+Here is the code of the core engines inside Goddard, with simple comments explaining how they work:
 
-### 7.1 The Sticker Journal Writer (`internal/events/store.go`)
+### 7.1 The Lab Journal Writer (`internal/events/journal.go`)
 
-This code writes new stickers to the SQLite book and keeps them safe.
+This code writes new entries to the SQLite book and keeps them safe.
 
 ```go
 package events
@@ -316,35 +280,36 @@ import (
 	"fmt"
 )
 
-type Sticker struct {
-	ID    int64  `json:"id"`
-	Who   string `json:"who"`
-	What  string `json:"what"`
-	Stamp int64  `json:"stamp"`
+// This is the sticker we stick in our journal
+type JournalEntry struct {
+	ID       int64  `json:"id"`       // The sticker number
+	Inventor string `json:"inventor"` // Who made the toy
+	Gadget   string `json:"gadget"`   // The name of the toy
+	Stamp    int64  `json:"stamp"`    // When we made the toy
 }
 
-type StickerStore struct {
+type JournalStore struct {
 	db *sql.DB
 }
 
-func (s *StickerStore) PutSticker(who string, what string) (*Sticker, error) {
-	// Write the sticker details
-	st := &Sticker{
-		Who:   who,
-		What:  what,
-		Stamp: 123456789,
+func (s *JournalStore) PutEntry(inventor string, gadget string) (*JournalEntry, error) {
+	// 1. Create a new sticker record
+	st := &JournalEntry{
+		Inventor: inventor,
+		Gadget:   gadget,
+		Stamp:    1782398400,
 	}
 	
-	// Convert sticker to text drawing
+	// 2. Convert the sticker into text bytes
 	data, err := json.Marshal(st)
 	if err != nil {
-		return nil, fmt.Errorf("could not shape sticker: %w", err)
+		return nil, fmt.Errorf("could not shape journal entry: %w", err)
 	}
 
-	// Stick it into the WAL book database
-	res, err := s.db.Exec("INSERT INTO sticker_book (payload) VALUES (?)", string(data))
+	// 3. Glue the sticker into our journal book database
+	res, err := s.db.Exec("INSERT INTO lab_journal (payload) VALUES (?)", string(data))
 	if err != nil {
-		return nil, fmt.Errorf("sticker book is locked: %w", err)
+		return nil, fmt.Errorf("lab journal is locked: %w", err)
 	}
 
 	id, _ := res.LastInsertId()
@@ -355,9 +320,9 @@ func (s *StickerStore) PutSticker(who string, what string) (*Sticker, error) {
 
 ---
 
-### 7.2 The Tin-Can Telegram Router (`internal/sync/hub.go`)
+### 7.2 Goddard's Communicator Router (`internal/sync/goddard_hub.go`)
 
-This code broadcasts messages to all paired tablets and phones over WebSocket wires.
+This code broadcasts messages to all paired screens over WebSocket wires.
 
 ```go
 package sync
@@ -368,28 +333,28 @@ import (
 	"nhooyr.io/websocket"
 )
 
-type Playmate struct {
+type LabMate struct {
 	ID   string
 	Conn *websocket.Conn
 }
 
-type StringTelephoneHub struct {
-	mu        sync.RWMutex
-	playmates map[string]*Playmate
+type GoddardCommunicatorHub struct {
+	mu       sync.RWMutex
+	labmates map[string]*LabMate
 }
 
-func (h *StringTelephoneHub) BroadcastToPlayroom(ctx context.Context, toyMessage []byte) {
+func (h *GoddardCommunicatorHub) BroadcastToClubhouse(ctx context.Context, gadgetSignal []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	// Loop through every single playmate in the room
-	for _, playmate := range h.playmates {
-		// Send the message down their tin-can line
-		writer, err := playmate.Conn.Writer(ctx, websocket.MessageText)
+	// Loop through every single communicator in the clubhouse
+	for _, labmate := range h.labmates {
+		// Send the message down their radio line
+		writer, err := labmate.Conn.Writer(ctx, websocket.MessageText)
 		if err != nil {
-			continue // This playmate let go of their tin can! Skip them.
+			continue // This communicator let go of their signal! Skip them.
 		}
-		writer.Write(toyMessage)
+		writer.Write(gadgetSignal)
 		writer.Close()
 	}
 }
@@ -397,9 +362,9 @@ func (h *StringTelephoneHub) BroadcastToPlayroom(ctx context.Context, toyMessage
 
 ---
 
-### 7.3 The Traffic Light Referee (`internal/permissions/manager.go`)
+### 7.3 The Vocoder Voice Prompter (`internal/permissions/vocoder.go`)
 
-This code stops the AI Teddy Bear from doing dangerous tricks without authorization.
+This code stops the Neuro-Link Band from doing dangerous things without authorization.
 
 ```go
 package permissions
@@ -409,94 +374,94 @@ import (
 	"time"
 )
 
-type Decision string
+type VoiceCommand string
 const (
-	GreenLight Decision = "YES"
-	RedLight   Decision = "NO"
-	Waiting    Decision = "WAIT"
+	GottaBlast   VoiceCommand = "YES"
+	GoddardAbort VoiceCommand = "NO"
+	Snoozing     VoiceCommand = "WAIT"
 )
 
 type PermissionRequest struct {
 	ID       string
 	Action   string
-	Result   Decision
+	Result   VoiceCommand
 	ExpireAt time.Time
 }
 
-type Referee struct {
+type Vocoder struct {
 	requests map[string]*PermissionRequest
 }
 
-func (r *Referee) AskToPlay(action string) (bool, error) {
+func (v *Vocoder) AskJimmy(action string) (bool, error) {
 	req := &PermissionRequest{
-		ID:       "req-99",
+		ID:       "req-brainblast",
 		Action:   action,
-		Result:   Waiting,
+		Result:   Snoozing,
 		ExpireAt: time.Now().Add(5 * time.Minute),
 	}
-	r.requests[req.ID] = req
+	v.requests[req.ID] = req
 
 	// Wait for the kid to press the button
 	for time.Now().Before(req.ExpireAt) {
-		if req.Result == GreenLight {
-			return true, nil // Kid said Yes!
+		if req.Result == GottaBlast {
+			return true, nil // Jimmy said Gotta Blast!
 		}
-		if req.Result == RedLight {
-			return false, nil // Kid said No!
+		if req.Result == GoddardAbort {
+			return false, nil // Cindy or Jimmy said Abort!
 		}
 		time.Sleep(500 * time.Millisecond) // Snooze for a bit
 	}
 
-	return false, errors.New("kid fell asleep while waiting")
+	return false, errors.New("inventor fell asleep while waiting")
 }
 ```
 
 ---
 
-## 8. Complete REST API Reference Manual (The Toy Store Counter Menu)
+## 8. Complete REST API Reference Manual (The Candy Bar Menu)
 
-When your tablet wants to talk to the closet Robot, it sends HTTP orders. Here is the complete menu of commands:
+When your communicator wants to talk to Goddard, it sends HTTP orders. Here is the complete menu of commands:
 
-### 8.1 Sandbox Operations
+### 8.1 Lab Blueprints Operations
 
 #### `GET /api/workspaces`
-* **Purpose:** Show me all my registered toy boxes.
+* **Purpose:** Show me all my registered blueprint folders.
 * **Response Payload (JSON):**
   ```json
   [
     {
-      "id": "workspace-123",
-      "name": "My Lego Fort",
-      "path": "C:\\Users\\ammon\\Projects\\LegoFort",
+      "id": "blueprint-123",
+      "name": "Hover Car V2",
+      "path": "C:\\Users\\ammon\\Projects\\Project-Hail-Larry\\hovercar",
       "registered_at": 1782398472
     }
   ]
   ```
 
 #### `POST /api/workspaces`
-* **Purpose:** Robot, add this new folder to our play list.
+* **Purpose:** Goddard, add this new invention folder to our list.
 * **Request Payload (JSON):**
   ```json
   {
-    "path": "C:\\Users\\ammon\\Projects\\NewCastle"
+    "path": "C:\\Users\\ammon\\Projects\\Project-Hail-Larry\\shrinkray"
   }
   ```
 
 #### `DELETE /api/workspaces/{id}`
-* **Purpose:** Robot, forget about this folder, we don't want to play here anymore.
+* **Purpose:** Goddard, forget about this folder, we don't want to play here anymore.
 
 ---
 
-### 8.2 Playmate & Device Operations
+### 8.2 Communicator & Device Operations
 
 #### `GET /api/devices`
-* **Purpose:** Who is connected to my string telephone?
+* **Purpose:** Who is connected to my intergalactic communicator net?
 * **Response Payload:**
   ```json
   [
     {
-      "id": "device-ipad-mom",
-      "name": "Mom's iPad",
+      "id": "device-carl-tablet",
+      "name": "Carl's Tablet",
       "trusted": true,
       "last_seen": 1782398592
     }
@@ -504,17 +469,17 @@ When your tablet wants to talk to the closet Robot, it sends HTTP orders. Here i
   ```
 
 #### `DELETE /api/devices/{id}`
-* **Purpose:** Revoke this device. They are not allowed to play in our castle anymore.
+* **Purpose:** Revoke this device. They are not allowed in the clubhouse anymore.
 
 ---
 
 ### 8.3 Permission Intercept Operations
 
 #### `GET /api/permissions`
-* **Purpose:** Is the Teddy Bear waiting for me to say Yes or No?
+* **Purpose:** Is Goddard waiting for me to say Gotta Blast or Abort?
 
 #### `POST /api/permissions/{id}/respond`
-* **Purpose:** Turn the traffic light GREEN for this turn, or keep it green all day!
+* **Purpose:** Send voice command response to the Vocoder prompter.
 * **Request Payload:**
   ```json
   {
@@ -525,18 +490,18 @@ When your tablet wants to talk to the closet Robot, it sends HTTP orders. Here i
 
 ---
 
-## 9. Exhaustive WebSocket Message Specifications (Tin-Can Telegrams)
+## 9. Exhaustive WebSocket Message Specifications (Goddard Telemetry)
 
-Once the WebSocket wire is tightly stretched between the Robot and the tablet, they send tiny package letters. Here are the templates of those letters:
+Once the radio connection is active, Goddard and the screens send tiny package letters. Here are the templates of those letters:
 
-### 9.1 `WorkspaceChangedEvent` (Someone moved the blocks!)
+### 9.1 `WorkspaceChangedEvent` (Someone moved the tools!)
 Sent to every device when a file changes on disk.
 ```json
 {
   "event_type": "WORKSPACE_CHANGED",
   "data": {
-    "workspace_id": "fort-99",
-    "changed_file": "castle_tower.txt",
+    "workspace_id": "lab-99",
+    "changed_file": "hover_chassis.go",
     "action": "MODIFIED",
     "size_bytes": 1024,
     "checksum": "0x5A4B"
@@ -544,28 +509,28 @@ Sent to every device when a file changes on disk.
 }
 ```
 
-### 9.2 `PermissionRequestedEvent` (The Robot stands still!)
-Sent when an agent wants to run a shell command.
+### 9.2 `PermissionRequestedEvent` (Goddard stands still!)
+Sent when the Neuro-Link Band wants to run a shell command.
 ```json
 {
   "event_type": "PERMISSION_REQUESTED",
   "data": {
-    "request_id": "req-888",
-    "agent_name": "Claude-Teddy",
+    "request_id": "req-999",
+    "agent_name": "Gemini-Band",
     "dangerous_action": "run_shell",
-    "toy_command": "rm -rf tmp_logs"
+    "toy_command": "rm -rf yolkian_slime"
   }
 }
 ```
 
-### 9.3 `ChatMessageChunkEvent` (Teddy is talking!)
+### 9.3 `ChatMessageChunkEvent` (Goddard's screen is typing!)
 Sent in tiny chunks while the AI is thinking out loud.
 ```json
 {
   "event_type": "CHAT_MESSAGE_CHUNK",
   "data": {
-    "session_id": "playdate-777",
-    "chunk_content": "Once upon a time, we wrote a loop..."
+    "session_id": "session-brainblast",
+    "chunk_content": "Brain Blast! Let's optimize the quantum hover-coils..."
   }
 }
 ```
@@ -574,7 +539,7 @@ Sent in tiny chunks while the AI is thinking out loud.
 
 ## 10. The Specialist Helper Manual (Model Context Protocol - MCP)
 
-Sometimes the Teddy Bear doesn't know the answer to a question (e.g. *"What is the weather outside?"* or *"What is 98234 times 8712?"*). In this case, he can play with **Specialist Helper Toys** called **MCP Servers**.
+Sometimes the Neuro-Link Band doesn't know Retroville details (e.g. *"What is Carl's favorite llama?"* or *"What is Sheen's favorite Ultra Lord episode?"*). In this case, he can play with **Specialist Helper Gadgets** called **MCP Servers**.
 
 ### 10.1 The Specialist Toy Drawer Settings (`mcp.json`)
 
@@ -583,116 +548,116 @@ The config file is located at `~/.local-agent/mcp.json`. It looks like this:
 ```json
 {
   "mcpServers": {
-    "weather-helper": {
-      "command": "node",
-      "args": ["C:\\tools\\weather.js"],
+    "llama-facts-helper": {
+      "command": "python",
+      "args": ["C:\\tools\\llama_facts.py"],
       "env": {
-        "API_KEY": "sunshine_token"
+        "LLAMA_KEY": "carl_llama_token"
       }
     },
-    "calculator-helper": {
-      "command": "python",
-      "args": ["-m", "calc_server"]
+    "ultralord-helper": {
+      "command": "node",
+      "args": ["C:\\tools\\ultralord.js"]
     }
   }
 }
 ```
 
-#### How the Robot hooks up the Specialist Toys
+#### How Goddard hooks up the Specialist Gadgets
 
 ```
-[ Teddy Bear ]
-      |
-      | (wants to know temperature)
-      v
-[ Big Boss Robot ] ---> [ weather-helper.js ] (runs script)
-      |                         |
-      | (returns "75 Degrees")  v
-      +<------------------------+
+[ Neuro-Link Band ]
+        |
+        | (wants to know llama details)
+        v
+ [ Goddard Daemon ] ---> [ llama_facts.py ] (runs script)
+        |                       |
+        | (returns "Alpacas!")  v
+        +<----------------------+
 ```
 
 ---
 
-## 11. Security Scenario Threat Matrix (Defeating the 10 Bad Monsters)
+## 11. Defeating the 10 Retroville Threats (Security Matrix)
 
-Here are the ten different ways bad kids or monsters try to ruin our play date, and how the Robot blocks them:
+Here are the ten different ways bad kids or space monsters try to ruin our lab session, and how Goddard blocks them:
 
-### Scenario 1: Sneaky Sally (Path Traversal)
-* **The Attack:** Sneaky Sally writes a command: `../secret_diary.txt` to read your private secrets outside the Lego room.
-* **The Defense:** The Robot measures the sand borders. If a path contains `..` that tries to exit the sandbox directory, the Robot immediately slams the door.
+### Scenario 1: Yolkians' Path Traversal
+* **The Attack:** King Goobot writes a command: `../secret_formula.txt` to read Jimmy's plans.
+* **The Defense:** Goddard measures the folder borders. If a path contains `..` that tries to exit the lab directory, Goddard immediately slams the door.
 
-### Scenario 2: Copycat Billy (Replay Attack)
-* **The Attack:** Billy records a cookie token that the tablet sent to the Robot, then tries to send it again later.
-* **The Defense:** Every handshake ticket has a timer. If a ticket is older than 5 minutes, the Robot tears it up.
+### Scenario 2: Copycat Cindy (Replay Attack)
+* **The Attack:** Cindy Vortex records a token that Sheen's device sent to Goddard, then tries to send it again later.
+* **The Defense:** Every handshake ticket has a timer. If a ticket is older than 5 minutes, Goddard tears it up.
 
 ### Scenario 3: Eavesdropping Eric (Man-in-the-Middle)
-* **The Attack:** Eric attaches a wire to your tin-can string to listen to what you whisper.
-* **The Defense:** We wrap our string in a magic HTTPS envelope so they only hear screeching noise.
+* **The Attack:** A Yolkian spy attaches a receiver to your communicator radio line.
+* **The Defense:** We wrap our signals in a magic TLS envelope so they only hear static noise.
 
-### Scenario 4: The Poison Crayon (Shell Command Injection)
-* **The Attack:** A bad agent tries to send a command with a sneaky semicolon: `echo hello; delete_all_games`.
-* **The Defense:** Semicolons are not allowed to trigger secondary actions. Everything is asked through the Referee first anyway.
+### Scenario 4: Sentient Burger Command Injection
+* **The Attack:** A McSpanky's burger tries to send a command with a sneaky semicolon: `echo hello; delete_lab`.
+* **The Defense:** Semicolons are not allowed to trigger secondary actions. Everything is asked through the Vocoder first.
 
 ### Scenario 5: Stranger-Danger Bobby (Unpaired Access)
-* **The Attack:** A neighbor connects to your Wi-Fi and tries to draw on your magic board.
-* **The Defense:** The lock screen blocks them. They cannot see any drawings unless they perform the 4-word handshake first.
+* **The Attack:** A kid from another school connects to your Wi-Fi and tries to delete Goddard.
+* **The Defense:** The lock screen blocks them. They cannot see any drawings unless they perform the 4-word passcode handshake first.
 
 ### Scenario 6: The Fake Signpost (Symlink Trap)
-* **The Attack:** Bobby uploads a fake shortcut file that points to `C:/Windows`.
-* **The Defense:** The Robot inspects all shortcuts (symlinks) and ignores ones that point outside the sandbox fence.
+* **The Attack:** Nick Dean uploads a fake shortcut file that points to `C:/Windows/System32`.
+* **The Defense:** Goddard inspects all shortcuts (symlinks) and ignores ones that point outside the lab folder.
 
-### Scenario 7: The Flood Attack (Denial of Service)
-* **The Attack:** A broken toy tries to send a billion letters a second to make the Robot's brain explode.
-* **The Defense:** The Robot has a rate limiter. If a toy talks too fast, the Robot puts a piece of tape over its mouth for 10 seconds.
+### Scenario 7: Nanobot Flood Attack (Denial of Service)
+* **The Attack:** Jimmy's Nanobots multiply and try to send a billion messages a second to make Goddard's brain explode.
+* **The Defense:** Goddard has a rate limiter. If a tool talks too fast, Goddard ignores it for 10 seconds.
 
-### Scenario 8: The Giant Cookie (Buffer Overflow)
-* **The Attack:** Someone tries to upload an image that is larger than the house.
-* **The Defense:** The Robot has a maximum package weight (10 Megabytes) and drops heavy files.
+### Scenario 8: Hugh's Giant Pie (Buffer Overflow)
+* **The Attack:** Hugh Neutron tries to upload an image of a pie that is larger than the entire computer drive.
+* **The Defense:** Goddard has a maximum package size (10 Megabytes) and drops heavy packages.
 
-### Scenario 9: Sleeping Beauty (Stale Permissions)
-* **The Attack:** Teddy Bear asks to run a command, but the kid leaves the room. Later, a bad guy sits down and clicks Yes.
-* **The Defense:** If a traffic light waits for more than 5 minutes, it automatically turns RED and expires.
+### Scenario 9: Sleeping Carl (Stale Permissions)
+* **The Attack:** The Neuro-Link Band asks to run a command, but Carl falls asleep. Later, Sheen sits down and clicks Yes.
+* **The Defense:** If a prompt waits for more than 5 minutes, it automatically turns RED and expires.
 
-### Scenario 10: The Secret Key Stealer (Local Token Leaks)
-* **The Attack:** A bad program tries to read the memory of the browser to steal the key.
+### Scenario 10: Libby's Music Player (Local Token Leaks)
+* **The Attack:** Libby's music player app tries to read the memory of the browser to steal the key.
 * **The Defense:** Tokens are kept in temporary browser sessions and are wiped out as soon as the tab is closed.
 
 ---
 
-### 11.1 The Banana-Based Energy Metric System (Resource Fuel Calculations)
+### 11.1 The Purple Flurp-Based Energy Metric System (Resource Fuel Calculations)
 
-To measure how much electrical power the Robot eats in our closet, we use standard playground fruit metrics. One Banana ($B_1$) is equal to $3.6 \times 10^3$ micro-joules of energy. Below is the official resource fuel mapping:
+To measure how much electrical power Goddard eats in our closet, we use standard Retroville soda metrics. One Can of Purple Flurp ($PF_1$) is equal to $3.6 \times 10^3$ micro-joules of energy. Below is the official resource fuel mapping:
 
-* **1 Shell Trick execution:** Costs $0.05 \text{ Bananas}$ ($0.05 B_1$).
-* **1 File Write to disk:** Costs $0.01 \text{ Cookies}$ ($0.01 C_{\text{choc}}$).
-* **1 WebSocket broadcast packet:** Costs $0.003 \text{ Juice Drops}$ ($0.003 J_{\text{apple}}$).
+* **1 Hover-Car Command execution:** Costs $0.05 \text{ Purple Flurps}$ ($0.05 PF_1$).
+* **1 Blueprint Write to disk:** Costs $0.01 \text{ Llama Treats}$ ($0.01 LT$).
+* **1 WebSocket broadcast packet:** Costs $0.003 \text{ Soda Drops}$ ($0.003 SD$).
 
-If the Robot runs out of fruit fuel, it slows down until you feed it fresh power bytes!
+If Goddard runs out of Flurp fuel, he slows down until you feed him fresh power bytes!
 
 ---
 
-## 12. A Microsecond Day in the Life of the Daemon (Timing Cycles)
+## 12. A Microsecond Day in the Life of Goddard (Timing Cycles)
 
-Here is the timeline log of the Robot's brain when a kid presses one letter on their screen. All values are in microseconds ($\mu s$, where $1 \mu s = 1/1,000,000$ of a second):
+Here is the timeline log of Goddard's brain when Jimmy presses one key on his screen. All values are in microseconds ($\mu s$, where $1 \mu s = 1/1,000,000$ of a second):
 
 ```
-Time Offset   | Brain Component      | Action Details & Sandbox Translation
+Time Offset   | Brain Component      | Action Details & Lab Translation
 --------------+----------------------+----------------------------------------------------------
-0.000 ms      | WebSocket Listener   | Receives electrical pulse from tin-can string.
-0.120 ms      | Event Parser         | Decodes JSON package: "Kid pressed 'a' key".
-0.250 ms      | Memory Lock Manager  | Robot grabs the Crayon Box Lock (mu.Lock()).
-0.310 ms      | Revision Engine      | Computes 48-bit content hash of the changed line block.
-0.450 ms      | SQLite Log Pipeline  | Writes temporary sticker note into SQLite WAL file.
-1.100 ms      | File Sync Hub        | Shouts update command to all other paired string wires.
+0.000 ms      | WebSocket Listener   | Receives electrical pulse from communicator.
+0.120 ms      | Event Parser         | Decodes JSON package: "Jimmy typed 'a' key".
+0.250 ms      | Memory Lock Manager  | Goddard grabs the Blueprint Box Lock (mu.Lock()).
+0.310 ms      | Revision Engine      | Computes 48-bit content hash of the changed blueprint.
+0.450 ms      | SQLite Log Pipeline  | Writes temporary entry into SQLite WAL database.
+1.100 ms      | File Sync Hub        | Shouts update command to all other paired communicators.
 1.850 ms      | Inotify Detector     | Watchdog eyes doublecheck the disk: "Yep, file modified!"
-2.200 ms      | Memory Lock Manager  | Robot releases Crayon Box Lock (mu.Unlock()).
+2.200 ms      | Memory Lock Manager  | Goddard releases Blueprint Box Lock (mu.Unlock()).
 ```
 
 ---
 
-## 13. The Custom Terminal Integration Subsystem (PTY & Signal Control)
+## 13. The Custom Terminal Integration Subsystem (The Hover-Car Brake)
 
-When the AI Teddy Bear needs to run shell tricks, the Robot spawns a terminal simulator (Pseudo-TTY) inside its tool shed. This is the Go engine logic for catching signals and canceling tasks:
+When the Neuro-Link Band needs to run command tricks, Goddard spawns a terminal simulator (Pseudo-TTY) inside his tool shed. This is the Go engine logic for catching signals and canceling tasks:
 
 ```go
 package shell
@@ -703,40 +668,40 @@ import (
 	"syscall"
 )
 
-type EmergencyBrake struct {
+type HoverCarBrake struct {
 	cmd *exec.Cmd
 }
 
-func (eb *EmergencyBrake) PullBrake() error {
+func (hb *HoverCarBrake) PullBrake() error {
 	// Send the soft-stop signal (SIGINT)
-	err := eb.cmd.Process.Signal(syscall.SIGINT)
+	err := hb.cmd.Process.Signal(syscall.SIGINT)
 	if err == nil {
-		return nil // Toy train stopped nicely!
+		return nil // Hover car stopped nicely!
 	}
 
-	// If it refuses to stop, cut the engine (SIGKILL)
-	return eb.cmd.Process.Kill()
+	// If it refuses to stop, cut the fuel line (SIGKILL)
+	return hb.cmd.Process.Kill()
 }
 ```
 
 #### Signal Action Matrix (Emergency Stop Rules)
 
 ```
-[ Kid clicks STOP button ]
-             |
-             v
-[ Send SIGINT (Soft Pull) ] ----- (Wait 1.5 seconds) ----- If still running ---> [ Send SIGKILL (Cut Engine) ]
+[ Jimmy clicks STOP button ]
+              |
+              v
+[ Send SIGINT (Soft Pull) ] ----- (Wait 1.5 seconds) ----- If still running ---> [ Send SIGKILL (Cut Fuel) ]
 ```
 
-* **SIGINT (Emergency Brake Pull):** A polite wave of the hand. The Robot says: *"Train, please stop rolling!"*
-* **SIGTERM (Lock Door Request):** The Robot says: *"Clean up your toys and leave now!"*
-* **SIGKILL (Big Giant Hammer):** The Robot hits the command with a hammer. The command dies instantly.
+* **SIGINT (Emergency Brake Pull):** A polite wave of the hand. Jimmy says: *"Hover-Car, please stop rolling!"*
+* **SIGTERM (Lock Door Request):** Goddard says: *"Clean up your toys and leave now!"*
+* **SIGKILL (Big Giant Hammer):** Goddard hits the engine with a hammer. The gadget stops instantly.
 
 ---
 
-## 14. Watchtower File Change Debouncing (The Debouncer Shield)
+## 14. Goddard's Ear-Wiggle Debouncing Shield (File Change Debouncing)
 
-When you save a file, code compilation tools write on disk multiple times in a millisecond. If the Robot broadcasted every tiny sub-event, the string telephones would snap! We use a **Debouncer Shield** to smooth things out:
+When you save a blueprint, compiler tools write on disk multiple times in a millisecond. If Goddard broadcasted every tiny sub-event, the communicator signals would break! We use an **Ear-Wiggle Debouncing Shield** to smooth things out:
 
 ```go
 package fswatch
@@ -745,12 +710,12 @@ import (
 	"time"
 )
 
-type Watchtower struct {
+type EarWiggleWatch struct {
 	changeChan chan string
 	outChan    chan string
 }
 
-func (w *Watchtower) DebouncePlayroom() {
+func (w *EarWiggleWatch) DebounceLab() {
 	var lastFile string
 	timer := time.NewTimer(100 * time.Millisecond)
 	timer.Stop()
@@ -762,7 +727,7 @@ func (w *Watchtower) DebouncePlayroom() {
 			timer.Reset(100 * time.Millisecond) // Wait for a quiet pause
 		case <-timer.C:
 			if lastFile != "" {
-				w.outChan <- lastFile // Send final clean event
+				w.outChan <- lastFile // Send final clean blueprint event
 				lastFile = ""
 			}
 		}
@@ -778,87 +743,87 @@ Output:    ------------------------------------[Broadcast!] (Only one broadcast 
 
 ---
 
-### 14.1 The Magic Unicorn Debounce Visualizer
+### 14.1 Goddard's Holo-Sparkle Visualizer
 
 To watch how the debouncer works, look at this magic path diagram:
 
 ```
 [ Scribble 1 ] ---\
-[ Scribble 2 ] ----+---> [ Watchtower Debounce Guard ] ---> [ Send Unicorn Sparkles (Vite Update) ]
+[ Scribble 2 ] ----+---> [ Ear-Wiggle Debounce Guard ] ---> [ Send Holo-Sparkles (Vite Update) ]
 [ Scribble 3 ] ---/
 ```
 
-The Guard catches all the messy scribbles in his bucket. When you pause to take a breath, he throws unicorn sparkles over the network, updating the drawing boards on all tablets instantly!
+The Guard catches all the messy scribbles in his bucket. When you pause to take a breath, he throws holographic sparkles over the network, updating the screen boards on all communicators instantly!
 
 ---
 
-## 15. Playground Troubleshooting Guide (Ouchie Resolution Manual)
+## 15. Retron-7000 Troubleshooting Guide (Lab Resolution Manual)
 
-If your toys aren't working, look at this table to find the doctor's cure:
+If your gadgets aren't working, look at this table to find the cure:
 
-| The Ouchie Message | What the Robot Thinks | How to Fix it |
+| Goddard Error Message | What Went Wrong in the Lab | How to Fix It |
 | :--- | :--- | :--- |
-| `Error: database is locked` | The Sticker Book is closed because the Robot is drawing a big picture. | Wait 3 seconds and tap the button again. |
-| `Error: permission denied` | You clicked the Red traffic light. The Teddy Bear is crying. | Open settings and toggle the permission switch back to Green. |
-| `Error: hand shake failed` | Your tin-can string is loose or the neighbor has the wrong passcode. | Re-scan the QR code to hold hands again. |
-| `Error: workspace out of bounds` | You tried to dig a hole outside the playground fence. | Make sure you only edit files inside your registered folder. |
-| `Error: agent CLI not found` | The Teddy Bear is missing from your playroom closet. | Open your computer terminal and install Claude Code or Gemini CLI first. |
+| `Error: database is locked` | The Lab Journal is closed because Goddard is drawing a big blueprint. | Wait 3 seconds and tap the button again. |
+| `Error: permission denied` | Cindy Vortex tapped the Red prompter button. Goddard is whimpering. | Open settings and toggle the permission switch back to Green. |
+| `Error: hand shake failed` | Goddard's ears are floppy or Carl has the wrong mnemonic passcode. | Re-scan the QR code to hold hands again. |
+| `Error: workspace out of bounds` | You tried to write a blueprint outside the authorized lab drawer. | Make sure you only edit files inside your registered folder. |
+| `Error: agent CLI not found` | The Neuro-Link Band tool is missing from your computer. | Open your computer terminal and install Claude Code or Gemini CLI first. |
 
 ---
 
-## 16. Frequently Asked Questions (FAQ)
+## 16. Retron-7000 Lab FAQ
 
-Here are the answers to the questions children and smart dogs ask most about our robot:
+Here are the answers to the questions kid-inventors ask most about our robot dog system:
 
-### Q1: Can the Teddy Bear eat my real cookies?
-No! The Teddy Bear has no mouth, and he lives behind the glass. Plus, the Robot blocks him from leaving his playroom folder anyway.
+### Q1: Can Goddard eat my real chocolate cookies?
+No! Goddard is a robot doggy. He has no organic stomach, and he lives behind the glass screen. Plus, he only eats virtual dog biscuits and Purple Flurp bytes!
 
-### Q2: What happens if I splash real water on the Robot?
-The Robot will go **POP!**, release smelly gray smoke, and sleep forever. Keep your juice box away from the computer tower!
+### Q2: What happens if I splash Purple Flurp on the computer?
+The computer will go **POP!**, release smelly gray smoke, and sleep forever. Keep your soda can away from the computer tower!
 
-### Q3: Why does the Robot show a QR code instead of a simple smiley face?
-It's a magic grid picture! When your tablet camera looks at it, it translates the square dots into the secret password key so your tablet can hold hands with the Robot.
+### Q3: Why does Goddard show a QR code instead of a simple smiley face?
+It's a magic grid picture! When your tablet camera looks at it, it translates the square dots into the secret password key so your tablet can hold hands with Goddard.
 
-### Q4: Can two Teddy Bears play in the sandbox at the exact same time?
-Yes, but they must sit on different chairs and share the crayon box politely using the talking stick!
+### Q4: Can Sheen and Carl play in the lab at the exact same time?
+Yes, but they must take turns sharing the keyboard and not fight over Ultra Lord. Goddard uses three-way merges to keep their code from colliding!
 
-### Q5: What if I pull the computer's power plug while the Robot is writing?
-The Robot drops his pencil and forgets the last letter he drew, but the rest of the sticker journal is made of solid stone so nothing breaks!
+### Q5: What if Hugh Neutron pulls the plug on the server while it's writing?
+Hugh might break the current slice of pie, but the SQLite log journal is made of durable WAL stone, so the past blueprints will never crumble!
 
-### Q6: Why is the Robot's brain written in a language called Go?
+### Q6: Why is Goddard's brain written in a language called Go?
 Because Go compiles into a single, strong gingerbread man cookie that runs super fast and doesn't crumble when multiple children scream updates!
 
-### Q7: Can the Teddy Bear write code on my sister's computer too?
+### Q7: Can the Neuro-Link Band write code on my sister's computer too?
 Only if you scan the magic QR stamp on her screen and click green on your traffic light to let her play in your room.
 
-### Q8: Does the Robot sleep at night?
-Yes! The Robot sits very still in the dark, using almost zero battery, waiting for you to tap the screen tomorrow.
+### Q8: Does Goddard sleep at night?
+Yes! Goddard sits very still in the dark, using almost zero battery, waiting for you to tap the screen tomorrow.
 
-### Q9: Can the Teddy Bear draw a real dinosaur that comes out of the screen?
+### Q9: Can Goddard draw a real dinosaur that comes out of the screen?
 No, he can only show a pretty 3D picture on your screen that you can spin with your finger. Real dinosaurs are too big for the house anyway!
 
-### Q10: What if the Teddy Bear turns mean and starts throwing toys?
-The Referee will blow his whistle, turn the traffic light RED, and lock the Teddy Bear in the dark closet forever!
+### Q10: What if the Neuro-Link Band turns mean and starts throwing toys?
+The Vocoder prompter will blow its whistle, turn the light RED, and lock the Band in the dark closet forever!
 
 ---
 
-## 17. Operational Initiation Protocol (How to Play)
+## 17. Operational Initiation Protocol (Building the Retroville Lab)
 
 Before we can start playing, we have to mix our ingredients and bake the code!
 
 ### Kitchen Prerequisites (What you need)
 
-| Toy Kitchen Tool | Version Required | 5-Year-Old Explanation |
+| Lab Tool | Version Required | What It Does for Our Gadget |
 | :--- | :--- | :--- |
-| [Go](https://go.dev/dl/) | 1.26+ | The magic flour that makes our robot big and strong. |
-| [Node.js](https://nodejs.org/) | 20+ (with npm) | The cookie cutter that shapes our pretty screens. |
-| ACP Agent CLI | Installed (e.g. Claude Code, Gemini CLI) | A talking teddy bear that actually knows how to write code. |
+| [Go](https://go.dev/dl/) | 1.26+ | The magic flour that makes our robot dog big and strong. |
+| [Node.js](https://nodejs.org/) | 20+ (with npm) | The cookie cutter that shapes our pretty holographic screens. |
+| ACP Agent CLI | Installed (e.g. Claude Code, Gemini CLI) | A talking headband that actually knows how to write code. |
 
 ### 🍳 Step 1: Baking the Code Cake
 
-We compile the frontend drawings and bake them directly inside the Go robot so it becomes a single file!
+We compile the frontend drawings and bake them directly inside the Go binary so it becomes a single file!
 
-**For computers with a Penguin/Apple logo (Linux / macOS):**
+**For computers with a Linux / macOS logo:**
 ```bash
 ./build.sh
 ```
@@ -875,21 +840,21 @@ make build
 
 ---
 
-### 🚀 Step 2: Waking Up the Robot
+### 🚀 Step 2: Waking Up Goddard
 
-1. **Tell the Robot where your toy box is:**
+1. **Tell Goddard where your lab blueprint drawer is:**
    ```bash
    app add-folder /path/to/your/project
    ```
 
-   Tell the Robot: *"Here is my lego box. We will build castles here."*
+   Tell Goddard: *"Here is my blueprint folder. We will build hover-cars here."*
 
-2. **Wake up the Robot:**
+2. **Wake up Goddard:**
    ```bash
    app start
    ```
 
-   Wake up the Robot so he starts listening on the subnet network waves. To run him in the dark closet with the door closed so he sleeps quietly in the background, say: `app start --background`.
+   Wake up Goddard so he starts listening on the subnet network waves. To run him in the background closet with the door closed so he sleeps quietly, say: `app start --background`.
 
 3. **Get the Secret Handshake:**
    ```bash
@@ -900,40 +865,40 @@ make build
 
 ---
 
-## 18. The Spellbook (CLI Command Dictionary)
+## 18. The Neutronic Command Reference (CLI Dictionary)
 
-Speak these words to make the Robot do tricks:
+Speak these words to make Goddard do tricks:
 
 ```bash
-app start                  # Wake up the Robot and start the engine.
-app stop                   # Put the Robot to sleep.
-app status                 # Ask the Robot: "Are you okay and what is your phone number?"
+app start                  # Wake up Goddard and start the engine.
+app stop                   # Put Goddard to sleep.
+app status                 # Ask Goddard: "Are you okay and what is your frequency?"
 
-app add-folder <path>      # Show the Robot a new sandbox to play in.
-app remove-folder          # Tell the Robot to forget a sandbox.
-app list-folders           # Ask the Robot to list all his registered sandboxes.
+app add-folder <path>      # Show Goddard a new folder to play in.
+app remove-folder          # Tell Goddard to forget a folder.
+app list-folders           # Ask Goddard to list all his registered folders.
 
-app pair                   # Ask the Robot to make a new friend QR code.
+app pair                   # Ask Goddard to make a new friend QR code.
 app devices                # Show a list of all devices in our play group.
 app revoke <id>            # Kick a device out of the play group forever.
 
-app install-service        # Tell the Robot to live in your closet permanently.
-app uninstall-service      # Ask the Robot to pack his sleeping bag and leave.
+app install-service        # Tell Goddard to live in your closet permanently.
+app uninstall-service      # Ask Goddard to pack his sleeping bag and leave.
 
-app logs                   # Read a list of everything the Robot did today.
-app help                   # Ask the Robot: "Help, I forgot the magic words!"
+app logs                   # Read a list of everything Goddard did today.
+app help                   # Ask Goddard: "Help, I forgot the magic words!"
 ```
 
 ---
 
-## 19. Key Documentation (The Instruction Manuals)
+## 19. Key Documentation (Retroville Blueprints)
 
 | Document | Purpose |
 | :--- | :--- |
-| [`docs/plans/Blueprint.md`](docs/plans/Blueprint.md) | **The Big Master Plan** — How we want the castle to look when it's finished. |
+| [`docs/plans/Blueprint.md`](docs/plans/Blueprint.md) | **The Big Master Plan** — How we want the lab to look when it's finished. |
 | [`docs/STATUS.md`](docs/STATUS.md) | **The Checklist** — What toys are ready and what blocks we still need to find. |
 | [`docs/known-issues.md`](docs/known-issues.md) | **The Ouchie List** — Things we know are broken but we promised to fix tomorrow. |
-| [`AGENTS.md`](AGENTS.md) | **The Teddy Bear Rules** — How the AI should behave in our sandbox. |
+| [`AGENTS.md`](AGENTS.md) | **The Neuro-Link Rules** — How the AI should behave in our lab. |
 
 ---
 
