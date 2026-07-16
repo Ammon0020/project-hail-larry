@@ -3,6 +3,14 @@
 Gaps and deferred work tracked from review passes. Each entry is a one-line
 note so the next agent can pick it up without re-reading the full review file.
 
+## Missing workspaces — auto-prune instead of user warning
+
+Temporary behavior (2026-07-15): if `Register` fails at startup, the daemon
+logs a WARNING and **removes** the path from config (`RemoveWorkspacePath`).
+Preferred product behavior: keep the registration and **warn the user** in UI
+and CLI until they fix or remove it. Story:
+`docs/plans/stories/pending-missing_workspace_user_warning-med-med.md`.
+
 ## Image upload — Claude Code inline-image delivery gap
 
 The image upload flow (Mode B) is implemented per ACP spec: when an agent

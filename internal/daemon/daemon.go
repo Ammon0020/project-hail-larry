@@ -414,7 +414,13 @@ func New(cfg *Config) (*Daemon, error) {
 	}
 	for _, wsPath := range appCfg.Workspaces {
 		if _, regErr := workspaceMgr.Register(context.Background(), wsPath); regErr != nil {
-			log.Printf("WARNING: failed to load workspace %s: %v", wsPath, regErr)
+			// Missing/invalid paths WARN every start until removed. Drop them
+			// from the persisted list so a stale fixture path (or deleted
+			// folder) does not spam logs forever; re-add with `app add-folder`.
+			log.Printf("WARNING: failed to load workspace %s: %v — removing from config", wsPath, regErr)
+			if remErr := appCfg.RemoveWorkspacePath(wsPath); remErr != nil {
+				log.Printf("WARNING: could not remove stale workspace %s: %v", wsPath, remErr)
+			}
 		}
 	}
 
@@ -676,7 +682,8 @@ func IsRunning(dataDir string) (int, error) {
 		return 0, err
 	}
 
-	pid, err := strconv.Atoi(string(data))
+	// Trim whitespace — some writers may include a trailing newline.
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {
 		return 0, fmt.Errorf("parse pid: %w", err)
 	}
@@ -689,6 +696,36 @@ func IsRunning(dataDir string) (int, error) {
 	}
 
 	return pid, nil
+}
+
+// EnsurePortsFree fails early with a clear error when the HTTP (and, when TLS
+// is enabled, HTTPS) listen ports are already bound. This catches orphaned
+// daemons that hold the ports but no longer have a PID file under dataDir
+// (status would otherwise report "Stopped" while bind later fails with
+// "address already in use").
+//
+// host is the configured bind address (empty/"0.0.0.0" mean all interfaces).
+// We probe with a temporary Listen on the resolved address; if bind succeeds
+// we close immediately so the real server can re-bind.
+func EnsurePortsFree(host string, httpPort, httpsPort int, tlsEnabled bool) error {
+	if host == "" {
+		host = defaultBindHost
+	}
+	if err := probePort(host, httpPort); err != nil {
+		return fmt.Errorf(
+			"HTTP port %s:%d is already in use — stop the process holding it (e.g. 'app stop' or kill the old binary) and retry: %w",
+			host, httpPort, err,
+		)
+	}
+	if tlsEnabled && httpsPort > 0 && httpsPort != httpPort {
+		if err := probePort(host, httpsPort); err != nil {
+			return fmt.Errorf(
+				"HTTPS port %s:%d is already in use — stop the process holding it and retry: %w",
+				host, httpsPort, err,
+			)
+		}
+	}
+	return nil
 }
 
 // Stop sends SIGTERM to the running daemon process.

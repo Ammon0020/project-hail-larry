@@ -135,6 +135,26 @@ func runStart(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Refuse to start if a daemon is already tracked by the PID file, or if the
+	// configured HTTP (or HTTPS) port is already bound — e.g. an orphaned binary
+	// left over after a crash that never wrote daemon.pid under ~/.local-agent.
+	if pid, err := daemon.IsRunning(cfg.DataDir); err != nil {
+		return fmt.Errorf("check daemon: %w", err)
+	} else if pid > 0 {
+		return fmt.Errorf("daemon already running (PID %d) — stop it with 'app stop' first", pid)
+	}
+	httpPort := cfg.Port
+	if httpPort <= 0 {
+		httpPort = 7337
+	}
+	httpsPort := cfg.HTTPSPort
+	if httpsPort <= 0 {
+		httpsPort = httpPort + 1
+	}
+	if err := daemon.EnsurePortsFree(cfg.Host, httpPort, httpsPort, cfg.TLSEnabled); err != nil {
+		return err
+	}
+
 	d, err := daemon.New(toDaemonConfig(cfg))
 	if err != nil {
 		return fmt.Errorf("init daemon: %w", err)
