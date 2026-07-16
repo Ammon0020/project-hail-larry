@@ -11,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/adama/local-agent/internal/acp"
-	"github.com/adama/local-agent/internal/mcp"
+	"github.com/adama/local-agent/internal/fsutil"
 )
 
 const (
@@ -273,7 +273,7 @@ func (c *Config) saveLocked() error {
 	}
 
 	configPath := filepath.Join(c.DataDir, "config.json")
-	return mcp.WriteFileAtomic(configPath, data, configFilePerm)
+	return fsutil.WriteFileAtomic(configPath, data, configFilePerm)
 }
 
 // UpsertAgent adds or updates an agent in the persisted config. It atomically

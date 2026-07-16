@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/adama/local-agent/internal/fsutil"
 	"github.com/adama/local-agent/internal/mcp"
 )
 
@@ -100,7 +101,7 @@ func (s *Server) handlePutMcp(w http.ResponseWriter, r *http.Request) {
 	// user's exact formatting, key ordering, and whitespace are preserved on
 	// round-trips. mcp.Save re-marshals, which would normalize all of that
 	// away; the GET endpoint returns the same raw bytes back to the editor.
-	if err := mcp.WriteFileAtomic(path, raw, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, raw, 0o600); err != nil {
 		writeError(w, http.StatusInternalServerError, "save mcp config: "+err.Error())
 		return
 	}
