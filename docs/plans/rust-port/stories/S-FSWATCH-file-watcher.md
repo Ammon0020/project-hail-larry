@@ -30,8 +30,8 @@ itself (via a "recently written" set with TTL).
 
 ## Acceptance Criteria
 
-- [ ] External file changes detected and emitted
-- [ ] App-originated writes suppressed
-- [ ] Rapid changes debounced (no event storm)
-- [ ] Watcher handles file creation, modification, deletion
-- [ ] `cargo test fswatch` passes
+- [x] External file changes detected and emitted
+- [x] App-originated writes suppressed
+- [x] Rapid changes debounced (no event storm)
+- [x] Watcher handles file creation, modification, deletion
+- [x] `cargo test fswatch` passes

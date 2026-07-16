@@ -1,7 +1,7 @@
 {
   "method": "GET",
-  "path": "/api/workspaces/66c9bb27f0c7a337/file?path=README.md",
-  "status": 404,
+  "path": "/api/workspaces/<REDACTED_WORKSPACE_ID>/file?path=README.md",
+  "status": 200,
   "contentType": "application/json",
-  "body": "{\"error\":\"stat file: lstat /media/adam/extex/projects/project-hail-larry/tests/contract/fixtures/seed-workspace/README.md: no such file or directory\"}\n"
+  "body": "{\"content\":\"# Seed Workspace\\n\\nThis is a seed workspace for the contract fixture harness.\\nIt contains a simple greeting file in `src/greet.txt`.\\n\\nsearch target: hello\\n\",\"isBinary\":false,\"path\":\"README.md\",\"previewable\":false,\"revision\":259927883136353}\n"
 }

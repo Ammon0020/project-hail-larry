@@ -1,6 +1,15 @@
 $ app pair
-exit: 1
+exit: 0
 --- stdout ---
---- stderr ---
-pairing failed (HTTP 429): {"error":"pairing rate limit exceeded, try again later"}
+╔══════════════════════════════════════════════════════╗
+║           Device Pairing — Local Agent               ║
+╠══════════════════════════════════════════════════════╣
+║  Passcode: <REDACTED_PASSCODE>                     ║
+║  URL:      http://127.0.0.1:<REDACTED_PORT>?token=<REDACTED_ID>║
+║  QR Code:  <REDACTED_PATH>/pairing-<REDACTED_ID>.png║
+║  Expires:  <REDACTED_TIMESTAMP>            ║
+╚══════════════════════════════════════════════════════╝
 
+Scan the QR code or enter the passcode on your device.
+The passcode expires in 5 minutes and can be used once.
+--- stderr ---

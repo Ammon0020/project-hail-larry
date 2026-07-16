@@ -30,7 +30,7 @@
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — Phase 0 done. Phase 1: S-PATHUTIL/S-CONFIG/S-INTERFACES/S-EVENTS/S-MIGRATE done. Shared **`src/fsutil`**. Next: service ports (pairing/workspace/…).
+- [ ] **Rust backend port** — Phase 0 done. Phase 1: S-PATHUTIL/S-CONFIG/S-INTERFACES/S-EVENTS/S-MIGRATE/S-UPLOADS/S-SHELL/S-FSWATCH done. Shared **`src/fsutil`**. Next: service ports (pairing/workspace/…).
 
 ## Blocked
 
@@ -38,6 +38,9 @@
 
 ## Recent Changes (2026-07)
 
+- **07-16** — Rust port **S-FSWATCH** complete: `src/fswatch/{mod,tests}.rs`. On-disk change detection via `notify` + `notify-debouncer-full` (preserves `EventKind` for Create-dir handling). Three std threads (debouncer callback, worker owning the `Debouncer`, emit drainer). Recursive per-dir NonRecursive watches (skips `.git`/`node_modules`/…/hidden), app-write suppression (2s TTL) + per-path emit throttle (300ms) via bounded `lru::LruCache`, opportunistic 30s cleanup, ignored-component filtering, `Access`/`Other` event filtering (notify noise Go's fsnotify never sees). Emits `FileChangedOnDisk` through a pluggable emit callback (caller wires to `EventBus`). Deps: `notify`, `notify-debouncer-full`, `lru`. Tests: 9 fswatch + prior = 168 lib + 7 spike = 175.
+- **07-16** — Rust port **S-SHELL** complete: `src/shell/{mod,tests}.rs`. Workspace-scoped subprocess runner (`tokio::process::Command`), line-by-line stdout/stderr streaming, CWD containment via `pathutil::clean_path`, per-command `CancellationToken` with process-group kill (Unix `setpgid`+`killpg`, Windows `CREATE_NEW_PROCESS_GROUP`), bounded output (1 MiB default), `merge_env`. 20 shell tests (echo, exit codes, CWD, streaming, cancellation, process-group orphan prevention, path traversal, timeout, output cap, env). Deps: `libc`. Tests: 20 shell + prior = 159 lib + 7 spike = 166.
+- **07-16** — Rust port **S-UPLOADS** complete: `src/uploads/{mod,tests}.rs` — per-session upload store (`Manager`), v4 UUID opaque IDs, `infer` magic-byte MIME detection (PNG/JPEG/GIF/WebP), 10 MB cap, path-traversal-safe session/upload ID validators, `store`/`get`/`remove_session`/`remove_all`. Deps: `uuid` (v4), `infer`. Tests: 18 uploads + prior = 139 lib + 7 spike = 146.
 - **07-15** — Rust port **S-MIGRATE** complete: `src/migrate/{mod,detect,config,validate,error,tests}.rs` + `tests/migrate/fixtures/go-state/`. Atomic/idempotent/restart-safe `config.json`→`config.toml` (versioned `config.json.bak.v1`, dual-state keeps Go readable). Validates event DB (Rust opens Go SQLite), structurally validates devices/conversations/mcp/uploads/tls (semantic load deferred). Tests: 21 migrate + prior = 120 lib + 7 spike = 127. Next: service ports.
 - **07-15** — Rust port **S-EVENTS** complete: SQLite WAL store, schema matching Go, EventBus. Tests: 27 events + prior = 99 lib + 7 spike.
 - **07-15** — S-INTERFACES, S-CONFIG, S-PATHUTIL, S-ACP-SPIKE, S-CONTRACT, S-ARCH; shared fsutil; daemon start resilience.
@@ -47,4 +50,4 @@
 
 - Go ACP SDK still missing `mcp/message` relay (Rust path unblocked).
 - Mobile editor touch; profile mode not wired; pair QR scheme selection.
-- Rust port Phase 1 complete (S-MIGRATE done); Phase 2+ service ports. Pairing/MCP/ACP/uploads semantic load deferred past structural validation.
+- Rust port Phase 1 complete (S-MIGRATE/S-UPLOADS/S-SHELL done); Phase 2+ service ports. Pairing/MCP/ACP semantic load deferred past structural validation.

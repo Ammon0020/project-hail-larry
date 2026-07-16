@@ -1,6 +1,6 @@
 {
   "method": "GET",
-  "path": "/api/workspaces/66c9bb27f0c7a337/file",
+  "path": "/api/workspaces/<REDACTED_WORKSPACE_ID>/file",
   "status": 400,
   "contentType": "application/json",
   "body": "{\"error\":\"missing 'path' query parameter\"}\n"

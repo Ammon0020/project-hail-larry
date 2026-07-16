@@ -121,6 +121,30 @@ async-trait = "0.1.89"
 # time.Time RFC3339 JSON. Verified 2026-07-15.
 chrono = { version = "0.4.45", features = ["serde"] }
 
+# --- Filesystem watcher (S-FSWATCH) ---
+# notify: cross-platform filesystem event watcher (replaces fsnotify/fsnotify).
+# Verified 2026-07-15. See docs/rust-ecosystem/data-and-concurrency.md.
+notify = "8.2.0"
+# notify-debouncer-full: maintained debouncer that coalesces the OS-level event
+# burst a single editor save produces (used instead of a hand-rolled sleep
+# loop). The "full" variant preserves `EventKind` so Create events for newly
+# created directories can be detected and watched recursively. Verified
+# 2026-07-15.
+notify-debouncer-full = "0.7.0"
+# lru: bounded LRU cache for the app-write suppression and per-path emit
+# throttle maps so they cannot grow unbounded between cleanup passes.
+# Verified 2026-07-15.
+lru = "0.18.1"
+# infer: magic-byte MIME type detection for the upload store (replaces Go's
+# net/http DetectContentType). Verified 2026-07-15.
+infer = "0.22.0"
+# uuid: v4 opaque upload IDs for the per-session upload store (S-UPLOADS).
+# Verified 2026-07-15.
+uuid = { version = "1.11", features = ["v4"] }
+# libc: Unix process-group management (setpgid, killpg) for the shell executor's
+# cancellation path. Verified 2026-07-15.
+libc = "0.2.186"
+
 [dev-dependencies]
 # async-process: used by S-ACP-SPIKE (`tests/spike_acp.rs`) to spawn the
 # mockagent with PID tracking for the cancellation/teardown test. The SDK's
@@ -133,6 +157,14 @@ async-process = "2.5.0"
 tempfile = "3.27.0"
 # tokio test macro for async unit tests. Verified 2026-07-15.
 tokio-test = "0.4"
+# regex: redaction patterns for the contract differential runner
+# (tests/contract_runner/). Mirrors the Go redactor in go-fixtures/redact.go.
+# Verified 2026-07-16.
+regex = "1.11"
+# tokio-tungstenite: async WebSocket client for the contract runner's WS tests
+# (origin rejection, auth success, event broadcast). Replaces nhooyr.io/websocket
+# from the Go harness. Verified 2026-07-16.
+tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 
 # Lint policy — authoritative levels enforced by `cargo build`/`cargo test`/
 # `cargo clippy` and IDE check-on-save, not just by `cargo clippy -- -D warnings`.

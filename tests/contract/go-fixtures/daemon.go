@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	_ "unsafe" // required by go:linkname
 
 	"github.com/adama/local-agent/internal/daemon"
 	"github.com/adama/local-agent/internal/server"
@@ -36,6 +37,17 @@ type harness struct {
 	httpSrv  *httptest.Server
 	redactor *Redactor
 }
+
+// knownAgents is the unexported package-level slice of agent specs in
+// internal/acp/autodetect.go. go:linkname gives the test harness access so it
+// can temporarily clear the slice, preventing machine-specific autodetected
+// agents (codex, cursor, devin, etc.) from polluting the golden fixtures. The
+// element type is unexported (agentSpec), but a slice header is always 3 words
+// regardless of element type, so []struct{} is link-compatible. Setting it to
+// nil makes Autodetect() return an empty slice.
+//
+//go:linkname knownAgents github.com/adama/local-agent/internal/acp.knownAgents
+var knownAgents []struct{}
 
 // harnessRepoRoot is the repo root captured at harness construction so
 // capturer files that need it (e.g. cli.go's config rewrite) can reach it
@@ -89,7 +101,15 @@ func newHarness(repoRoot string) (*harness, error) {
 		CredentialInactivityTTLSeconds:  2592000,
 	}
 
+	// Temporarily clear the autodetect registry so the daemon's
+	// autodetectAndRegisterAgents finds no machine-specific agents (codex,
+	// cursor, devin, etc.). This makes the agents_list fixture portable — only
+	// the fixture-agent from config.json appears. The original slice is
+	// restored after daemon.New so the rest of the process is unaffected.
+	origKnownAgents := knownAgents
+	knownAgents = nil
 	d, err := daemon.New(dcfg)
+	knownAgents = origKnownAgents
 	if err != nil {
 		_ = os.RemoveAll(stateDir)
 		return nil, fmt.Errorf("construct daemon: %w", err)
@@ -116,10 +136,25 @@ func newHarness(repoRoot string) (*harness, error) {
 		redactor: NewRedactor(),
 	}
 	harnessRepoRoot = repoRoot
-	// Scrub the temp state dir and the user's home dir from any captured text.
+	// Scrub the temp state dir, the user's home dir, and the repo root from any
+	// captured text. The repo root is registered so the seed workspace path
+	// (repoRoot/tests/contract/fixtures/seed-workspace) is redacted to
+	// <REDACTED_PATH>, making golden fixtures portable across machines. The
+	// repo root is registered AFTER the state dir and home dir so the
+	// longest-prefix-wins ordering is correct (the repo root may be under the
+	// home dir on some machines, or on a separate mount like /media on others).
 	h.redactor.RegisterPath(stateDir)
 	if home, err := os.UserHomeDir(); err == nil {
 		h.redactor.RegisterPath(home)
+	}
+	h.redactor.RegisterPath(repoRoot)
+	// Register the httptest server's ephemeral port so it is redacted wherever
+	// it appears (status output, pairing URLs, CLI output). The configured port
+	// (7337) is NOT registered — it is a stable contract value that appears in
+	// REST/DTO fixtures and must remain visible.
+	if port := httptestPort(h.httpSrv.URL); port > 0 {
+		h.redactor.RegisterSecret(fmt.Sprintf("127.0.0.1:%d", port), "127.0.0.1:<REDACTED_PORT>")
+		h.redactor.RegisterSecret(fmt.Sprintf("localhost:%d", port), "localhost:<REDACTED_PORT>")
 	}
 	return h, nil
 }

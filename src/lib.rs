@@ -12,12 +12,14 @@
 //! - [`events`]     — SQLite event store, WAL, append-only (Go `events/`)
 //! - [`files`]      — revision tracking, three-way merge (Go `files/`)
 //! - [`fsutil`]     — shared home-dir + durable atomic write (used by config/MCP/logging)
+//! - [`fswatch`]    — on-disk change detection, external file changes (Go `fswatch/`)
 //! - [`pairing`]    — QR + mnemonic pairing, device credentials (Go `pairing/`)
 //! - [`permissions`]— permission request/response, policies (Go `permissions/`)
 //! - [`pathutil`]   — path traversal + symlink containment (Go `pathutil/` + `workspace.safeJoin`)
 //! - [`search`]     — workspace content search (Go `search/`)
 //! - [`shell`]      — workspace-scoped subprocess runner (Go `shell/`)
 //! - [`sync`]       — WebSocket hub, broadcast, reconnection (Go `sync/`)
+//! - [`uploads`]    — per-session file upload store, magic-byte MIME (Go `uploads/`)
 //! - [`workspace`]  — registration, file tree, git info (Go `workspace/`)
 //! - [`interfaces`] — shared traits and typed errors (Go `interfaces/`)
 //! - [`migrate`]    — Go→Rust state migration + validation (S-MIGRATE)
@@ -38,6 +40,7 @@ pub mod config;
 pub mod events;
 pub mod files;
 pub mod fsutil;
+pub mod fswatch;
 pub mod interfaces;
 pub mod migrate;
 pub mod pairing;
@@ -46,4 +49,5 @@ pub mod permissions;
 pub mod search;
 pub mod shell;
 pub mod sync;
+pub mod uploads;
 pub mod workspace;

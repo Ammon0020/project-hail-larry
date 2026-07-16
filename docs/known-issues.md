@@ -99,3 +99,15 @@ Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic
   short-lived single-use WS ticket exchanged via the authenticated REST API
   would eliminate the leakage vector if a reverse proxy is ever placed in
   front.
+
+## Rust port — S-SHELL WIP does not compile (parallel task)
+
+As of 2026-07-16, `src/shell/mod.rs` contains in-progress S-SHELL work that
+does not compile: it declares a `pub struct Result` that shadows
+`std::result::Result`, breaking `resolve_cwd` and `run_inner`, and references
+`mod tests;` (`src/shell/tests.rs`) that is also WIP. This blocks `cargo
+check`/`cargo test`/`cargo fmt` for the whole crate until S-SHELL is fixed.
+S-UPLOADS was verified by temporarily restoring the committed shell stub via
+`git show HEAD:src/shell/mod.rs`; the WIP file was preserved at
+`/tmp/shell_mod_wip.rs` and restored afterward. S-SHELL should rename its
+`Result` struct (e.g. `ShellResult`) or scope it to avoid the std collision.

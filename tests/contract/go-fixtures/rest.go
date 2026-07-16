@@ -31,6 +31,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	_ "unsafe" // required by go:linkname
+
+	"golang.org/x/time/rate"
 )
 
 // restFixture is the on-disk shape of a single REST golden fixture.
@@ -151,7 +155,7 @@ func buildRESTCases(wsID string) []restCase {
 		restCase{name: "workspaces_read_missing_path", method: http.MethodGet, path: fmt.Sprintf("/api/workspaces/%s/file", wsID), loopback: true},
 		restCase{name: "workspaces_read_not_found", method: http.MethodGet, path: fmt.Sprintf("/api/workspaces/%s/file?path=nope.txt", wsID), loopback: true},
 		restCase{name: "workspaces_raw_ok", method: http.MethodGet, path: fmt.Sprintf("/api/workspaces/%s/raw?path=README.md", wsID), loopback: true},
-		restCase{name: "workspaces_search_ok", method: http.MethodGet, path: fmt.Sprintf("/api/workspaces/%s/search?q=hello", wsID), loopback: true},
+		restCase{name: "workspaces_search_ok", method: http.MethodGet, path: fmt.Sprintf("/api/workspaces/%s/search?pattern=hello", wsID), loopback: true},
 		restCase{name: "workspaces_write_bad_body", method: http.MethodPost, path: fmt.Sprintf("/api/workspaces/%s/file", wsID), body: `{not json`, loopback: true},
 	)
 
@@ -267,4 +271,27 @@ func registerPairingSecrets(h *harness, body string) {
 	if s.Passcode != "" {
 		h.redactor.RegisterSecret(s.Passcode, "<REDACTED_PASSCODE>")
 	}
+}
+
+// pairLimiters and pairLimitersMu are unexported package-level vars in
+// internal/server/api.go. go:linkname gives the test harness access so it can
+// reset the per-IP pairing rate limiter map between capture phases without
+// modifying the backend code. This is a standard Go testing technique for
+// resetting unexported test-relevant state.
+//
+//go:linkname pairLimiters github.com/adama/local-agent/internal/server.pairLimiters
+var pairLimiters map[string]*rate.Limiter
+
+//go:linkname pairLimitersMu github.com/adama/local-agent/internal/server.pairLimitersMu
+var pairLimitersMu sync.Mutex
+
+// resetPairRateLimiters clears the per-IP pairing rate limiter map so the CLI
+// capture phase starts with a fresh budget. The REST capture phase exercises
+// /api/pair/initiate (which consumes the limiter), and without a reset the CLI
+// `app pair` command hits a 429 before it can succeed, cascading into empty
+// `devices` and `revoke` fixtures.
+func resetPairRateLimiters() {
+	pairLimitersMu.Lock()
+	defer pairLimitersMu.Unlock()
+	pairLimiters = make(map[string]*rate.Limiter)
 }

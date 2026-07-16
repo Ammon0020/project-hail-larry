@@ -1,7 +1,7 @@
 {
   "method": "GET",
-  "path": "/api/workspaces/66c9bb27f0c7a337/file?path=nope.txt",
+  "path": "/api/workspaces/<REDACTED_WORKSPACE_ID>/file?path=nope.txt",
   "status": 404,
   "contentType": "application/json",
-  "body": "{\"error\":\"stat file: lstat /media/adam/extex/projects/project-hail-larry/tests/contract/fixtures/seed-workspace/nope.txt: no such file or directory\"}\n"
+  "body": "{\"error\":\"stat file: lstat \u003cREDACTED_PATH\u003e/tests/contract/fixtures/seed-workspace/nope.txt: no such file or directory\"}\n"
 }

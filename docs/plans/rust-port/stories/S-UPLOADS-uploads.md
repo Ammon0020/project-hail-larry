@@ -22,7 +22,7 @@ generates UUID IDs, validates MIME types, serves by ID.
 
 ## Acceptance Criteria
 
-- [ ] Uploads stored with opaque UUID IDs
-- [ ] MIME type validated via magic bytes
-- [ ] Files served by ID with correct Content-Type
-- [ ] `cargo test uploads` passes
+- [x] Uploads stored with opaque UUID IDs
+- [x] MIME type validated via magic bytes
+- [x] Files served by ID with correct Content-Type
+- [x] `cargo test uploads` passes

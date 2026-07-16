@@ -1,6 +1,6 @@
-$ app revoke 
+$ app revoke 5ae09e35a0604f8bf927e0e04682e117
 exit: 1
 --- stdout ---
 --- stderr ---
-revoke failed (HTTP 404): 404 page not found
+revoke failed (HTTP 202): {"id":"<REDACTED_ID>","type":"revocation","deviceId":"<REDACTED_DEVICE_ID>","deviceName":"fixture-device","requestedBy":"","requestedAt":"<REDACTED_TIMESTAMP>","executeAt":"<REDACTED_TIMESTAMP>"}
 

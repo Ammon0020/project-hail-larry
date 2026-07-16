@@ -182,30 +182,11 @@ type cliPairedDevice struct {
 // pairDeviceForCLI pairs a device via the in-process server so `app devices`
 // and `app revoke` have a real target. The issued secret + passcode are
 // registered with the redactor. Returns the paired device's ID and secret.
+//
+// This calls the server handler directly (not runRESTCase) so the raw passcode
+// is available for the verify step — runRESTCase redacts the passcode in the
+// returned body, which would make verification impossible.
 func pairDeviceForCLI(h *harness) *cliPairedDevice {
-	// POST /api/pair/initiate then verify-passcode with the issued passcode.
-	sessFix, err := runRESTCase(h, restCase{name: "_cli_pair_init", method: "POST", path: "/api/pair/initiate", body: `{"host":"localhost","port":7337}`, loopback: true})
-	if err != nil || sessFix.Status != 200 {
-		return &cliPairedDevice{}
-	}
-	var sess struct {
-		Passcode string `json:"passcode"`
-	}
-	if err := jsonUnmarshal([]byte(sessFix.Body), &sess); err != nil || sess.Passcode == "" {
-		// The redactor replaced the passcode already (registerPairingSecrets
-		// ran inside runRESTCase). Re-run without redaction by hitting the
-		// handler directly here is complex; instead, fetch the raw body by
-		// temporarily disabling redaction. Simpler: re-run the case and read
-		// the body before redaction by calling the handler inline.
-		return pairDeviceForCLIRaw(h)
-	}
-	return pairDeviceForCLIVerify(h, sess.Passcode)
-}
-
-// pairDeviceForCLIRaw is the fallback path that reads the raw (un-redacted)
-// pairing session body by calling the handler directly, so the passcode can be
-// used to verify. The passcode + token are then registered with the redactor.
-func pairDeviceForCLIRaw(h *harness) *cliPairedDevice {
 	req := httptest.NewRequest("POST", "/api/pair/initiate", strings.NewReader(`{"host":"localhost","port":7337}`))
 	req.RemoteAddr = "127.0.0.1:1234"
 	req.Header.Set("Content-Type", "application/json")

@@ -15,8 +15,8 @@ import (
 )
 
 // Non-deterministic-value patterns. Golden fixtures must be byte-stable across
-// runs so checked-in fixtures do not produce noisy diffs. Two classes of
-// values are non-deterministic and are redacted to stable placeholders:
+// runs so checked-in fixtures do not produce noisy diffs. The following classes
+// of values are non-deterministic and are redacted to stable placeholders:
 //
 //   - ISO-8601 timestamps (e.g. "2026-07-16T04:49:42.091338754Z") emitted by
 //     time.Time JSON marshaling. Replaced with <REDACTED_TIMESTAMP>.
@@ -26,12 +26,26 @@ import (
 //     intact when they appear as standalone path segments so workspace-scoped
 //     routes remain readable; the harness additionally registers the seeded
 //     workspace ID with the redactor when determinism matters.
+//   - OS process IDs (e.g. "PID 800296") in CLI status output. Replaced with
+//     <REDACTED_PID> so the status fixture is stable across runs.
+//   - Ephemeral TCP ports (e.g. "Port:      45869") in CLI status output.
+//     Replaced with <REDACTED_PORT> so the fixture is stable across runs.
 //
 // The future Rust differential runner applies the SAME redactions to its own
 // output before comparison, so redaction is comparison-neutral.
 var (
 	timestampRe = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})`)
 	hexIDRe     = regexp.MustCompile(`\b[A-Fa-f0-9]{20,}\b`)
+	// pidRe matches "PID <number>" in CLI status output (e.g. "Running (PID 800296)").
+	pidRe = regexp.MustCompile(`PID\s+\d+`)
+	// portRe matches "Port:      <number>" in CLI status output. The whitespace
+	// between "Port:" and the number varies; \s+ covers the aligned-column case.
+	portRe = regexp.MustCompile(`Port:\s+\d+`)
+	// passcodeRe matches "Passcode: <four-word-mnemonic>" in CLI pair output.
+	// The mnemonic is four lowercase words joined by hyphens (e.g.
+	// "eye-detect-stomach-firm"). It is a temporary secret that must not appear
+	// in checked-in golden fixtures.
+	passcodeRe = regexp.MustCompile(`Passcode:\s+[a-z]+-[a-z]+-[a-z]+-[a-z]+`)
 )
 
 // Redactor scrubbs secrets and absolute paths out of fixture text. It is safe
@@ -93,6 +107,9 @@ func (r *Redactor) String(s string) string {
 	}
 	s = timestampRe.ReplaceAllString(s, "<REDACTED_TIMESTAMP>")
 	s = hexIDRe.ReplaceAllString(s, "<REDACTED_ID>")
+	s = pidRe.ReplaceAllString(s, "PID <REDACTED_PID>")
+	s = portRe.ReplaceAllString(s, "Port:      <REDACTED_PORT>")
+	s = passcodeRe.ReplaceAllString(s, "Passcode: <REDACTED_PASSCODE>")
 	return s
 }
 

@@ -76,6 +76,12 @@ func generate(goldenDir, repoRoot string) error {
 	}
 	log.Printf("S-CONTRACT: DTO fixtures captured")
 
+	// Reset the pairing rate limiters before CLI capture so `app pair` has a
+	// fresh budget. The REST capture phase consumed the limiter via
+	// /api/pair/initiate; without a reset the CLI pair command hits 429 and
+	// cascades into empty devices/revoke fixtures.
+	resetPairRateLimiters()
+
 	if err := captureCLI(h, goldenDir, repoRoot); err != nil {
 		return err
 	}

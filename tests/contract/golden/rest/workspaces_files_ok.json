@@ -1,7 +1,7 @@
 {
   "method": "GET",
-  "path": "/api/workspaces/66c9bb27f0c7a337/files",
+  "path": "/api/workspaces/<REDACTED_WORKSPACE_ID>/files",
   "status": 200,
   "contentType": "application/json",
-  "body": "[{\"name\":\"src\",\"type\":\"folder\",\"path\":\"src\",\"children\":[{\"name\":\"greet.txt\",\"type\":\"file\",\"path\":\"src/greet.txt\"}]}]\n"
+  "body": "[{\"name\":\"src\",\"type\":\"folder\",\"path\":\"src\",\"children\":[{\"name\":\"greet.txt\",\"type\":\"file\",\"path\":\"src/greet.txt\"}]},{\"name\":\"README.md\",\"type\":\"file\",\"path\":\"README.md\"}]\n"
 }

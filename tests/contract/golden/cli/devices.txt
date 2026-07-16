@@ -1,5 +1,7 @@
 $ app devices
 exit: 0
 --- stdout ---
-No paired devices. Use 'app pair' to pair a device.
+DEVICE ID            NAME                 PAIRED AT
+------------------------------------------------------------
+5ae09e35a060         fixture-device       <REDACTED_TIMESTAMP>
 --- stderr ---

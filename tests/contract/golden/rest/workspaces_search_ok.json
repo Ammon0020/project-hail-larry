@@ -1,7 +1,7 @@
 {
   "method": "GET",
-  "path": "/api/workspaces/66c9bb27f0c7a337/search?q=hello",
-  "status": 400,
+  "path": "/api/workspaces/<REDACTED_WORKSPACE_ID>/search?pattern=hello",
+  "status": 200,
   "contentType": "application/json",
-  "body": "{\"error\":\"missing 'pattern' query parameter\"}\n"
+  "body": "[{\"path\":\"README.md\",\"lineNumber\":6,\"lineContent\":\"search target: hello\",\"matchStart\":15,\"matchEnd\":20},{\"path\":\"src/greet.txt\",\"lineNumber\":1,\"lineContent\":\"hello world\",\"matchStart\":0,\"matchEnd\":5},{\"path\":\"src/greet.txt\",\"lineNumber\":3,\"lineContent\":\"search target: hello\",\"matchStart\":15,\"matchEnd\":20}]\n"
 }

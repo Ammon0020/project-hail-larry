@@ -3,5 +3,5 @@
   "path": "/api/workspaces",
   "status": 200,
   "contentType": "application/json",
-  "body": "[{\"id\":\"66c9bb27f0c7a337\",\"path\":\"/media/adam/extex/projects/project-hail-larry/tests/contract/fixtures/seed-workspace\",\"name\":\"seed-workspace\"}]\n"
+  "body": "[{\"id\":\"\u003cREDACTED_WORKSPACE_ID\u003e\",\"path\":\"\u003cREDACTED_PATH\u003e/tests/contract/fixtures/seed-workspace\",\"name\":\"seed-workspace\"}]\n"
 }

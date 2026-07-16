@@ -28,9 +28,9 @@ output via channels, enforces workspace path bounds, handles signals.
 
 ## Acceptance Criteria
 
-- [ ] Commands run in workspace CWD
-- [ ] stdout/stderr streamed line-by-line
-- [ ] Exit codes captured correctly
-- [ ] Cancellation kills the process
-- [ ] Path traversal in CWD rejected
-- [ ] `cargo test shell` passes
+- [x] Commands run in workspace CWD
+- [x] stdout/stderr streamed line-by-line
+- [x] Exit codes captured correctly
+- [x] Cancellation kills the process
+- [x] Path traversal in CWD rejected
+- [x] `cargo test shell` passes

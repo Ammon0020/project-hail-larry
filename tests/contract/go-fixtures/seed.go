@@ -11,6 +11,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 )
@@ -75,9 +76,11 @@ func writeSeedConfig(stateDir, seedWsPath string) error {
 
 // seedWorkspace returns the deterministic workspace ID for the seed workspace.
 // The workspace manager derives the ID from a hash of the absolute path, so it
-// is stable across runs as long as the seed workspace path is stable. The
-// harness redacts the absolute path in fixtures, but the ID itself is derived
-// and safe to surface.
+// is stable across runs as long as the seed workspace path is stable. The ID
+// itself is machine-specific (different absolute path => different hash), so it
+// is registered with the redactor and replaced with <REDACTED_WORKSPACE_ID> in
+// all golden fixtures. This makes the fixtures portable: the future Rust
+// differential runner registers its own workspace ID with the same placeholder.
 //
 // We compute it lazily by asking the loaded server's workspace manager via the
 // /api/workspaces endpoint rather than re-implementing the hash, so the ID
@@ -85,18 +88,29 @@ func writeSeedConfig(stateDir, seedWsPath string) error {
 func seedWorkspace(h *harness) string {
 	// Hit /api/workspaces via the in-process handler and parse the first
 	// entry's ID. This guarantees the ID matches the daemon's derivation.
-	fix, err := runRESTCase(h, restCase{name: "_seed_lookup", method: "GET", path: "/api/workspaces", loopback: true})
-	if err != nil || fix.Status != 200 {
+	// Use a raw (un-redacted) handler call so the ID is not scrubbed before we
+	// can read it.
+	req := httptest.NewRequest("GET", "/api/workspaces", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	h.server.Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 {
 		return "unknown-workspace-id"
 	}
 	var ws []struct {
 		ID   string `json:"id"`
 		Path string `json:"path"`
 	}
-	if err := json.Unmarshal([]byte(fix.Body), &ws); err != nil || len(ws) == 0 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &ws); err != nil || len(ws) == 0 {
 		return "unknown-workspace-id"
 	}
-	return ws[0].ID
+	wsID := ws[0].ID
+	// Register the workspace ID with the redactor so it is replaced with
+	// <REDACTED_WORKSPACE_ID> in all captured fixtures (REST paths, response
+	// bodies, CLI output). This makes golden fixtures portable across machines
+	// with different repo paths (and therefore different workspace ID hashes).
+	h.redactor.RegisterSecret(wsID, "<REDACTED_WORKSPACE_ID>")
+	return wsID
 }
 
 // seedAgent is a no-op placeholder kept for symmetry with seedWorkspace. The

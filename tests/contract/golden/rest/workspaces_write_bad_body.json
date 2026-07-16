@@ -1,6 +1,6 @@
 {
   "method": "POST",
-  "path": "/api/workspaces/66c9bb27f0c7a337/file",
+  "path": "/api/workspaces/<REDACTED_WORKSPACE_ID>/file",
   "status": 400,
   "contentType": "application/json",
   "body": "{\"error\":\"invalid request body\"}\n"
