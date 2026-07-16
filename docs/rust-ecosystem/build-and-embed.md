@@ -125,8 +125,12 @@ repository minimum-release-age policy. It must include only required crates:
 - rusqlite with bundled SQLite, serde/serde_json/toml, clap, and rust-embed
 - governor-based rate limiting, rcgen, tracing-appender, and the chosen rustls
   crypto provider
-- notify plus a maintained debouncer, lru, similar, ignore, infer, subtle, and
-  the image support needed by QR PNG rendering
+- `dirs` + `atomic-write-file` (shared via `src/fsutil` for home + durable
+  state writes)
+- notify plus a maintained debouncer, lru, similar, ignore, infer, subtle,
+  dashmap 6.x, and the image support needed by QR PNG rendering
+- search: prefer shell-out to `rg --json` with `ignore`/`regex` fallback
+  (matches Go); do not pure-Rust reimplement ripgrep first
 - platform-gated service/process dependencies only where implementation needs
   them; avoid `tower-http` filesystem serving when rust-embed owns static files
 

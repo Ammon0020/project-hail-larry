@@ -16,10 +16,13 @@ storage.
 ## Rust Implementation
 
 - Use `toml` + `serde` for serialization (replaces `pelletier/go-toml/v2`)
-- Atomic writes: temp file in the same directory → fsync file → rename → fsync
-  parent directory where supported; preserve existing permissions.
-- Preserve the established `~/.local-agent/` location and Go TOML field names.
-  Do not substitute platform config directories during a compatibility port.
+- Atomic writes: **`crate::fsutil::atomic_write`** (`atomic-write-file` crate:
+  temp + fsync + mode `0600` + rename + parent fsync). Do not re-inline the
+  helper; config, MCP, and conversation store share it.
+- Home / state dir: **`crate::fsutil::home_dir`** (`dirs` crate) +
+  `LOCAL_AGENT_STATE_DIR` override. Preserve the established `~/.local-agent/`
+  location and Go camelCase field names — do not move to XDG config dirs during
+  the compatibility port.
 - Port `config_test.go`
 
 ## Acceptance Criteria

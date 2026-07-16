@@ -15,18 +15,25 @@ matching lines with line numbers and context.
 
 ## Rust Implementation
 
-- Regex: `regex` crate
-- File walking: use the `ignore` crate, configured to preserve the current
-  explicit ignored-directory behavior before opting into any new `.gitignore`
-  semantics.
-- Ignore patterns: port the ignore list (`node_modules`, `.git`, `.next`,
-  `dist`, `build`, `out`, `coverage`, `vendor`)
-- Read files with `std::fs::read_to_string`, skip binary files
-- Port `search_test.go`
+Prefer the same hybrid strategy as Go (`internal/search`): shell out to
+`rg` when available, fall back to a native walker. Do not reimplement a
+full pure-Rust ripgrep first.
+
+1. **Primary path (matches Go):** spawn `rg --json` via `tokio::process::Command`
+   when `rg` is on `PATH`. Parse JSON events for path/line/offsets; honor
+   `IgnoreCase`, `MaxResults`, `FilePattern`, `ContextLines` exactly as Go does.
+2. **Fallback:** `ignore` crate walk + `regex` crate when `rg` is missing.
+   Configure `ignore` to honor the **explicit** ignore list only (same set as
+   Go / workspace tree) before opting into `.gitignore` semantics.
+3. Ignore dirs (must match Go + workspace tree): `.git`, `node_modules`,
+   `vendor`, `dist`, `build`, `.next`, `target`, `.cache`, `coverage`, `out`.
+4. Skip binary files in the fallback without erroring.
+5. Port `search_test.go` for both code paths when practical (or mock `rg`).
 
 ## Acceptance Criteria
 
 - [ ] Regex and substring search work
+- [ ] Prefer `rg --json` when present; native fallback when not
 - [ ] Ignore patterns skip configured directories
 - [ ] Results include file path, line number, matching line, context
 - [ ] Binary files skipped without errors

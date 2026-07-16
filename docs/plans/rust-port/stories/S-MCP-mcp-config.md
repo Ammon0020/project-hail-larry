@@ -20,7 +20,11 @@ to preserve formatting), health checks for stdio/http/sse transports.
   `serde_json::Value` as a formatting-preserving round trip, and do not claim
   comment preservation for strict JSON; contract fixtures define the existing
   behavior.
-- Atomic write: temp + rename
+- **Atomic write:** use shared `crate::fsutil::atomic_write` (backed by
+  `atomic-write-file`: temp + fsync + mode `0600` + rename + parent fsync).
+  Do not re-implement WriteFileAtomic locally.
+- State dir / home: resolve via config / `crate::fsutil::home_dir` (same
+  `~/.local-agent/` path as Go).
 - Health: probe stdio (spawn + check), http/sse (HTTP request)
 - Port `config_test.go`, `health_test.go`
 

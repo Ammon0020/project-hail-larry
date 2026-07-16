@@ -65,17 +65,30 @@ struct Config {
 
 let config: Config = toml::from_str(&fs::read_to_string(path)?)?;
 let toml_str = toml::to_string_pretty(&config)?;
+// Persist via shared helper (do not re-inline temp+rename):
+// crate::fsutil::atomic_write(&path, toml_str.as_bytes(), Some(0o600))?;
 ```
 
 Go struct tags (`json:"field,omitempty"`) → `#[serde(rename = "field",
 skip_serializing_if = "Option::is_none")]`. Optional fields become
 `Option<T>` rather than zero-value + `omitempty`.
 
+Home / state path: `crate::fsutil::home_dir()` (`dirs` crate) +
+`LOCAL_AGENT_STATE_DIR` override. Stay under `~/.local-agent/` for Go
+compatibility — do not switch to XDG config dirs during the port.
+
+## Shared FS helpers — `src/fsutil` (`dirs` + `atomic-write-file`)
+
+- `home_dir()` — `dirs::home_dir()` (passwd / Known Folder fallback).
+- `atomic_write(path, data, mode)` — durable replace used by config, MCP
+  `mcp.json`, conversation store, TLS cert material. Prefer this over any
+  new hand-rolled temp+rename.
+
 ## MCP Config — JSON (replaces raw JSON read/write in `internal/mcp/`)
 
 The MCP config is Claude-Desktop-compatible `mcp.json` edited as raw JSON by
-the frontend (formatting/comments preserved). Keep using `serde_json::Value`
-for round-trip — don't deserialize into typed structs or formatting is lost.
+the frontend. Preserve raw bytes for read/modify/write; contract fixtures
+define existing behavior. Atomic write via `crate::fsutil::atomic_write`.
 
 ## QR Code — `qrcode` (replaces `skip2/go-qrcode`)
 
@@ -86,8 +99,9 @@ let png = code.render::<image::Luma<u8>>().build();
 // Render to terminal or save to PNG for display
 ```
 
-The pairing package generates QR + four-word mnemonic passcode. The mnemonic
-generation (BIP-39-style word list) is pure string logic — port directly.
+The pairing package generates QR + four-word mnemonic passcode. Port the
+English word list + sampling only (hyphen-joined 4 words). **Do not** pull a
+full BIP-39 crate — Go is not BIP-39 entropy+checksum.
 
 ## Fetching Live Docs
 

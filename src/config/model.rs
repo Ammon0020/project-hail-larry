@@ -164,7 +164,7 @@ impl Config {
                 return Ok(PathBuf::from(dir));
             }
         }
-        let home = home_dir().ok_or(ConfigError::HomeDirNotFound)?;
+        let home = crate::fsutil::home_dir().ok_or(ConfigError::HomeDirNotFound)?;
         Ok(home.join(".local-agent"))
     }
 
@@ -263,24 +263,5 @@ impl std::default::Default for Config {
                 }
             }
         }
-    }
-}
-
-/// `home_dir` resolves the user's home directory from the platform-appropriate
-/// environment variable. Returns `None` if unset. Uses `HOME` on Unix and
-/// `USERPROFILE` on Windows, matching Go's `os.UserHomeDir` behavior without
-/// pulling a `dirs`-style crate.
-fn home_dir() -> Option<PathBuf> {
-    #[cfg(unix)]
-    {
-        std::env::var_os("HOME").map(PathBuf::from)
-    }
-    #[cfg(windows)]
-    {
-        std::env::var_os("USERPROFILE").map(PathBuf::from)
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        None
     }
 }

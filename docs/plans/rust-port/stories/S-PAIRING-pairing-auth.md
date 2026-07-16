@@ -17,9 +17,16 @@ mnemonic generation (BIP-39-style word list), device credential hashing
 ## Rust Implementation
 
 - QR: `qrcode` crate (see `docs/rust-ecosystem/cli-and-config.md`)
-- Mnemonic: port the word list + generation logic (pure string ops)
+- **Mnemonic: port the English word list + `generatePasscode` only** (4
+  hyphen-joined words sampled with `OsRng`). **Do not** pull a full `bip39`
+  crate — Go is not BIP-39 entropy+checksum; only the word list is shared.
 - Credential hashing: `sha2::Sha256`, `hex` crate
 - Random bytes: `rand` crate (`OsRng` for cryptographic randomness)
+- Constant-time compare: `subtle` crate (port Go `crypto/subtle` usage)
+- Device credential / session state persistence: `crate::fsutil::atomic_write`
+  when writing secret-bearing files under `~/.local-agent/`.
+- Optional hygiene: `zeroize` / `secrecy` for in-memory passcodes if easy;
+  never required for parity if logging discipline matches Go.
 - Persisted expiry uses a wall-clock timestamp compatible with existing state;
   use monotonic time only for in-process delays.
 - Grace-period revocation: `CancellationToken` per pending revocation.

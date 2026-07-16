@@ -88,6 +88,10 @@ WebSocket client subscribes to a receiver, the hub sends events to all.
 The Go code's per-file locks (`files.go`) and the ACP client's
 `termMu`/session locks map to `tokio::sync::Mutex` (held across I/O).
 
+For concurrent maps (WS client registry, per-file lock table) prefer stable
+**`dashmap` 6.x** over `Mutex<HashMap<_>>`. Pin a non-RC version; avoid
+hand-rolling.
+
 ## LRU Cache (replaces `container/list` hand-rolled LRU)
 
 ```rust

@@ -11,6 +11,7 @@
 //! - [`config`]     — `~/.local-agent/` config storage (Go `config/`)
 //! - [`events`]     — SQLite event store, WAL, append-only (Go `events/`)
 //! - [`files`]      — revision tracking, three-way merge (Go `files/`)
+//! - [`fsutil`]     — shared home-dir + durable atomic write (used by config/MCP/logging)
 //! - [`pairing`]    — QR + mnemonic pairing, device credentials (Go `pairing/`)
 //! - [`permissions`]— permission request/response, policies (Go `permissions/`)
 //! - [`pathutil`]   — path traversal + symlink containment (Go `pathutil/` + `workspace.safeJoin`)
@@ -35,6 +36,7 @@ pub mod app;
 pub mod config;
 pub mod events;
 pub mod files;
+pub mod fsutil;
 pub mod interfaces;
 pub mod pairing;
 pub mod pathutil;

@@ -26,6 +26,11 @@
 | `container/list` (LRU) | `lru` crate | High | See [data-and-concurrency.md](data-and-concurrency.md) |
 | `sync` (Mutex, Once) | `std::sync` / `tokio::sync` | High | See [data-and-concurrency.md](data-and-concurrency.md) |
 | `context.Context` | `tokio_util::sync::CancellationToken` + task abort | High | See [data-and-concurrency.md](data-and-concurrency.md) |
+| `os.UserHomeDir` | `dirs` (`dirs::home_dir`) via `src/fsutil` | High | Fallback beyond bare `$HOME` |
+| `mcp.WriteFileAtomic` | `atomic-write-file` via `src/fsutil::atomic_write` | High | temp + fsync + mode + rename + parent fsync |
+| concurrent hub / lock maps | `dashmap` 6.x (stable) | High | WS clients, per-file locks — avoid hand-rolled `Mutex<HashMap>` |
+| self-signed TLS cert | `rcgen` | High | S-SERVER |
+| content search (rg) | shell out to `rg --json` + `ignore`/`regex` fallback | High | Matches Go hybrid strategy — do not pure-Rust reimplement first |
 
 ## Reference Cards
 

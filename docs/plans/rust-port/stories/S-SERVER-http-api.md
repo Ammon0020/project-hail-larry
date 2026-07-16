@@ -26,10 +26,12 @@ middleware (`requireAuth`), rate limiting (`withPairRateLimit`), TLS
 - Rate limiting uses a bounded governor-based policy for pairing endpoints.
 - TLS deliberately selects one rustls crypto provider before listener startup;
   the Phase 0 decision selects `axum-server` or `tokio-rustls` serving.
+- Self-signed cert generation: **`rcgen`** (write via `crate::fsutil::atomic_write`
+  into `tlsCertDir`).
 - Dual listeners: coordinated `tokio::spawn` HTTP + HTTPS tasks with one
   cancellation root.
-- Embedded frontend: `rust-embed`; SPA fallback serves `index.html` only after
-  API and static-asset route handling.
+- Embedded frontend: **`rust-embed`**; SPA fallback serves `index.html` only
+  after API and static-asset route handling.
 - Apply request and response size caps plus timeouts/concurrency limits as
   documented layers, then port server/API/dual tests.
 

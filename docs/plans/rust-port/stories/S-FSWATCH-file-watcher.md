@@ -16,13 +16,15 @@ itself (via a "recently written" set with TTL).
 
 ## Rust Implementation
 
-- `notify` crate (replaces `fsnotify`) — see
+- **`notify`** crate (replaces `fsnotify`) — see
   `docs/rust-ecosystem/data-and-concurrency.md`
-- Use a maintained `notify` debouncer rather than a hand-rolled sleep loop.
+- Use a **maintained debouncer** (`notify-debouncer-mini` or
+  `notify-debouncer-full`) rather than a hand-rolled sleep loop.
 - Subscribe to narrow app-write/workspace lifecycle notifications for
   suppression and root updates; do not add workspace setter callbacks.
-- Suppress app writes with bounded TTL state and explicit cleanup.
-  (recently-written set)
+- Suppress app writes with bounded TTL state and explicit cleanup
+  (recently-written set). Prefer `lru` or a small timed map — do not grow
+  unbounded.
 - Recursive watch: `notify::RecursiveMode::Recursive`
 - Port `watcher_test.go`
 

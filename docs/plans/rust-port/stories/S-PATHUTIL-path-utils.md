@@ -18,6 +18,10 @@ checks used by workspace, files, shell, and server packages.
 - Use `std::path::{Path, PathBuf}`, `std::fs::canonicalize`
 - Symlink containment: walk path components, reject if resolved path
   escapes workspace root
+- **Keep custom** — do not replace with `path-clean` / `path-absolutize` /
+  `strict-path`. Policy is stronger than generic crates: reject final-component
+  symlink entirely, reject symlinked parent for write targets, lexical `..`
+  rejection independent of canonicalize success.
 - Port `pathutil_test.go` and add property/fuzz cases for arbitrary relative
   paths, symlink chains, non-UTF8 paths, and TOCTOU-sensitive failures.
 

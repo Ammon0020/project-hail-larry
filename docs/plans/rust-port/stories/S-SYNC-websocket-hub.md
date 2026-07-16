@@ -17,10 +17,10 @@ timeout), broadcast to all clients, reconnection sync.
 
 - `axum::extract::ws` for WebSocket (see
   `docs/rust-ecosystem/web-framework.md`)
-- Use a bounded broadcast channel for durable events and track only
-  connection-specific state needed for shutdown.
-- A lagged receiver must explicitly resynchronize from the event store rather
-  than silently losing events.
+- Live fan-out: `tokio::sync::broadcast` (bounded); lagged receivers must
+  resynchronize from the event store rather than silently losing events.
+- Client registry / per-connection senders: stable **`dashmap` 6.x** (not an
+  RC) — do not hand-roll a global `Mutex<HashMap>` hub map.
 - Keepalive: `tokio::time::interval(30s)` ping task per client
 - Auth: `AuthChecker` callback (delegates to S-PAIRING) — gate handshake
 - Reconnection: subscribe first, replay events after the supplied cursor,

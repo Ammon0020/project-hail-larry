@@ -104,6 +104,15 @@ thiserror = "2.0"
 # client (provider management, session fork). MSRV 1.92.0 compatible.
 agent-client-protocol = { version = "1.2.0", features = ["unstable", "unstable_mcp_over_acp"] }
 
+# --- Filesystem helpers ---
+# dirs: cross-platform home_dir (passwd / Known Folder fallback when HOME is
+# unset). Shared by config + logging via src/fsutil. Verified 2026-07-15.
+dirs = "6.0.0"
+# atomic-write-file: durable atomic writes (temp + fsync + rename). Shared
+# helper in src/fsutil for config, MCP, conversation store, and other state
+# files that must not be truncated on crash. Verified 2026-07-15.
+atomic-write-file = "0.3.0"
+
 [dev-dependencies]
 # async-process: used by S-ACP-SPIKE (`tests/spike_acp.rs`) to spawn the
 # mockagent with PID tracking for the cancellation/teardown test. The SDK's

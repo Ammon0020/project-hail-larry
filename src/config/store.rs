@@ -9,25 +9,19 @@
 //! we parse the raw `toml::Table` first and force the secure-by-default /
 //! 5-minute-grace value when the key is absent.
 //!
-//! `save` writes atomically: temp file in the same directory → `fsync` file →
-//! `chmod 0600` → `rename` → `fsync` parent directory (best-effort). A crash
-//! at any point leaves either the previous file intact or a temp file that is
-//! never read, never a half-written `config.toml`. Mirrors Go
+//! `save` writes via [`crate::fsutil::atomic_write`] (temp + fsync + chmod +
+//! rename + parent fsync). A crash leaves either the previous file intact or a
+//! temp that is never read, never a half-written `config.toml`. Mirrors Go
 //! `mcp.WriteFileAtomic`.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::error::ConfigError;
 use super::model::Config;
 use super::{CONFIG_FILE_NAME, CONFIG_FILE_PERM, DEFAULT_REVOCATION_GRACE_PERIOD_SECONDS};
-
-/// Monotonic counter used to derive unique temp-file names per process so
-/// concurrent writers in the same directory never collide.
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+use crate::fsutil;
 
 impl Config {
     /// `load` reads the config from `<state_dir>/config.toml`, where
@@ -109,70 +103,9 @@ impl Config {
     pub fn save(&self) -> Result<(), ConfigError> {
         let toml_str = toml::to_string_pretty(self)?;
         let config_path = Path::new(&self.data_dir).join(CONFIG_FILE_NAME);
-        atomic_write_file(&config_path, toml_str.as_bytes(), CONFIG_FILE_PERM)?;
+        fsutil::atomic_write(&config_path, toml_str.as_bytes(), Some(CONFIG_FILE_PERM))?;
         Ok(())
     }
-}
-
-/// `atomic_write_file` writes `data` to `path` atomically: a temp file in the
-/// same directory is written, `fsync`'d, `chmod`'d to `perm`, then renamed over
-/// the target, and the parent directory is `fsync`'d best-effort. A crash
-/// leaves either the old file or a temp file (never read), never a truncated
-/// target. The temp file lives in the same directory so the rename is on the
-/// same filesystem. Mirrors Go `mcp.WriteFileAtomic`.
-fn atomic_write_file(path: &Path, data: &[u8], perm: u32) -> Result<(), std::io::Error> {
-    #[cfg(not(unix))]
-    let _ = perm;
-
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(dir)?;
-
-    let basename = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "config".to_string());
-    let pid = std::process::id();
-    let c = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    // Leading dot + `.tmp` suffix matches Go's `.<base>.*.tmp` pattern so
-    // concurrent writers for different files in the same dir never collide.
-    let tmp_name = format!(".{basename}.{pid}.{c}.tmp");
-    let tmp_path = dir.join(&tmp_name);
-
-    // Write + fsync the temp file. On any failure, clean up the temp file so
-    // a later writer does not trip over our partial output.
-    let mut tmp = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp_path)?;
-    let write_res: Result<(), std::io::Error> = (|| {
-        tmp.write_all(data)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            tmp.set_permissions(fs::Permissions::from_mode(perm))?;
-        }
-        // Flush contents + metadata to stable storage before the rename so a
-        // power loss cannot leave a renamed-but-empty file.
-        tmp.sync_all()?;
-        Ok(())
-    })();
-    drop(tmp);
-    if let Err(e) = write_res {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(e);
-    }
-
-    fs::rename(&tmp_path, path)?;
-
-    // Best-effort directory sync so the new dirent is durable. Some platforms
-    // (notably Windows) reject Sync on directories; ignore those errors.
-    #[cfg(unix)]
-    {
-        if let Ok(d) = File::open(dir) {
-            let _ = d.sync_all();
-        }
-    }
-    Ok(())
 }
 
 /// `ConfigStore` wraps a `Config` in an `RwLock` for thread-safe shared access

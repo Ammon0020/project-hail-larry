@@ -15,6 +15,8 @@ use std::path::PathBuf;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
 
+use crate::fsutil;
+
 /// Default log directory relative to the user's home: `~/.local-agent/logs/`.
 pub const LOG_DIR_NAME: &str = ".local-agent/logs";
 
@@ -24,7 +26,7 @@ pub const LOG_DIR_NAME: &str = ".local-agent/logs";
 /// dropping it flushes the non-blocking writer. The current stub wires only
 /// the file appender; console output and `env-filter` tuning land in S-DAEMON.
 pub fn init_file_logging() -> Result<(WorkerGuard, PathBuf)> {
-    let home = home_dir().context("could not resolve user home directory for log path")?;
+    let home = fsutil::home_dir().context("could not resolve user home directory for log path")?;
     let log_dir = home.join(LOG_DIR_NAME);
     std::fs::create_dir_all(&log_dir)
         .with_context(|| format!("creating log dir {}", log_dir.display()))?;
@@ -47,15 +49,6 @@ pub fn init_file_logging() -> Result<(WorkerGuard, PathBuf)> {
     Ok((guard, log_dir))
 }
 
-/// Resolve the user's home directory. Honors `$HOME` on Unix and
-/// `%USERPROFILE%` on Windows; falls back to the `dirs` crate behavior
-/// without pulling that dependency by using `std::env`.
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,11 +61,10 @@ mod tests {
 
     #[test]
     fn home_dir_resolves_in_test_env() {
-        // CI and dev shells set HOME; this guards against silent regressions
-        // in the resolution logic.
+        // CI and dev shells resolve a home via dirs (env or platform APIs).
         assert!(
-            home_dir().is_some(),
-            "HOME/USERPROFILE must be set for logging"
+            fsutil::home_dir().is_some(),
+            "home directory must resolve for logging"
         );
     }
 }

@@ -16,11 +16,19 @@ revision.
 
 ## Rust Implementation
 
-- Per-file locks: a bounded/cleaned `DashMap<String, Arc<tokio::sync::Mutex<()>>>`;
-  lock entries must not grow indefinitely with arbitrary file paths.
-- LRU cache: `lru` crate (replaces hand-rolled `container/list` LRU)
-- Use the `similar` crate for diff primitives; keep reconciliation logic small
-  and explicitly test the existing diff3 semantics.
+- Per-file locks: a bounded/cleaned `DashMap` (stable `dashmap` 6.x, not an
+  RC) of `String → Arc<tokio::sync::Mutex<()>>`; lock entries must not grow
+  indefinitely with arbitrary file paths (evict or GC unused keys).
+- LRU cache: **`lru` crate** — do not re-port Go's hand-rolled `container/list`
+  LRU (`maxContentsEntries = 256`).
+- Merge / diff: Go Phase 1 returns `ErrStaleRevision` without server-side
+  merge (UI uses `@codemirror/merge`). Match that first. When/if server-side
+  three-way merge is implemented, use **`similar`** (or `diffy` /
+  `diffy-imara` if conflict-marker output is required); keep reconciliation
+  thin and test against contract fixtures.
+- Durable writes of file content (if used for state bases) go through
+  `crate::fsutil::atomic_write` when atomicity is required; workspace user-file
+  writes stay on the normal path with pathutil containment.
 - Preserve the existing 48-bit hash algorithm and output exactly until a
   versioned state migration deliberately changes it.
 - Port `files_test.go` and add property tests for non-overlapping edits,
