@@ -20,6 +20,7 @@
 //! - [`sync`]       — WebSocket hub, broadcast, reconnection (Go `sync/`)
 //! - [`workspace`]  — registration, file tree, git info (Go `workspace/`)
 //! - [`interfaces`] — shared traits and typed errors (Go `interfaces/`)
+//! - [`migrate`]    — Go→Rust state migration + validation (S-MIGRATE)
 //!
 //! S-ARCH scope: package layout, MSRV, pinned deps, TLS provider, rate limit
 //! stub, file logging stub. Service implementations land in later stories.
@@ -38,6 +39,7 @@ pub mod events;
 pub mod files;
 pub mod fsutil;
 pub mod interfaces;
+pub mod migrate;
 pub mod pairing;
 pub mod pathutil;
 pub mod permissions;

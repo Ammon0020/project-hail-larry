@@ -1,0 +1,16 @@
+[
+  {
+    "id": "devfixture00000001",
+    "name": "Fixture Laptop",
+    "secretHash": "f2f15533d68a102202c84908c43827d1cf31ba7d3d63cd3f83f4d68fb1e0f162",
+    "pairedAt": "2026-07-01T12:00:00Z",
+    "lastSeen": "2026-07-14T18:30:00Z"
+  },
+  {
+    "id": "devfixture00000002",
+    "name": "Fixture Phone",
+    "secretHash": "7e7dd47198d6bb4eb08cb79c44c2a1a56aec9cc029d5783429195353856987a1",
+    "pairedAt": "2026-07-02T09:15:00Z",
+    "lastSeen": "2026-07-13T08:00:00Z"
+  }
+]

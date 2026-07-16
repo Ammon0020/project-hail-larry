@@ -1,0 +1,26 @@
+{
+  "$schema": "https://local-agent.dev/schemas/mcp.json",
+  "version": 1,
+  "mcpServers": {
+    "fixture-stdio": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/tmp"
+      ],
+      "env": {
+        "FIXTURE_TOKEN": "redacted-not-a-real-token"
+      },
+      "enabled": true
+    },
+    "fixture-http": {
+      "type": "http",
+      "url": "https://mcp.example.invalid/sse",
+      "headers": {
+        "Authorization": "Bearer redacted"
+      },
+      "enabled": false
+    }
+  }
+}

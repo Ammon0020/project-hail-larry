@@ -30,7 +30,7 @@
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — Phase 0 done (S-ARCH/S-CONTRACT/S-ACP-SPIKE). Phase 1: S-PATHUTIL/S-CONFIG/S-INTERFACES/S-EVENTS done. Shared **`src/fsutil`**. Next: S-MIGRATE.
+- [ ] **Rust backend port** — Phase 0 done. Phase 1: S-PATHUTIL/S-CONFIG/S-INTERFACES/S-EVENTS/S-MIGRATE done. Shared **`src/fsutil`**. Next: service ports (pairing/workspace/…).
 
 ## Blocked
 
@@ -38,13 +38,13 @@
 
 ## Recent Changes (2026-07)
 
-- **07-15** — Rust port **S-EVENTS** complete: `src/events/{mod,store,publisher,payload,tests}.rs`. SQLite WAL store (`rusqlite` bundled), single-connection + `spawn_blocking` boundary, schema matching Go (`events` table + indexes), `Append`/`Query`/`QueryAll`, prune by count/age + ticker. `EventBus`: persist-before-publish, subscribe→replay→dedupe-by-ID→live. PRAGMAs: `journal_mode=WAL`, `busy_timeout=5000`. Tests: 27 events (+ payload unit) + prior suite = 99 lib + 7 spike = 106. Next: S-MIGRATE.
-- **07-15** — Rust port **S-INTERFACES** complete: DTOs/traits/wire/`AppError`. Deps: `async-trait`, `chrono`.
-- **07-15** — Daemon start resilience; shared fsutil; S-CONFIG; S-PATHUTIL; S-ACP-SPIKE; S-CONTRACT; S-ARCH.
-- **07-13–07-06** — Chat/MCP/auth/ACP provider + binary previews; review backlog resolved; MCP-over-ACP Go SDK gap documented.
+- **07-15** — Rust port **S-MIGRATE** complete: `src/migrate/{mod,detect,config,validate,error,tests}.rs` + `tests/migrate/fixtures/go-state/`. Atomic/idempotent/restart-safe `config.json`→`config.toml` (versioned `config.json.bak.v1`, dual-state keeps Go readable). Validates event DB (Rust opens Go SQLite), structurally validates devices/conversations/mcp/uploads/tls (semantic load deferred). Tests: 21 migrate + prior = 120 lib + 7 spike = 127. Next: service ports.
+- **07-15** — Rust port **S-EVENTS** complete: SQLite WAL store, schema matching Go, EventBus. Tests: 27 events + prior = 99 lib + 7 spike.
+- **07-15** — S-INTERFACES, S-CONFIG, S-PATHUTIL, S-ACP-SPIKE, S-CONTRACT, S-ARCH; shared fsutil; daemon start resilience.
+- **07-13–07-06** — Chat/MCP/auth/ACP + binary previews; MCP-over-ACP Go SDK gap documented.
 
 ## Known Gaps (summary — see `docs/known-issues.md`)
 
 - Go ACP SDK still missing `mcp/message` relay (Rust path unblocked).
 - Mobile editor touch; profile mode not wired; pair QR scheme selection.
-- Rust port Phase 1 remaining: S-MIGRATE; Phase 2+ service ports.
+- Rust port Phase 1 complete (S-MIGRATE done); Phase 2+ service ports. Pairing/MCP/ACP/uploads semantic load deferred past structural validation.

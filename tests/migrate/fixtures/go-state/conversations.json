@@ -1,0 +1,24 @@
+[
+  {
+    "id": "conv-fixture-aaa111",
+    "name": "Hello from fixture",
+    "agentId": "fixture-agent",
+    "modelId": "fixture-model",
+    "workspace": "/home/fixture/projects/seed-workspace",
+    "status": "idle",
+    "createdAt": "2026-07-10T10:00:00Z",
+    "updatedAt": "2026-07-10T10:05:00Z",
+    "acpSessionId": "acp-sess-fixture-001"
+  },
+  {
+    "id": "conv-fixture-bbb222",
+    "name": "Second chat",
+    "agentId": "fixture-agent",
+    "modelId": "fixture-model",
+    "workspace": "/home/fixture/projects/second-ws",
+    "status": "idle",
+    "createdAt": "2026-07-11T11:00:00Z",
+    "updatedAt": "2026-07-11T11:20:00Z",
+    "acpSessionId": "acp-sess-fixture-002"
+  }
+]
