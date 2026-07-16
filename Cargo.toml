@@ -113,6 +113,14 @@ dirs = "6.0.0"
 # files that must not be truncated on crash. Verified 2026-07-15.
 atomic-write-file = "0.3.0"
 
+# --- Shared interfaces (S-INTERFACES) ---
+# async-trait: async methods on service traits (EventStore, WorkspaceManager, …)
+# without boxing futures at every call site. Verified 2026-07-15.
+async-trait = "0.1.89"
+# chrono: DateTime<Utc> for event/session timestamps; serde feature matches Go
+# time.Time RFC3339 JSON. Verified 2026-07-15.
+chrono = { version = "0.4.45", features = ["serde"] }
+
 [dev-dependencies]
 # async-process: used by S-ACP-SPIKE (`tests/spike_acp.rs`) to spawn the
 # mockagent with PID tracking for the cancellation/teardown test. The SDK's

@@ -30,12 +30,13 @@ Port the append-only event log backed by SQLite (WAL mode). Implements
 
 ## Acceptance Criteria
 
-- [ ] `Append` writes event, returns with assigned ID
-- [ ] `Query(sessionID, afterID, limit)` returns correct events
-- [ ] `QueryAll(afterID, limit)` returns across all sessions
-- [ ] WAL mode enabled, busy_timeout set
-- [ ] Retention pruning works
-- [ ] `cargo test events` passes
-- [ ] No SQLite lock contention under concurrent appends
-- [ ] Persist-before-publish ordering and reconnect replay handoff are tested
+- [x] `Append` writes event, returns with assigned ID
+- [x] `Query(sessionID, afterID, limit)` returns correct events
+- [x] `QueryAll(afterID, limit)` returns across all sessions
+- [x] WAL mode enabled, busy_timeout set
+- [x] Retention pruning works
+- [x] `cargo test events` passes
+- [x] No SQLite lock contention under concurrent appends
+- [x] Persist-before-publish ordering and reconnect replay handoff are tested
 - [ ] Opens the Go-created event DB fixture without schema or payload drift
+  (S-MIGRATE owns the fixture; schema/payload here match Go)

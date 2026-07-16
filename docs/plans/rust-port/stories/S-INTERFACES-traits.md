@@ -47,10 +47,10 @@ interfaces.
 
 ## Acceptance Criteria
 
-- [ ] Shared search DTOs have no dependency on the search implementation
-- [ ] Traits exist only at documented replacement/test boundaries
-- [ ] Typed internal events and errors have a stable wire adapter
-- [ ] All shared structs serialize to identical JSON as Go through S-CONTRACT
-- [ ] All required service dependencies are constructor arguments
-- [ ] `cargo check` passes
-- [ ] `cargo clippy -- -D warnings` passes
+- [x] Shared search DTOs have no dependency on the search implementation
+- [x] Traits exist only at documented replacement/test boundaries
+- [x] Typed internal events and errors have a stable wire adapter
+- [x] All shared structs serialize to identical JSON as Go through S-CONTRACT
+- [x] All required service dependencies are constructor arguments
+- [x] `cargo check` passes
+- [x] `cargo clippy -- -D warnings` passes
