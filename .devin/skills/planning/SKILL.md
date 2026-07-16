@@ -16,11 +16,11 @@ allowed-tools:
 
 # Planning System (for planners)
 
-You maintain the `plans/` folder structure. Implementors read the AGENTS.md "Planning System" section for their workflow — you don't need to repeat it. Your job: create epics and stories, assign phases, wire dependencies, prune completed/cancelled work, and keep `app-vision.md`'s phase roadmap honest.
+You maintain the `plans/` folder structure. Implementors read the AGENTS.md "Planning System" section — don't repeat it. Your job: create epics/stories, assign phases, wire dependencies, prune completed/cancelled work, keep `app-vision.md`'s roadmap honest.
 
 ## Naming conventions
 
-- **Epics**: `P<n>-<epic-name>.md` — phase prefix + kebab-case. No per-epic sequential numbering; phases are coarse and shared.
+- **Epics**: `P<n>-<epic-name>.md` — phase prefix + kebab-case. No per-epic numbering.
 - **Stories**: `<status>-<desc>-<urgency>-<difficulty>.md`. Description is `snake_case` (hyphens are field separators). Status/urgency/difficulty values are fixed: `pending|wip|done|blocked` · `high|med|low` · `easy|med|hard`.
 - **Story folders**: same name as the epic file. Stories inherit their epic's phase — no phase prefix on story filenames.
 
@@ -41,18 +41,17 @@ You maintain the `plans/` folder structure. Implementors read the AGENTS.md "Pla
 ## Pruning
 
 - **Completed stories**: delete when no longer needed for reference.
-- **Completed epic**: when all Status items are `✅`, delete the epic file and its story folder. Plans show what needs doing, not what was done.
-- **Cancelled epic**: delete the epic file and story folder, and add a one-line note to `app-vision.md` so the roadmap stays honest.
-- Update `app-vision.md`'s phase roadmap when epics are added, completed, or cancelled.
+- **Completed epic**: when all Status items are `✅`, delete the epic file and story folder.
+- **Cancelled epic**: delete both, add a one-line note to `app-vision.md`.
+- Update the roadmap when epics are added, completed, or cancelled.
 
 ## Anti-patterns
 
-- Per-epic sequential numbering (use phases).
-- Hyphens in the description field (use `snake_case`).
+- Hyphens in the description field.
 - Stories without acceptance criteria.
-- Stale Status sections — update on every completion/block.
-- Keeping completed or cancelled epics around.
-- Ignoring `Depends on:` when sequencing work.
+- Stale Status sections.
+- Keeping completed/cancelled epics around.
+- Ignoring `Depends on:` when sequencing.
 
 ## Ask the user before
 
