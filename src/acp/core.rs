@@ -11,8 +11,11 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex, RwLock};
 
 use agent_client_protocol::schema::v1::{
-    ClientCapabilities, ContentBlock, FileSystemCapabilities, InitializeRequest, NewSessionRequest,
-    PromptRequest, SessionId, SessionNotification,
+    CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities,
+    InitializeRequest, NewSessionRequest, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    SelectedPermissionOutcome, SessionId, SessionNotification, TextContent, WriteTextFileRequest,
+    WriteTextFileResponse,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ByteStreams, Client as SdkClient, ConnectionTo};
@@ -176,7 +179,10 @@ impl ACPClient for Client {
         let stderr_tail = Arc::new(Mutex::new(StderrTail::default()));
         let actor = ActorConfig {
             agent,
+            workspace_id: workspace_id.to_string(),
             workspace_path,
+            permissions: Arc::clone(&self.deps.permissions),
+            workspaces: Arc::clone(&self.deps.workspaces),
             stderr_tail: Arc::clone(&stderr_tail),
         };
         tokio::spawn(run_actor(actor, receiver, ready_tx));
@@ -342,7 +348,10 @@ enum ActorCommand {
 
 struct ActorConfig {
     agent: AgentInfo,
+    workspace_id: String,
     workspace_path: PathBuf,
+    permissions: Arc<dyn PermissionManager>,
+    workspaces: Arc<dyn WorkspaceManager>,
     stderr_tail: Arc<Mutex<StderrTail>>,
 }
 
@@ -385,12 +394,70 @@ async fn run_actor_inner(
         spawn_stderr_drain(stderr, Arc::clone(&config.stderr_tail));
     }
     let transport = ByteStreams::new(stdin, stdout);
+    let read_deps = HandlerDeps {
+        workspace_id: config.workspace_id.clone(),
+        workspace_path: config.workspace_path.clone(),
+        workspaces: Arc::clone(&config.workspaces),
+        permissions: Arc::clone(&config.permissions),
+    };
+    let write_deps = read_deps.clone();
+    let permission_deps = read_deps.clone();
     let connected = SdkClient
         .builder()
         .name("local-agent")
         .on_receive_notification(
             async |_notification: SessionNotification, _cx: ConnectionTo<Agent>| Ok(()),
             agent_client_protocol::on_receive_notification!(),
+        )
+        .on_receive_request(
+            async move |request: ReadTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
+                let deps = read_deps.clone();
+                tokio::spawn(async move {
+                    match read_text_file(deps, request).await {
+                        Ok(response) => {
+                            let _ = responder.respond(response);
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "ACP denied file read");
+                            let _ = responder.respond_with_internal_error(error);
+                        }
+                    }
+                });
+                Ok(())
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: WriteTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
+                let deps = write_deps.clone();
+                tokio::spawn(async move {
+                    match write_text_file(deps, request).await {
+                        Ok(response) => {
+                            let _ = responder.respond(response);
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "ACP denied file write");
+                            let _ = responder.respond_with_internal_error(error);
+                        }
+                    }
+                });
+                Ok(())
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: RequestPermissionRequest, responder, _cx: ConnectionTo<Agent>| {
+                let deps = permission_deps.clone();
+                // The permission manager waits for a user device. It must not
+                // block the SDK dispatch task, or the agent cannot process
+                // cancellation and unrelated callbacks while waiting.
+                tokio::spawn(async move {
+                    let response = request_permission(deps, request).await;
+                    let _ = responder.respond(response);
+                });
+                Ok(())
+            },
+            agent_client_protocol::on_receive_request!(),
         )
         .connect_with(transport, |cx: ConnectionTo<Agent>| async move {
             let initialize = InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
@@ -427,9 +494,7 @@ async fn actor_loop(
                 let reply = cx
                     .send_request(PromptRequest::new(
                         agent_session_id.clone(),
-                        vec![ContentBlock::Text(
-                            agent_client_protocol::schema::v1::TextContent::new(content),
-                        )],
+                        vec![ContentBlock::Text(TextContent::new(content))],
                     ))
                     .block_task()
                     .await
@@ -438,9 +503,8 @@ async fn actor_loop(
                 let _ = result.send(reply);
             }
             ActorCommand::Cancel => {
-                // Dropping a sent request would emit protocol cancellation, but
-                // a completed actor command has no request to drop. The SDK's
-                // typed Cancel notification is added alongside terminal support.
+                cx.send_notification(CancelNotification::new(agent_session_id.clone()))
+                    .map_err(|_| agent_client_protocol::Error::internal_error())?;
             }
             ActorCommand::Close(result) => {
                 let _ = result.send(());
@@ -449,6 +513,175 @@ async fn actor_loop(
         }
     }
     Ok(())
+}
+
+#[derive(Clone)]
+struct HandlerDeps {
+    workspace_id: String,
+    workspace_path: PathBuf,
+    workspaces: Arc<dyn WorkspaceManager>,
+    permissions: Arc<dyn PermissionManager>,
+}
+
+async fn read_text_file(
+    deps: HandlerDeps,
+    request: ReadTextFileRequest,
+) -> Result<ReadTextFileResponse, AppError> {
+    let content = match workspace_relative_path(&deps.workspace_path, &request.path).await {
+        Ok(path) => deps
+            .workspaces
+            .read_file(&deps.workspace_id, &path)
+            .await
+            .map(|result| result.content),
+        Err(error) => Err(error),
+    };
+    content.map(ReadTextFileResponse::new)
+}
+
+async fn write_text_file(
+    deps: HandlerDeps,
+    request: WriteTextFileRequest,
+) -> Result<WriteTextFileResponse, AppError> {
+    let result = match workspace_relative_path(&deps.workspace_path, &request.path).await {
+        Ok(path) => deps
+            .workspaces
+            .write_file(&deps.workspace_id, &path, &request.content, 0)
+            .await
+            .map(|_| ()),
+        Err(error) => Err(error),
+    };
+    result.map(|()| WriteTextFileResponse::new())
+}
+
+async fn request_permission(
+    deps: HandlerDeps,
+    request: RequestPermissionRequest,
+) -> RequestPermissionResponse {
+    let tool = request
+        .tool_call
+        .fields
+        .title
+        .clone()
+        .unwrap_or_else(|| "Tool call".to_string());
+    let tool_kind = request
+        .tool_call
+        .fields
+        .kind
+        .as_ref()
+        .map_or_else(String::new, tool_kind_name);
+    let command = request
+        .tool_call
+        .fields
+        .raw_input
+        .as_ref()
+        .map_or_else(String::new, ToString::to_string);
+    let target = request
+        .tool_call
+        .fields
+        .locations
+        .as_ref()
+        .and_then(|locations| locations.first())
+        .map_or_else(String::new, |location| {
+            location.path.to_string_lossy().into_owned()
+        });
+    let options = request
+        .options
+        .iter()
+        .filter_map(|option| permission_decision(&option.kind))
+        .collect();
+    let option_details = request
+        .options
+        .iter()
+        .map(|option| crate::interfaces::PermissionOptionInfo {
+            id: option.option_id.to_string(),
+            name: option.name.clone(),
+            kind: permission_kind_name(&option.kind).to_string(),
+        })
+        .collect();
+    let permission = crate::interfaces::PermissionRequest {
+        id: Uuid::new_v4().to_string(),
+        session_id: request.session_id.to_string(),
+        tool,
+        tool_kind,
+        command,
+        target,
+        options,
+        option_details,
+    };
+    match deps.permissions.request(permission).await {
+        Ok(decision) => request
+            .options
+            .iter()
+            .find(|option| permission_decision(&option.kind) == Some(decision))
+            .map_or_else(
+                || RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+                |option| {
+                    RequestPermissionResponse::new(RequestPermissionOutcome::Selected(
+                        SelectedPermissionOutcome::new(option.option_id.clone()),
+                    ))
+                },
+            ),
+        Err(error) => {
+            tracing::warn!(error = %error, "ACP permission request cancelled");
+            RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)
+        }
+    }
+}
+
+fn tool_kind_name(kind: &agent_client_protocol::schema::v1::ToolKind) -> String {
+    use agent_client_protocol::schema::v1::ToolKind;
+
+    match kind {
+        ToolKind::Read => "read",
+        ToolKind::Edit => "edit",
+        ToolKind::Delete => "delete",
+        ToolKind::Move => "move",
+        ToolKind::Search => "search",
+        ToolKind::Execute => "execute",
+        ToolKind::Think => "think",
+        ToolKind::Fetch => "fetch",
+        ToolKind::SwitchMode => "switch_mode",
+        ToolKind::Other => "other",
+        _ => "other",
+    }
+    .to_string()
+}
+
+fn permission_kind_name(
+    kind: &agent_client_protocol::schema::v1::PermissionOptionKind,
+) -> &'static str {
+    use agent_client_protocol::schema::v1::PermissionOptionKind;
+
+    match kind {
+        PermissionOptionKind::AllowOnce => "allow_once",
+        PermissionOptionKind::AllowAlways => "allow_always",
+        PermissionOptionKind::RejectOnce => "reject_once",
+        PermissionOptionKind::RejectAlways => "reject_always",
+        _ => "unknown",
+    }
+}
+
+fn permission_decision(
+    kind: &agent_client_protocol::schema::v1::PermissionOptionKind,
+) -> Option<crate::interfaces::PermissionDecision> {
+    use crate::interfaces::PermissionDecision;
+    use agent_client_protocol::schema::v1::PermissionOptionKind;
+
+    match kind {
+        PermissionOptionKind::AllowOnce => Some(PermissionDecision::AllowOnce),
+        PermissionOptionKind::AllowAlways => Some(PermissionDecision::AllowAlways),
+        PermissionOptionKind::RejectOnce => Some(PermissionDecision::Deny),
+        PermissionOptionKind::RejectAlways => Some(PermissionDecision::RejectAlways),
+        _ => None,
+    }
+}
+
+async fn workspace_relative_path(root: &Path, path: &Path) -> Result<String, AppError> {
+    if path.is_absolute() {
+        path_to_workspace_relative(root, path)
+    } else {
+        Ok(path.to_string_lossy().into_owned())
+    }
 }
 
 fn spawn_stderr_drain<R>(mut stderr: R, tail: Arc<Mutex<StderrTail>>)
