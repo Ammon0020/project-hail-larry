@@ -1,4 +1,918 @@
-//! REST API handlers (Go `internal/server/api.go`).
+//! HTTP API composition and first UI-smoke handlers.
 //!
-//! Axum handlers for the `/api/...` surface. Wire shapes are frozen by
-//! S-CONTRACT before implementation. S-ARCH scope: module placeholder only.
+//! The router deliberately keeps security policy at the edge: pairing is the
+//! only unauthenticated API, loopback requests bypass device credentials with
+//! an Origin check on mutations, and the WebSocket hub performs its own
+//! browser-specific credential and Origin gate.
+
+mod embed;
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use axum::body::Body;
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, post};
+use axum::{Json, Router};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use tracing::{debug, error, warn};
+
+use crate::acp::{self, Client};
+use crate::config::{AgentInfo, ConfigStore};
+use crate::events::SharedEventBus;
+use crate::interfaces::{
+    map_api_error, ACPClient, AppError, EventStore, PermissionDecision, PermissionManager,
+    SearchOptions, WorkspaceManager,
+};
+use crate::pairing::{Manager as PairingManager, PairingError};
+use crate::permissions::Manager as PermissionsManager;
+use crate::sync::{is_loopback_addr, AuthChecker, Hub};
+use crate::workspace::Manager as WorkspaceManagerImpl;
+
+/// JSON body size limit for API requests other than the intentionally deferred
+/// upload surface. It caps malformed or abusive LAN requests before parsing.
+pub const MAX_API_BODY_BYTES: usize = 10 * 1024 * 1024;
+const MAX_EVENT_LIMIT: i32 = 10_000;
+const DEFAULT_EVENT_LIMIT: i32 = 1_000;
+const PAIR_RATE_PER_MINUTE: f64 = 5.0;
+const PAIR_RATE_BURST: f64 = 5.0;
+
+/// Concrete services shared by handlers. Construction is owned by
+/// [`crate::app::listen`], keeping HTTP handlers free of global state.
+#[derive(Clone)]
+pub struct AppState {
+    pub config: ConfigStore,
+    pub pairing: PairingManager,
+    pub workspaces: Arc<WorkspaceManagerImpl>,
+    pub events: SharedEventBus,
+    pub hub: Arc<Hub>,
+    pub acp: Arc<Client>,
+    pub permissions: Arc<PermissionsManager>,
+    pair_rate: Arc<Mutex<HashMap<String, PairRateBucket>>>,
+}
+
+/// Per-IP token bucket matching Go's five-request burst and 5/minute refill.
+struct PairRateBucket {
+    tokens: f64,
+    updated_at: Instant,
+}
+
+impl AppState {
+    /// Build state from already-composed service instances.
+    #[must_use]
+    pub fn new(
+        config: ConfigStore,
+        pairing: PairingManager,
+        workspaces: Arc<WorkspaceManagerImpl>,
+        events: SharedEventBus,
+        hub: Arc<Hub>,
+        acp: Arc<Client>,
+        permissions: Arc<PermissionsManager>,
+    ) -> Self {
+        Self {
+            config,
+            pairing,
+            workspaces,
+            events,
+            hub,
+            acp,
+            permissions,
+            pair_rate: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+/// Construct the UI-smoke router.
+///
+/// Callers serving TCP must use Axum's `into_make_service_with_connect_info` so
+/// the loopback authorization decision uses the real peer address.
+pub fn router(state: AppState) -> Router {
+    let auth_state = state.clone();
+    let protected: Router = Router::new()
+        .route("/api/devices", get(list_devices))
+        .route("/api/devices/{id}", delete(revoke_device))
+        .route(
+            "/api/workspaces",
+            get(list_workspaces).post(register_workspace),
+        )
+        .route("/api/workspaces/{id}/files", get(file_tree))
+        .route("/api/workspaces/{id}/file", get(read_file).post(write_file))
+        .route("/api/workspaces/{id}/raw", get(raw_file))
+        .route("/api/workspaces/{id}/search", get(search))
+        .route("/api/events", get(events))
+        .route("/api/events/{session_id}", get(session_events))
+        .route("/api/agents", get(list_agents).post(upsert_agent))
+        .route("/api/agents/{id}", delete(delete_agent))
+        .route("/api/agents/autodetect", post(autodetect_agents))
+        .route("/api/sessions", get(list_sessions).post(create_session))
+        .route(
+            "/api/sessions/{id}",
+            get(get_session).patch(patch_session).delete(close_session),
+        )
+        .route("/api/sessions/{id}/prompt", post(send_prompt))
+        .route("/api/sessions/{id}/cancel", post(cancel_session))
+        .route("/api/permissions/pending", get(pending_permissions))
+        .route("/api/permissions/{id}/respond", post(respond_permission))
+        .route_layer(middleware::from_fn_with_state(auth_state, require_auth))
+        .with_state(state.clone());
+
+    // The hub owns its own handshake authorization because WebSocket
+    // credentials are browser query parameters rather than Authorization.
+    state
+        .hub
+        .set_auth_checker(pairing_auth_checker(&state.pairing));
+
+    let pairing_public: Router = Router::new()
+        .route("/api/pair/initiate", post(pair_initiate))
+        .route("/api/pair/verify-passcode", post(pair_verify_passcode))
+        .route("/api/pair/verify-token", post(pair_verify_token))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_pair_rate_limit,
+        ))
+        .with_state(state.clone());
+    let public: Router = Router::new()
+        .route("/health", get(health))
+        .merge(pairing_public);
+
+    Router::new()
+        .merge(public)
+        .merge(protected)
+        .merge(state.hub.clone().into_router())
+        .fallback(get(spa_fallback))
+        .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES))
+}
+
+fn pairing_auth_checker(manager: &PairingManager) -> AuthChecker {
+    let manager = manager.clone();
+    Arc::new(move |device_id, secret| manager.validate_credential(device_id, secret))
+}
+
+/// `GET /health` is intentionally unauthenticated for host/service probes.
+async fn health() -> Json<Value> {
+    Json(json!({"status": "ok"}))
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PairInitiateRequest {
+    host: Option<String>,
+    port: Option<u16>,
+}
+
+async fn pair_initiate(
+    State(state): State<AppState>,
+    body: Option<Json<PairInitiateRequest>>,
+) -> Result<Json<crate::interfaces::PairingSession>, ApiResponseError> {
+    let configured = state.config.read().clone();
+    let mut host = body
+        .as_ref()
+        .and_then(|request| request.host.clone())
+        .filter(|host| !host.is_empty())
+        .unwrap_or(configured.host);
+    if host == "0.0.0.0" || host == "::" {
+        host = "localhost".to_string();
+    }
+    let port = body
+        .as_ref()
+        .and_then(|request| request.port)
+        .unwrap_or_else(|| u16::try_from(configured.port).unwrap_or(7337));
+    state
+        .pairing
+        .create_session(&host, port)
+        .map(Json)
+        .map_err(pairing_error)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PairVerifyRequest {
+    passcode: Option<String>,
+    token: Option<String>,
+    device_name: String,
+}
+
+async fn pair_verify_passcode(
+    State(state): State<AppState>,
+    Json(request): Json<PairVerifyRequest>,
+) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
+    state
+        .pairing
+        .verify_passcode(
+            request.passcode.as_deref().unwrap_or_default(),
+            request.device_name,
+        )
+        .map(Json)
+        .map_err(pairing_error)
+}
+
+async fn pair_verify_token(
+    State(state): State<AppState>,
+    Json(request): Json<PairVerifyRequest>,
+) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
+    state
+        .pairing
+        .verify_token(
+            request.token.as_deref().unwrap_or_default(),
+            request.device_name,
+        )
+        .map(Json)
+        .map_err(pairing_error)
+}
+
+async fn list_devices(State(state): State<AppState>) -> Json<Vec<crate::interfaces::DeviceInfo>> {
+    Json(state.pairing.list_devices())
+}
+
+async fn revoke_device(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiResponseError> {
+    state.pairing.revoke_device(&id).map_err(pairing_error)?;
+    Ok(Json(json!({"status": "revoked"})))
+}
+
+async fn list_workspaces(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::interfaces::WorkspaceInfo>>, ApiResponseError> {
+    state.workspaces.list().await.map(Json).map_err(app_error)
+}
+
+#[derive(Deserialize)]
+struct RegisterWorkspaceRequest {
+    path: String,
+}
+
+async fn register_workspace(
+    State(state): State<AppState>,
+    Json(request): Json<RegisterWorkspaceRequest>,
+) -> Result<(StatusCode, Json<crate::interfaces::WorkspaceInfo>), ApiResponseError> {
+    if !state.config.read().allow_remote_workspace_registration {
+        return Err(ApiResponseError::forbidden(
+            "remote workspace registration is disabled; use `app add-folder <path>` on the host",
+        ));
+    }
+    state
+        .workspaces
+        .register(&request.path)
+        .await
+        .map(|workspace| (StatusCode::CREATED, Json(workspace)))
+        .map_err(app_error)
+}
+
+async fn file_tree(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<crate::interfaces::FileNode>>, ApiResponseError> {
+    state
+        .workspaces
+        .file_tree(&id)
+        .await
+        .map(Json)
+        .map_err(app_error)
+}
+
+#[derive(Deserialize)]
+struct FileQuery {
+    path: Option<String>,
+}
+
+async fn read_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let path = required_query(query.path, "path")?;
+    let file = state
+        .workspaces
+        .read_file(&id, &path)
+        .await
+        .map_err(app_error)?;
+    Ok(Json(json!({
+        "content": file.content,
+        "revision": file.revision,
+        "path": path,
+        "isBinary": file.is_binary,
+        "previewable": file.previewable,
+    })))
+}
+
+async fn raw_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> Result<Response, ApiResponseError> {
+    let path = required_query(query.path, "path")?;
+    let absolute = state
+        .workspaces
+        .file_path(&id, &path)
+        .await
+        .map_err(app_error)?;
+    let data = tokio::fs::read(&absolute)
+        .await
+        .map_err(|error| ApiResponseError::internal(format!("read raw file: {error}")))?;
+    let content_type = infer::get(&data)
+        .map(|kind| kind.mime_type())
+        .unwrap_or("application/octet-stream");
+    let mut response = Response::new(Body::from(data));
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("inline"),
+    );
+    let content_type = HeaderValue::try_from(content_type).map_err(|error| {
+        ApiResponseError::internal(format!("derive raw file content type: {error}"))
+    })?;
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, content_type);
+    Ok(response)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WriteFileRequest {
+    path: String,
+    content: String,
+    #[serde(default)]
+    expected_revision: i64,
+}
+
+async fn write_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<WriteFileRequest>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let revision = state
+        .workspaces
+        .write_file(
+            &id,
+            &request.path,
+            &request.content,
+            request.expected_revision,
+        )
+        .await
+        .map_err(app_error)?;
+    Ok(Json(json!({"revision": revision, "path": request.path})))
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SearchQuery {
+    pattern: Option<String>,
+    ignore_case: Option<bool>,
+    max_results: Option<i32>,
+    file_pattern: Option<String>,
+    context_lines: Option<i32>,
+}
+
+async fn search(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Vec<crate::interfaces::SearchResult>>, ApiResponseError> {
+    let pattern = required_query(query.pattern, "pattern")?;
+    let options = SearchOptions {
+        pattern: pattern.clone(),
+        ignore_case: query.ignore_case.unwrap_or(false),
+        max_results: query.max_results.unwrap_or_default(),
+        file_pattern: query.file_pattern.unwrap_or_default(),
+        context_lines: query.context_lines.unwrap_or_default(),
+    };
+    state
+        .workspaces
+        .search(&id, &pattern, options)
+        .await
+        .map(Json)
+        .map_err(app_error)
+}
+
+#[derive(Deserialize, Default)]
+struct EventsQuery {
+    after: Option<i64>,
+    limit: Option<i32>,
+}
+
+async fn events(
+    State(state): State<AppState>,
+    Query(query): Query<EventsQuery>,
+) -> Result<Json<Vec<crate::interfaces::Event>>, ApiResponseError> {
+    state
+        .events
+        .query_all(query.after.unwrap_or_default(), event_limit(query.limit))
+        .await
+        .map(Json)
+        .map_err(app_error)
+}
+
+async fn session_events(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Query(query): Query<EventsQuery>,
+) -> Result<Json<Vec<crate::interfaces::Event>>, ApiResponseError> {
+    state
+        .events
+        .query(
+            &session_id,
+            query.after.unwrap_or_default(),
+            event_limit(query.limit),
+        )
+        .await
+        .map(Json)
+        .map_err(app_error)
+}
+
+async fn list_agents(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<AgentInfo>>, ApiResponseError> {
+    state.acp.list_agents().await.map(Json).map_err(app_error)
+}
+
+async fn upsert_agent(
+    State(state): State<AppState>,
+    Json(agent): Json<AgentInfo>,
+) -> Result<Json<AgentInfo>, ApiResponseError> {
+    if agent.id.trim().is_empty() || agent.command.trim().is_empty() {
+        return Err(ApiResponseError::bad_request(
+            "agent id and command are required",
+        ));
+    }
+    state.acp.register_agent(agent.clone());
+    let mut config = state.config.write();
+    config.upsert_agent(agent.clone()).map_err(|error| {
+        ApiResponseError::internal(format!("persist agent configuration: {error}"))
+    })?;
+    Ok(Json(agent))
+}
+
+async fn delete_agent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiResponseError> {
+    state.acp.remove_agent(&id);
+    state.config.write().delete_agent(&id).map_err(|error| {
+        ApiResponseError::internal(format!("persist agent configuration: {error}"))
+    })?;
+    Ok(Json(json!({"status": "deleted"})))
+}
+
+async fn autodetect_agents() -> Json<Vec<AgentInfo>> {
+    Json(acp::autodetect().await)
+}
+
+async fn list_sessions(State(state): State<AppState>) -> Json<Vec<crate::interfaces::SessionInfo>> {
+    Json(state.acp.list_sessions())
+}
+
+async fn get_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::interfaces::SessionInfo>, ApiResponseError> {
+    state.acp.get_session_info(&id).map(Json).map_err(app_error)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateSessionRequest {
+    agent_id: String,
+    model_id: String,
+    workspace_id: String,
+}
+
+async fn create_session(
+    State(state): State<AppState>,
+    Json(request): Json<CreateSessionRequest>,
+) -> Result<(StatusCode, Json<crate::interfaces::SessionInfo>), ApiResponseError> {
+    state
+        .acp
+        .create_session(&request.agent_id, &request.model_id, &request.workspace_id)
+        .await
+        .map(|session| (StatusCode::CREATED, Json(session)))
+        .map_err(app_error)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PatchSessionRequest {
+    name: Option<String>,
+}
+
+async fn patch_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<PatchSessionRequest>,
+) -> Result<Json<Value>, ApiResponseError> {
+    if let Some(name) = request.name {
+        state.acp.rename_session(&id, &name).map_err(app_error)?;
+    }
+    Ok(Json(json!({"status": "updated"})))
+}
+
+#[derive(Deserialize)]
+struct PromptRequest {
+    content: String,
+}
+
+async fn send_prompt(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<PromptRequest>,
+) -> Result<Json<Value>, ApiResponseError> {
+    if request.content.trim().is_empty() {
+        return Err(ApiResponseError::bad_request("prompt content is required"));
+    }
+    state
+        .acp
+        .send_prompt(&id, &request.content, &[])
+        .await
+        .map_err(app_error)?;
+    Ok(Json(json!({"status": "sent"})))
+}
+
+async fn cancel_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiResponseError> {
+    state.acp.cancel_session(&id).await.map_err(app_error)?;
+    Ok(Json(json!({"status": "cancelled"})))
+}
+
+async fn close_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiResponseError> {
+    state.acp.close_session(&id).await.map_err(app_error)?;
+    Ok(Json(json!({"status": "closed"})))
+}
+
+async fn pending_permissions(
+    State(state): State<AppState>,
+) -> Json<Vec<crate::interfaces::PermissionRequest>> {
+    Json(state.permissions.get_pending())
+}
+
+#[derive(Deserialize)]
+struct RespondPermissionRequest {
+    decision: String,
+}
+
+async fn respond_permission(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<RespondPermissionRequest>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let decision = serde_json::from_value::<PermissionDecision>(Value::String(request.decision))
+        .map_err(|_| ApiResponseError::bad_request("invalid permission decision"))?;
+    state
+        .permissions
+        .respond(&id, decision)
+        .await
+        .map_err(app_error)?;
+    Ok(Json(json!({"status": "responded"})))
+}
+
+async fn spa_fallback(Path(path): Path<String>) -> Response {
+    embed::serve(path).await
+}
+
+/// Auth is deliberately performed before handlers, not in individual routes,
+/// so every new protected route inherits the same LAN and CSRF policy.
+async fn require_auth(
+    State(state): State<AppState>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let remote_addr = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|connect| connect.0.to_string())
+        // Direct Router tests lack ConnectInfo; treating them as loopback
+        // mirrors the host-only test/CLI path and never opens a LAN request.
+        .unwrap_or_else(|| "127.0.0.1:0".to_string());
+    match authorize_request(
+        &state.pairing,
+        &remote_addr,
+        request.method(),
+        request.headers(),
+        request.uri().query(),
+    ) {
+        Ok(()) => next.run(request).await,
+        Err(error) => error.into_response(),
+    }
+}
+
+/// Limit unauthenticated pairing requests before they allocate QR sessions or
+/// enter passcode verification. This mirrors Go's per-IP, 5/minute token bucket.
+async fn require_pair_rate_limit(
+    State(state): State<AppState>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let peer = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|connect| connect.0.ip().to_string())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    if !allow_pair_request(&state, &peer) {
+        debug!(peer, "pairing request rate limited");
+        return ApiResponseError::rate_limited("pairing rate limit exceeded, try again later")
+            .into_response();
+    }
+    next.run(request).await
+}
+
+fn allow_pair_request(state: &AppState, peer: &str) -> bool {
+    let mut buckets = match state.pair_rate.lock() {
+        Ok(buckets) => buckets,
+        Err(poisoned) => {
+            error!("pairing rate-limit lock poisoned; recovering state");
+            poisoned.into_inner()
+        }
+    };
+    let now = Instant::now();
+    let bucket = buckets
+        .entry(peer.to_string())
+        .or_insert_with(|| PairRateBucket {
+            tokens: PAIR_RATE_BURST,
+            updated_at: now,
+        });
+    bucket.tokens = (bucket.tokens
+        + now.duration_since(bucket.updated_at).as_secs_f64() * PAIR_RATE_PER_MINUTE / 60.0)
+        .min(PAIR_RATE_BURST);
+    bucket.updated_at = now;
+    if bucket.tokens < 1.0 {
+        return false;
+    }
+    bucket.tokens -= 1.0;
+    true
+}
+
+/// Apply Go-compatible loopback bypass and Origin/credential checks.
+fn authorize_request(
+    pairing: &PairingManager,
+    remote_addr: &str,
+    method: &Method,
+    headers: &HeaderMap,
+    query: Option<&str>,
+) -> Result<(), ApiResponseError> {
+    if is_loopback_addr(remote_addr) {
+        if is_mutating(method) && !loopback_origin_allowed(headers.get(header::ORIGIN)) {
+            warn!(
+                remote = remote_addr,
+                "rejected cross-origin loopback API mutation"
+            );
+            return Err(ApiResponseError::forbidden(
+                "cross-origin request not allowed",
+            ));
+        }
+        return Ok(());
+    }
+    let (device_id, secret) = extract_credential(headers, query);
+    if device_id.is_empty()
+        || secret.is_empty()
+        || !pairing.validate_credential(&device_id, &secret)
+    {
+        debug!(
+            remote = remote_addr,
+            "rejected unauthenticated remote API request"
+        );
+        return Err(ApiResponseError::unauthorized("unauthorized"));
+    }
+    Ok(())
+}
+
+fn is_mutating(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    )
+}
+
+fn loopback_origin_allowed(origin: Option<&HeaderValue>) -> bool {
+    let Some(origin) = origin else {
+        return true;
+    };
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    let Ok(url) = reqwest::Url::parse(origin) else {
+        return false;
+    };
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
+}
+
+fn extract_credential(headers: &HeaderMap, query: Option<&str>) -> (String, String) {
+    if let Some(value) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .and_then(|value| value.split_once(':'))
+    {
+        return (value.0.to_string(), value.1.to_string());
+    }
+    let url =
+        query.and_then(|query| reqwest::Url::parse(&format!("http://localhost/?{query}")).ok());
+    let lookup = |name: &str| {
+        url.as_ref()
+            .and_then(|url| {
+                url.query_pairs()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value.into_owned())
+            })
+            .unwrap_or_default()
+    };
+    (lookup("deviceId"), lookup("secret"))
+}
+
+fn event_limit(limit: Option<i32>) -> i32 {
+    limit
+        .filter(|limit| *limit > 0)
+        .unwrap_or(DEFAULT_EVENT_LIMIT)
+        .min(MAX_EVENT_LIMIT)
+}
+
+fn required_query(value: Option<String>, name: &str) -> Result<String, ApiResponseError> {
+    value
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiResponseError::bad_request(format!("missing '{name}' query parameter")))
+}
+
+fn pairing_error(error: PairingError) -> ApiResponseError {
+    match error {
+        PairingError::InvalidPairingCredential => ApiResponseError::unauthorized(error.to_string()),
+        PairingError::RateLimited => ApiResponseError::rate_limited(error.to_string()),
+        PairingError::DeviceNotFound | PairingError::PendingActionNotFound => {
+            ApiResponseError::not_found(error.to_string())
+        }
+        PairingError::PendingActionTypeMismatch | PairingError::DuplicatePendingAction => {
+            ApiResponseError::bad_request(error.to_string())
+        }
+        PairingError::Persistence(_)
+        | PairingError::State(_)
+        | PairingError::Qr(_)
+        | PairingError::QrEncoding(_) => {
+            error!(%error, "pairing API operation failed");
+            ApiResponseError::internal("pairing operation failed")
+        }
+    }
+}
+
+fn app_error(error: AppError) -> ApiResponseError {
+    let mapped = map_api_error(&error);
+    let status = StatusCode::from_u16(mapped.status.0).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    ApiResponseError {
+        status,
+        message: mapped.body.error,
+    }
+}
+
+struct ApiResponseError {
+    status: StatusCode,
+    message: String,
+}
+
+impl ApiResponseError {
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
+    fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: message.into(),
+        }
+    }
+
+    fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message: message.into(),
+        }
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+
+    fn rate_limited(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: message.into(),
+        }
+    }
+
+    fn internal(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: message.into(),
+        }
+    }
+}
+
+impl IntoResponse for ApiResponseError {
+    fn into_response(self) -> Response {
+        (self.status, Json(json!({"error": self.message}))).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use tower::ServiceExt;
+
+    fn state() -> (tempfile::TempDir, AppState) {
+        let dir = tempfile::tempdir().expect("temporary state directory");
+        let config = ConfigStore::new(crate::config::Config {
+            data_dir: dir.path().display().to_string(),
+            db_path: dir.path().join("events.db").display().to_string(),
+            ..crate::config::Config::default()
+        });
+        let pairing = PairingManager::new(dir.path(), None).expect("pairing manager");
+        let workspaces = Arc::new(WorkspaceManagerImpl::new());
+        let events = Arc::new(
+            crate::events::EventBus::open(dir.path().join("events.db")).expect("event bus"),
+        );
+        let hub = Hub::with_event_bus(Arc::clone(&events));
+        let permissions = PermissionsManager::new(None);
+        let registry = Arc::new(crate::acp::AgentRegistry::default());
+        let acp = Arc::new(Client::new(crate::acp::ClientDeps {
+            registry,
+            workspaces: workspaces.clone(),
+            permissions: permissions.clone(),
+            event_bus: events.clone(),
+        }));
+        (
+            dir,
+            AppState::new(config, pairing, workspaces, events, hub, acp, permissions),
+        )
+    }
+
+    #[tokio::test]
+    async fn health_is_public_and_router_compiles() {
+        let (_dir, state) = state();
+        let response = router(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn remote_request_without_a_credential_is_rejected() {
+        let (_dir, state) = state();
+        let headers = HeaderMap::new();
+        let error = authorize_request(
+            &state.pairing,
+            "192.168.1.2:9000",
+            &Method::GET,
+            &headers,
+            None,
+        )
+        .expect_err("missing remote credential must fail");
+        assert_eq!(error.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn pair_request_bucket_allows_a_five_request_burst() {
+        let (_dir, state) = state();
+        for _ in 0..5 {
+            assert!(allow_pair_request(&state, "192.168.1.2"));
+        }
+        assert!(!allow_pair_request(&state, "192.168.1.2"));
+    }
+
+    #[tokio::test]
+    async fn pairing_rate_limit_is_exposed_as_a_client_error() {
+        let (_dir, state) = state();
+        for _ in 0..5 {
+            let _ = state.pairing.verify_passcode("invalid", "device");
+        }
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/pair/verify-passcode")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"passcode":"invalid","deviceName":"device"}"#,
+            ))
+            .expect("request");
+        let response = router(state).oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+}

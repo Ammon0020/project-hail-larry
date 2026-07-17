@@ -30,9 +30,9 @@
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — Phase 0–2 complete; Phase 3 ACP core+stream done;
-  S-SYNC hub complete. Next: CONTEXT/PROVIDERS, then SERVER/DAEMON/CLI
-  (SERVER mounts `/ws`).
+- [ ] **Rust backend port** — HTTP UI smoke via `local_agent --serve` (needs
+  `cd web && npm run build` first). PROVIDERS client done; REST providers +
+  CONTEXT + TLS dual + DAEMON/CLI still open.
 
 ## Blocked
 
@@ -40,6 +40,21 @@
 
 ## Recent Changes (2026-07)
 
+- **07-17** — Rust **S-ACP-PROVIDERS batch 1**: `src/acp/providers.rs` + core
+  actor cmds for list/set/disable; `SessionCaps` caches providers +
+  embeddedContext from Initialize. SDK 1.2.0 lacks `unstable_llm_providers`
+  forward — hand-rolled JsonRpcRequest (Go `id` wire); schema feature
+  unification for caps. `switch_model` via set_config_option only (no rebind).
+  Tests: 10 provider unit. Deferred: REST routes (SERVER), rebind (CONTEXT).
+- **07-17** — Rust **S-SERVER first UI-smoke batch**: `src/api/` now mounts
+  health, pair/devices, workspace/files/search, events, sync WS, agent/session
+  CRUD/prompt/cancel/close, permission pending/respond, and embedded SPA fallback.
+  `local_agent --serve` binds configured HTTP (default `:7337`); auth includes
+  Bearer/query credentials, loopback mutation Origin checks, and a 10 MB body
+  cap. Build `web` once (`cd web && npm run build`) before Rust compilation for
+  the embedded SPA; otherwise the route returns a clear development fallback.
+  Remaining before full browser parity: providers/context/uploads, TLS dual
+  listener, raw MIME/range parity, and HTTP timeout parity.
 - **07-17** — Rust port **S-SYNC** complete: `src/sync/{mod,tests}.rs`. Axum WS
   hub with DashMap client registry, CancellationToken shutdown drain, Go-matching
   auth/Origin gates (401 before Origin on LAN; loopback+bad Origin → 403), JSON

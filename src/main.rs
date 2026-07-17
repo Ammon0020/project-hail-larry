@@ -1,14 +1,23 @@
 //! Binary entry point for the Local Agent daemon.
 //!
-//! S-ARCH scope: install the rustls crypto provider, initialize file logging,
-//! and exit cleanly. Real daemon wiring (clap subcommands, axum server, ACP
-//! sessions) lands in S-DAEMON / S-SERVER / S-CLI.
+//! `--serve` starts the first HTTP UI-smoke surface. Full daemon lifecycle,
+//! TLS dual listening, and CLI subcommands remain later work streams.
 
 // Lift the no-panic lint policy for test code (see src/lib.rs for rationale).
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
-use anyhow::Result;
+use anyhow::{bail, Result};
+use clap::Parser;
 use local_agent::app;
+
+/// Minimal bootstrap CLI while the full daemon command surface is ported.
+#[derive(Debug, Parser)]
+#[command(name = "local_agent", about = "Local Agent HTTP smoke server")]
+struct Args {
+    /// Bind the HTTP UI smoke server using configured host and port (default 7337).
+    #[arg(long)]
+    serve: bool,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,7 +29,10 @@ async fn main() -> Result<()> {
     // Initialize file logging to ~/.local-agent/logs/ (S-ARCH).
     let _log_guard = app::logging::init_file_logging()?;
 
-    tracing::info!("local-agent daemon starting (S-ARCH stub)");
-    // Real daemon composition root arrives in S-DAEMON.
-    Ok(())
+    let args = Args::parse();
+    if args.serve {
+        return app::listen::serve_http().await;
+    }
+
+    bail!("no command selected; run `local_agent --serve` to start HTTP on configured port")
 }

@@ -33,12 +33,16 @@ use tokio::sync::{mpsc, oneshot, watch, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::providers::{
+    find_model_config_id, require_providers_supported, rpc_disable_provider, rpc_list_providers,
+    rpc_set_model_config, rpc_set_provider, SessionCaps, MODEL_SWITCH_UNSUPPORTED_MSG,
+};
 use super::AgentRegistry;
 use crate::config::AgentInfo;
 use crate::events::SharedEventBus;
 use crate::interfaces::{
     wire::typed_event_to_wire, ACPClient, AppError, Attachment, EventMeta, EventPayload,
-    PermissionManager, Session, SessionInfo, TypedEvent, WorkspaceManager,
+    PermissionManager, ProviderInfo, Session, SessionInfo, TypedEvent, WorkspaceManager,
 };
 use crate::shell::{merge_env, Executor, DEFAULT_MAX_OUTPUT_BYTES};
 
@@ -95,6 +99,11 @@ struct SessionEntry {
     /// the actor while it is still idle (Prompt not dequeued yet); the bit
     /// makes that cancel visible when the prompt eventually starts.
     prompt_cancel: Arc<AtomicBool>,
+    /// Capabilities captured from Initialize (providers + embeddedContext).
+    caps: SessionCaps,
+    /// Config option id for the model selector when the agent advertises one.
+    /// Empty/`None` means live `switch_model` is unsupported (no rebind here).
+    model_config_id: Option<String>,
 }
 
 impl SessionEntry {
@@ -141,6 +150,36 @@ impl Client {
             SessionState::Closed => Err(AppError::internal("ACP session is closed")),
             _ => Ok((entry.commands.clone(), Arc::clone(&entry.prompt_cancel))),
         }
+    }
+
+    /// Look up a session's command sender and cached initialize capabilities.
+    fn session_for_providers(
+        &self,
+        session_id: &str,
+    ) -> Result<(mpsc::Sender<ActorCommand>, SessionCaps), AppError> {
+        let sessions = self
+            .sessions
+            .read()
+            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| AppError::not_found("session"))?;
+        Ok((entry.commands.clone(), entry.caps))
+    }
+
+    /// Look up command sender + model config id for a live model switch.
+    fn session_for_model_switch(
+        &self,
+        session_id: &str,
+    ) -> Result<(mpsc::Sender<ActorCommand>, Option<String>), AppError> {
+        let sessions = self
+            .sessions
+            .read()
+            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| AppError::not_found("session"))?;
+        Ok((entry.commands.clone(), entry.model_config_id.clone()))
     }
 
     /// Reserve the session's sole prompt slot before enqueuing the actor command.
@@ -276,13 +315,15 @@ impl ACPClient for Client {
         let result = ready_rx
             .await
             .map_err(|_| AppError::internal("ACP session actor exited during startup"))?;
-        result?;
+        let startup = result?;
         let mut entry = SessionEntry {
             info,
             state: SessionState::Created,
             commands,
             stderr_tail,
             prompt_cancel,
+            caps: startup.caps,
+            model_config_id: startup.model_config_id,
         };
         // Successful startup publishes as idle; status must match the enum.
         entry.apply_state(SessionState::Idle);
@@ -390,10 +431,51 @@ impl ACPClient for Client {
         ))
     }
 
-    async fn switch_model(&self, _session_id: &str, _model_id: &str) -> Result<(), AppError> {
-        Err(AppError::unsupported(
-            "model switching is implemented by S-ACP-PROVIDERS",
-        ))
+    async fn switch_model(&self, session_id: &str, model_id: &str) -> Result<(), AppError> {
+        let (sender, model_config_id) = self.session_for_model_switch(session_id)?;
+        let Some(config_id) = model_config_id else {
+            // Do NOT fall back to rebind here — CONTEXT owns that path.
+            tracing::info!(
+                session_id,
+                model_id,
+                "switch_model unsupported: no model config option advertised"
+            );
+            return Err(AppError::unsupported(MODEL_SWITCH_UNSUPPORTED_MSG));
+        };
+        let (result_tx, result_rx) = oneshot::channel();
+        sender
+            .send(ActorCommand::SwitchModel {
+                config_id,
+                model_id: model_id.to_string(),
+                result: result_tx,
+            })
+            .await
+            .map_err(|_| AppError::internal("ACP session actor is unavailable"))?;
+        result_rx
+            .await
+            .map_err(|_| AppError::internal("ACP switch_model actor exited"))??;
+
+        {
+            let mut sessions = self
+                .sessions
+                .write()
+                .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
+            let entry = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| AppError::not_found("session"))?;
+            entry.info.model_id = model_id.to_string();
+            entry.info.updated_at = Utc::now();
+        }
+
+        append_payload(
+            &self.deps.event_bus,
+            session_id,
+            EventPayload::ModelChanged {
+                content: format!("Switched model to {model_id}."),
+            },
+        )
+        .await?;
+        Ok(())
     }
 
     async fn cancel_session(&self, session_id: &str) -> Result<(), AppError> {
@@ -437,32 +519,59 @@ impl ACPClient for Client {
 
     fn set_session_profile(&self, _session_id: &str, _profile: &str) {}
 
-    async fn list_providers(
-        &self,
-        _session_id: &str,
-    ) -> Result<Vec<crate::interfaces::ProviderInfo>, AppError> {
-        Err(AppError::unsupported(
-            "providers are implemented by S-ACP-PROVIDERS",
-        ))
+    async fn list_providers(&self, session_id: &str) -> Result<Vec<ProviderInfo>, AppError> {
+        let (sender, caps) = self.session_for_providers(session_id)?;
+        require_providers_supported(caps)?;
+        let (result_tx, result_rx) = oneshot::channel();
+        sender
+            .send(ActorCommand::ListProviders { result: result_tx })
+            .await
+            .map_err(|_| AppError::internal("ACP session actor is unavailable"))?;
+        result_rx
+            .await
+            .map_err(|_| AppError::internal("ACP list_providers actor exited"))?
     }
 
     async fn set_provider(
         &self,
-        _session_id: &str,
-        _id: &str,
-        _api_type: &str,
-        _base_url: &str,
-        _headers: std::collections::HashMap<String, String>,
+        session_id: &str,
+        id: &str,
+        api_type: &str,
+        base_url: &str,
+        headers: std::collections::HashMap<String, String>,
     ) -> Result<(), AppError> {
-        Err(AppError::unsupported(
-            "providers are implemented by S-ACP-PROVIDERS",
-        ))
+        let (sender, caps) = self.session_for_providers(session_id)?;
+        require_providers_supported(caps)?;
+        let (result_tx, result_rx) = oneshot::channel();
+        sender
+            .send(ActorCommand::SetProvider {
+                id: id.to_string(),
+                api_type: api_type.to_string(),
+                base_url: base_url.to_string(),
+                headers,
+                result: result_tx,
+            })
+            .await
+            .map_err(|_| AppError::internal("ACP session actor is unavailable"))?;
+        result_rx
+            .await
+            .map_err(|_| AppError::internal("ACP set_provider actor exited"))?
     }
 
-    async fn disable_provider(&self, _session_id: &str, _id: &str) -> Result<(), AppError> {
-        Err(AppError::unsupported(
-            "providers are implemented by S-ACP-PROVIDERS",
-        ))
+    async fn disable_provider(&self, session_id: &str, id: &str) -> Result<(), AppError> {
+        let (sender, caps) = self.session_for_providers(session_id)?;
+        require_providers_supported(caps)?;
+        let (result_tx, result_rx) = oneshot::channel();
+        sender
+            .send(ActorCommand::DisableProvider {
+                id: id.to_string(),
+                result: result_tx,
+            })
+            .await
+            .map_err(|_| AppError::internal("ACP session actor is unavailable"))?;
+        result_rx
+            .await
+            .map_err(|_| AppError::internal("ACP disable_provider actor exited"))?
     }
 }
 
@@ -472,8 +581,33 @@ enum ActorCommand {
         attachments: Vec<Attachment>,
         result: oneshot::Sender<Result<(), AppError>>,
     },
+    ListProviders {
+        result: oneshot::Sender<Result<Vec<ProviderInfo>, AppError>>,
+    },
+    SetProvider {
+        id: String,
+        api_type: String,
+        base_url: String,
+        headers: std::collections::HashMap<String, String>,
+        result: oneshot::Sender<Result<(), AppError>>,
+    },
+    DisableProvider {
+        id: String,
+        result: oneshot::Sender<Result<(), AppError>>,
+    },
+    SwitchModel {
+        config_id: String,
+        model_id: String,
+        result: oneshot::Sender<Result<(), AppError>>,
+    },
     Cancel,
     Close(oneshot::Sender<()>),
+}
+
+/// Startup handshake result returned before the session is published.
+struct ActorStartup {
+    caps: SessionCaps,
+    model_config_id: Option<String>,
 }
 
 struct ActorConfig {
@@ -492,7 +626,7 @@ struct ActorConfig {
 async fn run_actor(
     config: ActorConfig,
     mut commands: mpsc::Receiver<ActorCommand>,
-    ready: oneshot::Sender<Result<(), AppError>>,
+    ready: oneshot::Sender<Result<ActorStartup, AppError>>,
     registered: oneshot::Receiver<()>,
 ) {
     let mut ready = Some(ready);
@@ -554,7 +688,7 @@ fn startup_error(error: &AppError, stderr_tail: &Arc<Mutex<StderrTail>>) -> AppE
 async fn run_actor_inner(
     config: &ActorConfig,
     commands: &mut mpsc::Receiver<ActorCommand>,
-    ready: &mut Option<oneshot::Sender<Result<(), AppError>>>,
+    ready: &mut Option<oneshot::Sender<Result<ActorStartup, AppError>>>,
     registered: &mut Option<oneshot::Receiver<()>>,
 ) -> Result<ActorExit, AppError> {
     let mut command = Command::new(&config.agent.command);
@@ -752,17 +886,41 @@ async fn run_actor_inner(
                     .read_text_file(true)
                     .write_text_file(true)),
             );
-            cx.send_request(initialize)
+            // Keep the InitializeResponse: providers + embeddedContext caps are
+            // cached on the session entry so later RPCs can gate without re-probe.
+            let init = cx
+                .send_request(initialize)
                 .block_task()
                 .await
                 .map_err(|_| agent_client_protocol::Error::internal_error())?;
+            let caps = SessionCaps::from_agent_capabilities(
+                init.agent_capabilities.providers.is_some(),
+                init.agent_capabilities.prompt_capabilities.embedded_context,
+            );
+            tracing::debug!(
+                providers_supported = caps.providers_supported,
+                embedded_context = caps.embedded_context,
+                "ACP initialize capabilities cached"
+            );
             let session = cx
                 .send_request(NewSessionRequest::new(config.workspace_path.clone()))
                 .block_task()
                 .await
                 .map_err(|_| agent_client_protocol::Error::internal_error())?;
+            let model_config_id = find_model_config_id(
+                session.config_options.as_deref().unwrap_or(&[]),
+                &config.agent.models,
+            );
+            if model_config_id.is_none() {
+                tracing::info!(
+                    "agent did not advertise a model config option; switch_model will be unsupported"
+                );
+            }
             if let Some(ready) = ready.take() {
-                let _ = ready.send(Ok(()));
+                let _ = ready.send(Ok(ActorStartup {
+                    caps,
+                    model_config_id,
+                }));
             }
             if let Some(registered) = registered.take() {
                 registered
@@ -824,15 +982,68 @@ async fn actor_loop(
                     PromptExit::Closed(result) => return Ok(ActorExit::Closed(result)),
                 }
             }
-            ActorCommand::Cancel => {
-                send_cancel(&cx, &agent_session_id)?;
-            }
-            ActorCommand::Close(result) => {
-                return Ok(ActorExit::Closed(result));
+            other => {
+                if let Some(closed) = handle_non_prompt_command(&cx, &agent_session_id, other).await
+                {
+                    return Ok(ActorExit::Closed(closed));
+                }
             }
         }
     }
     Err(agent_client_protocol::Error::internal_error())
+}
+
+/// Handle provider / model / cancel / close commands outside a prompt turn.
+///
+/// Returns `Some(close_ack)` when the session should tear down.
+async fn handle_non_prompt_command(
+    cx: &ConnectionTo<Agent>,
+    agent_session_id: &SessionId,
+    command: ActorCommand,
+) -> Option<oneshot::Sender<()>> {
+    match command {
+        ActorCommand::ListProviders { result } => {
+            let _ = result.send(rpc_list_providers(cx).await);
+            None
+        }
+        ActorCommand::SetProvider {
+            id,
+            api_type,
+            base_url,
+            headers,
+            result,
+        } => {
+            let _ = result.send(rpc_set_provider(cx, id, api_type, base_url, headers).await);
+            None
+        }
+        ActorCommand::DisableProvider { id, result } => {
+            let _ = result.send(rpc_disable_provider(cx, id).await);
+            None
+        }
+        ActorCommand::SwitchModel {
+            config_id,
+            model_id,
+            result,
+        } => {
+            let _ = result
+                .send(rpc_set_model_config(cx, agent_session_id, &config_id, &model_id).await);
+            None
+        }
+        ActorCommand::Cancel => {
+            if let Err(error) = send_cancel(cx, agent_session_id) {
+                tracing::error!(error = %error, "ACP cancel notification failed");
+            }
+            None
+        }
+        ActorCommand::Close(result) => Some(result),
+        ActorCommand::Prompt { result, .. } => {
+            // Nested prompts are rejected at begin_prompt; this is a defensive path.
+            let _ = result.send(Err(AppError::validation(
+                "ACP session already has an active prompt",
+            )));
+            None
+        }
+    }
 }
 
 enum PromptExit {
@@ -932,6 +1143,8 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
 
     // Drain control commands that arrived while persisting lifecycle events
     // so Cancel/Close cannot sit behind a prompt that has not started yet.
+    // Provider/model RPCs are serviced here too (concurrent with the upcoming
+    // prompt) so they are not starved behind a long turn.
     while let Ok(command) = commands.try_recv() {
         match command {
             ActorCommand::Cancel => {
@@ -948,6 +1161,14 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                 let _ = nested.send(Err(AppError::validation(
                     "ACP session already has an active prompt",
                 )));
+            }
+            other => {
+                if let Some(closed) = handle_non_prompt_command(&cx, &agent_session_id, other).await
+                {
+                    let _ =
+                        result.send(Err(AppError::internal("ACP session closed during prompt")));
+                    return Ok(PromptExit::Closed(closed));
+                }
             }
         }
     }
@@ -1043,6 +1264,18 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                         let _ = result.send(Err(AppError::validation(
                             "ACP session already has an active prompt",
                         )));
+                    }
+                    Some(other) => {
+                        if let Some(closed) =
+                            handle_non_prompt_command(&cx, &agent_session_id, other).await
+                        {
+                            if let Some(result) = result.take() {
+                                let _ = result.send(Err(AppError::internal(
+                                    "ACP session closed during prompt",
+                                )));
+                            }
+                            return Ok(PromptExit::Closed(closed));
+                        }
                     }
                     None => return Err(agent_client_protocol::Error::internal_error()),
                 }

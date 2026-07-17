@@ -101,8 +101,14 @@ thiserror = "2.0"
 # callbacks, permission requests). The `unstable_mcp_over_acp` feature is
 # required to code-generate the mcp/connect / mcp/disconnect / mcp/message
 # relay methods; `unstable` enables other draft operations used by the Go
-# client (provider management, session fork). MSRV 1.92.0 compatible.
+# client (session fork, elicitation). MSRV 1.92.0 compatible.
+#
+# NOTE: 1.2.0 does NOT forward schema feature `unstable_llm_providers`.
+# Provider RPCs use hand-rolled JsonRpcRequest types in src/acp/providers.rs.
+# The direct schema dep below enables AgentCapabilities.providers via Cargo
+# feature unification so initialize does not strip that field.
 agent-client-protocol = { version = "1.2.0", features = ["unstable", "unstable_mcp_over_acp"] }
+agent-client-protocol-schema = { version = "1.4.0", features = ["unstable_llm_providers"] }
 # async-process owns ACP agent children while exposing futures-compatible stdio
 # streams for the SDK's ByteStreams transport. Production ACP needs explicit
 # cwd, stderr-tail, and child lifecycle control, which AcpAgent intentionally
@@ -167,6 +173,7 @@ rand = "0.10.2"
 hex = "0.4.3"
 subtle = "2.6.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+rust-embed = { version = "8.12.0", features = ["interpolate-folder-path"] }
 
 [features]
 # `contract` enables the black-box contract differential runner

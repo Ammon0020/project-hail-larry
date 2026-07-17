@@ -9,6 +9,12 @@ lerna-debug.log*
 
 node_modules
 dist
+# Keep the empty directory available for rust-embed. Production Vite assets
+# remain generated and ignored; `src/api/embed.rs` serves an embedded dev
+# fallback until `npm run build` supplies `dist/index.html`.
+!dist/
+dist/*
+!dist/.gitkeep
 dist-ssr
 *.local
 
