@@ -55,13 +55,9 @@ cargo test --test contract_runner --features contract dto_ -- --nocapture
 
 ## Important: gated behind `contract` feature
 
-The contract runner is feature-gated (`#![cfg(feature = "contract")]`). Without
-`--features contract`, the test binary compiles to nothing — no tests, no
-dependencies pulled in, no Go subprocess. This keeps `cargo test --all-targets`
-(and CI) fast and dependency-free.
+The contract runner is feature-gated (`#![cfg(feature = "contract")]`). Without `--features contract`, the test binary compiles to nothing — no tests, no dependencies pulled in, no Go subprocess. This keeps `cargo test --all-targets` (and CI) fast and dependency-free.
 
-Always run it explicitly via `make test-contract` or
-`cargo test --test contract_runner --features contract`.
+Always run it explicitly via `make test-contract` or `cargo test --test contract_runner --features contract`.
 
 ## Regenerating golden fixtures
 
