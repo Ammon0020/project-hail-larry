@@ -375,8 +375,9 @@ async fn register_workspace(
     let grace = revocation_grace_period(&state);
     let requester = device_id_from_request(&headers, uri.query());
 
-    // Immediate path stays on WorkspaceManager so registration works even when
-    // the pairing workspace registrar has not been wired by the daemon yet.
+    // Immediate path stays on WorkspaceManager. Grace > 0 goes through pairing
+    // so the action can be listed/cancelled; the daemon-wired registrar fires
+    // the real registration when the timer elapses.
     if grace.is_zero() {
         let workspace = state
             .workspaces

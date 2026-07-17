@@ -20,7 +20,7 @@ use crate::config::{Config, ConfigStore};
 use crate::events::{EventBus, SharedEventBus};
 use crate::files::FileSync;
 use crate::interfaces::WorkspaceManager;
-use crate::pairing::Manager as PairingManager;
+use crate::pairing::{Manager as PairingManager, PairingError, WorkspaceRegistrar};
 use crate::permissions::{EventBusPermissionSink, Manager as PermissionsManager, PermissionSink};
 use crate::sync::Hub;
 use crate::uploads::Manager as UploadsManager;
@@ -85,18 +85,18 @@ impl Daemon {
         let config_store = ConfigStore::new(config.clone());
         let events = Arc::new(EventBus::open(&config.db_path).context("open SQLite event store")?);
 
-        // 2. Pairing state. Workspace grace callbacks are intentionally absent
-        // until the pending-registration API is ported; direct registration is
-        // still enforced by the workspace manager and config policy.
-        let pairing = PairingManager::new(&config.data_dir, None).context("open pairing state")?;
-        configure_pairing(&pairing, &config);
-
-        // 3. Workspace and revision tracking.
+        // 2. Workspace manager first so grace-delayed registrations can call it.
         let workspaces = Arc::new(WorkspaceManagerImpl::new());
+        let registrar: Arc<dyn WorkspaceRegistrar> = Arc::new(DaemonWorkspaceRegistrar {
+            workspaces: Arc::clone(&workspaces),
+        });
+        let pairing = PairingManager::new(&config.data_dir, Some(registrar))
+            .context("open pairing state")?;
+        configure_pairing(&pairing, &config);
         load_workspaces(&workspaces, &config.workspaces).await;
         let files = Arc::new(FileSync::new());
 
-        // 4. Permissions / ACP / sync. Permission notifications persist to the
+        // 3. Permissions / ACP / sync. Permission notifications persist to the
         // event bus before they reach the hub's reconnect stream.
         let permission_sink: Arc<dyn PermissionSink> =
             Arc::new(EventBusPermissionSink::new(Arc::clone(&events)));
@@ -115,13 +115,13 @@ impl Daemon {
         }));
         let hub = Hub::with_event_bus(Arc::clone(&events));
 
-        // 5. Supporting stores consumed by REST upload/MCP routes.
+        // 4. Supporting stores consumed by REST upload/MCP routes.
         let uploads = Arc::new(Mutex::new(
             UploadsManager::new(Path::new(&config.data_dir).join("uploads"))
                 .context("open upload store")?,
         ));
 
-        // 6. Router state only receives fully constructed dependencies.
+        // 5. Router state only receives fully constructed dependencies.
         let state = AppState::new(
             config_store,
             pairing.clone(),
@@ -263,6 +263,32 @@ fn configure_pairing(pairing: &PairingManager, config: &Config) {
         pairing.set_inactivity_ttl(Duration::from_secs(
             config.credential_inactivity_ttl_seconds as u64,
         ));
+    }
+}
+
+/// Bridges pairing's sync grace callback onto the async workspace manager.
+///
+/// Matches Go's `SetWorkspaceRegisterFn` wiring: the grace timer thread only
+/// needs fire-and-forget registration; failures are logged, not rethrown into
+/// the timer task.
+struct DaemonWorkspaceRegistrar {
+    workspaces: Arc<WorkspaceManagerImpl>,
+}
+
+impl WorkspaceRegistrar for DaemonWorkspaceRegistrar {
+    fn register_workspace(&self, path: &str) -> Result<(), PairingError> {
+        let workspaces = Arc::clone(&self.workspaces);
+        let path = path.to_string();
+        tokio::spawn(async move {
+            if let Err(error) = workspaces.register(&path).await {
+                tracing::error!(
+                    workspace = %path,
+                    error = %error,
+                    "grace-delayed workspace registration failed"
+                );
+            }
+        });
+        Ok(())
     }
 }
 
