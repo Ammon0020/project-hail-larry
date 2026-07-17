@@ -105,7 +105,7 @@ pub struct AuditEntry {
     pub tool: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub command: String,
-    pub decision: String,
+    pub decision: PermissionDecision,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -295,7 +295,7 @@ impl Manager {
             session_id: req.session_id.clone(),
             tool: req.tool.clone(),
             command: req.command.clone(),
-            decision: decision.as_str().to_string(),
+            decision,
             timestamp: Utc::now(),
         });
         // Bound the in-memory log to the last MAX_AUDIT_ENTRIES entries.

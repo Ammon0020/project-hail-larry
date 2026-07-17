@@ -236,6 +236,7 @@ pub fn expand_env(value: &str) -> String {
 fn expand_env_with(value: &str, lookup: impl Fn(&str) -> Option<String>) -> String {
     let mut result = String::with_capacity(value.len());
     let mut remaining = value;
+    let mut expanded = false;
     while let Some(start) = remaining.find("${") {
         result.push_str(&remaining[..start]);
         let after_start = &remaining[start + 2..];
@@ -246,12 +247,13 @@ fn expand_env_with(value: &str, lookup: impl Fn(&str) -> Option<String>) -> Stri
         let name = &after_start[..end];
         if is_env_name(name) {
             result.push_str(&lookup(name).unwrap_or_default());
+            expanded = true;
         } else {
             result.push_str(&remaining[start..start + 3 + end]);
         }
         remaining = &after_start[end + 1..];
     }
-    if remaining.is_empty() || !result.is_empty() {
+    if expanded || !result.is_empty() || remaining.is_empty() {
         result.push_str(remaining);
         result
     } else {
@@ -471,6 +473,7 @@ mod tests {
                 .then(|| "yes".to_owned())),
             "yes/_suffix"
         );
+        assert_eq!(expand_env_with("${MISSING}/suffix", |_| None), "/suffix");
     }
 
     #[test]

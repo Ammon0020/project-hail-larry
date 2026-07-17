@@ -1119,30 +1119,22 @@ async fn read_text_file(
     deps: HandlerDeps,
     request: ReadTextFileRequest,
 ) -> Result<ReadTextFileResponse, AppError> {
-    let content = match workspace_relative_path(&deps.workspace_path, &request.path) {
-        Ok(path) => deps
-            .workspaces
-            .read_file(&deps.workspace_id, &path)
-            .await
-            .map(|result| result.content),
-        Err(error) => Err(error),
-    };
-    content.map(ReadTextFileResponse::new)
+    let path = workspace_relative_path(&deps.workspace_path, &request.path)?;
+    deps.workspaces
+        .read_file(&deps.workspace_id, &path)
+        .await
+        .map(|result| ReadTextFileResponse::new(result.content))
 }
 
 async fn write_text_file(
     deps: HandlerDeps,
     request: WriteTextFileRequest,
 ) -> Result<WriteTextFileResponse, AppError> {
-    let result = match workspace_relative_path(&deps.workspace_path, &request.path) {
-        Ok(path) => deps
-            .workspaces
-            .write_file(&deps.workspace_id, &path, &request.content, 0)
-            .await
-            .map(|_| ()),
-        Err(error) => Err(error),
-    };
-    result.map(|()| WriteTextFileResponse::new())
+    let path = workspace_relative_path(&deps.workspace_path, &request.path)?;
+    deps.workspaces
+        .write_file(&deps.workspace_id, &path, &request.content, 0)
+        .await
+        .map(|_| WriteTextFileResponse::new())
 }
 
 async fn request_permission(

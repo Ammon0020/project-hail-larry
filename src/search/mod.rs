@@ -47,6 +47,16 @@ mod tests;
 /// Matches Go's `defaultMaxResults`. A giant workspace cannot exhaust memory.
 pub const DEFAULT_MAX_RESULTS: i32 = 200;
 
+/// Convert a relative path to the stable forward-slash wire representation.
+pub(crate) fn path_to_slash(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if std::path::MAIN_SEPARATOR == '/' {
+        value.into_owned()
+    } else {
+        value.replace(std::path::MAIN_SEPARATOR, "/")
+    }
+}
+
 /// Directory names always skipped during the walk. Matches the file-tree
 /// behavior in `internal/workspace` plus common build/dep caches that would
 /// otherwise produce noisy matches. Kept as a slice (rather than a `HashSet`)

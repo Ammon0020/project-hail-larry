@@ -19,7 +19,7 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use crate::interfaces::{SearchOptions, SearchResult};
-use crate::search::{SearchError, IGNORE_DIRS};
+use crate::search::{path_to_slash, SearchError, IGNORE_DIRS};
 
 /// Cached result of probing `PATH` for `rg` — resolved once and reused for
 /// every search so we do not re-scan `PATH` on each call. Mirrors Go's
@@ -241,17 +241,6 @@ async fn parse_rg_output(
         }
     }
     Ok(results)
-}
-
-/// Converts platform path separators to forward slashes for stable,
-/// cross-platform relative paths (matches Go's `filepath.ToSlash`).
-fn path_to_slash(p: &Path) -> String {
-    let s = p.to_string_lossy();
-    if std::path::MAIN_SEPARATOR == '/' {
-        s.into_owned()
-    } else {
-        s.replace(std::path::MAIN_SEPARATOR, "/")
-    }
 }
 
 // ============================================================================

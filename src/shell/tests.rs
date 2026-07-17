@@ -278,6 +278,74 @@ async fn cancellation_kills_long_running_command() {
     );
 }
 
+/// Dropping the run future kills an entire Unix process group, including a
+/// backgrounded grandchild that `kill_on_drop` alone would leave running.
+#[cfg(unix)]
+#[tokio::test]
+async fn dropping_run_future_kills_process_group_grandchild() {
+    let dir = TempDir::new().unwrap();
+    let exec = Executor::new(dir.path());
+    let pid_file = dir.path().join("grandchild.pid");
+    let pid_file_path = pid_file.to_str().expect("temporary path should be UTF-8");
+    let args = [
+        "-c",
+        "sleep 30 & echo $! > \"$1\"; wait",
+        "_",
+        pid_file_path,
+    ];
+
+    let timeout = tokio::time::timeout(
+        Duration::from_millis(250),
+        exec.run_async_args(CancellationToken::new(), "sh", &args, None, |_| {}, |_| {}),
+    )
+    .await;
+    assert!(timeout.is_err(), "long-running command should time out");
+
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .expect("child should write its PID before timing out")
+        .trim()
+        .parse()
+        .expect("grandchild PID should be numeric");
+
+    // Allow the drop guard to signal the process group. A zombie has exited
+    // and is harmless; it may remain briefly if the test environment's PID 1
+    // has not yet reaped the orphaned grandchild.
+    let mut exited = false;
+    for _ in 0..20 {
+        if process_is_gone_or_zombie(pid) {
+            exited = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    if !exited {
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+    assert!(
+        exited,
+        "grandchild process {pid} survived a dropped run future"
+    );
+
+    fn process_is_gone_or_zombie(pid: i32) -> bool {
+        if unsafe { libc::kill(pid, 0) } == -1 {
+            return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        }
+
+        // Linux reports process state immediately after the final `)` in
+        // `/proc/<pid>/stat`. Treat Z as exited even if it is not reaped yet.
+        let stat_path = format!("/proc/{pid}/stat");
+        std::fs::read_to_string(stat_path)
+            .ok()
+            .and_then(|stat| {
+                stat.rsplit_once(") ")
+                    .map(|(_, rest)| rest.starts_with('Z'))
+            })
+            .unwrap_or(false)
+    }
+}
+
 /// Cancellation kills the *process group*, not just the immediate child —
 /// a grandchild of a shell pipeline cannot survive daemon shutdown.
 ///

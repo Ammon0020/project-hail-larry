@@ -217,7 +217,13 @@ impl Manager {
             record_failure(&mut inner);
             return Err(PairingError::InvalidPairingCredential);
         };
-        issue_credential(&mut inner, &session_id, device_name)
+        let credential = issue_credential(&mut inner, &session_id, device_name)?;
+        // A verified pairing proves the user controls the valid credential, so
+        // stale failed attempts must not escalate future lockouts indefinitely.
+        inner.failures.clear();
+        inner.lockout_count = 0;
+        inner.lockout_until = None;
+        Ok(credential)
     }
 
     /// Validate and renew a device's sliding activity window.
@@ -653,6 +659,27 @@ mod tests {
         manager
             .verify_passcode(&session.passcode, "test device")
             .expect("credential")
+    }
+
+    #[test]
+    fn successful_pairing_resets_lockout_backoff() {
+        let (_dir, manager) = manager();
+        let session = manager.create_session("localhost", 7337).expect("session");
+        {
+            let mut inner = lock(&manager.inner);
+            inner.failures.push(Utc::now());
+            inner.lockout_count = 4;
+            inner.lockout_until = Some(Utc::now() - chrono::Duration::seconds(1));
+        }
+
+        manager
+            .verify_token(&session.token, "test device")
+            .expect("successful pairing");
+
+        let inner = lock(&manager.inner);
+        assert!(inner.failures.is_empty());
+        assert_eq!(inner.lockout_count, 0);
+        assert!(inner.lockout_until.is_none());
     }
 
     #[test]

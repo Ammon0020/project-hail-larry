@@ -568,6 +568,141 @@ fn wire_adapter_roundtrip_prompt_submitted() {
     assert_matches_golden("event_minimal", to_value(&wire));
 }
 
+/// Every typed payload must retain its discriminant and fields through the
+/// typed-to-wire-to-typed adapter used by event persistence and WebSockets.
+#[test]
+fn wire_adapter_roundtrips_all_event_payloads() {
+    let ts = fixture_ts();
+    let payloads = vec![
+        EventPayload::PromptSubmitted {
+            role: "user".into(),
+            content: "prompt".into(),
+            attachments: Vec::new(),
+        },
+        EventPayload::ResponseStarted {
+            role: "agent".into(),
+        },
+        EventPayload::StreamUpdate {
+            role: "agent".into(),
+            content: "stream".into(),
+            streaming: true,
+            thought: true,
+            stop_reason: "stop".into(),
+        },
+        EventPayload::ToolCompleted {
+            tool: "tool".into(),
+            tool_kind: "kind".into(),
+            tool_call_id: "call".into(),
+            target: "target".into(),
+            summary: "summary".into(),
+            exit_code: Some(1),
+        },
+        EventPayload::ToolStarted {
+            tool: "tool".into(),
+            tool_kind: "kind".into(),
+            tool_call_id: "call".into(),
+            target: "target".into(),
+            command: "command".into(),
+        },
+        EventPayload::PlanUpdated {
+            content: "plan".into(),
+        },
+        EventPayload::PermissionRequested {
+            request_id: "request".into(),
+            tool: "tool".into(),
+            tool_kind: "kind".into(),
+            target: "target".into(),
+            command: "command".into(),
+            options: vec!["allow".into(), "deny".into()],
+        },
+        EventPayload::PermissionGranted {
+            request_id: "request".into(),
+            tool: "tool".into(),
+        },
+        EventPayload::PermissionDenied {
+            request_id: "request".into(),
+            tool: "tool".into(),
+        },
+        EventPayload::ShellCommandStarted {
+            command: "command".into(),
+            cwd: "cwd".into(),
+            tool_call_id: "call".into(),
+        },
+        EventPayload::ShellOutputStreamed {
+            content: "output".into(),
+            tool_call_id: "call".into(),
+        },
+        EventPayload::ShellCommandCompleted {
+            command: "command".into(),
+            cwd: "cwd".into(),
+            exit_code: Some(2),
+            tool_call_id: "call".into(),
+        },
+        EventPayload::FileRevisionUpdated {
+            workspace_id: "workspace".into(),
+            target: "target".into(),
+        },
+        EventPayload::FileWritten {
+            workspace_id: "workspace".into(),
+            target: "target".into(),
+        },
+        EventPayload::FileChangedOnDisk {
+            workspace_id: "workspace".into(),
+            target: "target".into(),
+        },
+        EventPayload::SessionInterrupted,
+        EventPayload::SessionCancelled,
+        EventPayload::AgentExited {
+            content: "exit".into(),
+        },
+        EventPayload::ConnectionRestarted {
+            content: "restart".into(),
+        },
+        EventPayload::SessionResumed {
+            content: "resume".into(),
+        },
+        EventPayload::ModelChanged {
+            content: "model".into(),
+        },
+        EventPayload::DeviceRevocationPending {
+            execute_at: ts,
+            device_name: "device".into(),
+            content: "pending".into(),
+        },
+        EventPayload::DeviceRevocationCancelled {
+            device_name: "device".into(),
+        },
+        EventPayload::DeviceRevocationExecuted {
+            device_name: "device".into(),
+        },
+        EventPayload::WorkspaceRegistrationPending {
+            execute_at: ts,
+            target: "target".into(),
+        },
+        EventPayload::WorkspaceRegistrationCancelled {
+            target: "target".into(),
+        },
+        EventPayload::WorkspaceRegistrationExecuted {
+            target: "target".into(),
+        },
+    ];
+
+    assert_eq!(payloads.len(), EventType::all().len());
+    let mut seen_types = Vec::with_capacity(payloads.len());
+    for payload in payloads {
+        let event_type = payload.event_type();
+        assert!(EventType::all().contains(&event_type));
+        assert!(!seen_types.contains(&event_type), "duplicate {event_type}");
+
+        let typed = typed_event(1, "session", ts, payload.clone());
+        let wire = typed_event_to_wire(&typed);
+        let roundtrip = wire_to_typed_event(&wire);
+        assert_eq!(wire.event_type, event_type);
+        assert_eq!(roundtrip, typed, "failed to roundtrip {event_type}");
+        seen_types.push(event_type);
+    }
+}
+
 // ---- Error mapping ------------------------------------------------------------
 
 #[test]

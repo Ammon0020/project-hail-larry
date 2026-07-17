@@ -35,7 +35,6 @@ fn with_state_dir<R>(dir: &Path, body: impl FnOnce() -> R) -> R {
     }
     res
 }
-
 /// `TestDefaultConfig` (Go): default config has sensible values.
 #[test]
 fn default_config_has_sensible_values() {
@@ -52,6 +51,22 @@ fn default_config_has_sensible_values() {
             cfg.credential_inactivity_ttl_seconds, 2_592_000,
             "expected 30-day credential inactivity ttl"
         );
+    });
+}
+/// Saving always targets the active state directory, not the persisted
+/// `data_dir`, which may refer to a previous installation location.
+#[test]
+fn save_uses_active_state_dir_when_data_dir_differs() {
+    let state_dir = tempfile::tempdir().expect("state tempdir");
+    let stored_data_dir = tempfile::tempdir().expect("stored data tempdir");
+    with_state_dir(state_dir.path(), || {
+        let mut cfg = Config::default_or_error().expect("default");
+        cfg.data_dir = stored_data_dir.path().to_string_lossy().to_string();
+
+        cfg.save().expect("save");
+
+        assert!(state_dir.path().join("config.toml").is_file());
+        assert!(!stored_data_dir.path().join("config.toml").exists());
     });
 }
 

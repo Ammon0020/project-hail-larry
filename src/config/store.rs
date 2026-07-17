@@ -15,7 +15,6 @@
 //! `mcp.WriteFileAtomic`.
 
 use std::fs;
-use std::path::Path;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::error::ConfigError;
@@ -97,12 +96,12 @@ impl Config {
         Ok(cfg)
     }
 
-    /// `save` writes the config to `<data_dir>/config.toml` atomically with
-    /// mode `0600`. The data directory is created if missing. Mirrors Go
+    /// `save` writes the config to the active state directory atomically with
+    /// mode `0600`. The state directory is created if missing. Mirrors Go
     /// `Save` → `mcp.WriteFileAtomic`.
     pub fn save(&self) -> Result<(), ConfigError> {
         let toml_str = toml::to_string_pretty(self)?;
-        let config_path = Path::new(&self.data_dir).join(CONFIG_FILE_NAME);
+        let config_path = Self::resolved_state_dir()?.join(CONFIG_FILE_NAME);
         fsutil::atomic_write(&config_path, toml_str.as_bytes(), Some(CONFIG_FILE_PERM))?;
         Ok(())
     }
@@ -147,8 +146,12 @@ impl ConfigStore {
         self.cfg.write().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// `save` persists the current config under the read lock (save only
-    /// reads fields to serialize).
+    /// `save` persists the current config while holding its read lock.
+    ///
+    /// This intentionally blocks mutations during serialization and fsync. A
+    /// caller can mutate and save through [`Self::write`], so releasing the
+    /// read lock before persistence could let an older snapshot overwrite that
+    /// later direct save.
     pub fn save(&self) -> Result<(), ConfigError> {
         self.read().save()
     }

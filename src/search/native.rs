@@ -19,7 +19,7 @@ use regex::Regex;
 use tokio_util::sync::CancellationToken;
 
 use crate::interfaces::{SearchOptions, SearchResult};
-use crate::search::{glob_to_regex, SearchError, IGNORE_DIRS};
+use crate::search::{glob_to_regex, path_to_slash, SearchError, IGNORE_DIRS};
 
 /// Walks `root` with the `ignore` crate and scans each file for matches.
 ///
@@ -199,15 +199,4 @@ fn search_file(
         }
     }
     Ok(results)
-}
-
-/// Converts platform path separators to forward slashes for stable,
-/// cross-platform relative paths (matches Go's `filepath.ToSlash`).
-fn path_to_slash(p: &Path) -> String {
-    let s = p.to_string_lossy();
-    if std::path::MAIN_SEPARATOR == '/' {
-        s.into_owned()
-    } else {
-        s.replace(std::path::MAIN_SEPARATOR, "/")
-    }
 }

@@ -14,6 +14,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
 // Re-export agent DTOs from config so callers can import them from interfaces.
 pub use crate::config::{AgentInfo, AgentModel};
@@ -760,15 +761,11 @@ pub struct DeviceInfo {
 /// Go-matching flat events we use this explicit zero instant because Go's
 /// `omitempty` on `time.Time` still emits the year-1 value.
 pub fn go_zero_time() -> DateTime<Utc> {
-    // Fixed constant — parse cannot fail for this well-known string.
-    // Using DateTime::from_timestamp is not available for year 1 on all
-    // chrono versions; RFC3339 parse is the portable construction path.
-    match DateTime::parse_from_rfc3339("0001-01-01T00:00:00Z") {
-        Ok(dt) => dt.with_timezone(&Utc),
-        // Unreachable for a fixed valid RFC3339 literal; keep a safe fallback
-        // so non-test code never panics if chrono ever rejects the string.
-        Err(_) => DateTime::<Utc>::UNIX_EPOCH,
-    }
+    static ZERO_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
+    *ZERO_TIME.get_or_init(|| {
+        DateTime::parse_from_rfc3339("0001-01-01T00:00:00Z")
+            .map_or_else(|_| DateTime::<Utc>::UNIX_EPOCH, |dt| dt.with_timezone(&Utc))
+    })
 }
 
 /// `skip_serializing_if` helper: treat year-1 zero times as empty (SessionInfo

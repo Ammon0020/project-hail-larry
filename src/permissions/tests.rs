@@ -304,7 +304,7 @@ async fn audit_log_records_decision() {
     let log = m.get_audit_log();
     assert_eq!(log.len(), 1, "expected 1 audit entry, got {}", log.len());
     assert_eq!(log[0].tool, "shell");
-    assert_eq!(log[0].decision, D::AllowAlways.as_str());
+    assert_eq!(log[0].decision, D::AllowAlways);
 }
 
 /// Verifies that an invalid decision (not in the request's offered options) is
@@ -595,7 +595,7 @@ async fn auto_resolved_decision_recorded_in_audit_log() {
     );
 
     let entry = log.last().expect("log non-empty");
-    assert_eq!(entry.decision, D::AllowAlways.as_str());
+    assert_eq!(entry.decision, D::AllowAlways);
     assert_eq!(entry.session_id, "sess-audit");
     assert_eq!(entry.tool, "edit_file");
 }
@@ -846,7 +846,7 @@ async fn policy_reject_always_auto_denies() {
     // The auto-deny must be recorded in the audit log (seed + auto-deny = 2).
     let log = m.get_audit_log();
     assert_eq!(log.len(), 2, "expected 2 audit entries (seed + auto-deny)");
-    assert_eq!(log[1].decision, D::Deny.as_str());
+    assert_eq!(log[1].decision, D::Deny);
 }
 
 /// Verifies that `clear_session` drops cached `reject_always` decisions so

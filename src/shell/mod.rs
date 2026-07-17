@@ -25,12 +25,11 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::pathutil::{clean_path, PathError};
@@ -242,6 +241,9 @@ impl Executor {
         };
 
         let mut cmd = build_command(command, args);
+        // Dropping the run future (for example, when its caller times out)
+        // must also stop the immediate child rather than detaching it.
+        cmd.kill_on_drop(true);
         cmd.current_dir(&dir);
         if let Some(env) = &self.env {
             cmd.env_clear();
@@ -263,6 +265,10 @@ impl Executor {
         // kill the process group by PID during cancellation without needing
         // &mut child (which is held by the wait future).
         let pid = child.id();
+        // `kill_on_drop` only terminates `child`. Keep a Unix-specific cleanup
+        // guard for the full run so dropping this future also kills its process
+        // group and cannot leave grandchildren behind.
+        let mut process_group_cleanup = ProcessGroupCleanup::new(pid);
 
         // Take the pipes before awaiting so we own the readers.
         let stdout = child.stdout.take();
@@ -347,8 +353,14 @@ impl Executor {
         let _ = stdout_task.await;
         let _ = stderr_task.await;
 
-        let stdout = out_buf.lock().await.clone();
-        let stderr = err_buf.lock().await.clone();
+        let stdout = out_buf
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let stderr = err_buf
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
 
         let mut result = CommandResult {
             stdout,
@@ -359,6 +371,10 @@ impl Executor {
 
         match wait_status {
             Ok(status) => {
+                // The child has exited normally (or was reaped after
+                // cancellation), so a future drop can no longer leak this
+                // process group.
+                process_group_cleanup.disarm();
                 result.exit_code = status.code().unwrap_or(-1);
                 #[cfg(unix)]
                 {
@@ -469,7 +485,7 @@ async fn read_stream<R, F>(
                 if let Some(cb) = on_line.as_mut() {
                     cb(trimmed);
                 }
-                append_capped(buf, cap, &line).await;
+                append_capped(buf, cap, &line);
                 line.clear();
             }
             Err(_) => break, // pipe closed / EIO — stop reading
@@ -482,18 +498,18 @@ async fn read_stream<R, F>(
         if let Some(cb) = on_line.as_mut() {
             cb(trimmed);
         }
-        append_capped(buf, cap, &line).await;
+        append_capped(buf, cap, &line);
     }
 }
 
 /// Append `chunk` to the shared buffer, truncating at `cap` bytes total.
 /// `cap == 0` disables the cap (unbounded — not recommended for untrusted
 /// commands).
-async fn append_capped(buf: &Arc<Mutex<String>>, cap: usize, chunk: &str) {
+fn append_capped(buf: &Arc<Mutex<String>>, cap: usize, chunk: &str) {
     if chunk.is_empty() {
         return;
     }
-    let mut guard = buf.lock().await;
+    let mut guard = buf.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if cap == 0 || guard.len() < cap {
         let remaining = cap.saturating_sub(guard.len());
         if cap == 0 || remaining >= chunk.len() {
@@ -559,18 +575,72 @@ where
 // immediate child, matching Go's `cmd.Process.Kill()` behaviour).
 // ---------------------------------------------------------------------------
 
+/// Kills the Unix process group when a running command future is dropped.
+///
+/// `tokio::process::Command::kill_on_drop` only handles the direct child. This
+/// guard extends that behavior to the dedicated process group configured below.
+/// On Windows, `kill_on_drop` remains deliberately bounded to the child handle:
+/// terminating descendants requires a Job Object and is not available without
+/// adding a platform dependency.
+#[cfg(unix)]
+struct ProcessGroupCleanup {
+    pgid: Option<i32>,
+}
+
+#[cfg(unix)]
+impl ProcessGroupCleanup {
+    fn new(pid: Option<u32>) -> Self {
+        Self {
+            pgid: pid.and_then(|pid| i32::try_from(pid).ok()),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.pgid = None;
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ProcessGroupCleanup {
+    fn drop(&mut self) {
+        if let Some(pgid) = self.pgid {
+            // SAFETY: `pgid` identifies the dedicated group created by
+            // `configure_process_group`; negative PID addresses only that
+            // group. Errors mean it has already exited and require no action.
+            unsafe {
+                let _ = libc::kill(-pgid, libc::SIGKILL);
+            }
+        }
+    }
+}
+
+/// No additional drop behavior is needed on Windows because Tokio's
+/// `kill_on_drop` safely terminates the immediate child handle.
+#[cfg(not(unix))]
+struct ProcessGroupCleanup;
+
+#[cfg(not(unix))]
+impl ProcessGroupCleanup {
+    fn new(_pid: Option<u32>) -> Self {
+        Self
+    }
+
+    fn disarm(&mut self) {}
+}
+
 #[cfg(unix)]
 fn configure_process_group(cmd: &mut Command) {
     // SAFETY: `setpgid` only touches the child's own state. The closure is
-    // called post-fork, pre-exec in the child; panicking here would be fatal,
-    // so we only call a fallible libc function and ignore errors (a failure to
-    // set the pgid degrades to "kill only the child", not a crash).
+    // called post-fork, pre-exec in the child. Return an error rather than
+    // spawning without group isolation: otherwise a later killpg could fail
+    // to contain descendants.
     unsafe {
         cmd.pre_exec(|| {
             // setpgid(0, 0) puts the child into a new process group with pgid
-            // == child pid. Ignore errors: worst case the child stays in the
-            // daemon's group and only it is killed on cancel.
-            let _ = libc::setpgid(0, 0);
+            // == child pid, making it safe to target with kill(-pid, signal).
+            if libc::setpgid(0, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
             Ok(())
         });
     }

@@ -40,6 +40,7 @@
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
@@ -74,7 +75,7 @@ pub struct FileSync {
     locks: DashMap<String, Arc<Mutex<()>>>,
 
     /// Current revision per file key (`workspace_id/rel_path` → revision).
-    revisions: Mutex<Vec<(String, i64)>>,
+    revisions: Mutex<HashMap<String, i64>>,
 
     /// Bounded LRU cache of last-known file content, used as the three-way
     /// merge base. Evicted on access so it cannot grow unbounded.
@@ -97,7 +98,7 @@ impl FileSync {
         let cap = NonZeroUsize::new(capacity.max(1)).unwrap_or(NonZeroUsize::MIN);
         Self {
             locks: DashMap::new(),
-            revisions: Mutex::new(Vec::new()),
+            revisions: Mutex::new(HashMap::new()),
             contents: Mutex::new(LruCache::new(cap)),
         }
     }
@@ -151,24 +152,16 @@ impl FileSync {
     /// Returns `(revision, exists)`.
     async fn current_rev(&self, key: &str) -> (i64, bool) {
         let revisions = self.revisions.lock().await;
-        for (k, v) in revisions.iter() {
-            if k == key {
-                return (*v, true);
-            }
-        }
-        (0, false)
+        revisions
+            .get(key)
+            .copied()
+            .map_or((0, false), |rev| (rev, true))
     }
 
     /// Set the revision for a key under the brief map mutex.
     async fn set_rev(&self, key: &str, rev: i64) {
         let mut revisions = self.revisions.lock().await;
-        for (k, v) in revisions.iter_mut() {
-            if k == key {
-                *v = rev;
-                return;
-            }
-        }
-        revisions.push((key.to_string(), rev));
+        revisions.insert(key.to_string(), rev);
     }
 
     /// Write file content with optimistic locking via `expected_revision`.
@@ -203,7 +196,10 @@ impl FileSync {
     ) -> Result<i64, AppError> {
         let key = file_key(workspace_path, rel_path);
         let lock = self.lock_for(&key).await;
-        let _guard = lock.lock().await;
+        // Move the owned guard into the blocking task. If this async future is
+        // dropped while awaiting that task, the task continues to own the
+        // guard until its disk write has stopped mutating the file.
+        let guard = Arc::clone(&lock).lock_owned().await;
 
         // Read the current revision under the brief map mutex.
         let (current_rev, exists) = self.current_rev(&key).await;
@@ -214,22 +210,36 @@ impl FileSync {
             return Err(AppError::StaleRevision);
         }
 
-        // Write the file to disk. Only the per-file mutex is held here, so an
-        // unrelated save to a different file/workspace is not blocked.
-        let full_path = clean_path(Path::new(workspace_path), rel_path)?;
-        // Layer symlink containment on top of the lexical check (defends
-        // against agent-created symlinks that escape the workspace root).
-        let full_path = resolve_symlink(Path::new(workspace_path), &full_path)?;
+        // Path resolution and disk I/O can block on networked or slow filesystems.
+        // Keep the per-file mutex across the write for atomic revisions, but move
+        // the blocking work off Tokio's async workers.
+        let workspace_path = workspace_path.to_owned();
+        let rel_path = rel_path.to_owned();
+        let bytes = content.as_bytes().to_vec();
+        let (write_result, guard) = tokio::task::spawn_blocking(move || {
+            let write_result = (|| {
+                let full_path = clean_path(Path::new(&workspace_path), &rel_path)?;
+                // Layer symlink containment on top of the lexical check (defends
+                // against agent-created symlinks that escape the workspace root).
+                let full_path = resolve_symlink(Path::new(&workspace_path), &full_path)?;
 
-        // Ensure parent directory exists (matches Go os.MkdirAll(dir, 0755)).
-        if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| AppError::Internal(format!("create dir: {e}")))?;
-        }
+                // Ensure parent directory exists (matches Go os.MkdirAll(dir, 0755)).
+                if let Some(parent) = full_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| AppError::Internal(format!("create dir: {e}")))?;
+                }
 
-        // Write file with 0644 permissions (user-editable by normal tools).
-        std::fs::write(&full_path, content.as_bytes())
-            .map_err(|e| AppError::Internal(format!("write file: {e}")))?;
+                // Write file with 0644 permissions (user-editable by normal tools).
+                std::fs::write(&full_path, bytes)
+                    .map_err(|e| AppError::Internal(format!("write file: {e}")))?;
+
+                Ok::<(), AppError>(())
+            })();
+            (write_result, guard)
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("file write task: {e}")))?;
+        write_result?;
 
         // Increment revision and update the base-content cache under the brief
         // map mutex. The per-file mutex guarantees no concurrent writer for
@@ -248,7 +258,7 @@ impl FileSync {
         // `gc_lock`'s `remove_if` predicate never succeeds, leaking every
         // per-file lock entry. Dropping `lock` first leaves only the DashMap
         // holding the Arc, so `strong_count == 1` and the entry is evicted.
-        drop(_guard);
+        drop(guard);
         drop(lock);
         self.gc_lock(&key);
 

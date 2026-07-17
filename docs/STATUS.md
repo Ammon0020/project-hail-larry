@@ -50,6 +50,10 @@
   permission cleanup uses local IDs, and callback/terminal resources are bounded.
   Refactor: shared callback dispatch helpers, single `SessionEntry::apply_state`
   (new sessions expose `idle`), single close ack, and small dispatch cleanups.
+- **07-17** — Focused Rust review cleanup: hardened dropped shell-future process
+  cleanup, fixed MCP leading-unset expansion, serialized file revisions through
+  blocking writes, corrected config state-dir persistence, and added targeted
+  regression coverage. Deferred broader dependency and architecture proposals.
 - **07-17** — Rust port **S-MCP** and **S-ACP-AUTODETECT** complete.
   `src/mcp` provides compatible atomic MCP config persistence, transport capability
   conversion, environment expansion, and bounded health checks. `src/acp` now has a
