@@ -155,6 +155,11 @@ regex = "1.11"
 ignore = "0.4.29"
 dashmap = "6.2.1"
 sha2 = "0.11.0"
+qrcode = "0.14.1"
+rand = "0.10.2"
+hex = "0.4.3"
+subtle = "2.6.1"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [features]
 # `contract` enables the black-box contract differential runner

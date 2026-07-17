@@ -692,7 +692,7 @@ pub struct PendingActionInfo {
 }
 
 /// Short-lived single-use pairing session. Mirrors Go `pairing.PairingSession`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PairingSession {
     pub id: String,
@@ -705,15 +705,38 @@ pub struct PairingSession {
     pub used: bool,
 }
 
+impl std::fmt::Debug for PairingSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairingSession")
+            .field("id", &self.id)
+            .field("url", &"<redacted>")
+            .field("qr_path", &self.qr_path)
+            .field("created_at", &self.created_at)
+            .field("expires_at", &self.expires_at)
+            .field("used", &self.used)
+            .finish()
+    }
+}
+
 /// Long-lived credential returned once at pairing time.
 /// Mirrors Go `pairing.DeviceCredential`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceCredential {
     pub id: String,
     pub name: String,
     pub secret: String,
     pub paired_at: DateTime<Utc>,
+}
+
+impl std::fmt::Debug for DeviceCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceCredential")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("paired_at", &self.paired_at)
+            .finish()
+    }
 }
 
 /// Public, secret-free view of a paired device for list/admin APIs.
