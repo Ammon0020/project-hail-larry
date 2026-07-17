@@ -14,15 +14,17 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, OriginalUri, Path, Query, State};
-use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{debug, error, warn};
@@ -31,8 +33,8 @@ use crate::acp::{self, Client};
 use crate::config::{AgentInfo, ConfigStore};
 use crate::events::SharedEventBus;
 use crate::interfaces::{
-    map_api_error, ACPClient, AppError, Attachment, EventStore, PermissionDecision,
-    PermissionManager, SearchOptions, WorkspaceManager,
+    map_api_error, ACPClient, AppError, Attachment, Event, EventStore, EventType,
+    PermissionDecision, PermissionManager, SearchOptions, WorkspaceManager,
 };
 use crate::pairing::{Manager as PairingManager, PairingError};
 use crate::permissions::Manager as PermissionsManager;
@@ -115,9 +117,15 @@ pub fn router(state: AppState) -> Router {
     let protected: Router = Router::new()
         .route("/api/devices", get(list_devices))
         .route("/api/devices/{id}", delete(revoke_device))
+        .route("/api/devices/cancel-revocation", post(cancel_revocation))
+        .route("/api/pending-actions", get(list_pending_actions))
         .route(
             "/api/workspaces",
             get(list_workspaces).post(register_workspace),
+        )
+        .route(
+            "/api/workspaces/cancel-registration",
+            post(cancel_workspace_registration),
         )
         .route("/api/workspaces/{id}/files", get(file_tree))
         .route("/api/workspaces/{id}/file", get(read_file).post(write_file))
@@ -275,12 +283,68 @@ async fn list_devices(State(state): State<AppState>) -> Json<Vec<crate::interfac
     Json(state.pairing.list_devices())
 }
 
+/// `DELETE /api/devices/{id}` — immediate revoke (200) or grace-period pending (202).
 async fn revoke_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Result<Response, ApiResponseError> {
+    let grace = revocation_grace_period(&state);
+    let requester = device_id_from_request(&headers, uri.query());
+    let info = state
+        .pairing
+        .request_revocation(&id, requester, grace)
+        .map_err(pairing_error)?;
+
+    if grace.is_zero() {
+        return Ok((StatusCode::OK, Json(json!({"status": "revoked"}))).into_response());
+    }
+
+    // Broadcast so every connected device can surface and cancel the action.
+    let mut event = Event::new(0, EventType::DeviceRevocationPending, "", Utc::now());
+    event.target = info.device_id.clone();
+    event.device_name = info.device_name.clone();
+    event.request_id = info.id.clone();
+    event.command = info.requested_by.clone();
+    event.execute_at = info.execute_at;
+    record_event(&state, event).await;
+
+    Ok((StatusCode::ACCEPTED, Json(info)).into_response())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelActionRequest {
+    action_id: String,
+}
+
+/// `POST /api/devices/cancel-revocation` — body `{"actionId":"..."}`.
+async fn cancel_revocation(
+    State(state): State<AppState>,
+    body: Result<Json<CancelActionRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
-    state.pairing.revoke_device(&id).map_err(pairing_error)?;
-    Ok(Json(json!({"status": "revoked"})))
+    let Json(request) = decode_json_body(body)?;
+    if request.action_id.is_empty() {
+        return Err(ApiResponseError::bad_request("missing 'actionId'"));
+    }
+    state
+        .pairing
+        .cancel_revocation(&request.action_id)
+        .map_err(cancel_pending_error)?;
+
+    let mut event = Event::new(0, EventType::DeviceRevocationCancelled, "", Utc::now());
+    event.request_id = request.action_id;
+    record_event(&state, event).await;
+
+    Ok(Json(json!({"status": "cancelled"})))
+}
+
+/// `GET /api/pending-actions` — all grace-period pending actions.
+async fn list_pending_actions(
+    State(state): State<AppState>,
+) -> Json<Vec<crate::interfaces::PendingActionInfo>> {
+    Json(state.pairing.list_pending_actions())
 }
 
 async fn list_workspaces(
@@ -294,21 +358,68 @@ struct RegisterWorkspaceRequest {
     path: String,
 }
 
+/// `POST /api/workspaces` — gated by config; grace period yields 202 Accepted.
 async fn register_workspace(
     State(state): State<AppState>,
-    Json(request): Json<RegisterWorkspaceRequest>,
-) -> Result<(StatusCode, Json<crate::interfaces::WorkspaceInfo>), ApiResponseError> {
+    headers: HeaderMap,
+    uri: Uri,
+    body: Result<Json<RegisterWorkspaceRequest>, JsonRejection>,
+) -> Result<Response, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     if !state.config.read().allow_remote_workspace_registration {
         return Err(ApiResponseError::forbidden(
-            "remote workspace registration is disabled; use `app add-folder <path>` on the host",
+            "Remote workspace registration is disabled. Use 'app add-folder <path>' on the host, or set allowRemoteWorkspaceRegistration: true in config.",
         ));
     }
+
+    let grace = revocation_grace_period(&state);
+    let requester = device_id_from_request(&headers, uri.query());
+
+    // Immediate path stays on WorkspaceManager so registration works even when
+    // the pairing workspace registrar has not been wired by the daemon yet.
+    if grace.is_zero() {
+        let workspace = state
+            .workspaces
+            .register(&request.path)
+            .await
+            .map_err(app_error)?;
+        return Ok((StatusCode::CREATED, Json(workspace)).into_response());
+    }
+
+    let info = state
+        .pairing
+        .request_workspace_registration(&request.path, requester, grace)
+        .map_err(pairing_error)?;
+
+    let mut event = Event::new(0, EventType::WorkspaceRegistrationPending, "", Utc::now());
+    event.target = info.path.clone();
+    event.request_id = info.id.clone();
+    event.command = info.requested_by.clone();
+    event.execute_at = info.execute_at;
+    record_event(&state, event).await;
+
+    Ok((StatusCode::ACCEPTED, Json(info)).into_response())
+}
+
+/// `POST /api/workspaces/cancel-registration` — body `{"actionId":"..."}`.
+async fn cancel_workspace_registration(
+    State(state): State<AppState>,
+    body: Result<Json<CancelActionRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    if request.action_id.is_empty() {
+        return Err(ApiResponseError::bad_request("missing 'actionId'"));
+    }
     state
-        .workspaces
-        .register(&request.path)
-        .await
-        .map(|workspace| (StatusCode::CREATED, Json(workspace)))
-        .map_err(app_error)
+        .pairing
+        .cancel_workspace_registration(&request.action_id)
+        .map_err(cancel_pending_error)?;
+
+    let mut event = Event::new(0, EventType::WorkspaceRegistrationCancelled, "", Utc::now());
+    event.request_id = request.action_id;
+    record_event(&state, event).await;
+
+    Ok(Json(json!({"status": "cancelled"})))
 }
 
 async fn file_tree(
@@ -872,6 +983,39 @@ fn required_query(value: Option<String>, name: &str) -> Result<String, ApiRespon
         .ok_or_else(|| ApiResponseError::bad_request(format!("missing '{name}' query parameter")))
 }
 
+/// Map Go `mustDecodeJSON` failures to a stable client-facing message.
+fn decode_json_body<T>(body: Result<Json<T>, JsonRejection>) -> Result<Json<T>, ApiResponseError> {
+    body.map_err(|_| ApiResponseError::bad_request("invalid request body"))
+}
+
+/// Configured grace window for destructive pending actions (0 = immediate).
+fn revocation_grace_period(state: &AppState) -> Duration {
+    let secs = state.config.read().revocation_grace_period_seconds.max(0);
+    Duration::from_secs(u64::try_from(secs).unwrap_or(0))
+}
+
+/// Device ID from Bearer/`deviceId` query — empty on loopback-only requests.
+fn device_id_from_request(headers: &HeaderMap, query: Option<&str>) -> String {
+    extract_credential(headers, query).0
+}
+
+/// Persist + broadcast a pending-action event; failures are logged, not fatal.
+async fn record_event(state: &AppState, event: Event) {
+    if let Err(error) = state.events.append_and_publish(event).await {
+        warn!(%error, "failed to record pending-action event");
+    }
+}
+
+/// Cancel handlers always return 404 on pairing miss/type mismatch (Go parity).
+fn cancel_pending_error(error: PairingError) -> ApiResponseError {
+    match error {
+        PairingError::PendingActionNotFound | PairingError::PendingActionTypeMismatch => {
+            ApiResponseError::not_found(error.to_string())
+        }
+        other => pairing_error(other),
+    }
+}
+
 fn pairing_error(error: PairingError) -> ApiResponseError {
     match error {
         PairingError::InvalidPairingCredential => ApiResponseError::unauthorized(error.to_string()),
@@ -966,6 +1110,7 @@ impl IntoResponse for ApiResponseError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
     use axum::body::Body;
     use tower::ServiceExt;
 
@@ -1007,18 +1152,54 @@ mod tests {
         )
     }
 
+    /// Pair a device and optionally set grace / remote-registration flags.
+    fn pending_actions_state(
+        grace_seconds: i64,
+        allow_remote: bool,
+    ) -> (
+        tempfile::TempDir,
+        AppState,
+        crate::interfaces::DeviceCredential,
+    ) {
+        let (dir, state) = state();
+        {
+            let mut cfg = state.config.write();
+            cfg.revocation_grace_period_seconds = grace_seconds;
+            cfg.allow_remote_workspace_registration = allow_remote;
+        }
+        let session = state
+            .pairing
+            .create_session("localhost", 7337)
+            .expect("pairing session");
+        let cred = state
+            .pairing
+            .verify_passcode(&session.passcode, "Device")
+            .expect("pair device");
+        (dir, state, cred)
+    }
+
+    async fn oneshot(state: AppState, request: Request<Body>) -> Response {
+        router(state).oneshot(request).await.expect("response")
+    }
+
+    async fn json_body(response: Response) -> Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        serde_json::from_slice(&bytes).expect("json body")
+    }
+
     #[tokio::test]
     async fn health_is_public_and_router_compiles() {
         let (_dir, state) = state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/health")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
+        let response = oneshot(
+            state,
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::OK);
     }
 
@@ -1060,7 +1241,250 @@ mod tests {
                 r#"{"passcode":"invalid","deviceName":"device"}"#,
             ))
             .expect("request");
-        let response = router(state).oneshot(request).await.expect("response");
+        let response = oneshot(state, request).await;
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    // --- Grace-period pending action handlers (mirrors Go api_test.go) ---
+
+    #[tokio::test]
+    async fn revoke_device_grace_period_returns_accepted_and_lists() {
+        let (_dir, state, cred) = pending_actions_state(300, false);
+        let response = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/devices/{}", cred.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let info = json_body(response).await;
+        assert_eq!(info["deviceId"], cred.id);
+        assert_eq!(info["type"], "revocation");
+
+        let list = oneshot(
+            state,
+            Request::builder()
+                .uri("/api/pending-actions")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        let pending = json_body(list).await;
+        let pending = pending.as_array().expect("pending array");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["id"], info["id"]);
+    }
+
+    #[tokio::test]
+    async fn revoke_device_immediate_returns_ok() {
+        let (_dir, state, cred) = pending_actions_state(0, false);
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/devices/{}", cred.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["status"], "revoked");
+    }
+
+    #[tokio::test]
+    async fn cancel_revocation_removes_pending_action() {
+        let (_dir, state, cred) = pending_actions_state(300, false);
+        let del = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/devices/{}", cred.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(del.status(), StatusCode::ACCEPTED);
+        let info = json_body(del).await;
+        let action_id = info["id"].as_str().expect("action id").to_owned();
+
+        let cancel = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/devices/cancel-revocation")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(r#"{{"actionId":"{action_id}"}}"#)))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(cancel.status(), StatusCode::OK);
+
+        let list = oneshot(
+            state,
+            Request::builder()
+                .uri("/api/pending-actions")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        let pending = json_body(list).await;
+        assert_eq!(pending.as_array().map(Vec::len).unwrap_or(1), 0);
+    }
+
+    #[tokio::test]
+    async fn cancel_revocation_not_found_returns_404() {
+        let (_dir, state, _cred) = pending_actions_state(300, false);
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/devices/cancel-revocation")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"actionId":"nonexistent"}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn cancel_revocation_bad_body_returns_400() {
+        let (_dir, state, _cred) = pending_actions_state(300, false);
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/devices/cancel-revocation")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{not json"))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid request body");
+    }
+
+    #[tokio::test]
+    async fn list_pending_actions_empty_ok() {
+        let (_dir, state, _cred) = pending_actions_state(300, false);
+        let response = oneshot(
+            state,
+            Request::builder()
+                .uri("/api/pending-actions")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body.as_array().map(Vec::len).unwrap_or(1), 0);
+    }
+
+    #[tokio::test]
+    async fn workspace_registration_disabled_returns_403() {
+        let (_dir, state, _cred) = pending_actions_state(300, false);
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/workspaces")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"path":"/some/path"}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = json_body(response).await;
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Remote workspace registration is disabled"),
+            "body: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_registration_enabled_returns_accepted() {
+        let (_dir, state, _cred) = pending_actions_state(300, true);
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/workspaces")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"path":"/some/path"}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let info = json_body(response).await;
+        assert_eq!(info["type"], "workspace_registration");
+        assert_eq!(info["path"], "/some/path");
+    }
+
+    #[tokio::test]
+    async fn cancel_workspace_registration_removes_pending_action() {
+        let (_dir, state, _cred) = pending_actions_state(300, true);
+        let reg = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/workspaces")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"path":"/some/path"}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(reg.status(), StatusCode::ACCEPTED);
+        let info = json_body(reg).await;
+        let action_id = info["id"].as_str().expect("action id").to_owned();
+
+        let cancel = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/workspaces/cancel-registration")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(r#"{{"actionId":"{action_id}"}}"#)))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(cancel.status(), StatusCode::OK);
+
+        let list = oneshot(
+            state,
+            Request::builder()
+                .uri("/api/pending-actions")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        let pending = json_body(list).await;
+        assert_eq!(pending.as_array().map(Vec::len).unwrap_or(1), 0);
+    }
+
+    #[tokio::test]
+    async fn cancel_workspace_registration_bad_body_returns_400() {
+        let (_dir, state, _cred) = pending_actions_state(300, true);
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/workspaces/cancel-registration")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{not json"))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid request body");
     }
 }

@@ -30,9 +30,8 @@
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — Daemon/CLI + dual TLS + REST (providers/MCP/
-  export/context/uploads) landed. Remaining: service install, HTTP timeout
-  parity, pending-actions routes, contract black-box / full E2E.
+- [ ] **Rust backend port** — Daemon/CLI + dual TLS + REST + pending-actions,
+  HTTP deadlines, and platform user services landed. Next: contract/E2E.
 
 ## Blocked
 
@@ -40,11 +39,20 @@
 
 ## Recent Changes (2026-07)
 
+- **07-17** — Rust **HTTP/service parity**: HTTP/HTTPS apply header (5s),
+  request-body (30s), handler/response (60s), and idle (120s) deadlines.
+  `install-service`/`uninstall-service` now use systemd user units, launchd
+  LaunchAgents, or the Windows HKCU Run key. Hyper's HTTP/2 header deadline
+  remains unavailable; body timing begins at handler entry and a timed-out
+  started response closes its stream.
+- **07-17** — Rust **pending-actions REST**: GET /api/pending-actions,
+  POST cancel-revocation / cancel-registration; revoke/register use grace
+  period (202). Pairing list/cancel APIs. Gaps: daemon workspace registrar
+  wiring (timer fire), HTTP timeouts, contract black-box.
 - **07-17** — Rust **S-SERVER REST completion**: providers (GET/PUT/DELETE,
   Unsupported→501), MCP (GET/PUT/PATCH/status), session export/context/uploads,
   patch rebind/switch_model, prompt profile+attachments. AppState wires mcp path
-  + uploads mutex; daemon passes both. Tests: 15 api::. Gaps: raw MIME/range
-  parity, HTTP timeouts, pending-action routes, contract black-box.
+  + uploads mutex; daemon passes both. Gaps: raw MIME/range parity.
 - **07-17** — Rust **S-DAEMON / S-CLI** foundation: daemon composition, PID
   status/stop, dual HTTP/HTTPS rustls listeners, clap tree. install-service stub.
 - **07-17** — Rust **S-ACP-CONTEXT**: conversations.json, prompt context,
@@ -61,4 +69,7 @@
 
 - Go ACP SDK still missing `mcp/message` relay (Rust path unblocked).
 - Mobile editor touch; profile mode not wired; pair QR scheme selection.
-- Rust: service install stubs; pending-actions; contract black-box / E2E.
+- Rust: pending-action daemon registrar wiring; contract black-box / E2E.
+- Rust HTTP limits: Hyper's native header deadline is HTTP/1-only; body
+  timing starts at handler entry, and an expired response body closes its stream.
+- Rust's global 10 MiB body cap is stricter than Go's 50 MiB file-write exception.

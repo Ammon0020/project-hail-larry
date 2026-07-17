@@ -20,6 +20,15 @@ use crate::config::Config;
 use crate::interfaces::WorkspaceManager;
 use crate::workspace::Manager as WorkspaceManagerImpl;
 
+#[cfg(target_os = "linux")]
+mod service_linux;
+#[cfg(target_os = "macos")]
+mod service_macos;
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+mod service_unsupported;
+#[cfg(target_os = "windows")]
+mod service_windows;
+
 const LOG_TAIL_BYTES: u64 = 64 * 1024;
 
 /// Local Agent Interface host CLI.
@@ -57,9 +66,9 @@ enum Commands {
     Revoke { id: String },
     /// Print the recent tail of the rolling daemon log.
     Logs,
-    /// Register a per-user startup service (not implemented in this batch).
+    /// Register a per-user startup service.
     InstallService,
-    /// Remove a per-user startup service (not implemented in this batch).
+    /// Remove a per-user startup service.
     UninstallService,
 }
 
@@ -76,13 +85,33 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::Devices => devices().await,
         Commands::Revoke { id } => revoke(&id).await,
         Commands::Logs => logs(),
-        Commands::InstallService => {
-            bail!("install-service is not implemented for the Rust daemon yet")
-        }
-        Commands::UninstallService => {
-            bail!("uninstall-service is not implemented for the Rust daemon yet")
-        }
+        Commands::InstallService => install_service(),
+        Commands::UninstallService => uninstall_service(),
     }
+}
+
+/// Register the daemon as a per-user service on the current platform.
+fn install_service() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    return service_linux::install();
+    #[cfg(target_os = "macos")]
+    return service_macos::install();
+    #[cfg(target_os = "windows")]
+    return service_windows::install();
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    return service_unsupported::install();
+}
+
+/// Remove the daemon's per-user service from the current platform.
+fn uninstall_service() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    return service_linux::uninstall();
+    #[cfg(target_os = "macos")]
+    return service_macos::uninstall();
+    #[cfg(target_os = "windows")]
+    return service_windows::uninstall();
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    return service_unsupported::uninstall();
 }
 
 async fn start(background: bool) -> Result<()> {
