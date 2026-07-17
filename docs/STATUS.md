@@ -31,8 +31,8 @@
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
 - [ ] **Rust backend port** — HTTP UI smoke via `local_agent --serve` (needs
-  `cd web && npm run build` first). PROVIDERS client done; REST providers +
-  CONTEXT + TLS dual + DAEMON/CLI still open.
+  `cd web && npm run build` first). ACP CONTEXT core/store/rebind are done;
+  REST context/upload endpoints, TLS dual, and daemon/CLI remain open.
 
 ## Blocked
 
@@ -40,6 +40,12 @@
 
 ## Recent Changes (2026-07)
 
+- **07-17** — Rust **S-ACP-CONTEXT**: durable `conversations.json` metadata,
+  prompt context (workspace/time/editor/profile), transcript export/transfer,
+  and clean idle-session rebind now live in ACP core. Rebind keeps the stable
+  session ID and SQLite event history, queues a first-prompt transfer, then
+  restarts the actor. Embedded resources are capability-gated. Deferred: REST
+  context tracker updates and persisted-session lazy actor restore.
 - **07-17** — Rust **S-ACP-PROVIDERS batch 1**: `src/acp/providers.rs` + core
   actor cmds for list/set/disable; `SessionCaps` caches providers +
   embeddedContext from Initialize. SDK 1.2.0 lacks `unstable_llm_providers`

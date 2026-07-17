@@ -852,6 +852,7 @@ mod tests {
             workspaces: workspaces.clone(),
             permissions: permissions.clone(),
             event_bus: events.clone(),
+            conversation_store: crate::acp::ConversationStore::new(None),
         }));
         (
             dir,

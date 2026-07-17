@@ -13,13 +13,14 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use agent_client_protocol::schema::v1::{
     CancelNotification, ClientCapabilities, ContentBlock, CreateTerminalRequest,
-    CreateTerminalResponse, FileSystemCapabilities, InitializeRequest, KillTerminalRequest,
-    KillTerminalResponse, NewSessionRequest, PromptRequest, ReadTextFileRequest,
-    ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
+    CreateTerminalResponse, EmbeddedResource, EmbeddedResourceResource, FileSystemCapabilities,
+    InitializeRequest, KillTerminalRequest, KillTerminalResponse, NewSessionRequest, PromptRequest,
+    ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionId, SessionNotification, TerminalExitStatus,
-    TerminalOutputRequest, TerminalOutputResponse, TextContent, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
+    TerminalOutputRequest, TerminalOutputResponse, TextContent, TextResourceContents,
+    WaitForTerminalExitRequest, WaitForTerminalExitResponse, WriteTextFileRequest,
+    WriteTextFileResponse,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{
@@ -37,7 +38,12 @@ use super::providers::{
     find_model_config_id, require_providers_supported, rpc_disable_provider, rpc_list_providers,
     rpc_set_model_config, rpc_set_provider, SessionCaps, MODEL_SWITCH_UNSUPPORTED_MSG,
 };
-use super::AgentRegistry;
+use super::{
+    context::{PreparedPrompt, PromptPipeline},
+    conversation::{export_conversation, ConversationTransfer},
+    store::ConversationStore,
+    AgentRegistry,
+};
 use crate::config::AgentInfo;
 use crate::events::SharedEventBus;
 use crate::interfaces::{
@@ -56,6 +62,8 @@ const MAX_CALLBACK_TASKS: usize = 16;
 const MAX_TERMINALS_PER_SESSION: usize = 16;
 /// Maximum output retained for an ACP terminal when the agent gives no lower limit.
 const MAX_TERMINAL_OUTPUT_BYTES: usize = DEFAULT_MAX_OUTPUT_BYTES;
+/// Safe default for a model-switch rebind transfer (256 KiB).
+const MODEL_SWITCH_TRANSFER_BYTES: i64 = 256 * 1024;
 
 /// Constructor-only dependencies for ACP core.
 pub struct ClientDeps {
@@ -64,6 +72,8 @@ pub struct ClientDeps {
     pub permissions: Arc<dyn PermissionManager>,
     /// Ordered durable event stream for prompt lifecycle and ACP updates.
     pub event_bus: SharedEventBus,
+    /// Optional durable metadata file; `None` is useful for isolated tests.
+    pub conversation_store: ConversationStore,
 }
 
 /// Session status stored in the in-memory registry during the core port.
@@ -120,6 +130,7 @@ impl SessionEntry {
 pub struct Client {
     deps: ClientDeps,
     sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
+    pipeline: Arc<PromptPipeline>,
 }
 
 impl Client {
@@ -129,7 +140,34 @@ impl Client {
         Self {
             deps,
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            pipeline: Arc::new(PromptPipeline::default()),
         }
+    }
+
+    /// Returns the frontend context tracker used by prompt middleware.
+    #[must_use]
+    pub fn open_files_tracker(&self) -> &super::context::OpenFilesTracker {
+        &self.pipeline.tracker
+    }
+
+    /// Load persisted conversation metadata without treating it as live transport state.
+    ///
+    /// The daemon currently restores history through the event store; callers can
+    /// use this metadata for a durable conversation list before selecting a
+    /// session to resume. It intentionally does not fabricate an ACP actor.
+    pub fn load_conversation_metadata(&self) -> Result<Vec<SessionInfo>, AppError> {
+        self.deps.conversation_store.load()
+    }
+
+    fn persist_sessions(&self) -> Result<(), AppError> {
+        let sessions = self
+            .sessions
+            .read()
+            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
+            .values()
+            .map(|entry| entry.info.clone())
+            .collect::<Vec<_>>();
+        self.deps.conversation_store.persist(&sessions)
     }
 
     fn session_for_command(
@@ -183,7 +221,10 @@ impl Client {
     }
 
     /// Reserve the session's sole prompt slot before enqueuing the actor command.
-    fn begin_prompt(&self, session_id: &str) -> Result<mpsc::Sender<ActorCommand>, AppError> {
+    fn begin_prompt(
+        &self,
+        session_id: &str,
+    ) -> Result<(mpsc::Sender<ActorCommand>, SessionCaps, String), AppError> {
         let mut sessions = self
             .sessions
             .write()
@@ -195,7 +236,11 @@ impl Client {
             SessionState::Idle | SessionState::Interrupted => {
                 entry.prompt_cancel.store(false, Ordering::Release);
                 entry.apply_state(SessionState::Running);
-                Ok(entry.commands.clone())
+                Ok((
+                    entry.commands.clone(),
+                    entry.caps,
+                    entry.info.workspace.clone(),
+                ))
             }
             SessionState::Running => Err(AppError::validation(
                 "ACP session already has an active prompt",
@@ -336,6 +381,14 @@ impl ACPClient for Client {
         // eliminates the race where a connection could exit just after startup
         // but before its owning local session entry was registered.
         let _ = registered_tx.send(());
+        if let Err(error) = self.persist_sessions() {
+            // A failed create must not leave a live, invisible session behind.
+            // Teardown is best-effort here; callers receive the original durable
+            // persistence failure, which is the actionable error.
+            tracing::error!(session_id = %published.id, error = %error, "failed to persist new ACP session");
+            let _ = self.close_session(&published.id).await;
+            return Err(error);
+        }
         Ok(published)
     }
 
@@ -367,11 +420,37 @@ impl ACPClient for Client {
         // an empty command channel between reservation and enqueue. Lifecycle
         // events are persisted inside `await_prompt` after the actor owns the
         // turn. A sticky `prompt_cancel` bit still covers Cancel-before-dequeue.
-        let sender = self.begin_prompt(session_id)?;
+        let (sender, caps, workspace_id) = self.begin_prompt(session_id)?;
+        let workspace = self
+            .deps
+            .workspaces
+            .list()
+            .await?
+            .into_iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .ok_or_else(|| AppError::not_found("workspace"))?;
+        let prepared = match self
+            .pipeline
+            .prepare(
+                session_id,
+                &workspace_id,
+                Path::new(&workspace.path),
+                caps.embedded_context,
+                self.deps.workspaces.as_ref(),
+            )
+            .await
+        {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.update_state_if(session_id, SessionState::Running, SessionState::Idle);
+                return Err(error);
+            }
+        };
         let (result_tx, result_rx) = oneshot::channel();
         if sender
             .try_send(ActorCommand::Prompt {
-                content: content.to_string(),
+                user_content: content.to_string(),
+                prepared,
                 attachments: attachments.to_vec(),
                 result: result_tx,
             })
@@ -416,31 +495,186 @@ impl ACPClient for Client {
             .ok_or_else(|| AppError::not_found("session"))?;
         entry.info.name = name.to_string();
         entry.info.updated_at = Utc::now();
+        drop(sessions);
+        self.persist_sessions()?;
         Ok(())
     }
 
     async fn rebind_session(
         &self,
-        _session_id: &str,
-        _agent_id: &str,
-        _model_id: &str,
-        _max_transfer_bytes: i64,
+        session_id: &str,
+        agent_id: &str,
+        model_id: &str,
+        max_transfer_bytes: i64,
     ) -> Result<SessionInfo, AppError> {
-        Err(AppError::unsupported(
-            "session rebind is implemented by S-ACP-CONTEXT",
-        ))
+        let agent = self
+            .deps
+            .registry
+            .resolve(agent_id, model_id)
+            .map_err(AppError::validation)?;
+        let (workspace_id, old_agent_id, commands) = {
+            let mut sessions = self
+                .sessions
+                .write()
+                .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
+            let entry = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| AppError::not_found("session"))?;
+            if entry.state != SessionState::Idle {
+                return Err(AppError::validation(
+                    "ACP session must be idle before it can be rebound",
+                ));
+            }
+            // Created gates new prompts while the old actor is drained and the
+            // replacement handshake runs; history stays entirely in EventBus.
+            entry.apply_state(SessionState::Created);
+            (
+                entry.info.workspace.clone(),
+                entry.info.agent_id.clone(),
+                entry.commands.clone(),
+            )
+        };
+        let transfer =
+            match export_conversation(&self.deps.event_bus, session_id, max_transfer_bytes).await {
+                Ok(markdown) => markdown,
+                Err(error) => {
+                    self.update_state_if(session_id, SessionState::Created, SessionState::Idle);
+                    return Err(error);
+                }
+            };
+        let workspace = match self
+            .deps
+            .workspaces
+            .list()
+            .await?
+            .into_iter()
+            .find(|workspace| workspace.id == workspace_id)
+        {
+            Some(workspace) => workspace,
+            None => {
+                self.update_state_if(session_id, SessionState::Created, SessionState::Idle);
+                return Err(AppError::not_found("workspace"));
+            }
+        };
+
+        let (closed_tx, closed_rx) = oneshot::channel();
+        commands
+            .send(ActorCommand::Close(closed_tx))
+            .await
+            .map_err(|_| AppError::internal("ACP session actor is unavailable during rebind"))?;
+        let _ = closed_rx.await;
+
+        let stderr_tail = Arc::new(Mutex::new(StderrTail::default()));
+        let prompt_cancel = Arc::new(AtomicBool::new(false));
+        let (new_commands, receiver) = mpsc::channel(ACTOR_COMMAND_CAPACITY);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let (registered_tx, registered_rx) = oneshot::channel();
+        tokio::spawn(run_actor(
+            ActorConfig {
+                local_session_id: session_id.to_string(),
+                agent,
+                workspace_id: workspace_id.clone(),
+                workspace_path: PathBuf::from(workspace.path),
+                permissions: Arc::clone(&self.deps.permissions),
+                workspaces: Arc::clone(&self.deps.workspaces),
+                stderr_tail: Arc::clone(&stderr_tail),
+                sessions: Arc::clone(&self.sessions),
+                event_bus: Arc::clone(&self.deps.event_bus),
+                prompt_cancel: Arc::clone(&prompt_cancel),
+            },
+            receiver,
+            ready_tx,
+            registered_rx,
+        ));
+        let startup = match ready_rx.await {
+            Ok(Ok(startup)) => startup,
+            Ok(Err(error)) => {
+                self.update_state(session_id, SessionState::Failed);
+                return Err(error);
+            }
+            Err(_) => {
+                self.update_state(session_id, SessionState::Failed);
+                return Err(AppError::internal(
+                    "ACP replacement actor exited during startup",
+                ));
+            }
+        };
+        let updated = {
+            let mut sessions = self
+                .sessions
+                .write()
+                .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
+            let entry = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| AppError::not_found("session"))?;
+            entry.commands = new_commands;
+            entry.stderr_tail = stderr_tail;
+            entry.prompt_cancel = prompt_cancel;
+            entry.caps = startup.caps;
+            entry.model_config_id = startup.model_config_id;
+            entry.info.agent_id = agent_id.to_string();
+            entry.info.model_id = model_id.to_string();
+            entry.apply_state(SessionState::Idle);
+            entry.info.clone()
+        };
+        // The replacement actor has initialized, and the entry now owns its
+        // sender, so it may safely start receiving commands.
+        let _ = registered_tx.send(());
+        self.pipeline.reset(session_id);
+        self.pipeline.queue_transfer(
+            session_id.to_string(),
+            ConversationTransfer {
+                markdown: transfer,
+                from_agent_name: old_agent_id,
+            },
+        )?;
+        append_payload(
+            &self.deps.event_bus,
+            session_id,
+            EventPayload::ConnectionRestarted {
+                content: format!("Rebound session to {agent_id}/{model_id}."),
+            },
+        )
+        .await?;
+        self.persist_sessions()?;
+        tracing::info!(
+            session_id,
+            agent_id,
+            model_id,
+            "ACP session rebound without history wipe"
+        );
+        Ok(updated)
     }
 
     async fn switch_model(&self, session_id: &str, model_id: &str) -> Result<(), AppError> {
         let (sender, model_config_id) = self.session_for_model_switch(session_id)?;
         let Some(config_id) = model_config_id else {
-            // Do NOT fall back to rebind here — CONTEXT owns that path.
+            let current = self.get_session_info(session_id)?;
+            if current.status != SessionState::Idle.as_str() {
+                tracing::info!(
+                    session_id,
+                    model_id,
+                    status = current.status,
+                    "switch_model left live provider state unchanged: rebind is not clean"
+                );
+                return Err(AppError::unsupported(format!(
+                    "{MODEL_SWITCH_UNSUPPORTED_MSG}; session must be idle for rebind fallback"
+                )));
+            }
             tracing::info!(
                 session_id,
                 model_id,
-                "switch_model unsupported: no model config option advertised"
+                "switch_model falling back to clean rebind"
             );
-            return Err(AppError::unsupported(MODEL_SWITCH_UNSUPPORTED_MSG));
+            return self
+                .rebind_session(
+                    session_id,
+                    &current.agent_id,
+                    model_id,
+                    MODEL_SWITCH_TRANSFER_BYTES,
+                )
+                .await
+                .map(|_| ());
         };
         let (result_tx, result_rx) = oneshot::channel();
         sender
@@ -466,6 +700,7 @@ impl ACPClient for Client {
             entry.info.model_id = model_id.to_string();
             entry.info.updated_at = Utc::now();
         }
+        self.persist_sessions()?;
 
         append_payload(
             &self.deps.event_bus,
@@ -501,6 +736,9 @@ impl ACPClient for Client {
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
             .remove(session_id)
             .ok_or_else(|| AppError::not_found("session"))?;
+        // Closing removes only live transport state; durable events remain in
+        // SQLite and the metadata list is atomically updated before return.
+        let persist_result = self.persist_sessions();
         self.deps.permissions.clear_session(session_id);
         let (closed_tx, closed_rx) = oneshot::channel();
         if entry
@@ -514,10 +752,15 @@ impl ACPClient for Client {
             // while an owned agent process remains alive.
             let _ = closed_rx.await;
         }
-        Ok(())
+        self.pipeline.clear(session_id);
+        persist_result
     }
 
-    fn set_session_profile(&self, _session_id: &str, _profile: &str) {}
+    fn set_session_profile(&self, session_id: &str, profile: &str) {
+        if let Err(error) = self.pipeline.profiles.set_profile(session_id, profile) {
+            tracing::error!(session_id, error = %error, "failed to set ACP session profile");
+        }
+    }
 
     async fn list_providers(&self, session_id: &str) -> Result<Vec<ProviderInfo>, AppError> {
         let (sender, caps) = self.session_for_providers(session_id)?;
@@ -577,7 +820,9 @@ impl ACPClient for Client {
 
 enum ActorCommand {
     Prompt {
-        content: String,
+        /// User text is persisted verbatim; middleware context is transport-only.
+        user_content: String,
+        prepared: PreparedPrompt,
         attachments: Vec<Attachment>,
         result: oneshot::Sender<Result<(), AppError>>,
     },
@@ -961,14 +1206,16 @@ async fn actor_loop(
     while let Some(command) = commands.recv().await {
         match command {
             ActorCommand::Prompt {
-                content,
+                user_content,
+                prepared,
                 attachments,
                 result,
             } => {
                 match await_prompt(PromptTurn {
                     cx: cx.clone(),
                     agent_session_id: agent_session_id.clone(),
-                    content,
+                    user_content,
+                    prepared,
                     attachments,
                     result,
                     commands,
@@ -1068,7 +1315,8 @@ fn stop_reason_name(reason: agent_client_protocol::schema::v1::StopReason) -> &'
 struct PromptTurn<'a> {
     cx: ConnectionTo<Agent>,
     agent_session_id: SessionId,
-    content: String,
+    user_content: String,
+    prepared: PreparedPrompt,
     attachments: Vec<Attachment>,
     result: oneshot::Sender<Result<(), AppError>>,
     commands: &'a mut mpsc::Receiver<ActorCommand>,
@@ -1082,7 +1330,8 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
     let PromptTurn {
         cx,
         agent_session_id,
-        content,
+        user_content,
+        prepared,
         attachments,
         result,
         commands,
@@ -1107,7 +1356,7 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
         local_session_id,
         EventPayload::PromptSubmitted {
             role: "user".to_string(),
-            content: content.clone(),
+            content: user_content.clone(),
             attachments,
         },
     )
@@ -1179,11 +1428,19 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
         return Ok(PromptExit::Continue);
     }
 
-    let prompt = cx
-        .send_request(PromptRequest::new(
-            agent_session_id.clone(),
-            vec![ContentBlock::Text(TextContent::new(content))],
+    let mut blocks = vec![ContentBlock::Text(TextContent::new(
+        prepared.with_user_text(&user_content),
+    ))];
+    blocks.extend(prepared.resources.into_iter().map(|resource| {
+        ContentBlock::Resource(EmbeddedResource::new(
+            EmbeddedResourceResource::TextResourceContents(
+                TextResourceContents::new(resource.text, resource.uri)
+                    .mime_type(resource.mime_type),
+            ),
         ))
+    }));
+    let prompt = cx
+        .send_request(PromptRequest::new(agent_session_id.clone(), blocks))
         .block_task();
     tokio::pin!(prompt);
     let mut result = Some(result);
@@ -1873,11 +2130,11 @@ mod tests {
     use async_trait::async_trait;
     use tempfile::TempDir;
 
-    use super::{AgentRegistry, Client, ClientDeps, RetainedOutput};
+    use super::{AgentRegistry, Client, ClientDeps, ConversationStore, RetainedOutput};
     use crate::config::{AgentInfo, AgentModel};
     use crate::events::{EventBus, Store};
     use crate::interfaces::{
-        ACPClient, AppError, PermissionDecision, PermissionManager, PermissionRequest,
+        ACPClient, AppError, EventStore, PermissionDecision, PermissionManager, PermissionRequest,
         WorkspaceManager,
     };
     use crate::workspace::Manager as WorkspaceRegistry;
@@ -1950,6 +2207,7 @@ mod tests {
             workspaces,
             permissions: permissions.clone(),
             event_bus,
+            conversation_store: ConversationStore::new(None),
         }));
         let session = client
             .create_session("mock", "mock-model", &workspace.id)
@@ -2086,5 +2344,46 @@ mod tests {
             cleared.iter().any(|id| id == &session_id),
             "close did not clear permissions using local session ID; cleared: {cleared:?}"
         );
+    }
+
+    /// Rebinding replaces only transport ownership: the stable local ID,
+    /// display metadata, and durable transcript must survive intact.
+    #[tokio::test]
+    async fn rebind_preserves_session_identity_and_event_history() {
+        let (client, _permissions, _workspace) = mock_client().await;
+        let session = client.list_sessions().pop().expect("one mock session");
+        client
+            .send_prompt(&session.id, "record this before rebind", &[])
+            .await
+            .expect("complete first prompt");
+        let before = client
+            .deps
+            .event_bus
+            .query(&session.id, 0, 100)
+            .await
+            .expect("query event history");
+        assert!(!before.is_empty(), "prompt should create durable history");
+
+        let rebound = client
+            .rebind_session(&session.id, "mock", "mock-model", 8 * 1024)
+            .await
+            .expect("rebind idle session");
+        let after = client
+            .deps
+            .event_bus
+            .query(&session.id, 0, 100)
+            .await
+            .expect("query event history after rebind");
+
+        assert_eq!(rebound.id, session.id);
+        assert_eq!(rebound.name, "Mock session");
+        assert!(
+            after.len() > before.len(),
+            "rebind should preserve history and append a restart event"
+        );
+        client
+            .close_session(&session.id)
+            .await
+            .expect("close rebound session");
     }
 }

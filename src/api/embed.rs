@@ -72,15 +72,30 @@ mod tests {
     use super::*;
     use axum::body::to_bytes;
 
+    /// `/` must always return HTML that identifies Local Agent. When
+    /// `web/dist/index.html` was baked in at compile time that is a 200 SPA
+    /// entry; otherwise the development 503 fallback page.
     #[tokio::test]
-    async fn spa_entry_is_available_without_a_frontend_build() {
+    async fn spa_entry_serves_html_or_clear_build_fallback() {
         let response = serve("/".to_string()).await;
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let status = response.status();
+        assert!(
+            status == StatusCode::OK || status == StatusCode::SERVICE_UNAVAILABLE,
+            "unexpected SPA status: {status}"
+        );
         let body = to_bytes(response.into_body(), 1024 * 1024)
             .await
             .expect("embedded body");
-        assert!(std::str::from_utf8(&body)
-            .expect("UTF-8 fallback")
-            .contains("Local Agent"));
+        let text = std::str::from_utf8(&body).expect("UTF-8 SPA body");
+        assert!(
+            text.contains("Local Agent") || text.contains("<!"),
+            "SPA response missing HTML marker"
+        );
+        if status == StatusCode::SERVICE_UNAVAILABLE {
+            assert!(
+                text.contains("npm run build"),
+                "fallback page must tell developers how to build the frontend"
+            );
+        }
     }
 }

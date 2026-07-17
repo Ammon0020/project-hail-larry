@@ -1,2 +1,0 @@
-# This directory is intentionally present so rust-embed can compile in
-# frontend-free development and test environments.

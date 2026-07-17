@@ -6,13 +6,19 @@
 
 mod agent_registry;
 mod autodetect;
+mod context;
+mod conversation;
 mod core;
+mod profile;
 mod providers;
+mod store;
 mod stream;
 
 pub use agent_registry::AgentRegistry;
 pub use autodetect::{
     autodetect, autodetect_with, valid_commands_for_agent, AutodetectOptions, ProviderProbe,
 };
+pub use context::{EditorSelection, OpenFilesTracker};
 pub use core::{Client, ClientDeps, SessionState, STDERR_TAIL_BYTES};
 pub use providers::SessionCaps;
+pub use store::ConversationStore;

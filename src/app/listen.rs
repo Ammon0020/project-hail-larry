@@ -66,6 +66,9 @@ pub async fn build_http_state() -> Result<AppState> {
         workspaces: workspaces.clone(),
         permissions: permissions.clone(),
         event_bus: events.clone(),
+        conversation_store: crate::acp::ConversationStore::new(Some(
+            Path::new(&config.data_dir).join("conversations.json"),
+        )),
     }));
 
     Ok(AppState::new(
