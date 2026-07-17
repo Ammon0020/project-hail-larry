@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan Management"
+  short_description: "Navigate and update epic plans"
+  default_prompt: "Use $plan-management to plan and track this work item."

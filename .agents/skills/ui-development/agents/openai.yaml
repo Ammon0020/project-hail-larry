@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI Development"
+  short_description: "Build maintainable Tailwind UI"
+  default_prompt: "Use $ui-development to implement this React and Tailwind UI change."

@@ -19,6 +19,8 @@ allowed-tools:
 
 Reduce the token cost of a target file or area **without losing overall app functionality or safety**. Real wins come from removing genuine duplication, simplifying over-engineered logic, and collapsing abstractions that don't pay for themselves. This is not a formatter, not a minifier, and not a license to gut code.
 
+Basically, where less code is more maintainable, use less code. For large-scale refactors, suggest a fix in a markdown file for later review. 
+
 ## Core principle
 
 A successful compaction **reduces the number of tokens a reader (human or model) must process to understand and safely modify the code**, while preserving behavior and safety. Line count is a proxy, not the goal. A change that drops 200 lines but hides a bug, removes a guard, or makes the code harder to follow is a failure.
