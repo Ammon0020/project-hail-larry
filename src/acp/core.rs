@@ -118,6 +118,19 @@ impl Client {
         }
     }
 
+    /// Move a session only when no concurrent lifecycle operation superseded it.
+    fn update_state_if(&self, session_id: &str, expected: SessionState, state: SessionState) {
+        if let Ok(mut sessions) = self.sessions.write() {
+            if let Some(entry) = sessions.get_mut(session_id) {
+                if entry.state == expected {
+                    entry.state = state;
+                    entry.info.status = state.as_str().to_string();
+                    entry.info.updated_at = Utc::now();
+                }
+            }
+        }
+    }
+
     /// Return the retained, bounded stderr tail for a session.
     pub fn stderr_tail(&self, session_id: &str) -> Result<String, AppError> {
         let tail = self
@@ -252,7 +265,9 @@ impl ACPClient for Client {
         result_rx
             .await
             .map_err(|_| AppError::internal("ACP prompt actor exited"))??;
-        self.update_state(session_id, SessionState::Idle);
+        // Cancellation can arrive while the prompt RPC is in flight. Do not
+        // overwrite its Interrupted state after the RPC's response arrives.
+        self.update_state_if(session_id, SessionState::Running, SessionState::Idle);
         Ok(())
     }
 
