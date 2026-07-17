@@ -69,7 +69,7 @@ fn make_watcher() -> Option<(
             Some((guard, rx))
         }
         Err(e) => {
-            eprintln!("Skipping fswatch test: inotify instance limit reached ({e})");
+            tracing::warn!(error = %e, "skipping fswatch test: inotify instance limit reached");
             None
         }
     }
