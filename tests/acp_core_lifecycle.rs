@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use local_agent::acp::{AgentRegistry, Client, ClientDeps};
 use local_agent::config::{AgentInfo, AgentModel};
+use local_agent::events::{EventBus, Store};
 use local_agent::interfaces::{ACPClient, WorkspaceManager};
 use local_agent::permissions::{null_sink, Manager as PermissionManager};
 use local_agent::workspace::Manager as WorkspaceManagerImpl;
@@ -43,10 +44,14 @@ async fn client_with_workspace() -> (Arc<Client>, TempDir, String) {
         warning: String::new(),
     }]));
     let permissions = PermissionManager::new(Some(null_sink()));
+    let event_bus = Arc::new(EventBus::new(
+        Store::open(directory.path().join("events.db")).expect("open test event store"),
+    ));
     let client = Arc::new(Client::new(ClientDeps {
         registry,
         workspaces,
         permissions,
+        event_bus,
     }));
 
     (client, directory, workspace.id)

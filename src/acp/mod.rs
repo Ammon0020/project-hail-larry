@@ -7,6 +7,7 @@
 mod agent_registry;
 mod autodetect;
 mod core;
+mod stream;
 
 pub use agent_registry::AgentRegistry;
 pub use autodetect::{

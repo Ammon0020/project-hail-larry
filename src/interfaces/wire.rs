@@ -79,12 +79,14 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             tool_call_id,
             target,
             command,
+            summary,
         } => {
             event.tool = tool.clone();
             event.tool_kind = tool_kind.clone();
             event.tool_call_id = tool_call_id.clone();
             event.target = target.clone();
             event.command = command.clone();
+            event.summary = summary.clone();
         }
         EventPayload::ToolCompleted {
             tool,
@@ -92,6 +94,7 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             tool_call_id,
             target,
             summary,
+            content,
             exit_code,
         } => {
             event.tool = tool.clone();
@@ -99,6 +102,7 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             event.tool_call_id = tool_call_id.clone();
             event.target = target.clone();
             event.summary = summary.clone();
+            event.content = content.clone();
             event.exit_code = *exit_code;
         }
         EventPayload::PlanUpdated { content } => {
@@ -229,6 +233,7 @@ pub fn wire_to_typed_event(event: &Event) -> TypedEvent {
             tool_call_id: event.tool_call_id.clone(),
             target: event.target.clone(),
             command: event.command.clone(),
+            summary: event.summary.clone(),
         },
         EventType::ToolCompleted => EventPayload::ToolCompleted {
             tool: event.tool.clone(),
@@ -236,6 +241,7 @@ pub fn wire_to_typed_event(event: &Event) -> TypedEvent {
             tool_call_id: event.tool_call_id.clone(),
             target: event.target.clone(),
             summary: event.summary.clone(),
+            content: event.content.clone(),
             exit_code: event.exit_code,
         },
         EventType::PlanUpdated => EventPayload::PlanUpdated {

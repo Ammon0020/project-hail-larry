@@ -120,12 +120,54 @@ pub struct EventSubscription {
     live_rx: broadcast::Receiver<Event>,
 }
 
+/// Outcome of a strict subscription read ([`EventSubscription::recv_or_lag`]).
+///
+/// Unlike [`EventSubscription::recv`], this surfaces [`broadcast`] lag so
+/// callers (notably the WebSocket hub) can re-subscribe from a durable cursor
+/// instead of silently skipping events.
+///
+/// `Event` is boxed so the enum stays small (clippy `large_enum_variant`).
+#[derive(Debug)]
+pub enum SubRecv {
+    /// Next event in order (replay or live, already ID-deduped against
+    /// [`EventSubscription::last_seen_id`]).
+    Event(Box<Event>),
+    /// The live broadcast receiver fell behind. `skipped` is how many messages
+    /// the channel dropped; callers must re-subscribe with `last_seen_id`.
+    Lagged { skipped: u64 },
+    /// The bus publisher was dropped and replay is exhausted.
+    Closed,
+}
+
 impl EventSubscription {
     /// Next event for this subscriber, or `None` when the bus is closed and
     /// replay is exhausted.
     ///
     /// Replay is drained first; then live events are read with deduplication.
+    /// On lag this method logs and continues (best-effort). Prefer
+    /// [`Self::recv_or_lag`] when silent event loss is unacceptable.
     pub async fn recv(&mut self) -> Option<Event> {
+        loop {
+            match self.recv_or_lag().await {
+                SubRecv::Event(event) => return Some(*event),
+                SubRecv::Lagged { skipped } => {
+                    // Best-effort path: log and keep reading the live channel.
+                    // Strict consumers (sync hub) must use `recv_or_lag` and
+                    // re-subscribe from `last_seen_id` instead.
+                    warn!(skipped, "event subscription lagged; skipping to latest");
+                    continue;
+                }
+                SubRecv::Closed => return None,
+            }
+        }
+    }
+
+    /// Next subscription outcome without silently skipping lagged events.
+    ///
+    /// Replay is drained first; live events are ID-deduped. On
+    /// [`broadcast::error::RecvError::Lagged`], returns [`SubRecv::Lagged`] so
+    /// the caller can re-subscribe from [`Self::last_seen_id`].
+    pub async fn recv_or_lag(&mut self) -> SubRecv {
         // Drain replay buffer first (subscribe → replay).
         if self.replay_idx < self.replay.len() {
             let event = self.replay[self.replay_idx].clone();
@@ -133,7 +175,7 @@ impl EventSubscription {
             if event.id > self.last_seen_id {
                 self.last_seen_id = event.id;
             }
-            return Some(event);
+            return SubRecv::Event(Box::new(event));
         }
         // Free replay memory once drained.
         if !self.replay.is_empty() {
@@ -150,15 +192,12 @@ impl EventSubscription {
                         continue;
                     }
                     self.last_seen_id = event.id;
-                    return Some(event);
+                    return SubRecv::Event(Box::new(event));
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    // Slow consumer: log and keep reading. Callers that need a
-                    // strict cursor should re-subscribe with last_seen_id.
-                    warn!(skipped = n, "event subscription lagged; skipping to latest");
-                    continue;
+                    return SubRecv::Lagged { skipped: n };
                 }
-                Err(broadcast::error::RecvError::Closed) => return None,
+                Err(broadcast::error::RecvError::Closed) => return SubRecv::Closed,
             }
         }
     }

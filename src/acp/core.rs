@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use agent_client_protocol::schema::v1::{
@@ -34,8 +35,10 @@ use uuid::Uuid;
 
 use super::AgentRegistry;
 use crate::config::AgentInfo;
+use crate::events::SharedEventBus;
 use crate::interfaces::{
-    ACPClient, AppError, Attachment, PermissionManager, Session, SessionInfo, WorkspaceManager,
+    wire::typed_event_to_wire, ACPClient, AppError, Attachment, EventMeta, EventPayload,
+    PermissionManager, Session, SessionInfo, TypedEvent, WorkspaceManager,
 };
 use crate::shell::{merge_env, Executor, DEFAULT_MAX_OUTPUT_BYTES};
 
@@ -55,6 +58,8 @@ pub struct ClientDeps {
     pub registry: Arc<AgentRegistry>,
     pub workspaces: Arc<dyn WorkspaceManager>,
     pub permissions: Arc<dyn PermissionManager>,
+    /// Ordered durable event stream for prompt lifecycle and ACP updates.
+    pub event_bus: SharedEventBus,
 }
 
 /// Session status stored in the in-memory registry during the core port.
@@ -86,6 +91,10 @@ struct SessionEntry {
     state: SessionState,
     commands: mpsc::Sender<ActorCommand>,
     stderr_tail: Arc<Mutex<StderrTail>>,
+    /// Sticky cancel bit for the reserved prompt turn. Cancel may arrive on
+    /// the actor while it is still idle (Prompt not dequeued yet); the bit
+    /// makes that cancel visible when the prompt eventually starts.
+    prompt_cancel: Arc<AtomicBool>,
 }
 
 impl SessionEntry {
@@ -114,7 +123,10 @@ impl Client {
         }
     }
 
-    fn session_sender(&self, session_id: &str) -> Result<mpsc::Sender<ActorCommand>, AppError> {
+    fn session_for_command(
+        &self,
+        session_id: &str,
+    ) -> Result<(mpsc::Sender<ActorCommand>, Arc<AtomicBool>), AppError> {
         let sessions = self
             .sessions
             .read()
@@ -127,7 +139,7 @@ impl Client {
                 "ACP session failed; close it and create a new session",
             )),
             SessionState::Closed => Err(AppError::internal("ACP session is closed")),
-            _ => Ok(entry.commands.clone()),
+            _ => Ok((entry.commands.clone(), Arc::clone(&entry.prompt_cancel))),
         }
     }
 
@@ -142,6 +154,7 @@ impl Client {
             .ok_or_else(|| AppError::not_found("session"))?;
         match entry.state {
             SessionState::Idle | SessionState::Interrupted => {
+                entry.prompt_cancel.store(false, Ordering::Release);
                 entry.apply_state(SessionState::Running);
                 Ok(entry.commands.clone())
             }
@@ -243,6 +256,7 @@ impl ACPClient for Client {
         let (ready_tx, ready_rx) = oneshot::channel();
         let (registered_tx, registered_rx) = oneshot::channel();
         let stderr_tail = Arc::new(Mutex::new(StderrTail::default()));
+        let prompt_cancel = Arc::new(AtomicBool::new(false));
         let actor = ActorConfig {
             local_session_id: id.clone(),
             agent,
@@ -252,6 +266,8 @@ impl ACPClient for Client {
             workspaces: Arc::clone(&self.deps.workspaces),
             stderr_tail: Arc::clone(&stderr_tail),
             sessions: Arc::clone(&self.sessions),
+            event_bus: Arc::clone(&self.deps.event_bus),
+            prompt_cancel: Arc::clone(&prompt_cancel),
         };
         tokio::spawn(run_actor(actor, receiver, ready_tx, registered_rx));
 
@@ -266,6 +282,7 @@ impl ACPClient for Client {
             state: SessionState::Created,
             commands,
             stderr_tail,
+            prompt_cancel,
         };
         // Successful startup publishes as idle; status must match the enum.
         entry.apply_state(SessionState::Idle);
@@ -303,20 +320,45 @@ impl ACPClient for Client {
         &self,
         session_id: &str,
         content: &str,
-        _attachments: &[Attachment],
+        attachments: &[Attachment],
     ) -> Result<(), AppError> {
+        // Enqueue the actor Prompt without yielding so Cancel cannot slip onto
+        // an empty command channel between reservation and enqueue. Lifecycle
+        // events are persisted inside `await_prompt` after the actor owns the
+        // turn. A sticky `prompt_cancel` bit still covers Cancel-before-dequeue.
         let sender = self.begin_prompt(session_id)?;
         let (result_tx, result_rx) = oneshot::channel();
-        sender
-            .send(ActorCommand::Prompt {
+        if sender
+            .try_send(ActorCommand::Prompt {
                 content: content.to_string(),
+                attachments: attachments.to_vec(),
                 result: result_tx,
             })
+            .is_err()
+        {
+            self.update_state(session_id, SessionState::Failed);
+            append_payload(
+                &self.deps.event_bus,
+                session_id,
+                EventPayload::AgentExited {
+                    content: "ACP session actor is unavailable".to_string(),
+                },
+            )
             .await
-            .map_err(|_| AppError::internal("ACP session actor is unavailable"))?;
-        result_rx
+            .map_err(|error| {
+                tracing::error!(
+                    session_id,
+                    error = %error,
+                    "failed to persist ACP prompt-dispatch failure"
+                );
+                error
+            })?;
+            return Err(AppError::internal("ACP session actor is unavailable"));
+        }
+        let prompt_result = result_rx
             .await
-            .map_err(|_| AppError::internal("ACP prompt actor exited"))??;
+            .map_err(|_| AppError::internal("ACP prompt actor exited"))?;
+        prompt_result?;
         // Cancellation can arrive while the prompt RPC is in flight. Do not
         // overwrite its Interrupted state after the RPC's response arrives.
         self.update_state_if(session_id, SessionState::Running, SessionState::Idle);
@@ -355,7 +397,10 @@ impl ACPClient for Client {
     }
 
     async fn cancel_session(&self, session_id: &str) -> Result<(), AppError> {
-        let sender = self.session_sender(session_id)?;
+        let (sender, prompt_cancel) = self.session_for_command(session_id)?;
+        // Mark sticky cancel before the actor observes Cancel so a prompt
+        // reserved but not yet dequeued still fails when it starts.
+        prompt_cancel.store(true, Ordering::Release);
         sender
             .send(ActorCommand::Cancel)
             .await
@@ -424,6 +469,7 @@ impl ACPClient for Client {
 enum ActorCommand {
     Prompt {
         content: String,
+        attachments: Vec<Attachment>,
         result: oneshot::Sender<Result<(), AppError>>,
     },
     Cancel,
@@ -437,8 +483,10 @@ struct ActorConfig {
     workspace_path: PathBuf,
     permissions: Arc<dyn PermissionManager>,
     workspaces: Arc<dyn WorkspaceManager>,
+    event_bus: SharedEventBus,
     stderr_tail: Arc<Mutex<StderrTail>>,
     sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
+    prompt_cancel: Arc<AtomicBool>,
 }
 
 async fn run_actor(
@@ -457,6 +505,23 @@ async fn run_actor(
         Err(error) => {
             if let Some(ready) = ready.take() {
                 let _ = ready.send(Err(startup_error(&error, &config.stderr_tail)));
+            } else if let Err(append_error) = append_payload(
+                &config.event_bus,
+                &config.local_session_id,
+                EventPayload::AgentExited {
+                    content: "ACP session actor exited unexpectedly".to_string(),
+                },
+            )
+            .await
+            {
+                // The original actor error still determines the session state;
+                // only the stable error category is logged to avoid exposing
+                // agent-provided diagnostics that may contain secrets.
+                tracing::error!(
+                    session_id = %config.local_session_id,
+                    error = %append_error,
+                    "failed to persist ACP actor-exit event"
+                );
             }
             fail_session(&config);
             tracing::warn!(error = %error, "ACP session actor ended");
@@ -517,12 +582,16 @@ async fn run_actor_inner(
     let transport = ByteStreams::new(stdin, stdout);
     let terminals = Arc::new(Mutex::new(HashMap::new()));
     let handler_cancel = CancellationToken::new();
+    let event_bus = Arc::clone(&config.event_bus);
+    let local_session_id = config.local_session_id.clone();
+    let prompt_cancel = Arc::clone(&config.prompt_cancel);
     let handler_deps = HandlerDeps {
         local_session_id: config.local_session_id.clone(),
         workspace_id: config.workspace_id.clone(),
         workspace_path: config.workspace_path.clone(),
         workspaces: Arc::clone(&config.workspaces),
         permissions: Arc::clone(&config.permissions),
+        event_bus: Arc::clone(&config.event_bus),
         terminals: Arc::clone(&terminals),
         cancellation: handler_cancel.clone(),
         callback_slots: Arc::new(Semaphore::new(MAX_CALLBACK_TASKS)),
@@ -531,7 +600,25 @@ async fn run_actor_inner(
         .builder()
         .name("local-agent")
         .on_receive_notification(
-            async |_notification: SessionNotification, _cx: ConnectionTo<Agent>| Ok(()),
+            {
+                let deps = handler_deps.clone();
+                async move |notification: SessionNotification, _cx: ConnectionTo<Agent>| {
+                    let deps = deps.clone();
+                    handle_session_notification(&deps, notification)
+                        .await
+                        .map_err(|error| {
+                            // Returning an SDK error stops dispatch rather than
+                            // silently losing a session update after a failed
+                            // durable append.
+                            tracing::error!(
+                                session_id = %deps.local_session_id,
+                                error = %error,
+                                "failed to persist ACP session update"
+                            );
+                            agent_client_protocol::Error::internal_error()
+                        })
+                }
+            },
             agent_client_protocol::on_receive_notification!(),
         )
         .on_receive_request(
@@ -682,7 +769,15 @@ async fn run_actor_inner(
                     .await
                     .map_err(|_| agent_client_protocol::Error::internal_error())?;
             }
-            actor_loop(cx, session.session_id, commands).await
+            actor_loop(
+                cx,
+                session.session_id,
+                commands,
+                event_bus,
+                local_session_id,
+                prompt_cancel,
+            )
+            .await
         })
         .await;
     handler_cancel.cancel();
@@ -701,17 +796,28 @@ async fn actor_loop(
     cx: ConnectionTo<Agent>,
     agent_session_id: SessionId,
     commands: &mut mpsc::Receiver<ActorCommand>,
+    event_bus: SharedEventBus,
+    local_session_id: String,
+    prompt_cancel: Arc<AtomicBool>,
 ) -> Result<ActorExit, agent_client_protocol::Error> {
     while let Some(command) = commands.recv().await {
         match command {
-            ActorCommand::Prompt { content, result } => {
-                match await_prompt(
-                    cx.clone(),
-                    agent_session_id.clone(),
+            ActorCommand::Prompt {
+                content,
+                attachments,
+                result,
+            } => {
+                match await_prompt(PromptTurn {
+                    cx: cx.clone(),
+                    agent_session_id: agent_session_id.clone(),
                     content,
+                    attachments,
                     result,
                     commands,
-                )
+                    event_bus: &event_bus,
+                    local_session_id: &local_session_id,
+                    prompt_cancel: &prompt_cancel,
+                })
                 .await?
                 {
                     PromptExit::Continue => {}
@@ -734,14 +840,124 @@ enum PromptExit {
     Closed(oneshot::Sender<()>),
 }
 
-/// Await one prompt while continuing to receive session control commands.
-async fn await_prompt(
+/// Stable wire spelling for ACP stop reasons, including an SDK-forward fallback.
+fn stop_reason_name(reason: agent_client_protocol::schema::v1::StopReason) -> &'static str {
+    use agent_client_protocol::schema::v1::StopReason;
+
+    match reason {
+        StopReason::EndTurn => "end_turn",
+        StopReason::MaxTokens => "max_tokens",
+        StopReason::MaxTurnRequests => "max_turn_requests",
+        StopReason::Refusal => "refusal",
+        StopReason::Cancelled => "cancelled",
+        _ => "unknown",
+    }
+}
+
+struct PromptTurn<'a> {
     cx: ConnectionTo<Agent>,
     agent_session_id: SessionId,
     content: String,
+    attachments: Vec<Attachment>,
     result: oneshot::Sender<Result<(), AppError>>,
-    commands: &mut mpsc::Receiver<ActorCommand>,
-) -> Result<PromptExit, agent_client_protocol::Error> {
+    commands: &'a mut mpsc::Receiver<ActorCommand>,
+    event_bus: &'a SharedEventBus,
+    local_session_id: &'a str,
+    prompt_cancel: &'a AtomicBool,
+}
+
+/// Await one prompt while continuing to receive session control commands.
+async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_protocol::Error> {
+    let PromptTurn {
+        cx,
+        agent_session_id,
+        content,
+        attachments,
+        result,
+        commands,
+        event_bus,
+        local_session_id,
+        prompt_cancel,
+    } = turn;
+
+    // Cancel may have won the race onto an idle actor before this Prompt was
+    // dequeued. Honor the sticky bit before touching the agent.
+    if prompt_cancel.swap(false, Ordering::AcqRel) {
+        let cancel = send_cancel(&cx, &agent_session_id);
+        let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
+        cancel?;
+        return Ok(PromptExit::Continue);
+    }
+
+    // Persist lifecycle events only after the actor owns this turn so Cancel
+    // cannot race onto an idle loop and become a no-op.
+    if let Err(error) = append_payload(
+        event_bus,
+        local_session_id,
+        EventPayload::PromptSubmitted {
+            role: "user".to_string(),
+            content: content.clone(),
+            attachments,
+        },
+    )
+    .await
+    {
+        tracing::error!(
+            session_id = local_session_id,
+            error = %error,
+            "failed to persist ACP prompt-submitted event"
+        );
+        let _ = result.send(Err(error));
+        return Ok(PromptExit::Continue);
+    }
+    if let Err(error) = append_payload(
+        event_bus,
+        local_session_id,
+        // The typed contract contains no response-start text field. The
+        // wire adapter therefore emits the stable role-only shape.
+        EventPayload::ResponseStarted {
+            role: "agent".to_string(),
+        },
+    )
+    .await
+    {
+        tracing::error!(
+            session_id = local_session_id,
+            error = %error,
+            "failed to persist ACP response-started event"
+        );
+        let _ = result.send(Err(error));
+        return Ok(PromptExit::Continue);
+    }
+
+    // Drain control commands that arrived while persisting lifecycle events
+    // so Cancel/Close cannot sit behind a prompt that has not started yet.
+    while let Ok(command) = commands.try_recv() {
+        match command {
+            ActorCommand::Cancel => {
+                let cancel = send_cancel(&cx, &agent_session_id);
+                let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
+                cancel?;
+                return Ok(PromptExit::Continue);
+            }
+            ActorCommand::Close(close) => {
+                let _ = result.send(Err(AppError::internal("ACP session closed during prompt")));
+                return Ok(PromptExit::Closed(close));
+            }
+            ActorCommand::Prompt { result: nested, .. } => {
+                let _ = nested.send(Err(AppError::validation(
+                    "ACP session already has an active prompt",
+                )));
+            }
+        }
+    }
+    if prompt_cancel.swap(false, Ordering::AcqRel) {
+        let cancel = send_cancel(&cx, &agent_session_id);
+        let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
+        cancel?;
+        return Ok(PromptExit::Continue);
+    }
+
     let prompt = cx
         .send_request(PromptRequest::new(
             agent_session_id.clone(),
@@ -755,10 +971,55 @@ async fn await_prompt(
         tokio::select! {
             reply = &mut prompt => {
                 if let Some(result) = result.take() {
-                    let reply = reply
-                        .map(|_| ())
-                        .map_err(|error| AppError::internal(format!("ACP prompt: {error}")));
-                    let _ = result.send(reply);
+                    match reply {
+                        Ok(response) => {
+                            let final_event = EventPayload::StreamUpdate {
+                                role: "agent".to_string(),
+                                content: String::new(),
+                                streaming: false,
+                                thought: false,
+                                stop_reason: stop_reason_name(response.stop_reason).to_string(),
+                            };
+                            append_payload(event_bus, local_session_id, final_event)
+                                .await
+                                .map_err(|error| {
+                                    tracing::error!(
+                                        session_id = local_session_id,
+                                        error = %error,
+                                        "failed to persist ACP prompt-complete event"
+                                    );
+                                    agent_client_protocol::Error::internal_error()
+                                })?;
+                            let _ = result.send(Ok(()));
+                        }
+                        Err(error) => {
+                            // Do not copy SDK error text into events/logs:
+                            // agents control it and it can contain prompt data.
+                            tracing::warn!(
+                                session_id = local_session_id,
+                                "ACP prompt request failed"
+                            );
+                            append_payload(
+                                event_bus,
+                                local_session_id,
+                                EventPayload::AgentExited {
+                                    content: "ACP prompt request failed".to_string(),
+                                },
+                            )
+                            .await
+                            .map_err(|append_error| {
+                                tracing::error!(
+                                    session_id = local_session_id,
+                                    error = %append_error,
+                                    "failed to persist ACP prompt-failure event"
+                                );
+                                agent_client_protocol::Error::internal_error()
+                            })?;
+                            let _ = result.send(Err(AppError::internal(format!(
+                                "ACP prompt: {error}"
+                            ))));
+                        }
+                    }
                 }
                 return Ok(PromptExit::Continue);
             }
@@ -806,9 +1067,46 @@ struct HandlerDeps {
     workspace_path: PathBuf,
     workspaces: Arc<dyn WorkspaceManager>,
     permissions: Arc<dyn PermissionManager>,
+    event_bus: SharedEventBus,
     terminals: TerminalRegistry,
     cancellation: CancellationToken,
     callback_slots: Arc<Semaphore>,
+}
+
+/// Translate, persist, and publish an inbound ACP update in receive order.
+///
+/// The SDK dispatches notifications in stream order. Awaiting the durable
+/// append here keeps that order through SQLite before subscribers observe it.
+async fn handle_session_notification(
+    deps: &HandlerDeps,
+    notification: SessionNotification,
+) -> Result<(), AppError> {
+    let Some(payload) = super::stream::session_update_to_payload(&notification.update) else {
+        return Ok(());
+    };
+    append_payload(&deps.event_bus, &deps.local_session_id, payload).await
+}
+
+/// Project a typed event through the only public wire adapter, then persist it
+/// before broadcasting to live listeners. An ID of zero requests SQLite's
+/// autoincrement assignment and is replaced before publication.
+async fn append_payload(
+    event_bus: &SharedEventBus,
+    session_id: &str,
+    payload: EventPayload,
+) -> Result<(), AppError> {
+    let typed = TypedEvent {
+        meta: EventMeta {
+            id: 0,
+            session_id: session_id.to_string(),
+            timestamp: Utc::now(),
+        },
+        payload,
+    };
+    event_bus
+        .append_and_publish(typed_event_to_wire(&typed))
+        .await?;
+    Ok(())
 }
 
 /// Reserve one bounded callback worker without blocking SDK request dispatch.
@@ -1344,6 +1642,7 @@ mod tests {
 
     use super::{AgentRegistry, Client, ClientDeps, RetainedOutput};
     use crate::config::{AgentInfo, AgentModel};
+    use crate::events::{EventBus, Store};
     use crate::interfaces::{
         ACPClient, AppError, PermissionDecision, PermissionManager, PermissionRequest,
         WorkspaceManager,
@@ -1399,6 +1698,9 @@ mod tests {
             .await
             .expect("register temporary workspace");
         let permissions = Arc::new(RecordingPermissions::default());
+        let event_bus = Arc::new(EventBus::new(
+            Store::open(tempdir.path().join("events.db")).expect("open test event store"),
+        ));
         let registry = Arc::new(AgentRegistry::from_agents([AgentInfo {
             id: "mock".to_string(),
             name: "Mock agent".to_string(),
@@ -1414,6 +1716,7 @@ mod tests {
             registry,
             workspaces,
             permissions: permissions.clone(),
+            event_bus,
         }));
         let session = client
             .create_session("mock", "mock-model", &workspace.id)

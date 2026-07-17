@@ -329,6 +329,9 @@ pub enum EventPayload {
         tool_call_id: String,
         target: String,
         command: String,
+        /// Initial ACP tool status (`pending`, `in_progress`, …). Go exposes
+        /// this in the flat event's `summary` field.
+        summary: String,
     },
     ToolCompleted {
         tool: String,
@@ -336,6 +339,9 @@ pub enum EventPayload {
         tool_call_id: String,
         target: String,
         summary: String,
+        /// Rendered ACP text/diff/raw output. The flat Go-compatible event
+        /// stores this independently from the lifecycle status in `summary`.
+        content: String,
         exit_code: Option<i32>,
     },
     PlanUpdated {

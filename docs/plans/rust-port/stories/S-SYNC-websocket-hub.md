@@ -29,12 +29,19 @@ timeout), broadcast to all clients, reconnection sync.
 
 ## Acceptance Criteria
 
-- [ ] Paired devices can connect via WebSocket
-- [ ] Events broadcast to all connected clients
-- [ ] Keepalive ping/pong works (dead clients removed)
-- [ ] Reconnection sync: missing events replayed on reconnect
-- [ ] Unpaired devices rejected at handshake
-- [ ] Hub shutdown drains all connections
-- [ ] Slow/lagged clients resynchronize without silent event loss
-- [ ] Replay-to-live handoff cannot omit or duplicate durable event IDs
-- [ ] `cargo test sync` passes
+- [x] Paired devices can connect via WebSocket
+- [x] Events broadcast to all connected clients
+- [x] Keepalive ping/pong works (dead clients removed)
+- [x] Reconnection sync: missing events replayed on reconnect
+- [x] Unpaired devices rejected at handshake
+- [x] Hub shutdown drains all connections
+- [x] Slow/lagged clients resynchronize without silent event loss
+- [x] Replay-to-live handoff cannot omit or duplicate durable event IDs
+- [x] `cargo test sync` passes
+
+## Deferred (out of scope for hub-only story)
+
+- S-SERVER mount of `/ws` into the daemon HTTP stack
+- Frontend reconnect exp. backoff + jitter (already in `useBackend`)
+- In-flight permission re-presentation on reconnect
+- Black-box contract runner against a Rust binary (needs S-SERVER)

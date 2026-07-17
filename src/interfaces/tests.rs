@@ -520,6 +520,7 @@ fn wire_adapter_full_event_matches_golden() {
             tool_call_id: "fixture-tool-call".into(),
             target: "src/greet.txt".into(),
             summary: "fixture summary".into(),
+            content: "fixture content".into(),
             exit_code: Some(7),
         },
     );
@@ -595,6 +596,7 @@ fn wire_adapter_roundtrips_all_event_payloads() {
             tool_call_id: "call".into(),
             target: "target".into(),
             summary: "summary".into(),
+            content: "content".into(),
             exit_code: Some(1),
         },
         EventPayload::ToolStarted {
@@ -603,6 +605,7 @@ fn wire_adapter_roundtrips_all_event_payloads() {
             tool_call_id: "call".into(),
             target: "target".into(),
             command: "command".into(),
+            summary: "in_progress".into(),
         },
         EventPayload::PlanUpdated {
             content: "plan".into(),
