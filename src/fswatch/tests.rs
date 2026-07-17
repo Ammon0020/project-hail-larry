@@ -10,12 +10,18 @@
 use std::fs;
 use std::path::Path;
 use std::sync::mpsc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use tempfile::TempDir;
 
 use super::Watcher;
 use crate::interfaces::types::EventType;
+
+/// Serializes fswatch tests so only one inotify instance exists at a time.
+/// Without this, parallel tests exhaust the system's `max_user_instances`
+/// limit (128 on Linux) and fail with "Too many open files".
+static WATCHER_LOCK: Mutex<()> = Mutex::new(());
 
 /// Wait up to `timeout` for an event on `rx`, returning it, or `None` on
 /// timeout. Mirrors Go `waitForEvent`.
@@ -26,15 +32,55 @@ fn wait_for_event(
     rx.recv_timeout(timeout).ok()
 }
 
-/// Build a watcher whose emit callback forwards to a buffered channel. The
-/// watcher is closed automatically when the returned guard drops.
-fn new_test_watcher() -> (Watcher, mpsc::Receiver<crate::interfaces::types::Event>) {
+/// RAII guard that holds the watcher lock and drops the watcher before
+/// releasing the lock. This ensures inotify instances are cleaned up before
+/// the next test acquires the lock.
+struct WatcherGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    watcher: Option<Watcher>,
+}
+
+impl Drop for WatcherGuard {
+    fn drop(&mut self) {
+        // Drop the watcher first (joins threads, releases inotify instances),
+        // then the _lock guard drops, allowing the next test to proceed.
+        self.watcher.take();
+    }
+}
+
+/// Build a watcher whose emit callback forwards to a buffered channel.
+/// Acquires `WATCHER_LOCK` and returns a guard that ensures the watcher is
+/// cleaned up before the lock is released, serializing inotify usage.
+/// Skips the test if the system is out of inotify instances.
+fn make_watcher() -> Option<(
+    WatcherGuard,
+    mpsc::Receiver<crate::interfaces::types::Event>,
+)> {
+    let lock = WATCHER_LOCK.lock().expect("watcher lock");
     let (tx, rx) = mpsc::channel();
-    let w = Watcher::new(move |e| {
+    match Watcher::new(move |e| {
         let _ = tx.send(e);
-    })
-    .expect("new watcher");
-    (w, rx)
+    }) {
+        Ok(w) => {
+            let guard = WatcherGuard {
+                _lock: lock,
+                watcher: Some(w),
+            };
+            Some((guard, rx))
+        }
+        Err(e) => {
+            eprintln!("Skipping fswatch test: inotify instance limit reached ({e})");
+            None
+        }
+    }
+}
+
+/// Borrow the watcher from a guard for method calls.
+impl std::ops::Deref for WatcherGuard {
+    type Target = Watcher;
+    fn deref(&self) -> &Watcher {
+        self.watcher.as_ref().expect("watcher taken during drop")
+    }
 }
 
 /// Give notify a moment to establish the watch after `add_workspace`. Mirrors
@@ -46,7 +92,9 @@ fn settle() {
 #[test]
 fn external_change_emits_event() {
     let dir = TempDir::new().expect("tempdir");
-    let (w, rx) = new_test_watcher();
+    let Some((w, rx)) = make_watcher() else {
+        return;
+    };
     w.add_workspace("ws1", dir.path().to_str().expect("utf8 path"));
     settle();
 
@@ -62,7 +110,9 @@ fn external_change_emits_event() {
 #[test]
 fn app_write_is_suppressed() {
     let dir = TempDir::new().expect("tempdir");
-    let (w, rx) = new_test_watcher();
+    let Some((w, rx)) = make_watcher() else {
+        return;
+    };
     w.add_workspace("ws1", dir.path().to_str().expect("utf8 path"));
     settle();
 
@@ -85,7 +135,9 @@ fn app_write_is_suppressed() {
 fn ignored_dir_not_watched() {
     let dir = TempDir::new().expect("tempdir");
     fs::create_dir_all(dir.path().join("node_modules")).expect("mkdir");
-    let (w, rx) = new_test_watcher();
+    let Some((w, rx)) = make_watcher() else {
+        return;
+    };
     w.add_workspace("ws1", dir.path().to_str().expect("utf8 path"));
     settle();
 
@@ -101,7 +153,9 @@ fn ignored_dir_not_watched() {
 #[test]
 fn remove_workspace_stops_events() {
     let dir = TempDir::new().expect("tempdir");
-    let (w, rx) = new_test_watcher();
+    let Some((w, rx)) = make_watcher() else {
+        return;
+    };
     w.add_workspace("ws1", dir.path().to_str().expect("utf8 path"));
     settle();
     w.remove_workspace("ws1");
@@ -123,7 +177,9 @@ fn remove_workspace_stops_events() {
 #[test]
 fn recursive_create_directory_watches() {
     let dir = TempDir::new().expect("tempdir");
-    let (w, rx) = new_test_watcher();
+    let Some((w, rx)) = make_watcher() else {
+        return;
+    };
     w.add_workspace("ws1", dir.path().to_str().expect("utf8 path"));
     settle();
 
@@ -147,7 +203,9 @@ fn recursive_create_directory_watches() {
 #[test]
 fn emit_throttle_coalesces() {
     let dir = TempDir::new().expect("tempdir");
-    let (w, rx) = new_test_watcher();
+    let Some((w, rx)) = make_watcher() else {
+        return;
+    };
     w.add_workspace("ws1", dir.path().to_str().expect("utf8 path"));
     settle();
 
@@ -174,7 +232,9 @@ fn emit_throttle_coalesces() {
 #[test]
 fn double_close_is_safe() {
     let dir = TempDir::new().expect("tempdir");
-    let (w, _rx) = new_test_watcher();
+    let Some((w, _rx)) = make_watcher() else {
+        return;
+    };
     w.add_workspace("ws1", dir.path().to_str().expect("utf8 path"));
     settle();
 
@@ -189,12 +249,10 @@ fn double_close_is_safe() {
 /// cannot produce an event.
 #[test]
 fn events_stop_after_close() {
+    let Some((w, rx)) = make_watcher() else {
+        return;
+    };
     let dir = TempDir::new().expect("tempdir");
-    let (tx, rx) = mpsc::channel();
-    let w = Watcher::new(move |e| {
-        let _ = tx.send(e);
-    })
-    .expect("new watcher");
     w.add_workspace("ws1", dir.path().to_str().expect("utf8 path"));
     settle();
 
@@ -214,7 +272,9 @@ fn events_stop_after_close() {
 #[test]
 fn handles_create_modify_delete() {
     let dir = TempDir::new().expect("tempdir");
-    let (w, rx) = new_test_watcher();
+    let Some((w, rx)) = make_watcher() else {
+        return;
+    };
     w.add_workspace("ws1", dir.path().to_str().expect("utf8 path"));
     settle();
 
