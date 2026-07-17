@@ -26,7 +26,7 @@ use async_process::Command;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::io::AsyncReadExt;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -41,6 +41,10 @@ use crate::shell::{merge_env, Executor, DEFAULT_MAX_OUTPUT_BYTES};
 /// must never be allowed to grow the daemon's memory without bound.
 pub const STDERR_TAIL_BYTES: usize = 8 * 1024;
 const ACTOR_COMMAND_CAPACITY: usize = 32;
+/// Maximum callback requests an agent can make concurrently per session.
+const MAX_CALLBACK_TASKS: usize = 16;
+/// Maximum terminal records retained per ACP session.
+const MAX_TERMINALS_PER_SESSION: usize = 16;
 /// Maximum output retained for an ACP terminal when the agent gives no lower limit.
 const MAX_TERMINAL_OUTPUT_BYTES: usize = DEFAULT_MAX_OUTPUT_BYTES;
 
@@ -86,7 +90,7 @@ struct SessionEntry {
 /// senders; every async command is sent after cloning its sender.
 pub struct Client {
     deps: ClientDeps,
-    sessions: RwLock<HashMap<String, SessionEntry>>,
+    sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
 }
 
 impl Client {
@@ -95,17 +99,53 @@ impl Client {
     pub fn new(deps: ClientDeps) -> Self {
         Self {
             deps,
-            sessions: RwLock::new(HashMap::new()),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     fn session_sender(&self, session_id: &str) -> Result<mpsc::Sender<ActorCommand>, AppError> {
-        self.sessions
+        let sessions = self
+            .sessions
             .read()
-            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
+            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
+        let entry = sessions
             .get(session_id)
-            .map(|entry| entry.commands.clone())
-            .ok_or_else(|| AppError::not_found("session"))
+            .ok_or_else(|| AppError::not_found("session"))?;
+        match entry.state {
+            SessionState::Failed => Err(AppError::internal(
+                "ACP session failed; close it and create a new session",
+            )),
+            SessionState::Closed => Err(AppError::internal("ACP session is closed")),
+            _ => Ok(entry.commands.clone()),
+        }
+    }
+
+    /// Reserve the session's sole prompt slot before enqueuing the actor command.
+    fn begin_prompt(&self, session_id: &str) -> Result<mpsc::Sender<ActorCommand>, AppError> {
+        let mut sessions = self
+            .sessions
+            .write()
+            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
+        let entry = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| AppError::not_found("session"))?;
+        match entry.state {
+            SessionState::Idle | SessionState::Interrupted => {
+                entry.state = SessionState::Running;
+                entry.info.status = SessionState::Running.as_str().to_string();
+                entry.info.updated_at = Utc::now();
+                Ok(entry.commands.clone())
+            }
+            SessionState::Running => Err(AppError::validation(
+                "ACP session already has an active prompt",
+            )),
+            SessionState::Failed => Err(AppError::internal(
+                "ACP session failed; close it and create a new session",
+            )),
+            SessionState::Closed | SessionState::Created => {
+                Err(AppError::internal("ACP session is not ready for prompts"))
+            }
+        }
     }
 
     fn update_state(&self, session_id: &str, state: SessionState) {
@@ -196,16 +236,19 @@ impl ACPClient for Client {
         };
         let (commands, receiver) = mpsc::channel(ACTOR_COMMAND_CAPACITY);
         let (ready_tx, ready_rx) = oneshot::channel();
+        let (registered_tx, registered_rx) = oneshot::channel();
         let stderr_tail = Arc::new(Mutex::new(StderrTail::default()));
         let actor = ActorConfig {
+            local_session_id: id.clone(),
             agent,
             workspace_id: workspace_id.to_string(),
             workspace_path,
             permissions: Arc::clone(&self.deps.permissions),
             workspaces: Arc::clone(&self.deps.workspaces),
             stderr_tail: Arc::clone(&stderr_tail),
+            sessions: Arc::clone(&self.sessions),
         };
-        tokio::spawn(run_actor(actor, receiver, ready_tx));
+        tokio::spawn(run_actor(actor, receiver, ready_tx, registered_rx));
 
         // Do not publish a session until its agent has initialized and supplied
         // an ACP session ID. A dead-on-arrival child is reported with its tail.
@@ -225,6 +268,10 @@ impl ACPClient for Client {
                     stderr_tail,
                 },
             );
+        // The actor waits for this handoff before accepting commands. That
+        // eliminates the race where a connection could exit just after startup
+        // but before its owning local session entry was registered.
+        let _ = registered_tx.send(());
         Ok(info)
     }
 
@@ -252,9 +299,8 @@ impl ACPClient for Client {
         content: &str,
         _attachments: &[Attachment],
     ) -> Result<(), AppError> {
-        let sender = self.session_sender(session_id)?;
+        let sender = self.begin_prompt(session_id)?;
         let (result_tx, result_rx) = oneshot::channel();
-        self.update_state(session_id, SessionState::Running);
         sender
             .send(ActorCommand::Prompt {
                 content: content.to_string(),
@@ -313,18 +359,28 @@ impl ACPClient for Client {
     }
 
     async fn close_session(&self, session_id: &str) -> Result<(), AppError> {
-        let sender = self.session_sender(session_id)?;
-        let (closed_tx, closed_rx) = oneshot::channel();
-        sender
-            .send(ActorCommand::Close(closed_tx))
-            .await
-            .map_err(|_| AppError::internal("ACP session actor is unavailable"))?;
-        let _ = closed_rx.await;
-        self.deps.permissions.clear_session(session_id);
-        self.sessions
+        // Removing first makes close idempotent from the public registry's
+        // perspective and prevents new work from being queued while teardown
+        // is in progress. The actor still owns the sender copied below.
+        let entry = self
+            .sessions
             .write()
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
-            .remove(session_id);
+            .remove(session_id)
+            .ok_or_else(|| AppError::not_found("session"))?;
+        self.deps.permissions.clear_session(session_id);
+        let (closed_tx, closed_rx) = oneshot::channel();
+        if entry
+            .commands
+            .send(ActorCommand::Close(closed_tx))
+            .await
+            .is_ok()
+        {
+            // The actor acknowledges only after it has dropped the SDK
+            // connection and reaped its child, so public close never returns
+            // while an owned agent process remains alive.
+            let _ = closed_rx.await;
+        }
         Ok(())
     }
 
@@ -369,30 +425,71 @@ enum ActorCommand {
 }
 
 struct ActorConfig {
+    local_session_id: String,
     agent: AgentInfo,
     workspace_id: String,
     workspace_path: PathBuf,
     permissions: Arc<dyn PermissionManager>,
     workspaces: Arc<dyn WorkspaceManager>,
     stderr_tail: Arc<Mutex<StderrTail>>,
+    sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
 }
 
 async fn run_actor(
     config: ActorConfig,
     mut commands: mpsc::Receiver<ActorCommand>,
     ready: oneshot::Sender<Result<(), AppError>>,
+    registered: oneshot::Receiver<()>,
 ) {
-    let result = run_actor_inner(config, &mut commands, ready).await;
-    if let Err(error) = result {
-        tracing::warn!(error = %error, "ACP session actor ended");
+    let mut ready = Some(ready);
+    let mut registered = Some(registered);
+    let result = run_actor_inner(&config, &mut commands, &mut ready, &mut registered).await;
+    match result {
+        Ok(ActorExit::Closed(close_results)) => {
+            for result in close_results {
+                let _ = result.send(());
+            }
+        }
+        Err(error) => {
+            if let Some(ready) = ready.take() {
+                let _ = ready.send(Err(startup_error(&error, &config.stderr_tail)));
+            }
+            fail_session(&config);
+            tracing::warn!(error = %error, "ACP session actor ended");
+        }
+    }
+}
+
+/// Mark a live session failed and clear permission state after actor loss.
+fn fail_session(config: &ActorConfig) {
+    if let Ok(mut sessions) = config.sessions.write() {
+        if let Some(entry) = sessions.get_mut(&config.local_session_id) {
+            entry.state = SessionState::Failed;
+            entry.info.status = SessionState::Failed.as_str().to_string();
+            entry.info.updated_at = Utc::now();
+        }
+    }
+    config.permissions.clear_session(&config.local_session_id);
+}
+
+/// Add a bounded, line-redacted agent diagnostic to startup failures.
+fn startup_error(error: &AppError, stderr_tail: &Arc<Mutex<StderrTail>>) -> AppError {
+    let stderr = stderr_tail
+        .lock()
+        .map_or_else(|_| String::new(), |tail| tail.safe_diagnostic());
+    if stderr.is_empty() {
+        AppError::internal(error.to_string())
+    } else {
+        AppError::internal(format!("{error} (agent stderr: {stderr})"))
     }
 }
 
 async fn run_actor_inner(
-    config: ActorConfig,
+    config: &ActorConfig,
     commands: &mut mpsc::Receiver<ActorCommand>,
-    ready: oneshot::Sender<Result<(), AppError>>,
-) -> Result<(), AppError> {
+    ready: &mut Option<oneshot::Sender<Result<(), AppError>>>,
+    registered: &mut Option<oneshot::Receiver<()>>,
+) -> Result<ActorExit, AppError> {
     let mut command = Command::new(&config.agent.command);
     command
         .args(&config.agent.args)
@@ -417,12 +514,16 @@ async fn run_actor_inner(
     }
     let transport = ByteStreams::new(stdin, stdout);
     let terminals = Arc::new(Mutex::new(HashMap::new()));
+    let handler_cancel = CancellationToken::new();
     let read_deps = HandlerDeps {
+        local_session_id: config.local_session_id.clone(),
         workspace_id: config.workspace_id.clone(),
         workspace_path: config.workspace_path.clone(),
         workspaces: Arc::clone(&config.workspaces),
         permissions: Arc::clone(&config.permissions),
         terminals: Arc::clone(&terminals),
+        cancellation: handler_cancel.clone(),
+        callback_slots: Arc::new(Semaphore::new(MAX_CALLBACK_TASKS)),
     };
     let write_deps = read_deps.clone();
     let permission_deps = read_deps.clone();
@@ -441,7 +542,11 @@ async fn run_actor_inner(
         .on_receive_request(
             async move |request: ReadTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
                 let deps = read_deps.clone();
-                tokio::spawn(async move {
+                let Some(permit) = callback_permit(&deps) else {
+                    let _ = responder.respond_with_internal_error(callback_limit_error());
+                    return Ok(());
+                };
+                spawn_callback(deps.cancellation.clone(), permit, async move {
                     match read_text_file(deps, request).await {
                         Ok(response) => {
                             let _ = responder.respond(response);
@@ -459,7 +564,11 @@ async fn run_actor_inner(
         .on_receive_request(
             async move |request: WriteTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
                 let deps = write_deps.clone();
-                tokio::spawn(async move {
+                let Some(permit) = callback_permit(&deps) else {
+                    let _ = responder.respond_with_internal_error(callback_limit_error());
+                    return Ok(());
+                };
+                spawn_callback(deps.cancellation.clone(), permit, async move {
                     match write_text_file(deps, request).await {
                         Ok(response) => {
                             let _ = responder.respond(response);
@@ -480,7 +589,11 @@ async fn run_actor_inner(
                 // The permission manager waits for a user device. It must not
                 // block the SDK dispatch task, or the agent cannot process
                 // cancellation and unrelated callbacks while waiting.
-                tokio::spawn(async move {
+                let Some(permit) = callback_permit(&deps) else {
+                    let _ = responder.respond_with_internal_error(callback_limit_error());
+                    return Ok(());
+                };
+                spawn_callback(deps.cancellation.clone(), permit, async move {
                     let response = request_permission(deps, request).await;
                     let _ = responder.respond(response);
                 });
@@ -491,7 +604,11 @@ async fn run_actor_inner(
         .on_receive_request(
             async move |request: CreateTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
                 let deps = terminal_deps.clone();
-                tokio::spawn(async move {
+                let Some(permit) = callback_permit(&deps) else {
+                    let _ = responder.respond_with_internal_error(callback_limit_error());
+                    return Ok(());
+                };
+                spawn_callback(deps.cancellation.clone(), permit, async move {
                     match create_terminal(deps, request) {
                         Ok(response) => {
                             let _ = responder.respond(response);
@@ -509,7 +626,11 @@ async fn run_actor_inner(
         .on_receive_request(
             async move |request: TerminalOutputRequest, responder, _cx: ConnectionTo<Agent>| {
                 let deps = terminal_output_deps.clone();
-                tokio::spawn(async move {
+                let Some(permit) = callback_permit(&deps) else {
+                    let _ = responder.respond_with_internal_error(callback_limit_error());
+                    return Ok(());
+                };
+                spawn_callback(deps.cancellation.clone(), permit, async move {
                     match terminal_output(deps, request) {
                         Ok(response) => {
                             let _ = responder.respond(response);
@@ -531,7 +652,11 @@ async fn run_actor_inner(
                 let deps = terminal_wait_deps.clone();
                 // A terminal can run indefinitely. Waiting in this task would
                 // stop the SDK from dispatching cancellation and other callbacks.
-                tokio::spawn(async move {
+                let Some(permit) = callback_permit(&deps) else {
+                    let _ = responder.respond_with_internal_error(callback_limit_error());
+                    return Ok(());
+                };
+                spawn_callback(deps.cancellation.clone(), permit, async move {
                     match wait_for_terminal_exit(deps, request).await {
                         Ok(response) => {
                             let _ = responder.respond(response);
@@ -549,7 +674,11 @@ async fn run_actor_inner(
         .on_receive_request(
             async move |request: KillTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
                 let deps = terminal_kill_deps.clone();
-                tokio::spawn(async move {
+                let Some(permit) = callback_permit(&deps) else {
+                    let _ = responder.respond_with_internal_error(callback_limit_error());
+                    return Ok(());
+                };
+                spawn_callback(deps.cancellation.clone(), permit, async move {
                     match kill_terminal(deps, request) {
                         Ok(response) => {
                             let _ = responder.respond(response);
@@ -567,7 +696,11 @@ async fn run_actor_inner(
         .on_receive_request(
             async move |request: ReleaseTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
                 let deps = terminal_release_deps.clone();
-                tokio::spawn(async move {
+                let Some(permit) = callback_permit(&deps) else {
+                    let _ = responder.respond_with_internal_error(callback_limit_error());
+                    return Ok(());
+                };
+                spawn_callback(deps.cancellation.clone(), permit, async move {
                     match release_terminal(deps, request) {
                         Ok(response) => {
                             let _ = responder.respond(response);
@@ -597,55 +730,158 @@ async fn run_actor_inner(
                 .block_task()
                 .await
                 .map_err(|_| agent_client_protocol::Error::internal_error())?;
-            let _ = ready.send(Ok(()));
+            if let Some(ready) = ready.take() {
+                let _ = ready.send(Ok(()));
+            }
+            if let Some(registered) = registered.take() {
+                registered
+                    .await
+                    .map_err(|_| agent_client_protocol::Error::internal_error())?;
+            }
             actor_loop(cx, session.session_id, commands).await
         })
         .await;
+    handler_cancel.cancel();
     cancel_terminals(&terminals);
     let _ = child.kill();
     let _ = child.status().await;
     connected.map_err(|error| AppError::internal(format!("ACP connection: {error}")))
 }
 
+/// Outcome returned by the connection-owning actor loop.
+enum ActorExit {
+    Closed(Vec<oneshot::Sender<()>>),
+}
+
 async fn actor_loop(
     cx: ConnectionTo<Agent>,
     agent_session_id: SessionId,
     commands: &mut mpsc::Receiver<ActorCommand>,
-) -> Result<(), agent_client_protocol::Error> {
+) -> Result<ActorExit, agent_client_protocol::Error> {
     while let Some(command) = commands.recv().await {
         match command {
             ActorCommand::Prompt { content, result } => {
-                let reply = cx
-                    .send_request(PromptRequest::new(
-                        agent_session_id.clone(),
-                        vec![ContentBlock::Text(TextContent::new(content))],
-                    ))
-                    .block_task()
-                    .await
-                    .map(|_| ())
-                    .map_err(|error| AppError::internal(format!("ACP prompt: {error}")));
-                let _ = result.send(reply);
+                match await_prompt(
+                    cx.clone(),
+                    agent_session_id.clone(),
+                    content,
+                    result,
+                    commands,
+                )
+                .await?
+                {
+                    PromptExit::Continue => {}
+                    PromptExit::Closed(results) => return Ok(ActorExit::Closed(results)),
+                }
             }
             ActorCommand::Cancel => {
                 cx.send_notification(CancelNotification::new(agent_session_id.clone()))
                     .map_err(|_| agent_client_protocol::Error::internal_error())?;
             }
             ActorCommand::Close(result) => {
-                let _ = result.send(());
-                break;
+                return Ok(ActorExit::Closed(vec![result]));
             }
         }
     }
-    Ok(())
+    Err(agent_client_protocol::Error::internal_error())
+}
+
+enum PromptExit {
+    Continue,
+    Closed(Vec<oneshot::Sender<()>>),
+}
+
+/// Await one prompt while continuing to receive session control commands.
+async fn await_prompt(
+    cx: ConnectionTo<Agent>,
+    agent_session_id: SessionId,
+    content: String,
+    result: oneshot::Sender<Result<(), AppError>>,
+    commands: &mut mpsc::Receiver<ActorCommand>,
+) -> Result<PromptExit, agent_client_protocol::Error> {
+    let prompt = cx
+        .send_request(PromptRequest::new(
+            agent_session_id.clone(),
+            vec![ContentBlock::Text(TextContent::new(content))],
+        ))
+        .block_task();
+    tokio::pin!(prompt);
+    let mut result = Some(result);
+
+    loop {
+        tokio::select! {
+            reply = &mut prompt => {
+                if let Some(result) = result.take() {
+                    let reply = reply
+                        .map(|_| ())
+                        .map_err(|error| AppError::internal(format!("ACP prompt: {error}")));
+                    let _ = result.send(reply);
+                }
+                return Ok(PromptExit::Continue);
+            }
+            command = commands.recv() => {
+                match command {
+                    Some(ActorCommand::Cancel) => {
+                        let cancel = cx
+                            .send_notification(CancelNotification::new(agent_session_id.clone()))
+                            .map_err(|_| agent_client_protocol::Error::internal_error());
+                        if let Some(result) = result.take() {
+                            let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
+                        }
+                        cancel?;
+                        return Ok(PromptExit::Continue);
+                    }
+                    Some(ActorCommand::Close(close)) => {
+                        if let Some(result) = result.take() {
+                            let _ = result.send(Err(AppError::internal("ACP session closed during prompt")));
+                        }
+                        return Ok(PromptExit::Closed(vec![close]));
+                    }
+                    Some(ActorCommand::Prompt { result, .. }) => {
+                        let _ = result.send(Err(AppError::validation(
+                            "ACP session already has an active prompt",
+                        )));
+                    }
+                    None => return Err(agent_client_protocol::Error::internal_error()),
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
 struct HandlerDeps {
+    local_session_id: String,
     workspace_id: String,
     workspace_path: PathBuf,
     workspaces: Arc<dyn WorkspaceManager>,
     permissions: Arc<dyn PermissionManager>,
     terminals: TerminalRegistry,
+    cancellation: CancellationToken,
+    callback_slots: Arc<Semaphore>,
+}
+
+/// Reserve one bounded callback worker without blocking SDK request dispatch.
+fn callback_permit(deps: &HandlerDeps) -> Option<OwnedSemaphorePermit> {
+    deps.callback_slots.clone().try_acquire_owned().ok()
+}
+
+/// Run a callback until it completes or its owning ACP session closes.
+fn spawn_callback<F>(cancellation: CancellationToken, permit: OwnedSemaphorePermit, future: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(async move {
+        let _permit = permit;
+        tokio::select! {
+            () = cancellation.cancelled() => {}
+            () = future => {}
+        }
+    });
+}
+
+fn callback_limit_error() -> AppError {
+    AppError::internal("ACP callback capacity exceeded")
 }
 
 type TerminalRegistry = Arc<Mutex<HashMap<String, Arc<TerminalState>>>>;
@@ -699,6 +935,9 @@ fn create_terminal(
     deps: HandlerDeps,
     request: CreateTerminalRequest,
 ) -> Result<CreateTerminalResponse, AppError> {
+    if deps.cancellation.is_cancelled() {
+        return Err(AppError::internal("ACP session is closing"));
+    }
     let cwd = terminal_cwd(&deps.workspace_path, request.cwd.as_deref())?;
     let limit = request
         .output_byte_limit
@@ -708,17 +947,22 @@ fn create_terminal(
                 .min(MAX_TERMINAL_OUTPUT_BYTES)
         });
     let terminal_id = format!("term-{}", Uuid::new_v4().simple());
-    let cancel = CancellationToken::new();
     let (exit, _) = watch::channel(None);
     let state = Arc::new(TerminalState {
-        cancel: cancel.clone(),
+        cancel: deps.cancellation.child_token(),
         output: Mutex::new(RetainedOutput::new(limit)),
         exit,
     });
-    deps.terminals
-        .lock()
-        .map_err(|_| AppError::internal("ACP terminal registry lock poisoned"))?
-        .insert(terminal_id.clone(), Arc::clone(&state));
+    {
+        let mut terminals = deps
+            .terminals
+            .lock()
+            .map_err(|_| AppError::internal("ACP terminal registry lock poisoned"))?;
+        if terminals.len() >= MAX_TERMINALS_PER_SESSION {
+            return Err(AppError::internal("ACP terminal capacity exceeded"));
+        }
+        terminals.insert(terminal_id.clone(), Arc::clone(&state));
+    }
 
     let env = merge_env(
         std::env::vars(),
@@ -738,7 +982,7 @@ fn create_terminal(
         let stderr_state = Arc::clone(&state);
         let (result, error) = executor
             .run_async_args(
-                cancel,
+                state.cancel.clone(),
                 &command,
                 &args,
                 cwd.as_deref(),
@@ -835,10 +1079,11 @@ fn append_terminal_output(state: &TerminalState, line: &str) {
 
 /// Cancel every terminal when its owning ACP session disconnects.
 fn cancel_terminals(registry: &TerminalRegistry) {
-    if let Ok(terminals) = registry.lock() {
+    if let Ok(mut terminals) = registry.lock() {
         for terminal in terminals.values() {
             terminal.cancel.cancel();
         }
+        terminals.clear();
     }
 }
 
@@ -949,7 +1194,10 @@ async fn request_permission(
         .collect();
     let permission = crate::interfaces::PermissionRequest {
         id: Uuid::new_v4().to_string(),
-        session_id: request.session_id.to_string(),
+        // Agent session IDs are protocol transport identifiers. Permissions
+        // belong to the local lifecycle entry so close clears its exact
+        // pending prompts and durable policies.
+        session_id: deps.local_session_id.clone(),
         tool,
         tool_kind,
         command,
@@ -1069,6 +1317,23 @@ impl StderrTail {
     fn as_string(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
     }
+
+    /// Return a bounded startup diagnostic without obvious credential-bearing lines.
+    fn safe_diagnostic(&self) -> String {
+        self.as_string()
+            .lines()
+            .filter(|line| {
+                let line = line.to_ascii_lowercase();
+                !line.contains("token") && !line.contains("password") && !line.contains("api_key")
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(STDERR_TAIL_BYTES)
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
 }
 
 #[allow(dead_code)]
@@ -1081,7 +1346,113 @@ fn path_to_workspace_relative(root: &Path, path: &Path) -> Result<String, AppErr
 
 #[cfg(test)]
 mod tests {
-    use super::RetainedOutput;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use tempfile::TempDir;
+
+    use super::{AgentRegistry, Client, ClientDeps, RetainedOutput};
+    use crate::config::{AgentInfo, AgentModel};
+    use crate::interfaces::{
+        ACPClient, AppError, PermissionDecision, PermissionManager, PermissionRequest,
+        WorkspaceManager,
+    };
+    use crate::workspace::Manager as WorkspaceRegistry;
+
+    const MOCKAGENT_BIN: &str = "/tmp/mockagent";
+
+    /// Records only session cleanup so the test can prove the local ID is used.
+    #[derive(Default)]
+    struct RecordingPermissions {
+        cleared_sessions: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl PermissionManager for RecordingPermissions {
+        async fn request(
+            &self,
+            _request: PermissionRequest,
+        ) -> Result<PermissionDecision, AppError> {
+            Ok(PermissionDecision::Deny)
+        }
+
+        async fn respond(
+            &self,
+            _request_id: &str,
+            _decision: PermissionDecision,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+
+        fn clear_session(&self, session_id: &str) {
+            if let Ok(mut cleared) = self.cleared_sessions.lock() {
+                cleared.push(session_id.to_string());
+            }
+        }
+
+        fn get_pending(&self) -> Vec<PermissionRequest> {
+            Vec::new()
+        }
+    }
+
+    /// Create an isolated local ACP client backed by the deterministic Go fixture.
+    async fn mock_client() -> (Arc<Client>, Arc<RecordingPermissions>, TempDir) {
+        assert!(
+            Path::new(MOCKAGENT_BIN).exists(),
+            "mockagent binary missing at {MOCKAGENT_BIN}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/`"
+        );
+        let tempdir = TempDir::new().expect("temporary workspace");
+        let workspaces = Arc::new(WorkspaceRegistry::new());
+        let workspace = workspaces
+            .register(tempdir.path().to_str().expect("UTF-8 temporary workspace"))
+            .await
+            .expect("register temporary workspace");
+        let permissions = Arc::new(RecordingPermissions::default());
+        let registry = Arc::new(AgentRegistry::from_agents([AgentInfo {
+            id: "mock".to_string(),
+            name: "Mock agent".to_string(),
+            command: MOCKAGENT_BIN.to_string(),
+            args: Vec::new(),
+            models: vec![AgentModel {
+                id: "mock-model".to_string(),
+                name: "Mock model".to_string(),
+            }],
+            warning: String::new(),
+        }]));
+        let client = Arc::new(Client::new(ClientDeps {
+            registry,
+            workspaces,
+            permissions: permissions.clone(),
+        }));
+        let session = client
+            .create_session("mock", "mock-model", &workspace.id)
+            .await
+            .expect("create mock ACP session");
+        client
+            .rename_session(&session.id, "Mock session")
+            .expect("session remains registered after startup");
+        (client, permissions, tempdir)
+    }
+
+    /// Wait until `send_prompt` has atomically reserved the session's turn.
+    async fn wait_until_running(client: &Client, session_id: &str) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if client
+                    .get_session_info(session_id)
+                    .map(|session| session.status == "running")
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("prompt did not reserve its session slot");
+    }
 
     #[test]
     fn retained_terminal_output_truncates_at_utf8_boundary() {
@@ -1092,5 +1463,92 @@ mod tests {
         assert!(output.truncated);
         assert!(output.text.len() <= 5);
         assert!(std::str::from_utf8(output.text.as_bytes()).is_ok());
+    }
+
+    /// A prompt RPC must not monopolize the actor's control receiver.
+    #[tokio::test]
+    async fn cancel_preempts_prompt_and_rejects_second_prompt() {
+        let (client, _permissions, _workspace) = mock_client().await;
+        let session = client.list_sessions().pop().expect("one mock session");
+        let session_id = session.id.clone();
+        let prompt_client = Arc::clone(&client);
+        let prompt_session_id = session_id.clone();
+        let prompt = tokio::spawn(async move {
+            prompt_client
+                .send_prompt(&prompt_session_id, "please stream a response slowly", &[])
+                .await
+        });
+        wait_until_running(&client, &session_id).await;
+
+        // `send_prompt` reserves the single active slot before it enters the
+        // actor channel, so this assertion has no dependency on agent IO.
+        let second = client
+            .send_prompt(&session_id, "concurrent prompt", &[])
+            .await
+            .expect_err("a second prompt must not be queued as another active turn");
+        assert!(
+            second.to_string().contains("active prompt"),
+            "unexpected concurrent-prompt error: {second}"
+        );
+
+        tokio::time::timeout(Duration::from_secs(2), client.cancel_session(&session_id))
+            .await
+            .expect("cancel must be serviced while prompt is in flight")
+            .expect("cancel session");
+        let prompt_result = tokio::time::timeout(Duration::from_secs(2), prompt)
+            .await
+            .expect("cancelled prompt task must finish")
+            .expect("cancelled prompt task must not panic");
+        assert!(
+            prompt_result.is_err(),
+            "cancelled prompt unexpectedly succeeded"
+        );
+
+        client
+            .close_session(&session_id)
+            .await
+            .expect("close after cancellation");
+    }
+
+    /// Close must interrupt a prompt, reap the actor, and clean local permission state.
+    #[tokio::test]
+    async fn close_preempts_prompt_and_clears_local_permission_state() {
+        let (client, permissions, _workspace) = mock_client().await;
+        let session = client.list_sessions().pop().expect("one mock session");
+        let session_id = session.id.clone();
+        let prompt_client = Arc::clone(&client);
+        let prompt_session_id = session_id.clone();
+        let prompt = tokio::spawn(async move {
+            prompt_client
+                .send_prompt(&prompt_session_id, "please stream a response slowly", &[])
+                .await
+        });
+        wait_until_running(&client, &session_id).await;
+
+        tokio::time::timeout(Duration::from_secs(2), client.close_session(&session_id))
+            .await
+            .expect("close must not wait for a prompt RPC")
+            .expect("close session");
+        let prompt_result = tokio::time::timeout(Duration::from_secs(2), prompt)
+            .await
+            .expect("closed prompt task must finish")
+            .expect("closed prompt task must not panic");
+        assert!(
+            prompt_result.is_err(),
+            "closed prompt unexpectedly succeeded"
+        );
+        assert!(
+            client.get_session_info(&session_id).is_err(),
+            "closed session must not remain callable"
+        );
+
+        let cleared = permissions
+            .cleared_sessions
+            .lock()
+            .expect("recording permissions lock");
+        assert!(
+            cleared.iter().any(|id| id == &session_id),
+            "close did not clear permissions using local session ID; cleared: {cleared:?}"
+        );
     }
 }

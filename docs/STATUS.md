@@ -33,7 +33,7 @@
 - [ ] **Rust backend port** — Phase 0–2 complete (245 tests). Phase 3 in progress:
   S-MCP/S-ACP-AUTODETECT/S-WORKSPACE/S-PAIRING complete (268 tests); ACP core
   transport/actor and secure filesystem, permission, and terminal handlers are in place;
-  lifecycle integration tests and stream/context/provider stories remain.
+  lifecycle hardening tests are in place; stream/context/provider stories remain.
 
 ## Blocked
 
@@ -46,7 +46,8 @@
   `async_process` + SDK `ByteStreams`, workspace cwd, owned child teardown, and
   bounded stderr tails. Filesystem, permission, and terminal callbacks now enforce
   workspace containment, bounded output, child cancellation, and non-blocking waits.
-  Lifecycle integration tests remain in this story.
+  Actor control now preempts prompts for cancel/close, failures mark sessions failed,
+  permission cleanup uses local IDs, and callback/terminal resources are bounded.
 - **07-17** — Rust port **S-MCP** and **S-ACP-AUTODETECT** complete.
   `src/mcp` provides compatible atomic MCP config persistence, transport capability
   conversion, environment expansion, and bounded health checks. `src/acp` now has a

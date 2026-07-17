@@ -80,7 +80,7 @@ async fn mockagent_session_prompt_cancel_close_lifecycle() {
         .await
         .expect("prompt did not finish")
         .expect("prompt task panicked")
-        .expect("mockagent prompt failed");
+        .expect_err("cancelled prompt must return without waiting for agent completion");
 
     assert_eq!(
         client
