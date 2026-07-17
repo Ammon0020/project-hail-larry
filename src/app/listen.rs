@@ -1,109 +1,187 @@
-//! HTTP listener composition for the browser smoke-test server.
+//! Coordinated HTTP and HTTPS listeners for the daemon.
 //!
-//! This is deliberately a small composition root, not the future full daemon:
-//! it loads local config, constructs the services required by the first browser
-//! path, and binds one HTTP listener. TLS dual-listening remains S-DAEMON work.
+//! TLS mode binds both configured addresses before serving either one. A failed
+//! HTTPS bind therefore cannot silently downgrade a TLS-enabled daemon to
+//! cleartext-only operation.
 
+use std::fs::File;
+use std::io::BufReader;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use axum::Router;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder as ConnectionBuilder;
+use hyper_util::service::TowerToHyperService;
 use tokio::net::TcpListener;
-use tracing::info;
+use tokio_rustls::TlsAcceptor;
+use tokio_util::sync::CancellationToken;
+use tower::ServiceExt;
+use tracing::{info, warn};
 
-use crate::acp::{AgentRegistry, Client, ClientDeps};
-use crate::api::{self, AppState};
-use crate::config::{Config, ConfigStore};
-use crate::events::EventBus;
-use crate::interfaces::WorkspaceManager;
-use crate::pairing::Manager as PairingManager;
-use crate::permissions::Manager as PermissionsManager;
-use crate::sync::Hub;
-use crate::workspace::Manager as WorkspaceManagerImpl;
+use crate::config::Config;
 
-/// Build the first-batch HTTP state from persistent local configuration.
-///
-/// The state directory is created before SQLite and pairing state are opened;
-/// a failure is returned to the CLI rather than making a partially configured
-/// listener available.
-pub async fn build_http_state() -> Result<AppState> {
-    let config = Config::load().context("load local-agent configuration")?;
-    std::fs::create_dir_all(&config.data_dir)
-        .with_context(|| format!("create state directory {}", config.data_dir))?;
+use super::daemon::{resolved_https_port, BoundAddresses};
+use super::tls_cert;
 
-    let store = ConfigStore::new(config.clone());
-    let workspaces = Arc::new(WorkspaceManagerImpl::new());
-    for path in &config.workspaces {
-        if let Err(error) = workspaces.register(path).await {
-            // A missing workspace must not stop the local UI from showing the
-            // rest of its state. It is surfaced loudly for repair by the host.
-            tracing::warn!(workspace = %path, %error, "skipping unavailable configured workspace");
-        }
-    }
-
-    let pairing =
-        PairingManager::new(Path::new(&config.data_dir), None).context("open pairing state")?;
-    if config.pairing_ttl_seconds > 0 {
-        pairing.set_session_ttl(Duration::from_secs(config.pairing_ttl_seconds as u64));
-    }
-    if config.credential_inactivity_ttl_seconds > 0 {
-        pairing.set_inactivity_ttl(Duration::from_secs(
-            config.credential_inactivity_ttl_seconds as u64,
-        ));
-    }
-
-    let events = Arc::new(EventBus::open(&config.db_path).context("open event store")?);
-    let hub = Hub::with_event_bus(Arc::clone(&events));
-    let permissions = PermissionsManager::new(None);
-    // Detaching is intentional: the task holds only a weak reference and exits
-    // when AppState drops, while its timer prevents stale ACP permission waits.
-    let _permission_sweeper = permissions.start_sweeper();
-    let registry = Arc::new(AgentRegistry::from_agents(config.agents));
-    let acp = Arc::new(Client::new(ClientDeps {
-        registry,
-        workspaces: workspaces.clone(),
-        permissions: permissions.clone(),
-        event_bus: events.clone(),
-        conversation_store: crate::acp::ConversationStore::new(Some(
-            Path::new(&config.data_dir).join("conversations.json"),
-        )),
-    }));
-
-    Ok(AppState::new(
-        store,
-        pairing,
-        workspaces,
-        events,
-        hub,
-        acp,
-        permissions,
-    ))
+/// TCP listeners already bound for a daemon run.
+pub struct Listeners {
+    http: TcpListener,
+    https: Option<(TcpListener, TlsAcceptor)>,
 }
 
-/// Bind the configured HTTP address and serve the UI-smoke router.
-///
-/// Axum/hyper exposes header/body and request cancellation controls rather
-/// than Go's exact `http.Server` timeout fields. The 10 MB router limit and
-/// WebSocket-level limits are active now; read/write/idle timeout parity is
-/// deferred with TLS dual-listening.
-pub async fn serve_http() -> Result<()> {
-    let state = build_http_state().await?;
-    let config = state.config.read().clone();
-    let port = u16::try_from(config.port)
-        .map_err(|_| anyhow!("invalid configured port {}", config.port))?;
-    let address: SocketAddr = format!("{}:{port}", config.host)
-        .parse()
-        .with_context(|| format!("parse HTTP listen address {}:{port}", config.host))?;
-    let listener = TcpListener::bind(address)
+impl Listeners {
+    /// Return the concrete OS-assigned addresses.
+    pub fn addresses(&self) -> BoundAddresses {
+        BoundAddresses {
+            http: self.http.local_addr().unwrap_or_else(|_| {
+                // Binding succeeded; this fallback is only for an OS error
+                // querying a listener already scheduled to close.
+                SocketAddr::from(([0, 0, 0, 0], 0))
+            }),
+            https: self
+                .https
+                .as_ref()
+                .and_then(|(listener, _)| listener.local_addr().ok()),
+        }
+    }
+}
+
+/// Bind HTTP and, when configured, HTTPS listeners.
+pub async fn bind(config: &Config) -> Result<Listeners> {
+    let http_address = socket_address(&config.host, config.port)?;
+    let http = TcpListener::bind(http_address)
         .await
-        .with_context(|| format!("bind HTTP listener at {address}"))?;
-    info!(address = %address, "serving local-agent UI smoke HTTP endpoint");
-    axum::serve(
-        listener,
-        api::router(state).into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
-    .context("HTTP listener exited")
+        .with_context(|| format!("bind HTTP listener at {http_address}"))?;
+
+    if !config.tls_enabled {
+        if is_wildcard_host(&config.host) {
+            warn!("TLS is disabled while HTTP is bound to all interfaces; credentials travel in cleartext");
+        }
+        return Ok(Listeners { http, https: None });
+    }
+
+    let https_address = socket_address(&config.host, resolved_https_port(config)?)?;
+    let cert_dir = if config.tls_cert_dir.is_empty() {
+        std::path::Path::new(&config.data_dir).join("tls")
+    } else {
+        std::path::PathBuf::from(&config.tls_cert_dir)
+    };
+    let cert_paths = tls_cert::ensure_self_signed(&cert_dir, &config.host)?;
+    let tls = load_tls_acceptor(&cert_paths)?;
+    let https = TcpListener::bind(https_address)
+        .await
+        .with_context(|| format!("bind HTTPS listener at {https_address}"))?;
+    Ok(Listeners {
+        http,
+        https: Some((https, tls)),
+    })
+}
+
+/// Serve all bound listeners until cancellation, gracefully draining HTTP.
+pub async fn serve(listeners: Listeners, router: Router, cancel: CancellationToken) -> Result<()> {
+    let Listeners { http, https } = listeners;
+    let http_cancel = cancel.child_token();
+    let http_router = router.clone();
+    let http = async move {
+        axum::serve(
+            http,
+            http_router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(http_cancel.cancelled_owned())
+        .await
+        .context("HTTP listener exited")
+    };
+
+    let https = async move {
+        match https {
+            Some((listener, acceptor)) => serve_https(listener, acceptor, router, cancel).await,
+            None => Ok(()),
+        }
+    };
+
+    tokio::try_join!(http, https)?;
+    Ok(())
+}
+
+async fn serve_https(
+    listener: TcpListener,
+    acceptor: TlsAcceptor,
+    router: Router,
+    cancel: CancellationToken,
+) -> Result<()> {
+    let make_service = router.into_make_service_with_connect_info::<SocketAddr>();
+    info!(address = %listener.local_addr().context("read HTTPS listener address")?, "serving HTTPS endpoint");
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return Ok(()),
+            accepted = listener.accept() => {
+                let (stream, peer) = accepted.context("accept HTTPS connection")?;
+                let acceptor = acceptor.clone();
+                let make_service = make_service.clone();
+                tokio::spawn(async move {
+                    let stream = match acceptor.accept(stream).await {
+                        Ok(stream) => stream,
+                        Err(error) => {
+                            warn!(%peer, %error, "TLS handshake failed");
+                            return;
+                        }
+                    };
+                    let service = match make_service.oneshot(peer).await {
+                        Ok(service) => service,
+                        Err(error) => {
+                            warn!(%peer, %error, "create HTTPS request service failed");
+                            return;
+                        }
+                    };
+                    if let Err(error) = ConnectionBuilder::new(TokioExecutor::new())
+                        .serve_connection_with_upgrades(
+                            TokioIo::new(stream),
+                            TowerToHyperService::new(service),
+                        )
+                        .await
+                    {
+                        warn!(%peer, %error, "HTTPS connection failed");
+                    }
+                });
+            }
+        }
+    }
+}
+
+fn socket_address(host: &str, port: i64) -> Result<SocketAddr> {
+    let port = u16::try_from(port).map_err(|_| anyhow!("invalid configured port {port}"))?;
+    let host = if host.is_empty() { "0.0.0.0" } else { host };
+    format!("{host}:{port}")
+        .parse()
+        .with_context(|| format!("parse listen address {host}:{port}"))
+}
+
+fn is_wildcard_host(host: &str) -> bool {
+    host.is_empty() || matches!(host, "0.0.0.0" | "::")
+}
+
+fn load_tls_acceptor(paths: &tls_cert::CertificatePaths) -> Result<TlsAcceptor> {
+    let cert_file = File::open(&paths.cert)
+        .with_context(|| format!("open TLS certificate {}", paths.cert.display()))?;
+    let mut cert_reader = BufReader::new(cert_file);
+    let certs = rustls_pemfile::certs(&mut cert_reader)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("parse TLS certificate PEM")?;
+    if certs.is_empty() {
+        return Err(anyhow!("TLS certificate PEM contains no certificates"));
+    }
+
+    let key_file = File::open(&paths.key)
+        .with_context(|| format!("open TLS private key {}", paths.key.display()))?;
+    let mut key_reader = BufReader::new(key_file);
+    let key = rustls_pemfile::private_key(&mut key_reader)
+        .context("parse TLS private key PEM")?
+        .ok_or_else(|| anyhow!("TLS private key PEM contains no supported key"))?;
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .context("build rustls server configuration")?;
+    Ok(TlsAcceptor::from(Arc::new(config)))
 }

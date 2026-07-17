@@ -31,7 +31,7 @@ tokio-util = { version = "0.7.16", features = ["rt"] }
 # --- Web framework ---
 # axum: routing, middleware, and built-in WebSocket (replaces net/http +
 # nhooyr.io/websocket). v0.8 line per web-framework.md. Verified 2026-07-15.
-axum = { version = "0.8", features = ["ws", "macros"] }
+axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
 # tower: Service/Layer primitives consumed by axum middleware composition.
 # Verified 2026-07-15.
 tower = { version = "0.5", features = ["util"] }
@@ -55,6 +55,14 @@ governor = "0.8"
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "logging", "std", "tls12"] }
 # tokio-rustls: async TLS accept loop wrapper around rustls. Verified 2026-07-15.
 tokio-rustls = "0.26"
+# rcgen creates the daemon's ECDSA P-256 trust-on-first-use certificate; PEM
+# files are persisted atomically under tlsCertDir. Verified 2026-07-17.
+rcgen = { version = "0.14.8", default-features = false, features = ["aws_lc_rs", "pem"] }
+# rustls-pemfile loads the generated cert/key into the tokio-rustls listener.
+rustls-pemfile = "2.2.0"
+# hyper-util adapts Axum's tower request service to TLS streams accepted by
+# tokio-rustls. `axum-server` is deliberately not used (S-SERVER decision).
+hyper-util = { version = "0.1.20", features = ["server-auto", "service", "tokio"] }
 
 # --- HTTP client ---
 # reqwest: outbound HTTPS for ACP auth (PKCE) and agent provider callbacks.

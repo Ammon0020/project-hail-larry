@@ -19,6 +19,7 @@ pub use autodetect::{
     autodetect, autodetect_with, valid_commands_for_agent, AutodetectOptions, ProviderProbe,
 };
 pub use context::{EditorSelection, OpenFilesTracker};
+pub use conversation::export_conversation;
 pub use core::{Client, ClientDeps, SessionState, STDERR_TAIL_BYTES};
 pub use providers::SessionCaps;
 pub use store::ConversationStore;

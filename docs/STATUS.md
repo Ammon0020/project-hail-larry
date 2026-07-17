@@ -30,9 +30,9 @@
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — HTTP UI smoke via `local_agent --serve` (needs
-  `cd web && npm run build` first). ACP CONTEXT core/store/rebind are done;
-  REST context/upload endpoints, TLS dual, and daemon/CLI remain open.
+- [ ] **Rust backend port** — Daemon/CLI + dual TLS + REST (providers/MCP/
+  export/context/uploads) landed. Remaining: service install, HTTP timeout
+  parity, pending-actions routes, contract black-box / full E2E.
 
 ## Blocked
 
@@ -40,62 +40,25 @@
 
 ## Recent Changes (2026-07)
 
-- **07-17** — Rust **S-ACP-CONTEXT**: durable `conversations.json` metadata,
-  prompt context (workspace/time/editor/profile), transcript export/transfer,
-  and clean idle-session rebind now live in ACP core. Rebind keeps the stable
-  session ID and SQLite event history, queues a first-prompt transfer, then
-  restarts the actor. Embedded resources are capability-gated. Deferred: REST
-  context tracker updates and persisted-session lazy actor restore.
-- **07-17** — Rust **S-ACP-PROVIDERS batch 1**: `src/acp/providers.rs` + core
-  actor cmds for list/set/disable; `SessionCaps` caches providers +
-  embeddedContext from Initialize. SDK 1.2.0 lacks `unstable_llm_providers`
-  forward — hand-rolled JsonRpcRequest (Go `id` wire); schema feature
-  unification for caps. `switch_model` via set_config_option only (no rebind).
-  Tests: 10 provider unit. Deferred: REST routes (SERVER), rebind (CONTEXT).
-- **07-17** — Rust **S-SERVER first UI-smoke batch**: `src/api/` now mounts
-  health, pair/devices, workspace/files/search, events, sync WS, agent/session
-  CRUD/prompt/cancel/close, permission pending/respond, and embedded SPA fallback.
-  `local_agent --serve` binds configured HTTP (default `:7337`); auth includes
-  Bearer/query credentials, loopback mutation Origin checks, and a 10 MB body
-  cap. Build `web` once (`cd web && npm run build`) before Rust compilation for
-  the embedded SPA; otherwise the route returns a clear development fallback.
-  Remaining before full browser parity: providers/context/uploads, TLS dual
-  listener, raw MIME/range parity, and HTTP timeout parity.
-- **07-17** — Rust port **S-SYNC** complete: `src/sync/{mod,tests}.rs`. Axum WS
-  hub with DashMap client registry, CancellationToken shutdown drain, Go-matching
-  auth/Origin gates (401 before Origin on LAN; loopback+bad Origin → 403), JSON
-  broadcast (cap 64), 30s/10s keepalive, optional `after=` EventBus replay with
-  ID dedupe, and lagged resync (no silent skip). `EventSubscription::recv_or_lag`
-  surfaces lag for hub re-subscribe. Tests: 14 sync. Gaps: S-SERVER mount,
-  contract black-box, permission re-present (out of scope).
-- **07-17** — Rust port **S-ACP-STREAM** implemented: ACP session updates now
-  translate into typed, Go-compatible durable events and are persisted before live
-  publication. Prompt lifecycle emits submitted/started/final-or-exited events;
-  text/thought, tool, and plan updates are mapped with redacted compatibility
-  warnings for unsupported variants. Typed tool payloads now retain Go's status
-  summary and rendered result content. Unit coverage added.
-- **07-17** — Rust port **S-ACP-CORE** started: `src/acp/core.rs` has a
-  constructor-wired session registry and a per-session actor using manual
-  `async_process` + SDK `ByteStreams`, workspace cwd, owned child teardown, and
-  bounded stderr tails. Filesystem, permission, and terminal callbacks now enforce
-  workspace containment, bounded output, child cancellation, and non-blocking waits.
-  Actor control now preempts prompts for cancel/close, failures mark sessions failed,
-  permission cleanup uses local IDs, and callback/terminal resources are bounded.
-  Refactor: shared callback dispatch helpers, single `SessionEntry::apply_state`
-  (new sessions expose `idle`), single close ack, and small dispatch cleanups.
-- **07-17** — Focused Rust review cleanup: hardened dropped shell-future process
-  cleanup, fixed MCP leading-unset expansion, serialized file revisions through
-  blocking writes, corrected config state-dir persistence, and added targeted
-  regression coverage. Deferred broader dependency and architecture proposals.
-- **07-17** — Rust port **S-MCP** / **S-ACP-AUTODETECT** / **S-WORKSPACE** /
-  **S-PAIRING** complete (see git history for detail).
-- **07-16** — **S-PERMISSIONS**, contract runner, **S-FSWATCH**, **S-SHELL**,
-  **S-UPLOADS** complete.
-- **07-15** — **S-MIGRATE**, **S-EVENTS**, S-INTERFACES/CONFIG/PATHUTIL/ARCH.
+- **07-17** — Rust **S-SERVER REST completion**: providers (GET/PUT/DELETE,
+  Unsupported→501), MCP (GET/PUT/PATCH/status), session export/context/uploads,
+  patch rebind/switch_model, prompt profile+attachments. AppState wires mcp path
+  + uploads mutex; daemon passes both. Tests: 15 api::. Gaps: raw MIME/range
+  parity, HTTP timeouts, pending-action routes, contract black-box.
+- **07-17** — Rust **S-DAEMON / S-CLI** foundation: daemon composition, PID
+  status/stop, dual HTTP/HTTPS rustls listeners, clap tree. install-service stub.
+- **07-17** — Rust **S-ACP-CONTEXT**: conversations.json, prompt context,
+  export/transfer, idle rebind. Deferred: persisted-session lazy actor restore.
+- **07-17** — Rust **S-ACP-PROVIDERS** + **S-SERVER UI-smoke** + **S-SYNC** +
+  **S-ACP-STREAM/CORE** (see git history). Provider REST was deferred → done above.
+- **07-17** — Focused Rust review cleanup; **S-MCP** / **S-PAIRING** /
+  **S-WORKSPACE** / **S-ACP-AUTODETECT** complete.
+- **07-16–07-15** — S-PERMISSIONS, S-FSWATCH, S-SHELL, S-UPLOADS, S-MIGRATE,
+  S-EVENTS, S-INTERFACES/CONFIG/PATHUTIL/ARCH.
 - **07-13–07-06** — Chat/MCP/auth/ACP + binary previews; MCP-over-ACP Go SDK gap.
 
 ## Known Gaps (summary — see `docs/known-issues.md`)
 
 - Go ACP SDK still missing `mcp/message` relay (Rust path unblocked).
 - Mobile editor touch; profile mode not wired; pair QR scheme selection.
-- Rust port Phase 1 complete (S-MIGRATE/S-UPLOADS/S-SHELL done); Phase 2+ service ports. Pairing/MCP/ACP semantic load deferred past structural validation.
+- Rust: service install stubs; pending-actions; contract black-box / E2E.

@@ -20,14 +20,19 @@ use crate::fsutil;
 /// Default log directory relative to the user's home: `~/.local-agent/logs/`.
 pub const LOG_DIR_NAME: &str = ".local-agent/logs";
 
+/// Resolve the stable rolling-log directory used by the daemon and CLI.
+pub fn log_dir() -> Result<PathBuf> {
+    let home = fsutil::home_dir().context("could not resolve user home directory for log path")?;
+    Ok(home.join(LOG_DIR_NAME))
+}
+
 /// Initialize file logging to `~/.local-agent/logs/`.
 ///
 /// Returns a `WorkerGuard` that must be kept alive for the process lifetime;
 /// dropping it flushes the non-blocking writer. The current stub wires only
 /// the file appender; console output and `env-filter` tuning land in S-DAEMON.
 pub fn init_file_logging() -> Result<(WorkerGuard, PathBuf)> {
-    let home = fsutil::home_dir().context("could not resolve user home directory for log path")?;
-    let log_dir = home.join(LOG_DIR_NAME);
+    let log_dir = log_dir()?;
     std::fs::create_dir_all(&log_dir)
         .with_context(|| format!("creating log dir {}", log_dir.display()))?;
 

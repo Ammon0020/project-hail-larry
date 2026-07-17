@@ -6,18 +6,22 @@
 //! browser-specific credential and Origin gate.
 
 mod embed;
+mod mcp;
+mod providers;
+mod session_extra;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use axum::body::Body;
-use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, OriginalUri, Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -27,12 +31,13 @@ use crate::acp::{self, Client};
 use crate::config::{AgentInfo, ConfigStore};
 use crate::events::SharedEventBus;
 use crate::interfaces::{
-    map_api_error, ACPClient, AppError, EventStore, PermissionDecision, PermissionManager,
-    SearchOptions, WorkspaceManager,
+    map_api_error, ACPClient, AppError, Attachment, EventStore, PermissionDecision,
+    PermissionManager, SearchOptions, WorkspaceManager,
 };
 use crate::pairing::{Manager as PairingManager, PairingError};
 use crate::permissions::Manager as PermissionsManager;
 use crate::sync::{is_loopback_addr, AuthChecker, Hub};
+use crate::uploads;
 use crate::workspace::Manager as WorkspaceManagerImpl;
 
 /// JSON body size limit for API requests other than the intentionally deferred
@@ -54,6 +59,10 @@ pub struct AppState {
     pub hub: Arc<Hub>,
     pub acp: Arc<Client>,
     pub permissions: Arc<PermissionsManager>,
+    /// Absolute path to `mcp.json`. `None` makes `/api/mcp*` return 503.
+    pub mcp_config_path: Option<PathBuf>,
+    /// Per-session image store. `None` makes upload routes return 503.
+    pub uploads: Option<Arc<Mutex<uploads::Manager>>>,
     pair_rate: Arc<Mutex<HashMap<String, PairRateBucket>>>,
 }
 
@@ -65,7 +74,12 @@ struct PairRateBucket {
 
 impl AppState {
     /// Build state from already-composed service instances.
+    ///
+    /// The daemon composition root supplies all concrete services explicitly;
+    /// a parameter object would only duplicate this state struct at the API
+    /// boundary, so the intentionally wide constructor remains direct.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: ConfigStore,
         pairing: PairingManager,
@@ -74,6 +88,8 @@ impl AppState {
         hub: Arc<Hub>,
         acp: Arc<Client>,
         permissions: Arc<PermissionsManager>,
+        mcp_config_path: Option<PathBuf>,
+        uploads: Option<Arc<Mutex<uploads::Manager>>>,
     ) -> Self {
         Self {
             config,
@@ -83,6 +99,8 @@ impl AppState {
             hub,
             acp,
             permissions,
+            mcp_config_path,
+            uploads,
             pair_rate: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -117,6 +135,33 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/sessions/{id}/prompt", post(send_prompt))
         .route("/api/sessions/{id}/cancel", post(cancel_session))
+        .route(
+            "/api/sessions/{id}/export",
+            get(session_extra::export_session),
+        )
+        .route(
+            "/api/sessions/{id}/context",
+            post(session_extra::session_context),
+        )
+        .route(
+            "/api/sessions/{id}/uploads",
+            post(session_extra::upload_file),
+        )
+        .route(
+            "/api/sessions/{id}/uploads/{upload_id}",
+            get(session_extra::serve_upload),
+        )
+        .route(
+            "/api/sessions/{id}/providers",
+            get(providers::list_providers),
+        )
+        .route(
+            "/api/sessions/{id}/providers/{provider_id}",
+            put(providers::set_provider).delete(providers::disable_provider),
+        )
+        .route("/api/mcp", get(mcp::get_mcp).put(mcp::put_mcp))
+        .route("/api/mcp/servers/{name}", patch(mcp::patch_mcp_server))
+        .route("/api/mcp/status", get(mcp::get_mcp_status))
         .route("/api/permissions/pending", get(pending_permissions))
         .route("/api/permissions/{id}/respond", post(respond_permission))
         .route_layer(middleware::from_fn_with_state(auth_state, require_auth))
@@ -500,6 +545,9 @@ async fn create_session(
 #[serde(rename_all = "camelCase")]
 struct PatchSessionRequest {
     name: Option<String>,
+    agent_id: Option<String>,
+    model_id: Option<String>,
+    max_transfer_bytes: Option<i64>,
 }
 
 async fn patch_session(
@@ -510,12 +558,49 @@ async fn patch_session(
     if let Some(name) = request.name {
         state.acp.rename_session(&id, &name).map_err(app_error)?;
     }
+
+    // Model-only: switch on the live session; agent+model: full rebind.
+    if request.agent_id.is_none() {
+        if let Some(model_id) = request.model_id.as_deref() {
+            state
+                .acp
+                .switch_model(&id, model_id)
+                .await
+                .map_err(|error| ApiResponseError::bad_request(error.to_string()))?;
+            return Ok(Json(json!({"status": "updated"})));
+        }
+    }
+
+    if let (Some(agent_id), Some(model_id)) =
+        (request.agent_id.as_deref(), request.model_id.as_deref())
+    {
+        let max_transfer = request.max_transfer_bytes.unwrap_or(0);
+        state
+            .acp
+            .rebind_session(&id, agent_id, model_id, max_transfer)
+            .await
+            .map_err(|error| ApiResponseError::bad_request(error.to_string()))?;
+    }
+
     Ok(Json(json!({"status": "updated"})))
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptAttachment {
+    id: String,
+    name: String,
+    mime_type: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PromptRequest {
     content: String,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    attachments: Vec<PromptAttachment>,
 }
 
 async fn send_prompt(
@@ -526,9 +611,42 @@ async fn send_prompt(
     if request.content.trim().is_empty() {
         return Err(ApiResponseError::bad_request("prompt content is required"));
     }
+
+    if let Some(profile) = request
+        .profile
+        .as_deref()
+        .filter(|profile| !profile.is_empty())
+    {
+        state.acp.set_session_profile(&id, profile);
+    }
+
+    let mut attachments = Vec::with_capacity(request.attachments.len());
+    if !request.attachments.is_empty() {
+        let uploads = state
+            .uploads
+            .as_ref()
+            .ok_or_else(|| ApiResponseError::bad_request("uploads not configured"))?;
+        let manager = uploads.lock().map_err(|_| {
+            error!("uploads manager lock poisoned");
+            ApiResponseError::internal("uploads manager unavailable")
+        })?;
+        for att in &request.attachments {
+            let abs_path = manager.get(&id, &att.id).map_err(|_| {
+                ApiResponseError::bad_request(format!("attachment {} not found", att.id))
+            })?;
+            attachments.push(Attachment {
+                id: att.id.clone(),
+                name: att.name.clone(),
+                mime_type: att.mime_type.clone(),
+                path: abs_path.display().to_string(),
+                uri: format!("file://{}", abs_path.display()),
+            });
+        }
+    }
+
     state
         .acp
-        .send_prompt(&id, &request.content, &[])
+        .send_prompt(&id, &request.content, &attachments)
         .await
         .map_err(app_error)?;
     Ok(Json(json!({"status": "sent"})))
@@ -547,6 +665,14 @@ async fn close_session(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiResponseError> {
     state.acp.close_session(&id).await.map_err(app_error)?;
+    // Best-effort upload cleanup — ACP is intentionally decoupled from uploads.
+    if let Some(uploads) = &state.uploads {
+        if let Ok(manager) = uploads.lock() {
+            if let Err(error) = manager.remove_session(&id) {
+                warn!(session_id = %id, %error, "failed to remove session uploads");
+            }
+        }
+    }
     Ok(Json(json!({"status": "closed"})))
 }
 
@@ -576,8 +702,12 @@ async fn respond_permission(
     Ok(Json(json!({"status": "responded"})))
 }
 
-async fn spa_fallback(Path(path): Path<String>) -> Response {
-    embed::serve(path).await
+/// SPA fallback serving embedded frontend assets. Uses `OriginalUri` rather
+/// than `Path<String>` so the root path `/` (zero segments) is handled without
+/// a `Path` extraction error.
+async fn spa_fallback(OriginalUri(uri): OriginalUri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    embed::serve(path.to_string()).await
 }
 
 /// Auth is deliberately performed before handlers, not in individual routes,
@@ -772,8 +902,8 @@ fn app_error(error: AppError) -> ApiResponseError {
 }
 
 struct ApiResponseError {
-    status: StatusCode,
-    message: String,
+    pub(crate) status: StatusCode,
+    pub(crate) message: String,
 }
 
 impl ApiResponseError {
@@ -808,6 +938,13 @@ impl ApiResponseError {
     fn rate_limited(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
+            message: message.into(),
+        }
+    }
+
+    fn service_unavailable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
             message: message.into(),
         }
     }
@@ -856,7 +993,17 @@ mod tests {
         }));
         (
             dir,
-            AppState::new(config, pairing, workspaces, events, hub, acp, permissions),
+            AppState::new(
+                config,
+                pairing,
+                workspaces,
+                events,
+                hub,
+                acp,
+                permissions,
+                None,
+                None,
+            ),
         )
     }
 

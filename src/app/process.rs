@@ -1,0 +1,96 @@
+//! Platform-specific daemon process inspection and termination.
+
+use std::time::{Duration, Instant};
+
+use anyhow::{bail, Context, Result};
+
+/// Return whether `pid` still identifies a live process.
+pub fn is_running(pid: u32) -> bool {
+    platform::is_running(pid)
+}
+
+/// Ask the daemon process to stop, then wait for it to exit.
+///
+/// Unix sends SIGTERM so the daemon's signal handler can drain its listeners.
+/// Windows uses `taskkill` without `/F` first for the equivalent graceful
+/// console-control path.
+pub fn stop(pid: u32) -> Result<()> {
+    if !is_running(pid) {
+        return Ok(());
+    }
+    platform::request_stop(pid)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while is_running(pid) {
+        if Instant::now() >= deadline {
+            bail!("daemon PID {pid} did not exit within 5 seconds");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+mod platform {
+    use super::*;
+
+    pub(super) fn is_running(pid: u32) -> bool {
+        let Ok(pid) = i32::try_from(pid) else {
+            return false;
+        };
+        // kill(pid, 0) performs no signal delivery. EPERM still proves a
+        // process exists, while ESRCH means the PID is stale.
+        let result = unsafe { libc::kill(pid, 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    pub(super) fn request_stop(pid: u32) -> Result<()> {
+        let pid = i32::try_from(pid).context("daemon PID exceeds platform range")?;
+        let result = unsafe { libc::kill(pid, libc::SIGTERM) };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("send SIGTERM to daemon PID {pid}"));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+mod platform {
+    use super::*;
+    use std::process::Command;
+
+    pub(super) fn is_running(pid: u32) -> bool {
+        Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .map(|output| {
+                let text = String::from_utf8_lossy(&output.stdout);
+                text.contains(&pid.to_string())
+            })
+            .unwrap_or(false)
+    }
+
+    pub(super) fn request_stop(pid: u32) -> Result<()> {
+        let status = Command::new("taskkill")
+            .args(["/PID", &pid.to_string()])
+            .status()
+            .context("invoke taskkill")?;
+        if !status.success() {
+            bail!("taskkill failed for daemon PID {pid} with status {status}");
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod platform {
+    use super::*;
+
+    pub(super) fn is_running(_pid: u32) -> bool {
+        false
+    }
+
+    pub(super) fn request_stop(_pid: u32) -> Result<()> {
+        bail!("daemon stop is unsupported on this platform")
+    }
+}
