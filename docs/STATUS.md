@@ -48,6 +48,8 @@
   workspace containment, bounded output, child cancellation, and non-blocking waits.
   Actor control now preempts prompts for cancel/close, failures mark sessions failed,
   permission cleanup uses local IDs, and callback/terminal resources are bounded.
+  Refactor: shared callback dispatch helpers, single `SessionEntry::apply_state`
+  (new sessions expose `idle`), single close ack, and small dispatch cleanups.
 - **07-17** — Rust port **S-MCP** and **S-ACP-AUTODETECT** complete.
   `src/mcp` provides compatible atomic MCP config persistence, transport capability
   conversion, environment expansion, and bounded health checks. `src/acp` now has a

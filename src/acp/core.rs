@@ -21,7 +21,9 @@ use agent_client_protocol::schema::v1::{
     WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::{Agent, ByteStreams, Client as SdkClient, ConnectionTo};
+use agent_client_protocol::{
+    Agent, ByteStreams, Client as SdkClient, ConnectionTo, JsonRpcResponse, Responder,
+};
 use async_process::Command;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -86,6 +88,15 @@ struct SessionEntry {
     stderr_tail: Arc<Mutex<StderrTail>>,
 }
 
+impl SessionEntry {
+    /// Apply a lifecycle state to both the registry enum and public metadata.
+    fn apply_state(&mut self, state: SessionState) {
+        self.state = state;
+        self.info.status = state.as_str().to_string();
+        self.info.updated_at = Utc::now();
+    }
+}
+
 /// ACP lifecycle service. The registry lock protects only metadata and command
 /// senders; every async command is sent after cloning its sender.
 pub struct Client {
@@ -131,9 +142,7 @@ impl Client {
             .ok_or_else(|| AppError::not_found("session"))?;
         match entry.state {
             SessionState::Idle | SessionState::Interrupted => {
-                entry.state = SessionState::Running;
-                entry.info.status = SessionState::Running.as_str().to_string();
-                entry.info.updated_at = Utc::now();
+                entry.apply_state(SessionState::Running);
                 Ok(entry.commands.clone())
             }
             SessionState::Running => Err(AppError::validation(
@@ -151,9 +160,7 @@ impl Client {
     fn update_state(&self, session_id: &str, state: SessionState) {
         if let Ok(mut sessions) = self.sessions.write() {
             if let Some(entry) = sessions.get_mut(session_id) {
-                entry.state = state;
-                entry.info.status = state.as_str().to_string();
-                entry.info.updated_at = Utc::now();
+                entry.apply_state(state);
             }
         }
     }
@@ -163,9 +170,7 @@ impl Client {
         if let Ok(mut sessions) = self.sessions.write() {
             if let Some(entry) = sessions.get_mut(session_id) {
                 if entry.state == expected {
-                    entry.state = state;
-                    entry.info.status = state.as_str().to_string();
-                    entry.info.updated_at = Utc::now();
+                    entry.apply_state(state);
                 }
             }
         }
@@ -256,23 +261,24 @@ impl ACPClient for Client {
             .await
             .map_err(|_| AppError::internal("ACP session actor exited during startup"))?;
         result?;
+        let mut entry = SessionEntry {
+            info,
+            state: SessionState::Created,
+            commands,
+            stderr_tail,
+        };
+        // Successful startup publishes as idle; status must match the enum.
+        entry.apply_state(SessionState::Idle);
+        let published = entry.info.clone();
         self.sessions
             .write()
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
-            .insert(
-                id,
-                SessionEntry {
-                    info: info.clone(),
-                    state: SessionState::Idle,
-                    commands,
-                    stderr_tail,
-                },
-            );
+            .insert(id, entry);
         // The actor waits for this handoff before accepting commands. That
         // eliminates the race where a connection could exit just after startup
         // but before its owning local session entry was registered.
         let _ = registered_tx.send(());
-        Ok(info)
+        Ok(published)
     }
 
     fn get_session_info(&self, session_id: &str) -> Result<SessionInfo, AppError> {
@@ -445,10 +451,8 @@ async fn run_actor(
     let mut registered = Some(registered);
     let result = run_actor_inner(&config, &mut commands, &mut ready, &mut registered).await;
     match result {
-        Ok(ActorExit::Closed(close_results)) => {
-            for result in close_results {
-                let _ = result.send(());
-            }
+        Ok(ActorExit::Closed(close_result)) => {
+            let _ = close_result.send(());
         }
         Err(error) => {
             if let Some(ready) = ready.take() {
@@ -464,9 +468,7 @@ async fn run_actor(
 fn fail_session(config: &ActorConfig) {
     if let Ok(mut sessions) = config.sessions.write() {
         if let Some(entry) = sessions.get_mut(&config.local_session_id) {
-            entry.state = SessionState::Failed;
-            entry.info.status = SessionState::Failed.as_str().to_string();
-            entry.info.updated_at = Utc::now();
+            entry.apply_state(SessionState::Failed);
         }
     }
     config.permissions.clear_session(&config.local_session_id);
@@ -515,7 +517,7 @@ async fn run_actor_inner(
     let transport = ByteStreams::new(stdin, stdout);
     let terminals = Arc::new(Mutex::new(HashMap::new()));
     let handler_cancel = CancellationToken::new();
-    let read_deps = HandlerDeps {
+    let handler_deps = HandlerDeps {
         local_session_id: config.local_session_id.clone(),
         workspace_id: config.workspace_id.clone(),
         workspace_path: config.workspace_path.clone(),
@@ -525,13 +527,6 @@ async fn run_actor_inner(
         cancellation: handler_cancel.clone(),
         callback_slots: Arc::new(Semaphore::new(MAX_CALLBACK_TASKS)),
     };
-    let write_deps = read_deps.clone();
-    let permission_deps = read_deps.clone();
-    let terminal_deps = read_deps.clone();
-    let terminal_output_deps = read_deps.clone();
-    let terminal_wait_deps = read_deps.clone();
-    let terminal_kill_deps = read_deps.clone();
-    let terminal_release_deps = read_deps.clone();
     let connected = SdkClient
         .builder()
         .name("local-agent")
@@ -540,178 +535,127 @@ async fn run_actor_inner(
             agent_client_protocol::on_receive_notification!(),
         )
         .on_receive_request(
-            async move |request: ReadTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
-                let deps = read_deps.clone();
-                let Some(permit) = callback_permit(&deps) else {
-                    let _ = responder.respond_with_internal_error(callback_limit_error());
-                    return Ok(());
-                };
-                spawn_callback(deps.cancellation.clone(), permit, async move {
-                    match read_text_file(deps, request).await {
-                        Ok(response) => {
-                            let _ = responder.respond(response);
-                        }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "ACP denied file read");
-                            let _ = responder.respond_with_internal_error(error);
-                        }
-                    }
-                });
-                Ok(())
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            async move |request: WriteTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
-                let deps = write_deps.clone();
-                let Some(permit) = callback_permit(&deps) else {
-                    let _ = responder.respond_with_internal_error(callback_limit_error());
-                    return Ok(());
-                };
-                spawn_callback(deps.cancellation.clone(), permit, async move {
-                    match write_text_file(deps, request).await {
-                        Ok(response) => {
-                            let _ = responder.respond(response);
-                        }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "ACP denied file write");
-                            let _ = responder.respond_with_internal_error(error);
-                        }
-                    }
-                });
-                Ok(())
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            async move |request: RequestPermissionRequest, responder, _cx: ConnectionTo<Agent>| {
-                let deps = permission_deps.clone();
-                // The permission manager waits for a user device. It must not
-                // block the SDK dispatch task, or the agent cannot process
-                // cancellation and unrelated callbacks while waiting.
-                let Some(permit) = callback_permit(&deps) else {
-                    let _ = responder.respond_with_internal_error(callback_limit_error());
-                    return Ok(());
-                };
-                spawn_callback(deps.cancellation.clone(), permit, async move {
-                    let response = request_permission(deps, request).await;
-                    let _ = responder.respond(response);
-                });
-                Ok(())
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            async move |request: CreateTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
-                let deps = terminal_deps.clone();
-                let Some(permit) = callback_permit(&deps) else {
-                    let _ = responder.respond_with_internal_error(callback_limit_error());
-                    return Ok(());
-                };
-                spawn_callback(deps.cancellation.clone(), permit, async move {
-                    match create_terminal(deps, request) {
-                        Ok(response) => {
-                            let _ = responder.respond(response);
-                        }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "ACP denied terminal create");
-                            let _ = responder.respond_with_internal_error(error);
-                        }
-                    }
-                });
-                Ok(())
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            async move |request: TerminalOutputRequest, responder, _cx: ConnectionTo<Agent>| {
-                let deps = terminal_output_deps.clone();
-                let Some(permit) = callback_permit(&deps) else {
-                    let _ = responder.respond_with_internal_error(callback_limit_error());
-                    return Ok(());
-                };
-                spawn_callback(deps.cancellation.clone(), permit, async move {
-                    match terminal_output(deps, request) {
-                        Ok(response) => {
-                            let _ = responder.respond(response);
-                        }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "ACP terminal output failed");
-                            let _ = responder.respond_with_internal_error(error);
-                        }
-                    }
-                });
-                Ok(())
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            async move |request: WaitForTerminalExitRequest,
+            {
+                let deps = handler_deps.clone();
+                async move |request: ReadTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
+                    // Handlers are FnMut; clone deps for each inbound request.
+                    spawn_result_callback(
+                        deps.clone(),
                         responder,
-                        _cx: ConnectionTo<Agent>| {
-                let deps = terminal_wait_deps.clone();
-                // A terminal can run indefinitely. Waiting in this task would
-                // stop the SDK from dispatching cancellation and other callbacks.
-                let Some(permit) = callback_permit(&deps) else {
-                    let _ = responder.respond_with_internal_error(callback_limit_error());
-                    return Ok(());
-                };
-                spawn_callback(deps.cancellation.clone(), permit, async move {
-                    match wait_for_terminal_exit(deps, request).await {
-                        Ok(response) => {
-                            let _ = responder.respond(response);
-                        }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "ACP terminal wait failed");
-                            let _ = responder.respond_with_internal_error(error);
-                        }
-                    }
-                });
-                Ok(())
+                        "ACP denied file read",
+                        move |deps| async move { read_text_file(deps, request).await },
+                    );
+                    Ok(())
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
-            async move |request: KillTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
-                let deps = terminal_kill_deps.clone();
-                let Some(permit) = callback_permit(&deps) else {
-                    let _ = responder.respond_with_internal_error(callback_limit_error());
-                    return Ok(());
-                };
-                spawn_callback(deps.cancellation.clone(), permit, async move {
-                    match kill_terminal(deps, request) {
-                        Ok(response) => {
-                            let _ = responder.respond(response);
-                        }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "ACP terminal kill failed");
-                            let _ = responder.respond_with_internal_error(error);
-                        }
-                    }
-                });
-                Ok(())
+            {
+                let deps = handler_deps.clone();
+                async move |request: WriteTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
+                    spawn_result_callback(
+                        deps.clone(),
+                        responder,
+                        "ACP denied file write",
+                        move |deps| async move { write_text_file(deps, request).await },
+                    );
+                    Ok(())
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
-            async move |request: ReleaseTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
-                let deps = terminal_release_deps.clone();
-                let Some(permit) = callback_permit(&deps) else {
-                    let _ = responder.respond_with_internal_error(callback_limit_error());
-                    return Ok(());
-                };
-                spawn_callback(deps.cancellation.clone(), permit, async move {
-                    match release_terminal(deps, request) {
-                        Ok(response) => {
-                            let _ = responder.respond(response);
-                        }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "ACP terminal release failed");
-                            let _ = responder.respond_with_internal_error(error);
-                        }
-                    }
-                });
-                Ok(())
+            {
+                let deps = handler_deps.clone();
+                // Permission waits for a user device and must not block SDK
+                // dispatch. Errors become Cancelled outcomes, not internal errors.
+                async move |request: RequestPermissionRequest,
+                            responder,
+                            _cx: ConnectionTo<Agent>| {
+                    spawn_respond_callback(deps.clone(), responder, move |deps| async move {
+                        request_permission(deps, request).await
+                    });
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let deps = handler_deps.clone();
+                async move |request: CreateTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
+                    spawn_result_callback(
+                        deps.clone(),
+                        responder,
+                        "ACP denied terminal create",
+                        move |deps| async move { create_terminal(deps, request) },
+                    );
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let deps = handler_deps.clone();
+                async move |request: TerminalOutputRequest, responder, _cx: ConnectionTo<Agent>| {
+                    spawn_result_callback(
+                        deps.clone(),
+                        responder,
+                        "ACP terminal output failed",
+                        move |deps| async move { terminal_output(deps, request) },
+                    );
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let deps = handler_deps.clone();
+                // Terminal waits can run indefinitely; keep them off the dispatch task.
+                async move |request: WaitForTerminalExitRequest,
+                            responder,
+                            _cx: ConnectionTo<Agent>| {
+                    spawn_result_callback(
+                        deps.clone(),
+                        responder,
+                        "ACP terminal wait failed",
+                        move |deps| async move { wait_for_terminal_exit(deps, request).await },
+                    );
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let deps = handler_deps.clone();
+                async move |request: KillTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
+                    spawn_result_callback(
+                        deps.clone(),
+                        responder,
+                        "ACP terminal kill failed",
+                        move |deps| async move { kill_terminal(deps, request) },
+                    );
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let deps = handler_deps;
+                async move |request: ReleaseTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
+                    spawn_result_callback(
+                        deps.clone(),
+                        responder,
+                        "ACP terminal release failed",
+                        move |deps| async move { release_terminal(deps, request) },
+                    );
+                    Ok(())
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -750,7 +694,7 @@ async fn run_actor_inner(
 
 /// Outcome returned by the connection-owning actor loop.
 enum ActorExit {
-    Closed(Vec<oneshot::Sender<()>>),
+    Closed(oneshot::Sender<()>),
 }
 
 async fn actor_loop(
@@ -771,15 +715,14 @@ async fn actor_loop(
                 .await?
                 {
                     PromptExit::Continue => {}
-                    PromptExit::Closed(results) => return Ok(ActorExit::Closed(results)),
+                    PromptExit::Closed(result) => return Ok(ActorExit::Closed(result)),
                 }
             }
             ActorCommand::Cancel => {
-                cx.send_notification(CancelNotification::new(agent_session_id.clone()))
-                    .map_err(|_| agent_client_protocol::Error::internal_error())?;
+                send_cancel(&cx, &agent_session_id)?;
             }
             ActorCommand::Close(result) => {
-                return Ok(ActorExit::Closed(vec![result]));
+                return Ok(ActorExit::Closed(result));
             }
         }
     }
@@ -788,7 +731,7 @@ async fn actor_loop(
 
 enum PromptExit {
     Continue,
-    Closed(Vec<oneshot::Sender<()>>),
+    Closed(oneshot::Sender<()>),
 }
 
 /// Await one prompt while continuing to receive session control commands.
@@ -822,9 +765,7 @@ async fn await_prompt(
             command = commands.recv() => {
                 match command {
                     Some(ActorCommand::Cancel) => {
-                        let cancel = cx
-                            .send_notification(CancelNotification::new(agent_session_id.clone()))
-                            .map_err(|_| agent_client_protocol::Error::internal_error());
+                        let cancel = send_cancel(&cx, &agent_session_id);
                         if let Some(result) = result.take() {
                             let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
                         }
@@ -835,7 +776,7 @@ async fn await_prompt(
                         if let Some(result) = result.take() {
                             let _ = result.send(Err(AppError::internal("ACP session closed during prompt")));
                         }
-                        return Ok(PromptExit::Closed(vec![close]));
+                        return Ok(PromptExit::Closed(close));
                     }
                     Some(ActorCommand::Prompt { result, .. }) => {
                         let _ = result.send(Err(AppError::validation(
@@ -847,6 +788,15 @@ async fn await_prompt(
             }
         }
     }
+}
+
+/// Notify the agent that the local session cancelled an in-flight turn.
+fn send_cancel(
+    cx: &ConnectionTo<Agent>,
+    agent_session_id: &SessionId,
+) -> Result<(), agent_client_protocol::Error> {
+    cx.send_notification(CancelNotification::new(agent_session_id.clone()))
+        .map_err(|_| agent_client_protocol::Error::internal_error())
 }
 
 #[derive(Clone)]
@@ -877,6 +827,54 @@ where
             () = cancellation.cancelled() => {}
             () = future => {}
         }
+    });
+}
+
+/// Bound an inbound ACP request that maps `Result` to typed success/error replies.
+fn spawn_result_callback<T, F, Fut>(
+    deps: HandlerDeps,
+    responder: Responder<T>,
+    warn: &'static str,
+    work: F,
+) where
+    T: JsonRpcResponse,
+    F: FnOnce(HandlerDeps) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<T, AppError>> + Send + 'static,
+{
+    let Some(permit) = callback_permit(&deps) else {
+        let _ = responder.respond_with_internal_error(callback_limit_error());
+        return;
+    };
+    spawn_callback(deps.cancellation.clone(), permit, async move {
+        match work(deps).await {
+            Ok(response) => {
+                let _ = responder.respond(response);
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, message = warn);
+                let _ = responder.respond_with_internal_error(error);
+            }
+        }
+    });
+}
+
+/// Bound an inbound ACP request that always replies with a typed success value.
+///
+/// Used by `RequestPermission`, which maps failures to `Cancelled` outcomes
+/// instead of JSON-RPC internal errors.
+fn spawn_respond_callback<T, F, Fut>(deps: HandlerDeps, responder: Responder<T>, work: F)
+where
+    T: JsonRpcResponse,
+    F: FnOnce(HandlerDeps) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = T> + Send + 'static,
+{
+    let Some(permit) = callback_permit(&deps) else {
+        let _ = responder.respond_with_internal_error(callback_limit_error());
+        return;
+    };
+    spawn_callback(deps.cancellation.clone(), permit, async move {
+        let response = work(deps).await;
+        let _ = responder.respond(response);
     });
 }
 
@@ -1121,7 +1119,7 @@ async fn read_text_file(
     deps: HandlerDeps,
     request: ReadTextFileRequest,
 ) -> Result<ReadTextFileResponse, AppError> {
-    let content = match workspace_relative_path(&deps.workspace_path, &request.path).await {
+    let content = match workspace_relative_path(&deps.workspace_path, &request.path) {
         Ok(path) => deps
             .workspaces
             .read_file(&deps.workspace_id, &path)
@@ -1136,7 +1134,7 @@ async fn write_text_file(
     deps: HandlerDeps,
     request: WriteTextFileRequest,
 ) -> Result<WriteTextFileResponse, AppError> {
-    let result = match workspace_relative_path(&deps.workspace_path, &request.path).await {
+    let result = match workspace_relative_path(&deps.workspace_path, &request.path) {
         Ok(path) => deps
             .workspaces
             .write_file(&deps.workspace_id, &path, &request.content, 0)
@@ -1273,7 +1271,7 @@ fn permission_decision(
     }
 }
 
-async fn workspace_relative_path(root: &Path, path: &Path) -> Result<String, AppError> {
+fn workspace_relative_path(root: &Path, path: &Path) -> Result<String, AppError> {
     if path.is_absolute() {
         path_to_workspace_relative(root, path)
     } else {
@@ -1336,7 +1334,6 @@ impl StderrTail {
     }
 }
 
-#[allow(dead_code)]
 fn path_to_workspace_relative(root: &Path, path: &Path) -> Result<String, AppError> {
     let relative = path
         .strip_prefix(root)
@@ -1430,6 +1427,17 @@ mod tests {
             .create_session("mock", "mock-model", &workspace.id)
             .await
             .expect("create mock ACP session");
+        assert_eq!(
+            session.status, "idle",
+            "successful startup must publish idle metadata"
+        );
+        assert_eq!(
+            client
+                .get_session_info(&session.id)
+                .expect("session remains registered after startup")
+                .status,
+            "idle"
+        );
         client
             .rename_session(&session.id, "Mock session")
             .expect("session remains registered after startup");

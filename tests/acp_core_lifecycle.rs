@@ -63,6 +63,7 @@ async fn mockagent_session_prompt_cancel_close_lifecycle() {
     .await
     .expect("session creation timed out")
     .expect("create mockagent session");
+    assert_eq!(session.status, "idle");
 
     let prompt_client = Arc::clone(&client);
     let prompt_session_id = session.id.clone();
