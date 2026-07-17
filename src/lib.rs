@@ -42,6 +42,7 @@ pub mod files;
 pub mod fsutil;
 pub mod fswatch;
 pub mod interfaces;
+pub mod mcp;
 pub mod migrate;
 pub mod pairing;
 pub mod pathutil;
