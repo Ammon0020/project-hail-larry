@@ -11,15 +11,15 @@
 //! The REST envelope fields (`method`, `path`, `status`, `contentType`) are
 //! always compared exactly.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// Compare two JSON strings semantically (parse both, compare structurally).
 /// Returns Ok(()) if they are structurally equivalent, Err(message) otherwise.
 pub fn json_semantic_eq(actual: &str, expected: &str) -> Result<(), String> {
-    let actual_val: Value = serde_json::from_str(actual)
-        .map_err(|e| format!("actual is not valid JSON: {e}"))?;
-    let expected_val: Value = serde_json::from_str(expected)
-        .map_err(|e| format!("expected is not valid JSON: {e}"))?;
+    let actual_val: Value =
+        serde_json::from_str(actual).map_err(|e| format!("actual is not valid JSON: {e}"))?;
+    let expected_val: Value =
+        serde_json::from_str(expected).map_err(|e| format!("expected is not valid JSON: {e}"))?;
     if values_equal(&actual_val, &expected_val) {
         Ok(())
     } else {
@@ -39,9 +39,9 @@ fn values_equal(a: &Value, b: &Value) -> bool {
             if a_obj.len() != b_obj.len() {
                 return false;
             }
-            a_obj.iter().all(|(k, v)| {
-                b_obj.get(k).is_some_and(|bv| values_equal(v, bv))
-            })
+            a_obj
+                .iter()
+                .all(|(k, v)| b_obj.get(k).is_some_and(|bv| values_equal(v, bv)))
         }
         (Value::Array(a_arr), Value::Array(b_arr)) => {
             a_arr.len() == b_arr.len() && a_arr.iter().zip(b_arr).all(|(x, y)| values_equal(x, y))
@@ -61,7 +61,10 @@ pub fn should_compare_semantically(content_type: &str, body: &str) -> bool {
     if !content_type.contains("application/json") {
         return false;
     }
-    matches!(serde_json::from_str::<Value>(body), Ok(Value::Object(_) | Value::Array(_)))
+    matches!(
+        serde_json::from_str::<Value>(body),
+        Ok(Value::Object(_) | Value::Array(_))
+    )
 }
 
 /// Compare two strings exactly. Returns Ok(()) if equal, Err(diff) otherwise.
@@ -97,7 +100,10 @@ fn simple_diff(expected: &str, actual: &str) -> String {
         let exp = exp_lines.get(i).copied().unwrap_or("<missing>");
         let act = act_lines.get(i).copied().unwrap_or("<missing>");
         if exp != act {
-            out.push_str(&format!("line {}: expected={exp:?} actual={act:?}\n", i + 1));
+            out.push_str(&format!(
+                "line {}: expected={exp:?} actual={act:?}\n",
+                i + 1
+            ));
         }
     }
     out
@@ -120,20 +126,32 @@ pub fn compare_envelope(
     actual_content_type: &str,
     expected: &Value,
 ) -> Result<(), String> {
-    let exp_method = expected.get("method").and_then(|v| v.as_str()).unwrap_or("");
+    let exp_method = expected
+        .get("method")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let exp_path = expected.get("path").and_then(|v| v.as_str()).unwrap_or("");
     let exp_status = expected.get("status").and_then(|v| v.as_u64()).unwrap_or(0);
-    let exp_ct = expected.get("contentType").and_then(|v| v.as_str()).unwrap_or("");
+    let exp_ct = expected
+        .get("contentType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     let mut errors = Vec::new();
     if actual_method != exp_method {
-        errors.push(format!("method: expected={exp_method:?} actual={actual_method:?}"));
+        errors.push(format!(
+            "method: expected={exp_method:?} actual={actual_method:?}"
+        ));
     }
     if actual_path != exp_path {
-        errors.push(format!("path: expected={exp_path:?} actual={actual_path:?}"));
+        errors.push(format!(
+            "path: expected={exp_path:?} actual={actual_path:?}"
+        ));
     }
     if actual_status as u64 != exp_status {
-        errors.push(format!("status: expected={exp_status} actual={actual_status}"));
+        errors.push(format!(
+            "status: expected={exp_status} actual={actual_status}"
+        ));
     }
     if actual_content_type != exp_ct {
         errors.push(format!(
@@ -155,7 +173,13 @@ pub fn extract_body(fixture: &Value) -> &str {
 
 /// Helper: build a restFixture-shaped JSON value for comparison.
 #[allow(dead_code)]
-pub fn make_fixture(method: &str, path: &str, status: u16, content_type: &str, body: &str) -> Value {
+pub fn make_fixture(
+    method: &str,
+    path: &str,
+    status: u16,
+    content_type: &str,
+    body: &str,
+) -> Value {
     json!({
         "method": method,
         "path": path,
@@ -171,55 +195,61 @@ mod tests {
 
     #[test]
     fn test_semantic_eq_same_order() {
-    let a = r#"{"a":1,"b":2}"#;
-    let b = r#"{"a":1,"b":2}"#;
-    assert!(json_semantic_eq(a, b).is_ok());
+        let a = r#"{"a":1,"b":2}"#;
+        let b = r#"{"a":1,"b":2}"#;
+        assert!(json_semantic_eq(a, b).is_ok());
     }
 
     #[test]
     fn test_semantic_eq_different_order() {
-    let a = r#"{"a":1,"b":2}"#;
-    let b = r#"{"b":2,"a":1}"#;
-    assert!(json_semantic_eq(a, b).is_ok());
+        let a = r#"{"a":1,"b":2}"#;
+        let b = r#"{"b":2,"a":1}"#;
+        assert!(json_semantic_eq(a, b).is_ok());
     }
 
     #[test]
     fn test_semantic_neq_different_values() {
-    let a = r#"{"a":1,"b":2}"#;
-    let b = r#"{"a":1,"b":3}"#;
-    assert!(json_semantic_eq(a, b).is_err());
+        let a = r#"{"a":1,"b":2}"#;
+        let b = r#"{"a":1,"b":3}"#;
+        assert!(json_semantic_eq(a, b).is_err());
     }
 
     #[test]
     fn test_semantic_array_order_matters() {
-    let a = r#"[1,2,3]"#;
-    let b = r#"[3,2,1]"#;
-    assert!(json_semantic_eq(a, b).is_err());
+        let a = r#"[1,2,3]"#;
+        let b = r#"[3,2,1]"#;
+        assert!(json_semantic_eq(a, b).is_err());
     }
 
     #[test]
     fn test_should_compare_semantically_json_object() {
-    assert!(should_compare_semantically("application/json", r#"{"a":1}"#));
+        assert!(should_compare_semantically(
+            "application/json",
+            r#"{"a":1}"#
+        ));
     }
 
     #[test]
     fn test_should_compare_semantically_json_array() {
-    assert!(should_compare_semantically("application/json", r#"[1,2]"#));
+        assert!(should_compare_semantically("application/json", r#"[1,2]"#));
     }
 
     #[test]
     fn test_should_compare_semantically_json_scalar() {
-    assert!(!should_compare_semantically("application/json", r#""hello""#));
+        assert!(!should_compare_semantically(
+            "application/json",
+            r#""hello""#
+        ));
     }
 
     #[test]
     fn test_should_compare_semantically_non_json() {
-    assert!(!should_compare_semantically("text/plain", "hello"));
+        assert!(!should_compare_semantically("text/plain", "hello"));
     }
 
     #[test]
     fn test_exact_eq() {
-    assert!(exact_eq("hello", "hello").is_ok());
-    assert!(exact_eq("hello", "world").is_err());
+        assert!(exact_eq("hello", "hello").is_ok());
+        assert!(exact_eq("hello", "world").is_err());
     }
 }

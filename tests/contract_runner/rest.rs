@@ -45,60 +45,285 @@ struct RestCase {
 /// non-loopback connections and can't be tested black-box).
 const REST_CASES: &[RestCase] = &[
     // Health
-    RestCase { name: "health_ok", method: "GET", path: "/health", body: "" },
+    RestCase {
+        name: "health_ok",
+        method: "GET",
+        path: "/health",
+        body: "",
+    },
     // Pairing
-    RestCase { name: "pair_initiate_ok", method: "POST", path: "/api/pair/initiate", body: r#"{"host":"localhost","port":7337}"# },
-    RestCase { name: "pair_initiate_bad_body", method: "POST", path: "/api/pair/initiate", body: r#"{not json"# },
-    RestCase { name: "pair_verify_passcode_bad_body", method: "POST", path: "/api/pair/verify-passcode", body: r#"{not json"# },
-    RestCase { name: "pair_verify_passcode_wrong", method: "POST", path: "/api/pair/verify-passcode", body: r#"{"passcode":"wrong wrong wrong wrong","deviceName":"dev"}"# },
-    RestCase { name: "pair_verify_token_wrong", method: "POST", path: "/api/pair/verify-token", body: r#"{"token":"deadbeef","deviceName":"dev"}"# },
+    RestCase {
+        name: "pair_initiate_ok",
+        method: "POST",
+        path: "/api/pair/initiate",
+        body: r#"{"host":"localhost","port":7337}"#,
+    },
+    RestCase {
+        name: "pair_initiate_bad_body",
+        method: "POST",
+        path: "/api/pair/initiate",
+        body: r#"{not json"#,
+    },
+    RestCase {
+        name: "pair_verify_passcode_bad_body",
+        method: "POST",
+        path: "/api/pair/verify-passcode",
+        body: r#"{not json"#,
+    },
+    RestCase {
+        name: "pair_verify_passcode_wrong",
+        method: "POST",
+        path: "/api/pair/verify-passcode",
+        body: r#"{"passcode":"wrong wrong wrong wrong","deviceName":"dev"}"#,
+    },
+    RestCase {
+        name: "pair_verify_token_wrong",
+        method: "POST",
+        path: "/api/pair/verify-token",
+        body: r#"{"token":"deadbeef","deviceName":"dev"}"#,
+    },
     // Devices
-    RestCase { name: "devices_list_ok", method: "GET", path: "/api/devices", body: "" },
-    RestCase { name: "devices_revoke_not_found", method: "DELETE", path: "/api/devices/nonexistent", body: "" },
-    RestCase { name: "devices_cancel_revocation_bad_body", method: "POST", path: "/api/devices/cancel-revocation", body: r#"{not json"# },
+    RestCase {
+        name: "devices_list_ok",
+        method: "GET",
+        path: "/api/devices",
+        body: "",
+    },
+    RestCase {
+        name: "devices_revoke_not_found",
+        method: "DELETE",
+        path: "/api/devices/nonexistent",
+        body: "",
+    },
+    RestCase {
+        name: "devices_cancel_revocation_bad_body",
+        method: "POST",
+        path: "/api/devices/cancel-revocation",
+        body: r#"{not json"#,
+    },
     // Pending actions
-    RestCase { name: "pending_actions_list_ok", method: "GET", path: "/api/pending-actions", body: "" },
-    RestCase { name: "workspaces_cancel_registration_bad_body", method: "POST", path: "/api/workspaces/cancel-registration", body: r#"{not json"# },
+    RestCase {
+        name: "pending_actions_list_ok",
+        method: "GET",
+        path: "/api/pending-actions",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_cancel_registration_bad_body",
+        method: "POST",
+        path: "/api/workspaces/cancel-registration",
+        body: r#"{not json"#,
+    },
     // Workspaces
-    RestCase { name: "workspaces_list_ok", method: "GET", path: "/api/workspaces", body: "" },
-    RestCase { name: "workspaces_register_remote_disabled", method: "POST", path: "/api/workspaces", body: r#"{"path":"/tmp"}"# },
-    RestCase { name: "workspaces_register_bad_body", method: "POST", path: "/api/workspaces", body: r#"{not json"# },
-    RestCase { name: "workspaces_files_ok", method: "GET", path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/files", body: "" },
-    RestCase { name: "workspaces_files_not_found", method: "GET", path: "/api/workspaces/nonexistent/files", body: "" },
-    RestCase { name: "workspaces_read_ok", method: "GET", path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/file?path=README.md", body: "" },
-    RestCase { name: "workspaces_read_missing_path", method: "GET", path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/file", body: "" },
-    RestCase { name: "workspaces_read_not_found", method: "GET", path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/file?path=nope.txt", body: "" },
-    RestCase { name: "workspaces_raw_ok", method: "GET", path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/raw?path=README.md", body: "" },
-    RestCase { name: "workspaces_search_ok", method: "GET", path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/search?pattern=hello", body: "" },
-    RestCase { name: "workspaces_write_bad_body", method: "POST", path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/file", body: r#"{not json"# },
+    RestCase {
+        name: "workspaces_list_ok",
+        method: "GET",
+        path: "/api/workspaces",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_register_remote_disabled",
+        method: "POST",
+        path: "/api/workspaces",
+        body: r#"{"path":"/tmp"}"#,
+    },
+    RestCase {
+        name: "workspaces_register_bad_body",
+        method: "POST",
+        path: "/api/workspaces",
+        body: r#"{not json"#,
+    },
+    RestCase {
+        name: "workspaces_files_ok",
+        method: "GET",
+        path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/files",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_files_not_found",
+        method: "GET",
+        path: "/api/workspaces/nonexistent/files",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_read_ok",
+        method: "GET",
+        path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/file?path=README.md",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_read_missing_path",
+        method: "GET",
+        path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/file",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_read_not_found",
+        method: "GET",
+        path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/file?path=nope.txt",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_raw_ok",
+        method: "GET",
+        path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/raw?path=README.md",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_search_ok",
+        method: "GET",
+        path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/search?pattern=hello",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_write_bad_body",
+        method: "POST",
+        path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/file",
+        body: r#"{not json"#,
+    },
     // Events
-    RestCase { name: "events_list_ok", method: "GET", path: "/api/events", body: "" },
-    RestCase { name: "events_session_ok", method: "GET", path: "/api/events/nonexistent", body: "" },
+    RestCase {
+        name: "events_list_ok",
+        method: "GET",
+        path: "/api/events",
+        body: "",
+    },
+    RestCase {
+        name: "events_session_ok",
+        method: "GET",
+        path: "/api/events/nonexistent",
+        body: "",
+    },
     // Agents
-    RestCase { name: "agents_list_ok", method: "GET", path: "/api/agents", body: "" },
-    RestCase { name: "agents_upsert_bad_body", method: "POST", path: "/api/agents", body: r#"{not json"# },
-    RestCase { name: "agents_delete_ok", method: "DELETE", path: "/api/agents/fixture-agent", body: "" },
-    RestCase { name: "agents_autodetect_ok", method: "POST", path: "/api/agents/autodetect", body: "" },
+    RestCase {
+        name: "agents_list_ok",
+        method: "GET",
+        path: "/api/agents",
+        body: "",
+    },
+    RestCase {
+        name: "agents_upsert_bad_body",
+        method: "POST",
+        path: "/api/agents",
+        body: r#"{not json"#,
+    },
+    RestCase {
+        name: "agents_delete_ok",
+        method: "DELETE",
+        path: "/api/agents/fixture-agent",
+        body: "",
+    },
+    RestCase {
+        name: "agents_autodetect_ok",
+        method: "POST",
+        path: "/api/agents/autodetect",
+        body: "",
+    },
     // Sessions
-    RestCase { name: "sessions_list_ok", method: "GET", path: "/api/sessions", body: "" },
-    RestCase { name: "sessions_get_not_found", method: "GET", path: "/api/sessions/nonexistent", body: "" },
-    RestCase { name: "sessions_export_not_found", method: "GET", path: "/api/sessions/nonexistent/export", body: "" },
-    RestCase { name: "sessions_create_bad_body", method: "POST", path: "/api/sessions", body: r#"{not json"# },
-    RestCase { name: "sessions_create_unknown_agent", method: "POST", path: "/api/sessions", body: r#"{"agentId":"no-such-agent","modelId":"m","workspaceId":""}"# },
-    RestCase { name: "sessions_patch_bad_body", method: "PATCH", path: "/api/sessions/nonexistent", body: r#"{not json"# },
-    RestCase { name: "sessions_prompt_not_found", method: "POST", path: "/api/sessions/nonexistent/prompt", body: r#"{"content":"hi"}"# },
-    RestCase { name: "sessions_cancel_not_found", method: "POST", path: "/api/sessions/nonexistent/cancel", body: "" },
-    RestCase { name: "sessions_close_not_found", method: "DELETE", path: "/api/sessions/nonexistent", body: "" },
-    RestCase { name: "sessions_context_bad_body", method: "POST", path: "/api/sessions/nonexistent/context", body: r#"{not json"# },
-    RestCase { name: "sessions_providers_not_found", method: "GET", path: "/api/sessions/nonexistent/providers", body: "" },
+    RestCase {
+        name: "sessions_list_ok",
+        method: "GET",
+        path: "/api/sessions",
+        body: "",
+    },
+    RestCase {
+        name: "sessions_get_not_found",
+        method: "GET",
+        path: "/api/sessions/nonexistent",
+        body: "",
+    },
+    RestCase {
+        name: "sessions_export_not_found",
+        method: "GET",
+        path: "/api/sessions/nonexistent/export",
+        body: "",
+    },
+    RestCase {
+        name: "sessions_create_bad_body",
+        method: "POST",
+        path: "/api/sessions",
+        body: r#"{not json"#,
+    },
+    RestCase {
+        name: "sessions_create_unknown_agent",
+        method: "POST",
+        path: "/api/sessions",
+        body: r#"{"agentId":"no-such-agent","modelId":"m","workspaceId":""}"#,
+    },
+    RestCase {
+        name: "sessions_patch_bad_body",
+        method: "PATCH",
+        path: "/api/sessions/nonexistent",
+        body: r#"{not json"#,
+    },
+    RestCase {
+        name: "sessions_prompt_not_found",
+        method: "POST",
+        path: "/api/sessions/nonexistent/prompt",
+        body: r#"{"content":"hi"}"#,
+    },
+    RestCase {
+        name: "sessions_cancel_not_found",
+        method: "POST",
+        path: "/api/sessions/nonexistent/cancel",
+        body: "",
+    },
+    RestCase {
+        name: "sessions_close_not_found",
+        method: "DELETE",
+        path: "/api/sessions/nonexistent",
+        body: "",
+    },
+    RestCase {
+        name: "sessions_context_bad_body",
+        method: "POST",
+        path: "/api/sessions/nonexistent/context",
+        body: r#"{not json"#,
+    },
+    RestCase {
+        name: "sessions_providers_not_found",
+        method: "GET",
+        path: "/api/sessions/nonexistent/providers",
+        body: "",
+    },
     // Permissions
-    RestCase { name: "permissions_pending_ok", method: "GET", path: "/api/permissions/pending", body: "" },
-    RestCase { name: "permissions_respond_bad_body", method: "POST", path: "/api/permissions/nonexistent/respond", body: r#"{not json"# },
+    RestCase {
+        name: "permissions_pending_ok",
+        method: "GET",
+        path: "/api/permissions/pending",
+        body: "",
+    },
+    RestCase {
+        name: "permissions_respond_bad_body",
+        method: "POST",
+        path: "/api/permissions/nonexistent/respond",
+        body: r#"{not json"#,
+    },
     // MCP
-    RestCase { name: "mcp_get_ok", method: "GET", path: "/api/mcp", body: "" },
-    RestCase { name: "mcp_put_bad_body", method: "PUT", path: "/api/mcp", body: r#"{not json"# },
-    RestCase { name: "mcp_patch_server_bad_body", method: "PATCH", path: "/api/mcp/servers/fixture", body: r#"{not json"# },
-    RestCase { name: "mcp_status_ok", method: "GET", path: "/api/mcp/status", body: "" },
+    RestCase {
+        name: "mcp_get_ok",
+        method: "GET",
+        path: "/api/mcp",
+        body: "",
+    },
+    RestCase {
+        name: "mcp_put_bad_body",
+        method: "PUT",
+        path: "/api/mcp",
+        body: r#"{not json"#,
+    },
+    RestCase {
+        name: "mcp_patch_server_bad_body",
+        method: "PATCH",
+        path: "/api/mcp/servers/fixture",
+        body: r#"{not json"#,
+    },
+    RestCase {
+        name: "mcp_status_ok",
+        method: "GET",
+        path: "/api/mcp/status",
+        body: "",
+    },
 ];
 
 /// Find a REST case by name from the static list.
@@ -108,7 +333,12 @@ fn find_case(name: &str) -> Option<&'static RestCase> {
 
 /// Resolve the golden fixture directory path.
 fn golden_dir(harness: &BackendHarness) -> PathBuf {
-    harness.repo_root.join("tests").join("contract").join("golden").join("rest")
+    harness
+        .repo_root
+        .join("tests")
+        .join("contract")
+        .join("golden")
+        .join("rest")
 }
 
 /// Run a single REST test case by name. Reads the golden fixture, makes the
@@ -159,11 +389,15 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
 
     let mut req = client.request(method, &url);
     if !case.body.is_empty() {
-        req = req.body(case.body.to_string())
+        req = req
+            .body(case.body.to_string())
             .header("Content-Type", "application/json");
     }
 
-    let resp = req.send().await.with_context(|| format!("send request {} {url}", case.method))
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("send request {} {url}", case.method))
         .expect("send HTTP request");
 
     let status = resp.status().as_u16();
@@ -201,13 +435,9 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
     let redacted_path = redactor.redact(&actual_path);
 
     // Compare the envelope (method, path, status, contentType).
-    if let Err(e) = compare::compare_envelope(
-        case.method,
-        &redacted_path,
-        status,
-        &content_type,
-        &fixture,
-    ) {
+    if let Err(e) =
+        compare::compare_envelope(case.method, &redacted_path, status, &content_type, &fixture)
+    {
         eprintln!("[contract] FAIL: {name}\n{e}");
         panic!("REST case {name} failed: {e}");
     }
@@ -219,5 +449,8 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
         panic!("REST case {name} body mismatch: {e}");
     }
 
-    eprintln!("[contract] PASS: {name} ({} {actual_path} → {status})", case.method);
+    eprintln!(
+        "[contract] PASS: {name} ({} {actual_path} → {status})",
+        case.method
+    );
 }

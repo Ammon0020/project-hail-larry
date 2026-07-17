@@ -40,11 +40,15 @@ pub async fn test_origin_rejection(harness: &BackendHarness) {
         .expect("parse ws:// URL into client request");
     req.headers_mut().insert(
         "Origin",
-        "http://evil.example.com".parse().expect("valid Origin header"),
+        "http://evil.example.com"
+            .parse()
+            .expect("valid Origin header"),
     );
     req.headers_mut().insert(
         "Authorization",
-        "Bearer dummy:dummy".parse().expect("valid Authorization header"),
+        "Bearer dummy:dummy"
+            .parse()
+            .expect("valid Authorization header"),
     );
 
     // Attempt the connection. The server should reject the upgrade before the
@@ -55,9 +59,7 @@ pub async fn test_origin_rejection(harness: &BackendHarness) {
         Ok(_) => {
             // If the connection succeeded, the server didn't reject the
             // cross-origin request — this is a security bug.
-            panic!(
-                "WS origin rejection: expected rejection (403), but connection succeeded"
-            );
+            panic!("WS origin rejection: expected rejection (403), but connection succeeded");
         }
         Err(e) => {
             // The error should indicate an HTTP rejection. Check that it's a
@@ -89,19 +91,21 @@ pub async fn test_connection_success(harness: &BackendHarness) {
         .expect("parse ws:// URL into client request");
     req.headers_mut().insert(
         "Origin",
-        format!("http://{host}").parse().expect("valid Origin header"),
+        format!("http://{host}")
+            .parse()
+            .expect("valid Origin header"),
     );
     req.headers_mut().insert(
         "Authorization",
-        "Bearer dummy:dummy".parse().expect("valid Authorization header"),
+        "Bearer dummy:dummy"
+            .parse()
+            .expect("valid Authorization header"),
     );
 
     let (ws_stream, response) = match tokio_tungstenite::connect_async(req).await {
         Ok(conn) => conn,
         Err(e) => {
-            panic!(
-                "WS connection success: expected successful upgrade, got error: {e}"
-            );
+            panic!("WS connection success: expected successful upgrade, got error: {e}");
         }
     };
 

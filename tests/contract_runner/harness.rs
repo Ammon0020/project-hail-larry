@@ -131,7 +131,11 @@ impl BackendHarness {
         loop {
             if std::time::Instant::now() > deadline {
                 eprintln!("[contract] ERROR: backend did not become ready within 30s");
-                eprintln!("[contract] backend = {} binary = {}", self.backend, self.binary_path.display());
+                eprintln!(
+                    "[contract] backend = {} binary = {}",
+                    self.backend,
+                    self.binary_path.display()
+                );
                 eprintln!("[contract] state dir = {}", self.state_dir.display());
                 eprintln!("[contract] base url  = {}", self.base_url);
                 panic!("backend did not become ready within 30s");
@@ -189,13 +193,19 @@ fn find_repo_root() -> PathBuf {
             break;
         }
     }
-    panic!("could not find repo root (Cargo.toml + go.mod) from {}", cwd.display());
+    panic!(
+        "could not find repo root (Cargo.toml + go.mod) from {}",
+        cwd.display()
+    );
 }
 
 /// Build the Go binary (`go build -o /tmp/contract-local-agent ./cmd/app`).
 async fn build_go_binary(repo_root: &Path) -> PathBuf {
     let bin_path = std::env::temp_dir().join("contract-local-agent");
-    eprintln!("[contract] building Go binary: go build -o {} ./cmd/app", bin_path.display());
+    eprintln!(
+        "[contract] building Go binary: go build -o {} ./cmd/app",
+        bin_path.display()
+    );
 
     let output = tokio::process::Command::new("go")
         .args(["build", "-o", bin_path.to_str().unwrap(), "./cmd/app"])

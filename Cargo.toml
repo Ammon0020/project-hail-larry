@@ -144,6 +144,25 @@ uuid = { version = "1.11", features = ["v4"] }
 # libc: Unix process-group management (setpgid, killpg) for the shell executor's
 # cancellation path. Verified 2026-07-15.
 libc = "0.2.186"
+# regex: pattern compilation for the workspace content-search fallback
+# (S-SEARCH). Also a transitive dep of `ignore`; pinned as a direct dep so the
+# fallback walker can compile user patterns. Verified 2026-07-16.
+regex = "1.11"
+# ignore: ripgrep's directory walker (BurntSushi/ripgrep) used by the
+# content-search native fallback when `rg` is not on PATH. We configure it with
+# the explicit ignore list only (no .gitignore) to match the Go fallback.
+# Verified 2026-07-16.
+ignore = "0.4.29"
+dashmap = "6.2.1"
+sha2 = "0.11.0"
+
+[features]
+# `contract` enables the black-box contract differential runner
+# (tests/contract_runner/). The runner boots a Go or Rust backend binary as a
+# subprocess and requires Go to be installed, so it's gated behind a feature
+# to keep `cargo test --all-targets` (and CI) fast and dependency-free.
+# Run via: cargo test --test contract_runner --features contract
+contract = []
 
 [dev-dependencies]
 # async-process: used by S-ACP-SPIKE (`tests/spike_acp.rs`) to spawn the

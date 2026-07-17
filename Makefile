@@ -20,8 +20,9 @@ test:
 
 # Run the black-box contract differential runner against the Go backend.
 # Use CONTRACT_BACKEND=rust to test against the Rust backend instead.
+# The `contract` feature gate keeps this out of `cargo test --all-targets`.
 test-contract:
-	cargo test --test contract_runner -- --nocapture
+	cargo test --test contract_runner --features contract -- --nocapture
 
 # Run golangci-lint (cross-platform: Windows, macOS, Linux).
 lint:

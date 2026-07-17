@@ -67,15 +67,18 @@ impl Redactor {
             port_re: Regex::new(r"Port:\s+\d+").expect("valid port regex"),
             passcode_re: Regex::new(r"Passcode:\s+[a-z]+-[a-z]+-[a-z]+-[a-z]+")
                 .expect("valid passcode regex"),
-            hex_token_re: Regex::new(r#""(token|secret|secretHash)"\s*:\s*"([A-Za-z0-9_\-]{16,})""#)
-                .expect("valid hex token regex"),
+            hex_token_re: Regex::new(
+                r#""(token|secret|secretHash)"\s*:\s*"([A-Za-z0-9_\-]{16,})""#,
+            )
+            .expect("valid hex token regex"),
         }
     }
 
     /// Register a raw secret value and the placeholder to substitute for it.
     pub fn register_secret(&mut self, raw: &str, placeholder: &str) {
         if !raw.is_empty() {
-            self.secrets.insert(raw.to_string(), placeholder.to_string());
+            self.secrets
+                .insert(raw.to_string(), placeholder.to_string());
         }
     }
 
@@ -120,19 +123,31 @@ impl Redactor {
         result = self.scrub_secret_fields(&result);
 
         // 4. Timestamps.
-        result = self.timestamp_re.replace_all(&result, REDACTED_TIMESTAMP).to_string();
+        result = self
+            .timestamp_re
+            .replace_all(&result, REDACTED_TIMESTAMP)
+            .to_string();
 
         // 5. Long hex IDs.
         result = self.hex_id_re.replace_all(&result, REDACTED_ID).to_string();
 
         // 6. PIDs.
-        result = self.pid_re.replace_all(&result, "PID <REDACTED_PID>").to_string();
+        result = self
+            .pid_re
+            .replace_all(&result, "PID <REDACTED_PID>")
+            .to_string();
 
         // 7. Ports.
-        result = self.port_re.replace_all(&result, "Port:      <REDACTED_PORT>").to_string();
+        result = self
+            .port_re
+            .replace_all(&result, "Port:      <REDACTED_PORT>")
+            .to_string();
 
         // 8. CLI passcodes (Passcode: word-word-word-word format).
-        result = self.passcode_re.replace_all(&result, "Passcode: <REDACTED_PASSCODE>").to_string();
+        result = self
+            .passcode_re
+            .replace_all(&result, "Passcode: <REDACTED_PASSCODE>")
+            .to_string();
 
         result
     }
@@ -150,9 +165,8 @@ impl Redactor {
 
         // Scrub passcode fields (four-word mnemonic: word-word-word-word).
         // These are temporary secrets that must not appear in fixtures.
-        let passcode_json_re =
-            Regex::new(r#""passcode"\s*:\s*"([a-z]+-[a-z]+-[a-z]+-[a-z]+)""#)
-                .expect("valid passcode JSON regex");
+        let passcode_json_re = Regex::new(r#""passcode"\s*:\s*"([a-z]+-[a-z]+-[a-z]+-[a-z]+)""#)
+            .expect("valid passcode JSON regex");
         passcode_json_re
             .replace_all(&result, r#""passcode":"<REDACTED_PASSCODE>""#)
             .to_string()

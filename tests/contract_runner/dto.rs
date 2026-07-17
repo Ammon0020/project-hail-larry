@@ -26,7 +26,11 @@ use crate::harness::BackendHarness;
 pub async fn test_workspace_info_shape(harness: &BackendHarness) {
     let url = format!("{}/api/workspaces", harness.base_url);
     let resp = reqwest::get(&url).await.expect("fetch workspaces");
-    assert!(resp.status().is_success(), "workspaces list failed: {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "workspaces list failed: {}",
+        resp.status()
+    );
     let body: serde_json::Value = resp.json().await.expect("parse workspaces JSON");
 
     let first = body
@@ -60,16 +64,19 @@ pub async fn test_workspace_info_shape(harness: &BackendHarness) {
 pub async fn test_agent_info_shape(harness: &BackendHarness) {
     let url = format!("{}/api/agents", harness.base_url);
     let resp = reqwest::get(&url).await.expect("fetch agents");
-    assert!(resp.status().is_success(), "agents list failed: {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "agents list failed: {}",
+        resp.status()
+    );
     let body: serde_json::Value = resp.json().await.expect("parse agents JSON");
 
     // Find the fixture-agent entry (the seeded agent).
     let agent = body
         .as_array()
         .and_then(|arr| {
-            arr.iter().find(|a| {
-                a.get("id").and_then(|v| v.as_str()) == Some("fixture-agent")
-            })
+            arr.iter()
+                .find(|a| a.get("id").and_then(|v| v.as_str()) == Some("fixture-agent"))
         })
         .expect("fixture-agent in agents list");
 
@@ -99,7 +106,11 @@ pub async fn test_agent_info_shape(harness: &BackendHarness) {
 pub async fn test_event_shape(harness: &BackendHarness) {
     let url = format!("{}/api/events", harness.base_url);
     let resp = reqwest::get(&url).await.expect("fetch events");
-    assert!(resp.status().is_success(), "events list failed: {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "events list failed: {}",
+        resp.status()
+    );
     let body: serde_json::Value = resp.json().await.expect("parse events JSON");
 
     let events = body.as_array();
@@ -146,7 +157,11 @@ pub async fn test_event_shape(harness: &BackendHarness) {
 /// This handles the fact that golden DTO fixtures are generated from direct
 /// Go struct marshals (which include all fields), while the black-box runner
 /// observes API responses (which omit empty fields via omitempty).
-fn compare_shape(actual: &serde_json::Value, expected: &serde_json::Value, path: &str) -> Vec<String> {
+fn compare_shape(
+    actual: &serde_json::Value,
+    expected: &serde_json::Value,
+    path: &str,
+) -> Vec<String> {
     let mut errors = Vec::new();
 
     match (actual, expected) {
@@ -181,10 +196,16 @@ fn compare_shape(actual: &serde_json::Value, expected: &serde_json::Value, path:
         }
         (serde_json::Value::Array(actual_arr), serde_json::Value::Array(expected_arr)) => {
             if actual_arr.is_empty() && !expected_arr.is_empty() {
-                errors.push(format!("{path}: actual array is empty, expected at least one element"));
+                errors.push(format!(
+                    "{path}: actual array is empty, expected at least one element"
+                ));
             } else if !actual_arr.is_empty() && !expected_arr.is_empty() {
                 // Compare the first element's shape.
-                errors.extend(compare_shape(&actual_arr[0], &expected_arr[0], &format!("{path}[0]")));
+                errors.extend(compare_shape(
+                    &actual_arr[0],
+                    &expected_arr[0],
+                    &format!("{path}[0]"),
+                ));
             }
         }
         (actual_val, expected_val) => {
@@ -227,7 +248,10 @@ fn is_omitempty_candidate(v: &serde_json::Value) -> bool {
 /// non-empty value (the DTO fixture is from a direct struct marshal, not an
 /// API response).
 fn is_array_or_object(v: &serde_json::Value) -> bool {
-    matches!(v, serde_json::Value::Array(_) | serde_json::Value::Object(_))
+    matches!(
+        v,
+        serde_json::Value::Array(_) | serde_json::Value::Object(_)
+    )
 }
 
 /// Get a human-readable type name for a JSON value.
@@ -246,6 +270,8 @@ fn json_type_name(v: &serde_json::Value) -> &'static str {
 /// field iteration. Currently unused but kept for potential future exact-shape
 /// comparison.
 #[allow(dead_code)]
-fn sorted_object(obj: &serde_json::Map<String, serde_json::Value>) -> BTreeMap<String, &serde_json::Value> {
+fn sorted_object(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> BTreeMap<String, &serde_json::Value> {
     obj.iter().map(|(k, v)| (k.clone(), v)).collect()
 }
