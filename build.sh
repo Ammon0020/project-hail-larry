@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# Builds the Local Agent Interface project (Frontend + Backend) on Linux/macOS.
+# Builds the Local Agent Interface project (Frontend + Go + Rust backends).
 #
 # This script builds the React frontend, copies the compiled assets into the
-# Go server's embed directory, and then builds the final Go executable.
+# Go server's embed directory, builds the Go executable, and then builds the
+# Rust port (which embeds web/dist via rust-embed at compile time).
 # It is the Unix counterpart to build.ps1.
 
 set -euo pipefail
@@ -26,7 +27,7 @@ if ! command -v go >/dev/null 2>&1 && [[ -x /usr/local/go/bin/go ]]; then
 fi
 
 # Fail loudly if required tooling is missing.
-for tool in npm go; do
+for tool in npm go cargo; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "ERROR: '$tool' is not installed or not on PATH." >&2
         exit 1
@@ -48,4 +49,13 @@ go build -o bin/app ./cmd/app
 # Also install it to GOBIN/GOPATH so 'app start' works globally.
 go install ./cmd/app
 
-echo "${GREEN}Build complete! The binary is available at bin/app and installed globally as 'app'.${RESET}"
+echo "${CYAN}4. Building Rust backend...${RESET}"
+# rust-embed bakes web/dist into the binary at compile time, so the frontend
+# build above is picked up automatically — no copy step needed. The Rust port
+# outputs a separate binary (bin/local_agent) alongside the Go binary (bin/app).
+cargo build --release
+cp -f target/release/local_agent bin/local_agent
+
+echo "${GREEN}Build complete!${RESET}"
+echo "  Go binary:   bin/app        (installed globally as 'app')"
+echo "  Rust binary: bin/local_agent  (run with 'bin/local_agent --serve')"
