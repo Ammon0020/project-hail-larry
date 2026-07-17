@@ -31,7 +31,7 @@
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
 - [ ] **Rust backend port** — Phase 0–2 complete (245 tests). Phase 3 in progress:
-  S-MCP/S-ACP-AUTODETECT/S-WORKSPACE/S-PAIRING complete (268 tests); ACP core next.
+  S-MCP/S-ACP-AUTODETECT/S-WORKSPACE/S-PAIRING complete (268 tests); ACP core in progress.
 
 ## Blocked
 
