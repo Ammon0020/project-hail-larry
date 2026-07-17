@@ -46,12 +46,17 @@ pub trait WorkspaceRegistrar: Send + Sync {
 /// Pairing manager failures intentionally contain no supplied credentials.
 #[derive(Debug, Error)]
 pub enum PairingError {
-    #[error("invalid or expired pairing credential")]
-    InvalidPairingCredential,
+    /// Passcode verify failed (wrong/expired/used). Distinct from token so the
+    /// REST layer can return Go's `"invalid or expired passcode"`.
+    #[error("invalid or expired passcode")]
+    InvalidPasscode,
+    /// Token verify failed (wrong/expired/used).
+    #[error("invalid or expired token")]
+    InvalidToken,
     #[error("too many pairing attempts; try again later")]
     RateLimited,
-    #[error("device not found")]
-    DeviceNotFound,
+    #[error("device not found: {0}")]
+    DeviceNotFound(String),
     #[error("pending action not found")]
     PendingActionNotFound,
     #[error("pending action has a different type")]
@@ -184,9 +189,11 @@ impl Manager {
         passcode: &str,
         device_name: impl Into<String>,
     ) -> Result<DeviceCredential, PairingError> {
-        self.verify(device_name.into(), |session| {
-            bool::from(session.passcode.as_bytes().ct_eq(passcode.as_bytes()))
-        })
+        self.verify(
+            device_name.into(),
+            |session| bool::from(session.passcode.as_bytes().ct_eq(passcode.as_bytes())),
+            PairingError::InvalidPasscode,
+        )
     }
 
     pub fn verify_token(
@@ -194,15 +201,18 @@ impl Manager {
         token: &str,
         device_name: impl Into<String>,
     ) -> Result<DeviceCredential, PairingError> {
-        self.verify(device_name.into(), |session| {
-            bool::from(session.token.as_bytes().ct_eq(token.as_bytes()))
-        })
+        self.verify(
+            device_name.into(),
+            |session| bool::from(session.token.as_bytes().ct_eq(token.as_bytes())),
+            PairingError::InvalidToken,
+        )
     }
 
     fn verify(
         &self,
         device_name: String,
         matches: impl Fn(&PairingSession) -> bool,
+        miss: PairingError,
     ) -> Result<DeviceCredential, PairingError> {
         let mut inner = lock(&self.inner);
         cleanup_sessions(&mut inner);
@@ -215,7 +225,7 @@ impl Manager {
             .map(|s| s.id.clone());
         let Some(session_id) = session_id else {
             record_failure(&mut inner);
-            return Err(PairingError::InvalidPairingCredential);
+            return Err(miss);
         };
         let credential = issue_credential(&mut inner, &session_id, device_name)?;
         // A verified pairing proves the user controls the valid credential, so
@@ -279,7 +289,7 @@ impl Manager {
         let removed = inner
             .devices
             .remove(device_id)
-            .ok_or(PairingError::DeviceNotFound)?;
+            .ok_or_else(|| PairingError::DeviceNotFound(device_id.to_string()))?;
         if let Err(error) = save_devices(&mut inner) {
             inner.devices.insert(removed.id.clone(), removed);
             return Err(error);
@@ -298,7 +308,7 @@ impl Manager {
             let device = inner
                 .devices
                 .get(device_id)
-                .ok_or(PairingError::DeviceNotFound)?;
+                .ok_or_else(|| PairingError::DeviceNotFound(device_id.to_string()))?;
             if inner.pending.values().any(|p| {
                 p.info.action_type == PENDING_ACTION_TYPE_REVOCATION
                     && p.info.device_id == device_id
@@ -404,7 +414,7 @@ fn issue_credential(
     let session = inner
         .sessions
         .remove(session_id)
-        .ok_or(PairingError::InvalidPairingCredential)?;
+        .ok_or(PairingError::InvalidPasscode)?;
     let id = random_hex(16)?;
     let secret = random_hex(32)?;
     let now = Utc::now();
@@ -720,7 +730,7 @@ mod tests {
         assert!(!manager.validate_credential(&credential.id, "wrong"));
         assert!(matches!(
             manager.verify_passcode(&session.passcode, "other"),
-            Err(PairingError::InvalidPairingCredential)
+            Err(PairingError::InvalidPasscode)
         ));
         let state = fs::read_to_string(dir.path().join(DEVICES_FILE)).expect("state");
         assert!(!state.contains(&credential.secret));
@@ -764,7 +774,7 @@ mod tests {
         for _ in 0..MAX_VERIFY_ATTEMPTS {
             assert!(matches!(
                 manager.verify_passcode("wrong-wrong-wrong-wrong", "attacker"),
-                Err(PairingError::InvalidPairingCredential)
+                Err(PairingError::InvalidPasscode)
             ));
         }
         assert!(matches!(

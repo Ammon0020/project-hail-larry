@@ -29,7 +29,7 @@ impl AgentRegistry {
             .agents
             .write()
             .unwrap_or_else(|poison| poison.into_inner());
-        agents.insert(agent.id.clone(), agent);
+        agents.insert(agent.id.clone(), verify_agent_executable(agent));
     }
 
     /// Removes an agent. Missing IDs are intentionally a no-op.
@@ -89,6 +89,53 @@ impl AgentRegistry {
     }
 }
 
+/// Go `warningExecutableNotFound` — set when the launch command is missing.
+const WARNING_EXECUTABLE_NOT_FOUND: &str = "Executable not found in PATH";
+
+/// Mirror Go `verifyAgentExecutable`: set/clear the PATH warning based on
+/// whether `command` resolves as a file or on `$PATH`.
+fn verify_agent_executable(mut agent: AgentInfo) -> AgentInfo {
+    if agent.command.is_empty() {
+        return agent;
+    }
+    let exists = std::path::Path::new(&agent.command).is_file() || command_on_path(&agent.command);
+    if exists {
+        if agent.warning == WARNING_EXECUTABLE_NOT_FOUND {
+            agent.warning.clear();
+        }
+    } else {
+        agent.warning = WARNING_EXECUTABLE_NOT_FOUND.to_string();
+    }
+    agent
+}
+
+/// Best-effort `exec.LookPath` for a bare command name (or absolute path).
+fn command_on_path(command: &str) -> bool {
+    let path = std::path::Path::new(command);
+    if path.is_absolute() || command.contains('/') || command.contains('\\') {
+        return path.is_file();
+    }
+    let Ok(path_env) = std::env::var("PATH") else {
+        return false;
+    };
+    for dir in std::env::split_paths(&path_env) {
+        let candidate = dir.join(command);
+        if candidate.is_file() {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            for ext in ["exe", "cmd", "bat"] {
+                let with_ext = dir.join(format!("{command}.{ext}"));
+                if with_ext.is_file() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::AgentRegistry;
@@ -98,7 +145,8 @@ mod tests {
         AgentInfo {
             id: id.into(),
             name: format!("Agent {id}"),
-            command: "agent-bin".into(),
+            // Real binary so verify_agent_executable does not overwrite Warning.
+            command: "/bin/sh".into(),
             args: vec!["--flag".into()],
             models: vec![AgentModel {
                 id: "model-a".into(),

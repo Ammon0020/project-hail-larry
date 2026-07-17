@@ -710,10 +710,10 @@ fn wire_adapter_roundtrips_all_event_payloads() {
 
 #[test]
 fn error_map_not_found() {
-    let err = AppError::not_found("session");
+    let err = AppError::not_found_id("session", "nonexistent");
     let api = map_api_error(&err);
     assert_eq!(api.status, ApiStatusCode::NOT_FOUND);
-    assert_eq!(api.body.error, "session not found");
+    assert_eq!(api.body.error, "session not found: nonexistent");
 }
 
 #[test]

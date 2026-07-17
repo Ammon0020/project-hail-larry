@@ -221,20 +221,35 @@ struct PairInitiateRequest {
 
 async fn pair_initiate(
     State(state): State<AppState>,
-    body: Option<Json<PairInitiateRequest>>,
+    body: Result<Json<PairInitiateRequest>, JsonRejection>,
 ) -> Result<Json<crate::interfaces::PairingSession>, ApiResponseError> {
+    // Empty/missing JSON is allowed (defaults); syntax errors are 400.
+    let request = match body {
+        Ok(Json(request)) => request,
+        Err(rejection) => {
+            if matches!(
+                rejection,
+                JsonRejection::MissingJsonContentType(_) | JsonRejection::BytesRejection(_)
+            ) {
+                PairInitiateRequest {
+                    host: None,
+                    port: None,
+                }
+            } else {
+                return Err(ApiResponseError::bad_request("invalid request body"));
+            }
+        }
+    };
     let configured = state.config.read().clone();
-    let mut host = body
-        .as_ref()
-        .and_then(|request| request.host.clone())
+    let mut host = request
+        .host
         .filter(|host| !host.is_empty())
         .unwrap_or(configured.host);
     if host == "0.0.0.0" || host == "::" {
         host = "localhost".to_string();
     }
-    let port = body
-        .as_ref()
-        .and_then(|request| request.port)
+    let port = request
+        .port
         .unwrap_or_else(|| u16::try_from(configured.port).unwrap_or(7337));
     state
         .pairing
@@ -253,8 +268,9 @@ struct PairVerifyRequest {
 
 async fn pair_verify_passcode(
     State(state): State<AppState>,
-    Json(request): Json<PairVerifyRequest>,
+    body: Result<Json<PairVerifyRequest>, JsonRejection>,
 ) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     state
         .pairing
         .verify_passcode(
@@ -267,8 +283,9 @@ async fn pair_verify_passcode(
 
 async fn pair_verify_token(
     State(state): State<AppState>,
-    Json(request): Json<PairVerifyRequest>,
+    body: Result<Json<PairVerifyRequest>, JsonRejection>,
 ) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     state
         .pairing
         .verify_token(
@@ -474,9 +491,9 @@ async fn raw_file(
     let data = tokio::fs::read(&absolute)
         .await
         .map_err(|error| ApiResponseError::internal(format!("read raw file: {error}")))?;
-    let content_type = infer::get(&data)
-        .map(|kind| kind.mime_type())
-        .unwrap_or("application/octet-stream");
+    // Go http.ServeFile uses mime.TypeByExtension then sniffing. Prefer the
+    // extension so README.md is text/markdown; charset=utf-8.
+    let content_type = content_type_for_path(std::path::Path::new(&absolute), &data);
     let mut response = Response::new(Body::from(data));
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
@@ -491,6 +508,33 @@ async fn raw_file(
     Ok(response)
 }
 
+/// MIME type for raw file serving — extension first, then magic sniff.
+fn content_type_for_path(path: &std::path::Path, data: &[u8]) -> String {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "md" | "markdown" | "mdown" => "text/markdown; charset=utf-8".into(),
+        "html" | "htm" => "text/html; charset=utf-8".into(),
+        "css" => "text/css; charset=utf-8".into(),
+        "js" | "mjs" => "text/javascript; charset=utf-8".into(),
+        "json" => "application/json".into(),
+        "txt" | "text" | "log" => "text/plain; charset=utf-8".into(),
+        "svg" => "image/svg+xml".into(),
+        "png" => "image/png".into(),
+        "jpg" | "jpeg" => "image/jpeg".into(),
+        "gif" => "image/gif".into(),
+        "webp" => "image/webp".into(),
+        "pdf" => "application/pdf".into(),
+        "wasm" => "application/wasm".into(),
+        _ => infer::get(data)
+            .map(|kind| kind.mime_type().to_string())
+            .unwrap_or_else(|| "application/octet-stream".into()),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WriteFileRequest {
@@ -503,8 +547,9 @@ struct WriteFileRequest {
 async fn write_file(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<WriteFileRequest>,
+    body: Result<Json<WriteFileRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     let revision = state
         .workspaces
         .write_file(
@@ -592,8 +637,9 @@ async fn list_agents(
 
 async fn upsert_agent(
     State(state): State<AppState>,
-    Json(agent): Json<AgentInfo>,
+    body: Result<Json<AgentInfo>, JsonRejection>,
 ) -> Result<Json<AgentInfo>, ApiResponseError> {
+    let Json(agent) = decode_json_body(body)?;
     if agent.id.trim().is_empty() || agent.command.trim().is_empty() {
         return Err(ApiResponseError::bad_request(
             "agent id and command are required",
@@ -643,8 +689,9 @@ struct CreateSessionRequest {
 
 async fn create_session(
     State(state): State<AppState>,
-    Json(request): Json<CreateSessionRequest>,
+    body: Result<Json<CreateSessionRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<crate::interfaces::SessionInfo>), ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     state
         .acp
         .create_session(&request.agent_id, &request.model_id, &request.workspace_id)
@@ -665,8 +712,9 @@ struct PatchSessionRequest {
 async fn patch_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<PatchSessionRequest>,
+    body: Result<Json<PatchSessionRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     if let Some(name) = request.name {
         state.acp.rename_session(&id, &name).map_err(app_error)?;
     }
@@ -718,8 +766,9 @@ struct PromptRequest {
 async fn send_prompt(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<PromptRequest>,
+    body: Result<Json<PromptRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     if request.content.trim().is_empty() {
         return Err(ApiResponseError::bad_request("prompt content is required"));
     }
@@ -802,8 +851,9 @@ struct RespondPermissionRequest {
 async fn respond_permission(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<RespondPermissionRequest>,
+    body: Result<Json<RespondPermissionRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     let decision = serde_json::from_value::<PermissionDecision>(Value::String(request.decision))
         .map_err(|_| ApiResponseError::bad_request("invalid permission decision"))?;
     state
@@ -985,7 +1035,9 @@ fn required_query(value: Option<String>, name: &str) -> Result<String, ApiRespon
 }
 
 /// Map Go `mustDecodeJSON` failures to a stable client-facing message.
-fn decode_json_body<T>(body: Result<Json<T>, JsonRejection>) -> Result<Json<T>, ApiResponseError> {
+pub(crate) fn decode_json_body<T>(
+    body: Result<Json<T>, JsonRejection>,
+) -> Result<Json<T>, ApiResponseError> {
     body.map_err(|_| ApiResponseError::bad_request("invalid request body"))
 }
 
@@ -1019,9 +1071,11 @@ fn cancel_pending_error(error: PairingError) -> ApiResponseError {
 
 fn pairing_error(error: PairingError) -> ApiResponseError {
     match error {
-        PairingError::InvalidPairingCredential => ApiResponseError::unauthorized(error.to_string()),
+        PairingError::InvalidPasscode | PairingError::InvalidToken => {
+            ApiResponseError::unauthorized(error.to_string())
+        }
         PairingError::RateLimited => ApiResponseError::rate_limited(error.to_string()),
-        PairingError::DeviceNotFound | PairingError::PendingActionNotFound => {
+        PairingError::DeviceNotFound(_) | PairingError::PendingActionNotFound => {
             ApiResponseError::not_found(error.to_string())
         }
         PairingError::PendingActionTypeMismatch | PairingError::DuplicatePendingAction => {
@@ -1046,7 +1100,7 @@ fn app_error(error: AppError) -> ApiResponseError {
     }
 }
 
-struct ApiResponseError {
+pub(crate) struct ApiResponseError {
     pub(crate) status: StatusCode,
     pub(crate) message: String,
 }

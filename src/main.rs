@@ -17,7 +17,8 @@ async fn main() -> Result<()> {
     // (web-framework.md). S-ARCH acceptance criterion.
     app::tls::install_crypto_provider()?;
 
-    // Initialize file logging to ~/.local-agent/logs/ (S-ARCH).
+    // Initialize file logging under the state dir's logs/ (S-ARCH).
+    // Respects LOCAL_AGENT_STATE_DIR so isolated harnesses do not need $HOME.
     let _log_guard = app::logging::init_file_logging()?;
 
     local_agent::cli::run(Cli::parse()).await

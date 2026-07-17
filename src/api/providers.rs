@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -13,7 +14,7 @@ use serde_json::{json, Value};
 
 use crate::interfaces::{ACPClient, AppError, ProviderInfo};
 
-use super::{app_error, ApiResponseError, AppState};
+use super::{app_error, decode_json_body, ApiResponseError, AppState};
 
 /// Accepted `apiType` values for PUT (Go `validLLMProtocols`).
 const VALID_LLM_PROTOCOLS: &[&str] = &["anthropic", "openai", "azure", "vertex", "bedrock"];
@@ -44,8 +45,9 @@ pub async fn list_providers(
 pub async fn set_provider(
     State(state): State<AppState>,
     Path((session_id, provider_id)): Path<(String, String)>,
-    Json(request): Json<SetProviderRequest>,
+    body: Result<Json<SetProviderRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     if provider_id.is_empty() {
         return Err(ApiResponseError::bad_request("missing provider id in path"));
     }
@@ -134,7 +136,7 @@ mod tests {
 
     #[test]
     fn not_found_maps_to_404() {
-        let error = provider_error(AppError::not_found("session"));
+        let error = provider_error(AppError::not_found_kind("session"));
         assert_eq!(error.status, StatusCode::NOT_FOUND);
         assert_eq!(error.message, "session not found");
     }

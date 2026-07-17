@@ -30,8 +30,9 @@
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — Daemon/CLI + dual TLS + REST + pending-actions,
-  HTTP deadlines, and platform user services landed. Next: contract/E2E.
+- [ ] **Rust backend port** — Core port + daemon/CLI done. Contract black-box
+  against Rust (`CONTRACT_BACKEND=rust`) boots via seed `config.toml`; remaining
+  golden diffs tracked under known limitations (MCP JSON parse text).
 
 ## Blocked
 
@@ -39,6 +40,11 @@
 
 ## Recent Changes (2026-07)
 
+- **07-17** — Rust **contract black-box**: harness seeds `config.toml` (+ JSON
+  for Go), PATH/HOME neutralize autodetect, log dir follows
+  `LOCAL_AGENT_STATE_DIR`. API parity: Json rejection → JSON 400, not-found
+  messages with ids, pairing passcode/token errors, agent PATH warning, raw
+  MIME by extension. Remaining: MCP JSON parse-error text (ignored).
 - **07-17** — Rust **HTTP/service parity**: HTTP/HTTPS apply header (5s),
   request-body (30s), handler/response (60s), and idle (120s) deadlines.
   `install-service`/`uninstall-service` now use systemd user units, launchd
@@ -69,7 +75,8 @@
 
 - Go ACP SDK still missing `mcp/message` relay (Rust path unblocked).
 - Mobile editor touch; profile mode not wired; pair QR scheme selection.
-- Rust: pending-action daemon registrar wiring; contract black-box / E2E.
+- Rust: pending-action daemon registrar wiring; contract black-box mostly green
+  (`CONTRACT_BACKEND=rust`); MCP JSON parse-error text still ignored.
 - Rust HTTP limits: Hyper's native header deadline is HTTP/1-only; body
   timing starts at handler entry, and an expired response body closes its stream.
 - Rust's global 10 MiB body cap is stricter than Go's 50 MiB file-write exception.

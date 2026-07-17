@@ -1,10 +1,15 @@
 //! File logging configuration.
 //!
-//! S-ARCH acceptance criterion: file logs land at a stable
-//! `~/.local-agent/logs/` location. We use `tracing-appender`'s non-blocking
-//! rolling writer so the daemon never blocks on disk I/O. The returned guard
-//! must be held for the lifetime of the process so buffered records flush on
-//! shutdown.
+//! S-ARCH acceptance criterion: file logs land at a stable location under the
+//! state directory (`~/.local-agent/logs/` by default). We use
+//! `tracing-appender`'s non-blocking rolling writer so the daemon never blocks
+//! on disk I/O. The returned guard must be held for the lifetime of the
+//! process so buffered records flush on shutdown.
+//!
+//! When `LOCAL_AGENT_STATE_DIR` is set (contract harness, tests), logs follow
+//! that override — matching Go's `cfg.DataDir/daemon.log` placement under the
+//! isolated state dir — so neutralizing `$HOME` for autodetect does not break
+//! startup.
 //!
 //! Redaction of credentials, passcodes, bearer tokens, and file contents is
 //! the responsibility of call sites using structured fields — see
@@ -15,22 +20,25 @@ use std::path::PathBuf;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
 
-use crate::fsutil;
+use crate::config::Config;
 
-/// Default log directory relative to the user's home: `~/.local-agent/logs/`.
-pub const LOG_DIR_NAME: &str = ".local-agent/logs";
+/// Log subdirectory name under the resolved state directory.
+pub const LOG_SUBDIR: &str = "logs";
 
 /// Resolve the stable rolling-log directory used by the daemon and CLI.
+///
+/// Uses [`Config::resolved_state_dir`] so `LOCAL_AGENT_STATE_DIR` redirects
+/// logs into the isolated state tree (default: `~/.local-agent/logs`).
 pub fn log_dir() -> Result<PathBuf> {
-    let home = fsutil::home_dir().context("could not resolve user home directory for log path")?;
-    Ok(home.join(LOG_DIR_NAME))
+    let state_dir =
+        Config::resolved_state_dir().context("could not resolve state directory for log path")?;
+    Ok(state_dir.join(LOG_SUBDIR))
 }
 
-/// Initialize file logging to `~/.local-agent/logs/`.
+/// Initialize file logging under the resolved state directory's `logs/` folder.
 ///
 /// Returns a `WorkerGuard` that must be kept alive for the process lifetime;
-/// dropping it flushes the non-blocking writer. The current stub wires only
-/// the file appender; console output and `env-filter` tuning land in S-DAEMON.
+/// dropping it flushes the non-blocking writer.
 pub fn init_file_logging() -> Result<(WorkerGuard, PathBuf)> {
     let log_dir = log_dir()?;
     std::fs::create_dir_all(&log_dir)
@@ -59,17 +67,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn log_dir_name_is_stable() {
-        // Stable path is an S-ARCH acceptance criterion.
-        assert_eq!(LOG_DIR_NAME, ".local-agent/logs");
+    fn log_subdir_is_stable() {
+        // Stable path component is an S-ARCH acceptance criterion.
+        assert_eq!(LOG_SUBDIR, "logs");
     }
 
     #[test]
-    fn home_dir_resolves_in_test_env() {
-        // CI and dev shells resolve a home via dirs (env or platform APIs).
+    fn log_dir_follows_state_dir() {
+        // Default (no LOCAL_AGENT_STATE_DIR): ~/.local-agent/logs.
+        let dir = log_dir().expect("log_dir resolves");
         assert!(
-            fsutil::home_dir().is_some(),
-            "home directory must resolve for logging"
+            dir.ends_with(".local-agent/logs") || dir.ends_with(LOG_SUBDIR),
+            "unexpected log_dir: {}",
+            dir.display()
         );
     }
 }

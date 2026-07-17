@@ -180,7 +180,7 @@ impl Client {
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
         let entry = sessions
             .get(session_id)
-            .ok_or_else(|| AppError::not_found("session"))?;
+            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
         match entry.state {
             SessionState::Failed => Err(AppError::internal(
                 "ACP session failed; close it and create a new session",
@@ -201,7 +201,7 @@ impl Client {
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
         let entry = sessions
             .get(session_id)
-            .ok_or_else(|| AppError::not_found("session"))?;
+            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
         Ok((entry.commands.clone(), entry.caps))
     }
 
@@ -216,7 +216,7 @@ impl Client {
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
         let entry = sessions
             .get(session_id)
-            .ok_or_else(|| AppError::not_found("session"))?;
+            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
         Ok((entry.commands.clone(), entry.model_config_id.clone()))
     }
 
@@ -231,7 +231,7 @@ impl Client {
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
         let entry = sessions
             .get_mut(session_id)
-            .ok_or_else(|| AppError::not_found("session"))?;
+            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
         match entry.state {
             SessionState::Idle | SessionState::Interrupted => {
                 entry.prompt_cancel.store(false, Ordering::Release);
@@ -281,7 +281,7 @@ impl Client {
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
             .get(session_id)
             .map(|entry| Arc::clone(&entry.stderr_tail))
-            .ok_or_else(|| AppError::not_found("session"))?;
+            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
         let stderr = tail
             .lock()
             .map_err(|_| AppError::internal("ACP stderr lock poisoned"))?
@@ -322,7 +322,7 @@ impl ACPClient for Client {
             .await?
             .into_iter()
             .find(|workspace| workspace.id == workspace_id)
-            .ok_or_else(|| AppError::not_found("workspace"))?;
+            .ok_or_else(|| AppError::not_found_id("workspace", workspace_id))?;
         let workspace_path = PathBuf::from(workspace.path);
         let id = format!("sess-{}", Uuid::new_v4().simple());
         let now = Utc::now();
@@ -398,7 +398,7 @@ impl ACPClient for Client {
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
             .get(session_id)
             .map(|entry| entry.info.clone())
-            .ok_or_else(|| AppError::not_found("session"))
+            .ok_or_else(|| AppError::not_found_id("session", session_id))
     }
 
     fn list_sessions(&self) -> Vec<Session> {
@@ -428,7 +428,7 @@ impl ACPClient for Client {
             .await?
             .into_iter()
             .find(|workspace| workspace.id == workspace_id)
-            .ok_or_else(|| AppError::not_found("workspace"))?;
+            .ok_or_else(|| AppError::not_found_id("workspace", &workspace_id))?;
         let prepared = match self
             .pipeline
             .prepare(
@@ -492,7 +492,7 @@ impl ACPClient for Client {
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
         let entry = sessions
             .get_mut(session_id)
-            .ok_or_else(|| AppError::not_found("session"))?;
+            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
         entry.info.name = name.to_string();
         entry.info.updated_at = Utc::now();
         drop(sessions);
@@ -519,7 +519,7 @@ impl ACPClient for Client {
                 .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
             let entry = sessions
                 .get_mut(session_id)
-                .ok_or_else(|| AppError::not_found("session"))?;
+                .ok_or_else(|| AppError::not_found_id("session", session_id))?;
             if entry.state != SessionState::Idle {
                 return Err(AppError::validation(
                     "ACP session must be idle before it can be rebound",
@@ -553,7 +553,7 @@ impl ACPClient for Client {
             Some(workspace) => workspace,
             None => {
                 self.update_state_if(session_id, SessionState::Created, SessionState::Idle);
-                return Err(AppError::not_found("workspace"));
+                return Err(AppError::not_found_id("workspace", &workspace_id));
             }
         };
 
@@ -606,7 +606,7 @@ impl ACPClient for Client {
                 .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
             let entry = sessions
                 .get_mut(session_id)
-                .ok_or_else(|| AppError::not_found("session"))?;
+                .ok_or_else(|| AppError::not_found_id("session", session_id))?;
             entry.commands = new_commands;
             entry.stderr_tail = stderr_tail;
             entry.prompt_cancel = prompt_cancel;
@@ -696,7 +696,7 @@ impl ACPClient for Client {
                 .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
             let entry = sessions
                 .get_mut(session_id)
-                .ok_or_else(|| AppError::not_found("session"))?;
+                .ok_or_else(|| AppError::not_found_id("session", session_id))?;
             entry.info.model_id = model_id.to_string();
             entry.info.updated_at = Utc::now();
         }
@@ -735,7 +735,7 @@ impl ACPClient for Client {
             .write()
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
             .remove(session_id)
-            .ok_or_else(|| AppError::not_found("session"))?;
+            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
         // Closing removes only live transport state; durable events remain in
         // SQLite and the metadata list is atomically updated before return.
         let persist_result = self.persist_sessions();
@@ -1840,7 +1840,7 @@ fn release_terminal(
         .lock()
         .map_err(|_| AppError::internal("ACP terminal registry lock poisoned"))?
         .remove(&request.terminal_id.to_string())
-        .ok_or_else(|| AppError::not_found("terminal"))?;
+        .ok_or_else(|| AppError::not_found_id("terminal", &request.terminal_id.to_string()))?;
     terminal.cancel.cancel();
     Ok(ReleaseTerminalResponse::new())
 }
@@ -1854,7 +1854,7 @@ fn terminal_state(
         .map_err(|_| AppError::internal("ACP terminal registry lock poisoned"))?
         .get(terminal_id)
         .cloned()
-        .ok_or_else(|| AppError::not_found("terminal"))
+        .ok_or_else(|| AppError::not_found_id("terminal", terminal_id))
 }
 
 fn append_terminal_output(state: &TerminalState, line: &str) {

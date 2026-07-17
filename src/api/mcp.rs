@@ -7,6 +7,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use axum::body::Bytes;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -17,7 +18,7 @@ use tracing::error;
 
 use crate::mcp::{self, File as McpFile, McpError, ServerStatus};
 
-use super::{ApiResponseError, AppState};
+use super::{decode_json_body, ApiResponseError, AppState};
 
 #[derive(Deserialize)]
 pub(crate) struct PatchMcpServerRequest {
@@ -48,8 +49,9 @@ pub async fn put_mcp(
 pub async fn patch_mcp_server(
     State(state): State<AppState>,
     AxumPath(name): AxumPath<String>,
-    Json(request): Json<PatchMcpServerRequest>,
+    body: Result<Json<PatchMcpServerRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     let path = require_mcp_path(&state)?;
     if name.is_empty() {
         return Err(ApiResponseError::bad_request("missing server name"));

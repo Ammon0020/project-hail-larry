@@ -90,8 +90,8 @@ impl Daemon {
         let registrar: Arc<dyn WorkspaceRegistrar> = Arc::new(DaemonWorkspaceRegistrar {
             workspaces: Arc::clone(&workspaces),
         });
-        let pairing = PairingManager::new(&config.data_dir, Some(registrar))
-            .context("open pairing state")?;
+        let pairing =
+            PairingManager::new(&config.data_dir, Some(registrar)).context("open pairing state")?;
         configure_pairing(&pairing, &config);
         load_workspaces(&workspaces, &config.workspaces).await;
         let files = Arc::new(FileSync::new());

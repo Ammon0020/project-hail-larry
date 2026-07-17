@@ -459,10 +459,10 @@ mod tests {
             Ok(Vec::new())
         }
         async fn read_file(&self, _id: &str, _path: &str) -> Result<ReadFileResult, AppError> {
-            Err(AppError::not_found("file"))
+            Err(AppError::not_found_kind("file"))
         }
         async fn file_path(&self, _id: &str, _path: &str) -> Result<String, AppError> {
-            Err(AppError::not_found("file"))
+            Err(AppError::not_found_kind("file"))
         }
         async fn write_file(
             &self,

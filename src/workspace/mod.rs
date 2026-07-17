@@ -45,7 +45,7 @@ impl Manager {
             .map_err(|_| AppError::internal("workspace registry lock poisoned"))?
             .get(id)
             .cloned()
-            .ok_or_else(|| AppError::not_found("workspace"))
+            .ok_or_else(|| AppError::not_found_id("workspace", id))
     }
 
     fn safe_path(root: &Path, rel_path: &str) -> Result<PathBuf, AppError> {
@@ -117,7 +117,7 @@ impl WorkspaceManager for Manager {
             .map_err(|_| AppError::internal("workspace registry lock poisoned"))?
             .remove(id)
             .map(|_| ())
-            .ok_or_else(|| AppError::not_found("workspace"))
+            .ok_or_else(|| AppError::not_found_id("workspace", id))
     }
 
     async fn file_tree(&self, workspace_id: &str) -> Result<Vec<FileNode>, AppError> {
@@ -206,8 +206,18 @@ fn workspace_id(root: &Path) -> String {
 
 fn read_file(root: &Path, rel_path: &str) -> Result<ReadFileResult, AppError> {
     let path = Manager::safe_path(root, rel_path)?;
-    let metadata = fs::symlink_metadata(&path)
-        .map_err(|err| AppError::internal(format!("stat file: {err}")))?;
+    let metadata = fs::symlink_metadata(&path).map_err(|err| {
+        // Go returns `stat file: lstat <path>: no such file or directory` as a
+        // 404 via handleReadFile; mirror that client-facing string.
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::not_found(format!(
+                "stat file: lstat {}: no such file or directory",
+                path.display()
+            ))
+        } else {
+            AppError::internal(format!("stat file: {err}"))
+        }
+    })?;
     if !metadata.file_type().is_file() {
         return Err(AppError::validation("path is not a regular file"));
     }

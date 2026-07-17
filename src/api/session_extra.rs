@@ -3,6 +3,7 @@
 use std::io::Cursor;
 use std::path::Path;
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Multipart, Path as AxumPath, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -15,7 +16,7 @@ use crate::acp::{self, EditorSelection};
 use crate::interfaces::ACPClient;
 use crate::uploads::{self, UploadError, MAX_UPLOAD_BYTES};
 
-use super::{app_error, ApiResponseError, AppState};
+use super::{app_error, decode_json_body, ApiResponseError, AppState};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,8 +83,9 @@ pub async fn export_session(
 pub async fn session_context(
     State(state): State<AppState>,
     AxumPath(_session_id): AxumPath<String>,
-    Json(request): Json<SessionContextRequest>,
+    body: Result<Json<SessionContextRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
     let tracker = state.acp.open_files_tracker();
     if let Some(open_files) = request.open_files {
         tracker.set_open_files(open_files).map_err(app_error)?;

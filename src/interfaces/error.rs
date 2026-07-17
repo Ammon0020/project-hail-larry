@@ -21,11 +21,14 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum AppError {
     /// Requested resource does not exist (workspace, session, device, upload, …).
-    #[error("not found: {resource}")]
+    ///
+    /// `resource` is the full client-facing message (Go `err.Error()`), e.g.
+    /// `"session not found: nonexistent"` or `"stat file: lstat …"`.
+    #[error("{resource}")]
     NotFound {
-        /// Resource kind for diagnostics (e.g. `"session"`, `"workspace"`).
+        /// Full Go-compatible error string returned in `{"error":…}`.
         resource: String,
-        /// Optional resource identifier.
+        /// Optional underlying cause (not shown to clients).
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
@@ -69,20 +72,33 @@ pub enum AppError {
 
 impl AppError {
     /// Convenience constructor for [`AppError::NotFound`] without a source error.
-    pub fn not_found(resource: impl Into<String>) -> Self {
+    ///
+    /// Prefer the full Go-style message (`"session not found: {id}"`). Kind-only
+    /// helpers [`Self::not_found_kind`] / [`Self::not_found_id`] build that text.
+    pub fn not_found(message: impl Into<String>) -> Self {
         Self::NotFound {
-            resource: resource.into(),
+            resource: message.into(),
             source: None,
         }
     }
 
+    /// `"{kind} not found"` (no id) — matches Go when the id is unavailable.
+    pub fn not_found_kind(kind: &str) -> Self {
+        Self::not_found(format!("{kind} not found"))
+    }
+
+    /// `"{kind} not found: {id}"` — matches Go `fmt.Errorf("%s not found: %s", …)`.
+    pub fn not_found_id(kind: &str, id: &str) -> Self {
+        Self::not_found(format!("{kind} not found: {id}"))
+    }
+
     /// Convenience constructor for [`AppError::NotFound`] with a source error.
     pub fn not_found_with_source(
-        resource: impl Into<String>,
+        message: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self::NotFound {
-            resource: resource.into(),
+            resource: message.into(),
             source: Some(Box::new(source)),
         }
     }
@@ -159,7 +175,7 @@ impl ApiError {
 pub fn map_api_error(err: &AppError) -> ApiError {
     match err {
         AppError::NotFound { resource, .. } => {
-            ApiError::new(ApiStatusCode::NOT_FOUND, format!("{resource} not found"))
+            ApiError::new(ApiStatusCode::NOT_FOUND, resource.clone())
         }
         AppError::StaleRevision => ApiError::new(
             ApiStatusCode::CONFLICT,

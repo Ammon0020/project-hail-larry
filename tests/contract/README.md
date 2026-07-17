@@ -225,6 +225,10 @@ contract surface that the Rust port must replicate.
   autodetect (`PATH=/dev/null`, `HOME=/dev/null`) for reproducibility, so
   `/api/agents/autodetect` returns an empty list. This test can only be run via
   the Go in-process harness.
+- **`rest_mcp_put_bad_body` is ignored** (`#[ignore]`). Go `encoding/json` and
+  Rust `serde_json` disagree on the parse-error suffix for `{not json` while
+  both return 400 + `invalid mcp config JSON: …`. Other bad-body cases cover
+  the envelope contract.
 - **WebSocket auth rejection is not tested**. It requires a non-loopback TCP
   connection, which the runner can't simulate (the server's loopback auth
   bypass always applies).
@@ -247,8 +251,10 @@ contract surface that the Rust port must replicate.
 - `CONTRACT_BINARY=/path/to/binary`: overrides the binary path for either
   backend. The runner uses this directly without building.
 
-The runner sets `LOCAL_AGENT_STATE_DIR` to an isolated temp dir, writes a seed
-`config.json` (same shape as the Go harness), and starts the backend with
-`<binary> start`. It polls `/health` until the backend is ready (up to 30s),
-then runs the tests. On shutdown it kills the subprocess and cleans up the
-temp dir (unless `CONTRACT_KEEP_STATE` is set).
+The runner sets `LOCAL_AGENT_STATE_DIR` to an isolated temp dir, writes seed
+`config.json` (Go) and `config.toml` (Rust — same camelCase fields), and starts
+the backend with `<binary> start`. It also sets `PATH=/dev/null` and
+`HOME=/dev/null` so autodetect cannot pick up host agents. It polls `/health`
+until the backend is ready (up to 30s), then runs the tests. On shutdown it
+kills the subprocess and cleans up the temp dir (unless `CONTRACT_KEEP_STATE`
+is set).

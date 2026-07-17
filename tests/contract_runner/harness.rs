@@ -252,8 +252,12 @@ fn find_free_port() -> u16 {
     port
 }
 
-/// Write the seed config.json into the state dir. Mirrors `writeSeedConfig` in
+/// Write seed config into the state dir. Mirrors `writeSeedConfig` in
 /// go-fixtures/seed.go but with the dynamically-allocated port.
+///
+/// Writes both formats: `config.json` for the Go backend and `config.toml`
+/// for the Rust backend (`Config::load` only reads TOML). Writing both is
+/// harmless — each backend ignores the format it does not use.
 fn write_seed_config(state_dir: &Path, repo_root: &Path, port: u16) -> Result<()> {
     let seed_ws_path = repo_root.join(SEED_WORKSPACE_REL);
     if !seed_ws_path.is_dir() {
@@ -261,22 +265,48 @@ fn write_seed_config(state_dir: &Path, repo_root: &Path, port: u16) -> Result<()
     }
 
     let db_path = state_dir.join("local-agent.db");
-    let config = serde_json::json!({
+    let agents: Vec<local_agent::config::AgentInfo> =
+        serde_json::from_str(SEED_AGENT_JSON).context("parse seed agent JSON")?;
+
+    // Go backend reads config.json (encoding/json camelCase tags).
+    let json_config = serde_json::json!({
         "port": port,
         "host": "127.0.0.1",
         "dataDir": state_dir,
-        "dbPath": db_path,
-        "workspaces": [seed_ws_path],
-        "agents": serde_json::from_str::<serde_json::Value>(SEED_AGENT_JSON)?,
+        "dbPath": &db_path,
+        "workspaces": [&seed_ws_path],
+        "agents": &agents,
         "tlsEnabled": false,
         "pairingTtlSeconds": 300,
         "revocationGracePeriodSeconds": 300,
         "credentialInactivityTtlSeconds": 2592000,
     });
+    std::fs::write(
+        state_dir.join("config.json"),
+        serde_json::to_string_pretty(&json_config)?,
+    )?;
 
-    let config_path = state_dir.join("config.json");
-    let data = serde_json::to_string_pretty(&config)?;
-    std::fs::write(&config_path, data)?;
+    // Rust backend reads config.toml (same camelCase field names via serde).
+    let toml_config = local_agent::config::Config {
+        port: i64::from(port),
+        host: "127.0.0.1".to_string(),
+        data_dir: state_dir.to_string_lossy().to_string(),
+        db_path: db_path.to_string_lossy().to_string(),
+        workspaces: vec![seed_ws_path.to_string_lossy().to_string()],
+        agents,
+        tls_enabled: false,
+        tls_cert_dir: String::new(),
+        https_port: 0,
+        pairing_ttl_seconds: 300,
+        credential_inactivity_ttl_seconds: 2_592_000,
+        allow_remote_workspace_registration: false,
+        revocation_grace_period_seconds: 300,
+        extra: toml::Table::new(),
+    };
+    std::fs::write(
+        state_dir.join("config.toml"),
+        toml::to_string_pretty(&toml_config).context("serialize seed config.toml")?,
+    )?;
     Ok(())
 }
 
@@ -285,7 +315,7 @@ fn write_seed_config(state_dir: &Path, repo_root: &Path, port: u16) -> Result<()
 /// are visible in the test output.
 async fn start_backend(binary: &Path, state_dir: &Path, backend: &str) -> Result<Child> {
     eprintln!(
-        "[contract] starting backend: {} start (state dir: {})",
+        "[contract] starting {backend} backend: {} start (state dir: {})",
         binary.display(),
         state_dir.display()
     );
@@ -297,19 +327,14 @@ async fn start_backend(binary: &Path, state_dir: &Path, backend: &str) -> Result
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
 
-    // For the Go backend, neutralize autodetect so only the fixture-agent from
-    // config.json appears in /api/agents. Autodetect checks PATH first, then
-    // falls back to absolute searchPaths that expand ~ to $HOME. Setting both
-    // PATH and HOME to empty/non-existent paths makes findFirstCommand return
-    // "" for every agent spec, so no machine-specific agents are registered.
-    // The binary path is absolute so it doesn't need PATH.
-    //
-    // The Rust backend will need similar treatment once autodetect is
-    // implemented.
-    if backend == "go" {
-        cmd.env("PATH", "/dev/null");
-        cmd.env("HOME", "/dev/null");
-    }
+    // Neutralize autodetect so only the fixture-agent from the seed config
+    // appears in /api/agents. Autodetect checks PATH first, then falls back
+    // to absolute searchPaths that expand ~ to $HOME. Setting both PATH and
+    // HOME to non-existent paths makes find_first_command return None for
+    // every agent spec (Go and Rust). The binary path is absolute so it
+    // doesn't need PATH.
+    cmd.env("PATH", "/dev/null");
+    cmd.env("HOME", "/dev/null");
 
     cmd.spawn().context("failed to spawn backend subprocess")
 }
