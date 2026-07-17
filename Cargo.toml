@@ -103,6 +103,13 @@ thiserror = "2.0"
 # relay methods; `unstable` enables other draft operations used by the Go
 # client (provider management, session fork). MSRV 1.92.0 compatible.
 agent-client-protocol = { version = "1.2.0", features = ["unstable", "unstable_mcp_over_acp"] }
+# async-process owns ACP agent children while exposing futures-compatible stdio
+# streams for the SDK's ByteStreams transport. Production ACP needs explicit
+# cwd, stderr-tail, and child lifecycle control, which AcpAgent intentionally
+# encapsulates.
+async-process = "2.5.0"
+# Used to drain the agent stderr pipe without blocking the bounded ACP actor.
+futures-util = "0.3"
 
 # --- Filesystem helpers ---
 # dirs: cross-platform home_dir (passwd / Known Folder fallback when HOME is
@@ -170,11 +177,6 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 contract = []
 
 [dev-dependencies]
-# async-process: used by S-ACP-SPIKE (`tests/spike_acp.rs`) to spawn the
-# mockagent with PID tracking for the cancellation/teardown test. The SDK's
-# `AcpAgent` uses it internally; the streams implement `futures::io` traits
-# required by `agent_client_protocol::ByteStreams`. Verified 2026-07-15.
-async-process = "2.5.0"
 # tempfile: scratch workspace dirs for S-PATHUTIL traversal/symlink tests and
 # S-CONFIG atomic-write / round-trip tests so they never touch the developer's
 # real filesystem. Verified 2026-07-15.
@@ -189,9 +191,6 @@ regex = "1.11"
 # (origin rejection, auth success, event broadcast). Replaces nhooyr.io/websocket
 # from the Go harness. Verified 2026-07-16.
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
-# futures-utils: SinkExt/StreamExt for splitting the WS stream in the contract
-# runner's connection-success test. Verified 2026-07-16.
-futures-util = "0.3"
 
 # Lint policy — authoritative levels enforced by `cargo build`/`cargo test`/
 # `cargo clippy` and IDE check-on-save, not just by `cargo clippy -- -D warnings`.

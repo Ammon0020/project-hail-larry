@@ -6,8 +6,10 @@
 
 mod agent_registry;
 mod autodetect;
+mod core;
 
 pub use agent_registry::AgentRegistry;
 pub use autodetect::{
     autodetect, autodetect_with, valid_commands_for_agent, AutodetectOptions, ProviderProbe,
 };
+pub use core::{Client, ClientDeps, SessionState, STDERR_TAIL_BYTES};
