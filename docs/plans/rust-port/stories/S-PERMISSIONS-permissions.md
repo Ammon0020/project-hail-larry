@@ -31,8 +31,8 @@ to server for event broadcast.
 
 ## Acceptance Criteria
 
-- [ ] Permission requests stored and retrievable
-- [ ] `allow_always` / `allow_session` policies enforced
-- [ ] Stale prompts auto-denied after 5 minutes
-- [ ] Ephemeral audit log records all decisions for the running daemon; durable policy/audit storage remains post-parity work
-- [ ] `cargo test permissions` passes
+- [x] Permission requests stored and retrievable
+- [x] `allow_always` / `allow_session` policies enforced
+- [x] Stale prompts auto-denied after 5 minutes
+- [x] Ephemeral audit log records all decisions for the running daemon; durable policy/audit storage remains post-parity work
+- [x] `cargo test permissions` passes

@@ -538,6 +538,14 @@ pub struct ProviderCurrentConfig {
 // ============================================================================
 
 /// Decision values for permission prompts. Wire strings match Go constants.
+///
+/// `RejectAlways` mirrors the Go `permissions.PermissionRejectAlways` local
+/// constant (`"reject_always"`): a durable deny counterpart to `AllowAlways`,
+/// kept on the same enum so it round-trips through the respond API and the
+/// policy cache without a parallel string type. It is defined on this enum
+/// rather than locally in `permissions` because Rust enums are closed — the
+/// respond path validates a `PermissionDecision` against the request's offered
+/// options, so the value must inhabit the same type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PermissionDecision {
     #[serde(rename = "allow_once")]
@@ -548,6 +556,10 @@ pub enum PermissionDecision {
     AllowAlways,
     #[serde(rename = "deny")]
     Deny,
+    /// Durable deny: auto-deny subsequent matching requests without re-prompting.
+    /// Go counterpart: `permissions.PermissionRejectAlways` (`"reject_always"`).
+    #[serde(rename = "reject_always")]
+    RejectAlways,
 }
 
 impl PermissionDecision {
@@ -558,6 +570,7 @@ impl PermissionDecision {
             Self::AllowSession => "allow_session",
             Self::AllowAlways => "allow_always",
             Self::Deny => "deny",
+            Self::RejectAlways => "reject_always",
         }
     }
 }
@@ -583,7 +596,7 @@ pub struct PermissionOptionInfo {
 pub type PermissionOption = PermissionOptionInfo;
 
 /// Pending permission prompt. Mirrors Go `interfaces.PermissionRequest`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionRequest {
     pub id: String,
