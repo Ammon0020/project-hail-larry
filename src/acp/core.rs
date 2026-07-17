@@ -11,11 +11,14 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex, RwLock};
 
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities,
-    InitializeRequest, NewSessionRequest, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    CancelNotification, ClientCapabilities, ContentBlock, CreateTerminalRequest,
+    CreateTerminalResponse, FileSystemCapabilities, InitializeRequest, KillTerminalRequest,
+    KillTerminalResponse, NewSessionRequest, PromptRequest, ReadTextFileRequest,
+    ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionId, SessionNotification, TextContent, WriteTextFileRequest,
-    WriteTextFileResponse,
+    SelectedPermissionOutcome, SessionId, SessionNotification, TerminalExitStatus,
+    TerminalOutputRequest, TerminalOutputResponse, TextContent, WaitForTerminalExitRequest,
+    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ByteStreams, Client as SdkClient, ConnectionTo};
@@ -23,7 +26,8 @@ use async_process::Command;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::io::AsyncReadExt;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::AgentRegistry;
@@ -31,11 +35,14 @@ use crate::config::AgentInfo;
 use crate::interfaces::{
     ACPClient, AppError, Attachment, PermissionManager, Session, SessionInfo, WorkspaceManager,
 };
+use crate::shell::{merge_env, Executor, DEFAULT_MAX_OUTPUT_BYTES};
 
 /// Maximum retained agent stderr diagnostic tail. Agent stderr is untrusted and
 /// must never be allowed to grow the daemon's memory without bound.
 pub const STDERR_TAIL_BYTES: usize = 8 * 1024;
 const ACTOR_COMMAND_CAPACITY: usize = 32;
+/// Maximum output retained for an ACP terminal when the agent gives no lower limit.
+const MAX_TERMINAL_OUTPUT_BYTES: usize = DEFAULT_MAX_OUTPUT_BYTES;
 
 /// Constructor-only dependencies for ACP core.
 pub struct ClientDeps {
@@ -394,14 +401,21 @@ async fn run_actor_inner(
         spawn_stderr_drain(stderr, Arc::clone(&config.stderr_tail));
     }
     let transport = ByteStreams::new(stdin, stdout);
+    let terminals = Arc::new(Mutex::new(HashMap::new()));
     let read_deps = HandlerDeps {
         workspace_id: config.workspace_id.clone(),
         workspace_path: config.workspace_path.clone(),
         workspaces: Arc::clone(&config.workspaces),
         permissions: Arc::clone(&config.permissions),
+        terminals: Arc::clone(&terminals),
     };
     let write_deps = read_deps.clone();
     let permission_deps = read_deps.clone();
+    let terminal_deps = read_deps.clone();
+    let terminal_output_deps = read_deps.clone();
+    let terminal_wait_deps = read_deps.clone();
+    let terminal_kill_deps = read_deps.clone();
+    let terminal_release_deps = read_deps.clone();
     let connected = SdkClient
         .builder()
         .name("local-agent")
@@ -459,6 +473,100 @@ async fn run_actor_inner(
             },
             agent_client_protocol::on_receive_request!(),
         )
+        .on_receive_request(
+            async move |request: CreateTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
+                let deps = terminal_deps.clone();
+                tokio::spawn(async move {
+                    match create_terminal(deps, request) {
+                        Ok(response) => {
+                            let _ = responder.respond(response);
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "ACP denied terminal create");
+                            let _ = responder.respond_with_internal_error(error);
+                        }
+                    }
+                });
+                Ok(())
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: TerminalOutputRequest, responder, _cx: ConnectionTo<Agent>| {
+                let deps = terminal_output_deps.clone();
+                tokio::spawn(async move {
+                    match terminal_output(deps, request) {
+                        Ok(response) => {
+                            let _ = responder.respond(response);
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "ACP terminal output failed");
+                            let _ = responder.respond_with_internal_error(error);
+                        }
+                    }
+                });
+                Ok(())
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: WaitForTerminalExitRequest,
+                        responder,
+                        _cx: ConnectionTo<Agent>| {
+                let deps = terminal_wait_deps.clone();
+                // A terminal can run indefinitely. Waiting in this task would
+                // stop the SDK from dispatching cancellation and other callbacks.
+                tokio::spawn(async move {
+                    match wait_for_terminal_exit(deps, request).await {
+                        Ok(response) => {
+                            let _ = responder.respond(response);
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "ACP terminal wait failed");
+                            let _ = responder.respond_with_internal_error(error);
+                        }
+                    }
+                });
+                Ok(())
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: KillTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
+                let deps = terminal_kill_deps.clone();
+                tokio::spawn(async move {
+                    match kill_terminal(deps, request) {
+                        Ok(response) => {
+                            let _ = responder.respond(response);
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "ACP terminal kill failed");
+                            let _ = responder.respond_with_internal_error(error);
+                        }
+                    }
+                });
+                Ok(())
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ReleaseTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
+                let deps = terminal_release_deps.clone();
+                tokio::spawn(async move {
+                    match release_terminal(deps, request) {
+                        Ok(response) => {
+                            let _ = responder.respond(response);
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "ACP terminal release failed");
+                            let _ = responder.respond_with_internal_error(error);
+                        }
+                    }
+                });
+                Ok(())
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
         .connect_with(transport, |cx: ConnectionTo<Agent>| async move {
             let initialize = InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
                 ClientCapabilities::new().fs(FileSystemCapabilities::new()
@@ -478,6 +586,7 @@ async fn run_actor_inner(
             actor_loop(cx, session.session_id, commands).await
         })
         .await;
+    cancel_terminals(&terminals);
     let _ = child.kill();
     let _ = child.status().await;
     connected.map_err(|error| AppError::internal(format!("ACP connection: {error}")))
@@ -521,6 +630,231 @@ struct HandlerDeps {
     workspace_path: PathBuf,
     workspaces: Arc<dyn WorkspaceManager>,
     permissions: Arc<dyn PermissionManager>,
+    terminals: TerminalRegistry,
+}
+
+type TerminalRegistry = Arc<Mutex<HashMap<String, Arc<TerminalState>>>>;
+
+/// State shared by callback requests for one ACP terminal.
+///
+/// The standard mutex is intentionally used only for short, synchronous state
+/// updates. Terminal waits observe the watch channel outside the lock.
+struct TerminalState {
+    cancel: CancellationToken,
+    output: Mutex<RetainedOutput>,
+    exit: watch::Sender<Option<TerminalExitStatus>>,
+}
+
+/// Bounded terminal output that discards the oldest complete UTF-8 prefix.
+struct RetainedOutput {
+    text: String,
+    limit: usize,
+    truncated: bool,
+}
+
+impl RetainedOutput {
+    fn new(limit: usize) -> Self {
+        Self {
+            text: String::new(),
+            limit,
+            truncated: false,
+        }
+    }
+
+    fn push_line(&mut self, line: &str) {
+        if self.limit == 0 {
+            // Each callback invocation represents at least a newline, even
+            // when the emitted line is empty.
+            self.truncated = true;
+            return;
+        }
+        self.text.push_str(line);
+        self.text.push('\n');
+        if self.text.len() > self.limit {
+            let excess = self.text.len() - self.limit;
+            let start = self.text.ceil_char_boundary(excess);
+            self.text.drain(..start);
+            self.truncated = true;
+        }
+    }
+}
+
+/// Create an ACP terminal and start its command without delaying the response.
+fn create_terminal(
+    deps: HandlerDeps,
+    request: CreateTerminalRequest,
+) -> Result<CreateTerminalResponse, AppError> {
+    let cwd = terminal_cwd(&deps.workspace_path, request.cwd.as_deref())?;
+    let limit = request
+        .output_byte_limit
+        .map_or(MAX_TERMINAL_OUTPUT_BYTES, |limit| {
+            usize::try_from(limit)
+                .unwrap_or(MAX_TERMINAL_OUTPUT_BYTES)
+                .min(MAX_TERMINAL_OUTPUT_BYTES)
+        });
+    let terminal_id = format!("term-{}", Uuid::new_v4().simple());
+    let cancel = CancellationToken::new();
+    let (exit, _) = watch::channel(None);
+    let state = Arc::new(TerminalState {
+        cancel: cancel.clone(),
+        output: Mutex::new(RetainedOutput::new(limit)),
+        exit,
+    });
+    deps.terminals
+        .lock()
+        .map_err(|_| AppError::internal("ACP terminal registry lock poisoned"))?
+        .insert(terminal_id.clone(), Arc::clone(&state));
+
+    let env = merge_env(
+        std::env::vars(),
+        request
+            .env
+            .iter()
+            .map(|variable| (variable.name.clone(), variable.value.clone())),
+    );
+    let command = request.command;
+    let args = request.args;
+    let executor = Executor::new(&deps.workspace_path)
+        .with_env(env)
+        .with_max_output_bytes(limit);
+    tokio::spawn(async move {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let stdout_state = Arc::clone(&state);
+        let stderr_state = Arc::clone(&state);
+        let (result, error) = executor
+            .run_async_args(
+                cancel,
+                &command,
+                &args,
+                cwd.as_deref(),
+                move |line| append_terminal_output(&stdout_state, line),
+                move |line| append_terminal_output(&stderr_state, line),
+            )
+            .await;
+        if let Some(error) = error {
+            // Commands, argv, and environment values may contain credentials;
+            // keep the diagnostic category without recording their contents.
+            tracing::warn!(error = %error, "ACP terminal command ended abnormally");
+        }
+        let status = TerminalExitStatus::new()
+            .exit_code((result.exit_code >= 0).then_some(result.exit_code as u32))
+            .signal(result.signal);
+        state.exit.send_replace(Some(status));
+    });
+    Ok(CreateTerminalResponse::new(terminal_id))
+}
+
+/// Return a snapshot of terminal output without waiting for the command.
+fn terminal_output(
+    deps: HandlerDeps,
+    request: TerminalOutputRequest,
+) -> Result<TerminalOutputResponse, AppError> {
+    let terminal = terminal_state(&deps.terminals, &request.terminal_id.to_string())?;
+    let output = terminal
+        .output
+        .lock()
+        .map_err(|_| AppError::internal("ACP terminal output lock poisoned"))?;
+    let exit_status = terminal.exit.borrow().clone();
+    Ok(TerminalOutputResponse::new(output.text.clone(), output.truncated).exit_status(exit_status))
+}
+
+/// Wait asynchronously for an owned terminal to exit.
+async fn wait_for_terminal_exit(
+    deps: HandlerDeps,
+    request: WaitForTerminalExitRequest,
+) -> Result<WaitForTerminalExitResponse, AppError> {
+    let terminal = terminal_state(&deps.terminals, &request.terminal_id.to_string())?;
+    let mut exit = terminal.exit.subscribe();
+    loop {
+        if let Some(status) = exit.borrow().clone() {
+            return Ok(WaitForTerminalExitResponse::new(status));
+        }
+        exit.changed()
+            .await
+            .map_err(|_| AppError::internal("ACP terminal exited without a status"))?;
+    }
+}
+
+/// Cancel a terminal while retaining its output for subsequent inspection.
+fn kill_terminal(
+    deps: HandlerDeps,
+    request: KillTerminalRequest,
+) -> Result<KillTerminalResponse, AppError> {
+    let terminal = terminal_state(&deps.terminals, &request.terminal_id.to_string())?;
+    terminal.cancel.cancel();
+    Ok(KillTerminalResponse::new())
+}
+
+/// Cancel and remove a terminal, releasing its registry-owned resources.
+fn release_terminal(
+    deps: HandlerDeps,
+    request: ReleaseTerminalRequest,
+) -> Result<ReleaseTerminalResponse, AppError> {
+    let terminal = deps
+        .terminals
+        .lock()
+        .map_err(|_| AppError::internal("ACP terminal registry lock poisoned"))?
+        .remove(&request.terminal_id.to_string())
+        .ok_or_else(|| AppError::not_found("terminal"))?;
+    terminal.cancel.cancel();
+    Ok(ReleaseTerminalResponse::new())
+}
+
+fn terminal_state(
+    registry: &TerminalRegistry,
+    terminal_id: &str,
+) -> Result<Arc<TerminalState>, AppError> {
+    registry
+        .lock()
+        .map_err(|_| AppError::internal("ACP terminal registry lock poisoned"))?
+        .get(terminal_id)
+        .cloned()
+        .ok_or_else(|| AppError::not_found("terminal"))
+}
+
+fn append_terminal_output(state: &TerminalState, line: &str) {
+    if let Ok(mut output) = state.output.lock() {
+        output.push_line(line);
+    }
+}
+
+/// Cancel every terminal when its owning ACP session disconnects.
+fn cancel_terminals(registry: &TerminalRegistry) {
+    if let Ok(terminals) = registry.lock() {
+        for terminal in terminals.values() {
+            terminal.cancel.cancel();
+        }
+    }
+}
+
+/// Validate the ACP-required absolute CWD and translate it for Executor.
+fn terminal_cwd(root: &Path, cwd: Option<&Path>) -> Result<Option<String>, AppError> {
+    let Some(cwd) = cwd else {
+        return Ok(None);
+    };
+    if !cwd.is_absolute() {
+        return Err(AppError::validation(
+            "terminal cwd must be an absolute path within the workspace",
+        ));
+    }
+    let root = std::fs::canonicalize(root)
+        .map_err(|error| AppError::internal(format!("canonicalize workspace: {error}")))?;
+    let cwd = std::fs::canonicalize(cwd)
+        .map_err(|error| AppError::validation(format!("invalid terminal cwd: {error}")))?;
+    if !cwd.is_dir() {
+        return Err(AppError::validation("terminal cwd is not a directory"));
+    }
+    let relative = cwd
+        .strip_prefix(&root)
+        .map_err(|_| AppError::validation("terminal cwd is outside the workspace"))?;
+    if relative.as_os_str().is_empty() {
+        Ok(None)
+    } else {
+        relative
+            .to_str()
+            .map(|path| Some(path.to_string()))
+            .ok_or_else(|| AppError::validation("terminal cwd is not valid Unicode"))
+    }
 }
 
 async fn read_text_file(
@@ -728,4 +1062,20 @@ fn path_to_workspace_relative(root: &Path, path: &Path) -> Result<String, AppErr
         .strip_prefix(root)
         .map_err(|_| AppError::validation("agent path is outside the workspace"))?;
     Ok(relative.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RetainedOutput;
+
+    #[test]
+    fn retained_terminal_output_truncates_at_utf8_boundary() {
+        let mut output = RetainedOutput::new(5);
+        output.push_line("éé");
+        output.push_line("x");
+
+        assert!(output.truncated);
+        assert!(output.text.len() <= 5);
+        assert!(std::str::from_utf8(output.text.as_bytes()).is_ok());
+    }
 }

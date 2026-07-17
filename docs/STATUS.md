@@ -32,7 +32,8 @@
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
 - [ ] **Rust backend port** — Phase 0–2 complete (245 tests). Phase 3 in progress:
   S-MCP/S-ACP-AUTODETECT/S-WORKSPACE/S-PAIRING complete (268 tests); ACP core
-  transport/actor first batch in progress (handlers, terminal lifecycle, tests remain).
+  transport/actor and secure filesystem, permission, and terminal handlers are in place;
+  lifecycle integration tests and stream/context/provider stories remain.
 
 ## Blocked
 
@@ -43,8 +44,9 @@
 - **07-17** — Rust port **S-ACP-CORE** started: `src/acp/core.rs` has a
   constructor-wired session registry and a per-session actor using manual
   `async_process` + SDK `ByteStreams`, workspace cwd, owned child teardown, and
-  bounded stderr tails. Command-channel prompt/cancel/close wiring is underway;
-  secure callback handlers and lifecycle tests remain in this story.
+  bounded stderr tails. Filesystem, permission, and terminal callbacks now enforce
+  workspace containment, bounded output, child cancellation, and non-blocking waits.
+  Lifecycle integration tests remain in this story.
 - **07-17** — Rust port **S-MCP** and **S-ACP-AUTODETECT** complete.
   `src/mcp` provides compatible atomic MCP config persistence, transport capability
   conversion, environment expansion, and bounded health checks. `src/acp` now has a
