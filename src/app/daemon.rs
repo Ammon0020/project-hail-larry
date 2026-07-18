@@ -83,8 +83,10 @@ impl Daemon {
         fs::create_dir_all(&config.data_dir)
             .with_context(|| format!("create state directory {}", config.data_dir))?;
 
-        // 1. Config / durable events. All event-producing services receive the
-        // same already-open bus, preventing post-construction event wiring.
+        // 1. Config / durable events. Autodetect may rewrite agents before the
+        // store is published so REST and ACP share one registry snapshot.
+        let mut config = config;
+        refresh_agents_on_startup(&mut config).await;
         let config_store = ConfigStore::new(config.clone());
         let events = Arc::new(EventBus::open(&config.db_path).context("open SQLite event store")?);
 
@@ -365,6 +367,32 @@ async fn load_workspaces(workspaces: &Arc<WorkspaceManagerImpl>, configured: &[S
                 );
             }
         }
+    }
+}
+
+/// Prune stale known-agent commands, merge PATH autodetection, persist if needed.
+///
+/// Mirrors Go `autodetectAndRegisterAgents` so an empty `agents = []` config
+/// still populates the harness selector on first boot.
+async fn refresh_agents_on_startup(config: &mut Config) {
+    let (pruned, pruned_changed) =
+        crate::acp::prune_stale_known_agents(std::mem::take(&mut config.agents));
+    config.agents = pruned;
+
+    let detected = crate::acp::autodetect().await;
+    let (merged, merge_changed) = crate::acp::merge_autodetected_agents(&config.agents, detected);
+    config.agents = merged;
+
+    if !(pruned_changed || merge_changed) {
+        return;
+    }
+    if let Err(error) = config.save() {
+        warn!(%error, "failed to persist autodetected agents");
+    } else {
+        info!(
+            count = config.agents.len(),
+            "persisted autodetected ACP agents"
+        );
     }
 }
 

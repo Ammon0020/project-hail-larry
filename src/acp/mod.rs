@@ -16,7 +16,8 @@ mod stream;
 
 pub use agent_registry::AgentRegistry;
 pub use autodetect::{
-    autodetect, autodetect_with, valid_commands_for_agent, AutodetectOptions, ProviderProbe,
+    autodetect, autodetect_with, merge_autodetected_agents, prune_stale_known_agents,
+    valid_commands_for_agent, AutodetectOptions, ProviderProbe,
 };
 pub use context::{EditorSelection, OpenFilesTracker};
 pub use conversation::export_conversation;

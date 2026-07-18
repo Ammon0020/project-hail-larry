@@ -178,6 +178,102 @@ pub async fn autodetect_with(options: AutodetectOptions) -> Vec<AgentInfo> {
     agents
 }
 
+/// Merge configured agents with a fresh autodetect pass (Go `mergeAutodetectedAgents`).
+///
+/// Existing entries keep user-set name/command/models; empty fields are filled
+/// from detection. New IDs are appended. Returns the merged list and whether
+/// anything changed (so the caller can persist).
+#[must_use]
+pub fn merge_autodetected_agents(
+    configured: &[AgentInfo],
+    detected: Vec<AgentInfo>,
+) -> (Vec<AgentInfo>, bool) {
+    let mut merged = configured.to_vec();
+    let mut changed = false;
+    for detected_agent in detected {
+        if let Some(slot) = merged
+            .iter_mut()
+            .find(|agent| agent.id == detected_agent.id)
+        {
+            if slot.name.is_empty() {
+                slot.name = detected_agent.name;
+                changed = true;
+            }
+            if slot.command.is_empty() {
+                slot.command = detected_agent.command;
+                changed = true;
+            }
+            if slot.args.is_empty() && !detected_agent.args.is_empty() {
+                slot.args = detected_agent.args;
+                changed = true;
+            }
+            if slot.models.is_empty() {
+                slot.models = detected_agent.models;
+                changed = true;
+            }
+            if slot.warning.is_empty() && !detected_agent.warning.is_empty() {
+                slot.warning = detected_agent.warning;
+            }
+        } else {
+            merged.push(detected_agent);
+            changed = true;
+        }
+    }
+    (merged, changed)
+}
+
+/// Drop persisted known-agent entries whose command is no longer a valid launch
+/// command for that agent id (Go `pruneStaleKnownAgents`). Custom agents kept.
+#[must_use]
+pub fn prune_stale_known_agents(agents: Vec<AgentInfo>) -> (Vec<AgentInfo>, bool) {
+    let mut pruned = Vec::with_capacity(agents.len());
+    let mut removed = false;
+    for agent in agents {
+        match valid_commands_for_agent(&agent.id) {
+            None => pruned.push(agent),
+            Some(valid) if command_matches_spec(&agent.command, &valid) => pruned.push(agent),
+            Some(valid) => {
+                tracing::warn!(
+                    agent_id = %agent.id,
+                    command = %agent.command,
+                    ?valid,
+                    "removing stale agent entry: command is not a valid launch command"
+                );
+                removed = true;
+            }
+        }
+    }
+    (pruned, removed)
+}
+
+/// True when `cmd` is a bare valid name or a path whose base matches one.
+fn command_matches_spec(cmd: &str, valid_commands: &[&str]) -> bool {
+    if cmd.is_empty() {
+        return false;
+    }
+    let base = Path::new(cmd)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(cmd);
+    for valid in valid_commands {
+        if cmd == *valid || base == *valid {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            let base_lower = base.to_ascii_lowercase();
+            let valid_lower = valid.to_ascii_lowercase();
+            if base_lower == valid_lower
+                || base_lower.trim_end_matches(".exe") == valid_lower
+                || base_lower.trim_end_matches(".cmd") == valid_lower
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 async fn detect_models(
     spec: &AgentSpec,
     command: &Path,
@@ -638,9 +734,10 @@ fn truncate(value: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        expand_windows_env, parse_cursor_models, strip_ansi, valid_commands_for_agent,
-        ProviderProbe,
+        command_matches_spec, expand_windows_env, merge_autodetected_agents, parse_cursor_models,
+        prune_stale_known_agents, strip_ansi, valid_commands_for_agent, ProviderProbe,
     };
+    use crate::config::{AgentInfo, AgentModel};
 
     #[test]
     fn codex_never_allows_the_bare_tui() {
@@ -648,6 +745,76 @@ mod tests {
         assert_eq!(commands, ["codex-acp"]);
         assert!(!commands.contains(&"codex"));
         assert!(valid_commands_for_agent("custom").is_none());
+    }
+
+    #[test]
+    fn merge_adds_new_and_fills_empty_fields() {
+        let configured = vec![AgentInfo {
+            id: "codex".into(),
+            name: String::new(),
+            command: String::new(),
+            args: Vec::new(),
+            models: Vec::new(),
+            warning: String::new(),
+        }];
+        let detected = vec![
+            AgentInfo {
+                id: "codex".into(),
+                name: "Codex CLI".into(),
+                command: "/usr/bin/codex-acp".into(),
+                args: Vec::new(),
+                models: vec![AgentModel {
+                    id: "gpt".into(),
+                    name: "GPT".into(),
+                }],
+                warning: String::new(),
+            },
+            AgentInfo {
+                id: "cursor".into(),
+                name: "Cursor Agent".into(),
+                command: "/usr/bin/agent".into(),
+                args: vec!["acp".into()],
+                models: Vec::new(),
+                warning: String::new(),
+            },
+        ];
+        let (merged, changed) = merge_autodetected_agents(&configured, detected);
+        assert!(changed);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].name, "Codex CLI");
+        assert_eq!(merged[0].command, "/usr/bin/codex-acp");
+        assert_eq!(merged[0].models.len(), 1);
+        assert_eq!(merged[1].id, "cursor");
+    }
+
+    #[test]
+    fn prune_drops_stale_codex_tui_keeps_custom() {
+        let agents = vec![
+            AgentInfo {
+                id: "codex".into(),
+                name: "Codex".into(),
+                command: "codex".into(), // bare TUI — invalid for ACP
+                args: Vec::new(),
+                models: Vec::new(),
+                warning: String::new(),
+            },
+            AgentInfo {
+                id: "custom".into(),
+                name: "Custom".into(),
+                command: "/opt/my-agent".into(),
+                args: Vec::new(),
+                models: Vec::new(),
+                warning: String::new(),
+            },
+        ];
+        let (pruned, removed) = prune_stale_known_agents(agents);
+        assert!(removed);
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(pruned[0].id, "custom");
+        assert!(command_matches_spec(
+            "/home/u/.nvm/bin/codex-acp",
+            &["codex-acp"]
+        ));
     }
 
     #[test]
