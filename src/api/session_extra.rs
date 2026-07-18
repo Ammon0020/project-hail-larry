@@ -315,6 +315,7 @@ mod tests {
             permissions,
             None,
             Some(uploads),
+            None,
         )
     }
 

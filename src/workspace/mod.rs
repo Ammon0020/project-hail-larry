@@ -20,14 +20,53 @@ const BINARY_SNIFF_SIZE: usize = 512;
 const MAX_FILE_TREE_DEPTH: usize = 20;
 const MAX_FILE_TREE_NODES: usize = 100_000;
 
+/// One registered workspace root, available or retained-as-unavailable.
+#[derive(Clone)]
+struct WorkspaceEntry {
+    path: PathBuf,
+    /// Set when the path failed validation; empty when the root is usable.
+    error: String,
+}
+
+impl WorkspaceEntry {
+    fn available(path: PathBuf) -> Self {
+        Self {
+            path,
+            error: String::new(),
+        }
+    }
+
+    fn unavailable(path: PathBuf, error: String) -> Self {
+        Self { path, error }
+    }
+
+    fn is_available(&self) -> bool {
+        self.error.is_empty()
+    }
+
+    fn to_info(&self, id: &str) -> WorkspaceInfo {
+        WorkspaceInfo {
+            id: id.to_string(),
+            path: self.path.to_string_lossy().into_owned(),
+            name: self
+                .path
+                .file_name()
+                .map_or_else(String::new, |part| part.to_string_lossy().into_owned()),
+            available: self.is_available(),
+            error: self.error.clone(),
+        }
+    }
+}
+
 /// In-memory registry and workspace-scoped filesystem service.
 ///
 /// The registry lock protects only its map. Every disk operation first copies
 /// a workspace root out of the lock, so a slow tree walk or search never
 /// blocks registration and removal. File writes are serialized per file by
-/// [`FileSync`].
+/// [`FileSync`]. Unavailable entries (missing paths) stay listed so the UI/CLI
+/// can warn without pruning config.
 pub struct Manager {
-    workspaces: RwLock<HashMap<String, PathBuf>>,
+    workspaces: RwLock<HashMap<String, WorkspaceEntry>>,
 }
 
 impl Manager {
@@ -39,13 +78,42 @@ impl Manager {
         }
     }
 
-    fn root_for(&self, id: &str) -> Result<PathBuf, AppError> {
+    /// Retain a configured path that failed to load so list/CLI can warn.
+    ///
+    /// Does not touch config. ID is the same path-hash used by successful
+    /// register (hash of the configured path string). Replaces any prior entry
+    /// for that id.
+    pub fn retain_unavailable(
+        &self,
+        path: &str,
+        error: impl Into<String>,
+    ) -> Result<WorkspaceInfo, AppError> {
+        let path_buf = PathBuf::from(path);
+        let id = workspace_id(&path_buf);
+        let entry = WorkspaceEntry::unavailable(path_buf, error.into());
+        let info = entry.to_info(&id);
         self.workspaces
+            .write()
+            .map_err(|_| AppError::internal("workspace registry lock poisoned"))?
+            .insert(id, entry);
+        Ok(info)
+    }
+
+    fn root_for(&self, id: &str) -> Result<PathBuf, AppError> {
+        let entry = self
+            .workspaces
             .read()
             .map_err(|_| AppError::internal("workspace registry lock poisoned"))?
             .get(id)
             .cloned()
-            .ok_or_else(|| AppError::not_found_id("workspace", id))
+            .ok_or_else(|| AppError::not_found_id("workspace", id))?;
+        if !entry.is_available() {
+            return Err(AppError::validation(format!(
+                "workspace unavailable: {}",
+                entry.error
+            )));
+        }
+        Ok(entry.path)
     }
 
     fn safe_path(root: &Path, rel_path: &str) -> Result<PathBuf, AppError> {
@@ -78,18 +146,13 @@ impl WorkspaceManager for Manager {
         .map_err(|err| AppError::internal(format!("register task failed: {err}")))??;
 
         let id = workspace_id(&root);
-        let name = root
-            .file_name()
-            .map_or_else(String::new, |part| part.to_string_lossy().into_owned());
+        let entry = WorkspaceEntry::available(root);
+        let info = entry.to_info(&id);
         self.workspaces
             .write()
             .map_err(|_| AppError::internal("workspace registry lock poisoned"))?
-            .insert(id.clone(), root.clone());
-        Ok(WorkspaceInfo {
-            id,
-            path: root.to_string_lossy().into_owned(),
-            name,
-        })
+            .insert(id, entry);
+        Ok(info)
     }
 
     async fn list(&self) -> Result<Vec<WorkspaceInfo>, AppError> {
@@ -98,13 +161,7 @@ impl WorkspaceManager for Manager {
             .read()
             .map_err(|_| AppError::internal("workspace registry lock poisoned"))?
             .iter()
-            .map(|(id, path)| WorkspaceInfo {
-                id: id.clone(),
-                path: path.to_string_lossy().into_owned(),
-                name: path
-                    .file_name()
-                    .map_or_else(String::new, |part| part.to_string_lossy().into_owned()),
-            })
+            .map(|(id, entry)| entry.to_info(id))
             .collect();
         workspaces
             .sort_by(|left, right| left.name.cmp(&right.name).then(left.path.cmp(&right.path)));

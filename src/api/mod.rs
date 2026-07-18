@@ -66,6 +66,8 @@ pub struct AppState {
     pub mcp_config_path: Option<PathBuf>,
     /// Per-session image store. `None` makes upload routes return 503.
     pub uploads: Option<Arc<Mutex<uploads::Manager>>>,
+    /// External filesystem watcher. `None` when notify init failed.
+    pub fs_watcher: Option<Arc<crate::fswatch::Watcher>>,
     pair_rate: Arc<Mutex<HashMap<String, PairRateBucket>>>,
 }
 
@@ -93,6 +95,7 @@ impl AppState {
         permissions: Arc<PermissionsManager>,
         mcp_config_path: Option<PathBuf>,
         uploads: Option<Arc<Mutex<uploads::Manager>>>,
+        fs_watcher: Option<Arc<crate::fswatch::Watcher>>,
     ) -> Self {
         Self {
             config,
@@ -104,6 +107,7 @@ impl AppState {
             permissions,
             mcp_config_path,
             uploads,
+            fs_watcher,
             pair_rate: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -397,6 +401,9 @@ async fn register_workspace(
             .register(&payload.path)
             .await
             .map_err(app_error)?;
+        if let Some(watcher) = state.fs_watcher.as_ref() {
+            watcher.add_workspace(&workspace.id, &workspace.path);
+        }
         // Keep config.toml aligned when the host CLI (or zero-grace remote)
         // registers into a running daemon.
         if let Err(error) = state.config.write().add_workspace(&workspace.path) {
@@ -444,6 +451,9 @@ async fn remove_workspace(
         .find(|workspace| workspace.id == id)
         .ok_or_else(|| ApiResponseError::not_found(format!("workspace {id} not found")))?;
     state.workspaces.remove(&id).await.map_err(app_error)?;
+    if let Some(watcher) = state.fs_watcher.as_ref() {
+        watcher.remove_workspace(&id);
+    }
     if let Err(error) = state.config.write().remove_workspace(&workspace.path) {
         // Already removed from the live manager; config drift is loud but not
         // fatal for the CLI operator who may have already saved config.
@@ -1272,6 +1282,7 @@ mod tests {
                 hub,
                 acp,
                 permissions,
+                None,
                 None,
                 None,
             ),

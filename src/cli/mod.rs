@@ -77,7 +77,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Start { background } => start(background).await,
         Commands::Stop => stop(),
-        Commands::Status => status(),
+        Commands::Status => status().await,
         Commands::AddFolder { path } => add_folder(&path).await,
         Commands::RemoveFolder { id } => remove_folder(&id).await,
         Commands::ListFolders => list_folders().await,
@@ -146,9 +146,10 @@ fn stop() -> Result<()> {
     writeln!(io::stdout(), "Daemon stopped.").context("write stop status")
 }
 
-fn status() -> Result<()> {
+async fn status() -> Result<()> {
     let config = Config::load().context("load local-agent configuration")?;
     let status = daemon::status(&config)?;
+    let workspaces = configured_workspaces(&config).await?;
     let mut out = io::stdout();
     match status.pid {
         Some(pid) => writeln!(out, "Status:   Running (PID {pid})")?,
@@ -159,7 +160,10 @@ fn status() -> Result<()> {
         writeln!(out, "HTTPS:    https://{} (self-signed)", https)?;
     }
     writeln!(out, "Data:     {}", config.data_dir)?;
-    writeln!(out, "Workspaces: {}", config.workspaces.len())?;
+    writeln!(out, "Workspaces: {}", workspaces.len())?;
+    for workspace in &workspaces {
+        write_workspace_line(&mut out, workspace)?;
+    }
     Ok(())
 }
 
@@ -240,11 +244,28 @@ async fn list_folders() -> Result<()> {
         )?;
         return Ok(());
     }
-    for workspace in workspaces {
+    for workspace in &workspaces {
+        write_workspace_line(&mut out, workspace)?;
+    }
+    Ok(())
+}
+
+fn write_workspace_line(
+    out: &mut impl Write,
+    workspace: &crate::interfaces::WorkspaceInfo,
+) -> Result<()> {
+    if workspace.available {
         writeln!(
             out,
             "{}\t{}\t{}",
             workspace.id, workspace.name, workspace.path
+        )?;
+    } else {
+        // Clear marker so operators can reconnect the drive or remove-folder.
+        writeln!(
+            out,
+            "{}\t{}\t{}\tUNAVAILABLE: {}",
+            workspace.id, workspace.name, workspace.path, workspace.error
         )?;
     }
     Ok(())
@@ -256,7 +277,10 @@ async fn configured_workspaces(config: &Config) -> Result<Vec<crate::interfaces:
         if let Err(error) = manager.register(path).await {
             // Keep missing workspace registrations in config; surface them to
             // the operator rather than silently pruning state.
-            tracing::warn!(workspace = %path, %error, "skip unavailable configured workspace");
+            tracing::warn!(workspace = %path, %error, "configured workspace unavailable");
+            manager
+                .retain_unavailable(path, error.to_string())
+                .map_err(anyhow::Error::from)?;
         }
     }
     manager.list().await.map_err(Into::into)

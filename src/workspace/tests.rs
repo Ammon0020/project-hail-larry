@@ -318,3 +318,47 @@ async fn concurrent_registry_access_is_safe() {
         result.unwrap();
     }
 }
+
+#[tokio::test]
+async fn missing_path_stays_listed_as_unavailable() {
+    let manager = manager();
+    let missing = "/tmp/local-agent-missing-workspace-definitely-gone";
+    let info = manager
+        .retain_unavailable(missing, "stat workspace: No such file or directory")
+        .unwrap();
+    assert!(!info.available);
+    assert!(!info.error.is_empty());
+    assert_eq!(info.path, missing);
+    assert_eq!(info.id.len(), 16);
+
+    let listed = manager.list().await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].available);
+    assert_eq!(listed[0].id, info.id);
+
+    // File ops must fail clearly rather than panicking on a missing root.
+    assert!(manager.file_tree(&info.id).await.is_err());
+
+    manager.remove(&info.id).await.unwrap();
+    assert!(manager.list().await.unwrap().is_empty());
+    assert!(matches!(
+        manager.remove(&info.id).await,
+        Err(AppError::NotFound { .. })
+    ));
+}
+
+#[tokio::test]
+async fn successful_register_replaces_unavailable_entry() {
+    let manager = manager();
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().to_string_lossy().into_owned();
+    manager
+        .retain_unavailable(&path, "temporary mount missing")
+        .unwrap();
+    let restored = manager.register(&path).await.unwrap();
+    assert!(restored.available);
+    assert!(restored.error.is_empty());
+    let listed = manager.list().await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].available);
+}

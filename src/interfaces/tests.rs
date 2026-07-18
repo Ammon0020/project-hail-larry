@@ -322,6 +322,8 @@ fn golden_workspace_info() {
         id: "<REDACTED_WORKSPACE_ID>".into(),
         path: "<REDACTED_PATH>".into(),
         name: "seed-workspace".into(),
+        available: true,
+        error: String::new(),
     };
     assert_matches_golden("workspace_info", to_value(&info));
 }

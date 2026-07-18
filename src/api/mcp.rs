@@ -163,6 +163,7 @@ mod tests {
             permissions,
             Some(dir.path().join("mcp.json")),
             None,
+            None,
         )
     }
 
@@ -268,6 +269,7 @@ mod tests {
             hub,
             acp,
             permissions,
+            None,
             None,
             None,
         );

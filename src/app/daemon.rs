@@ -19,6 +19,7 @@ use crate::api::{self, AppState};
 use crate::config::{Config, ConfigStore};
 use crate::events::{EventBus, SharedEventBus};
 use crate::files::FileSync;
+use crate::fswatch;
 use crate::interfaces::WorkspaceManager;
 use crate::pairing::{Manager as PairingManager, PairingError, WorkspaceRegistrar};
 use crate::permissions::{EventBusPermissionSink, Manager as PermissionsManager, PermissionSink};
@@ -65,6 +66,8 @@ pub struct Daemon {
     uploads: Arc<Mutex<UploadsManager>>,
     mcp_config_path: PathBuf,
     _files: Arc<FileSync>,
+    /// External on-disk change watcher. `None` when notify init fails (non-fatal).
+    fs_watcher: Option<Arc<fswatch::Watcher>>,
     permission_sweeper: tokio::task::JoinHandle<()>,
 }
 
@@ -85,18 +88,31 @@ impl Daemon {
         let config_store = ConfigStore::new(config.clone());
         let events = Arc::new(EventBus::open(&config.db_path).context("open SQLite event store")?);
 
-        // 2. Workspace manager first so grace-delayed registrations can call it.
+        // 2. Filesystem watcher before workspace load so startup + grace
+        // registrations can attach watches. Init failure is non-fatal (Go parity).
+        // note_app_write is not wired yet — FileSync has no write hook; STATUS gap.
+        let fs_watcher = match new_filesystem_watcher(Arc::clone(&events)) {
+            Ok(watcher) => Some(Arc::new(watcher)),
+            Err(error) => {
+                warn!(%error, "filesystem watcher unavailable");
+                None
+            }
+        };
+
+        // 3. Workspace manager first so grace-delayed registrations can call it.
         let workspaces = Arc::new(WorkspaceManagerImpl::new());
         let registrar: Arc<dyn WorkspaceRegistrar> = Arc::new(DaemonWorkspaceRegistrar {
             workspaces: Arc::clone(&workspaces),
+            fs_watcher: fs_watcher.clone(),
         });
         let pairing =
             PairingManager::new(&config.data_dir, Some(registrar)).context("open pairing state")?;
         configure_pairing(&pairing, &config);
         load_workspaces(&workspaces, &config.workspaces).await;
+        watch_available_workspaces(&workspaces, fs_watcher.as_deref()).await;
         let files = Arc::new(FileSync::new());
 
-        // 3. Permissions / ACP / sync. Permission notifications persist to the
+        // 4. Permissions / ACP / sync. Permission notifications persist to the
         // event bus before they reach the hub's reconnect stream.
         let permission_sink: Arc<dyn PermissionSink> =
             Arc::new(EventBusPermissionSink::new(Arc::clone(&events)));
@@ -118,13 +134,13 @@ impl Daemon {
             .context("load persisted ACP conversations")?;
         let hub = Hub::with_event_bus(Arc::clone(&events));
 
-        // 4. Supporting stores consumed by REST upload/MCP routes.
+        // 5. Supporting stores consumed by REST upload/MCP routes.
         let uploads = Arc::new(Mutex::new(
             UploadsManager::new(Path::new(&config.data_dir).join("uploads"))
                 .context("open upload store")?,
         ));
 
-        // 5. Router state only receives fully constructed dependencies.
+        // 6. Router state only receives fully constructed dependencies.
         let state = AppState::new(
             config_store,
             pairing.clone(),
@@ -135,6 +151,7 @@ impl Daemon {
             permissions,
             Some(mcp_config_path.clone()),
             Some(uploads.clone()),
+            fs_watcher.clone(),
         );
         let cancel = CancellationToken::new();
 
@@ -148,6 +165,7 @@ impl Daemon {
             uploads,
             mcp_config_path,
             _files: files,
+            fs_watcher,
             permission_sweeper,
         })
     }
@@ -194,6 +212,11 @@ impl Daemon {
     async fn shutdown(&self) {
         // Listener drain is complete when `listen::serve` returns. Stop event
         // producers before dropping the SQLite-backed EventBus.
+        if let Some(watcher) = &self.fs_watcher {
+            if let Err(error) = watcher.close() {
+                warn!(%error, "close filesystem watcher during shutdown");
+            }
+        }
         self.pairing.close();
         self.hub.shutdown();
         self.permission_sweeper.abort();
@@ -276,32 +299,85 @@ fn configure_pairing(pairing: &PairingManager, config: &Config) {
 /// the timer task.
 struct DaemonWorkspaceRegistrar {
     workspaces: Arc<WorkspaceManagerImpl>,
+    fs_watcher: Option<Arc<fswatch::Watcher>>,
 }
 
 impl WorkspaceRegistrar for DaemonWorkspaceRegistrar {
     fn register_workspace(&self, path: &str) -> Result<(), PairingError> {
         let workspaces = Arc::clone(&self.workspaces);
+        let fs_watcher = self.fs_watcher.clone();
         let path = path.to_string();
         tokio::spawn(async move {
-            if let Err(error) = workspaces.register(&path).await {
-                tracing::error!(
-                    workspace = %path,
-                    error = %error,
-                    "grace-delayed workspace registration failed"
-                );
+            match workspaces.register(&path).await {
+                Ok(info) => {
+                    if let Some(watcher) = fs_watcher.as_ref() {
+                        watcher.add_workspace(&info.id, &info.path);
+                    }
+                }
+                Err(error) => {
+                    tracing::error!(
+                        workspace = %path,
+                        error = %error,
+                        "grace-delayed workspace registration failed"
+                    );
+                }
             }
         });
         Ok(())
     }
 }
 
+/// Create a watcher whose emit path persists + publishes on the event bus.
+///
+/// The notify callback runs off the Tokio runtime; spawn onto the current
+/// handle so `append_and_publish` stays async without blocking the emit thread.
+fn new_filesystem_watcher(
+    events: SharedEventBus,
+) -> Result<fswatch::Watcher, crate::interfaces::AppError> {
+    let handle = tokio::runtime::Handle::current();
+    fswatch::Watcher::new(move |event| {
+        let events = Arc::clone(&events);
+        handle.spawn(async move {
+            if let Err(error) = events.append_and_publish(event).await {
+                warn!(%error, "failed to publish filesystem change event");
+            }
+        });
+    })
+}
+
 async fn load_workspaces(workspaces: &Arc<WorkspaceManagerImpl>, configured: &[String]) {
     for path in configured {
         if let Err(error) = workspaces.register(path).await {
-            // Retain configuration so an offline mount can recover without
-            // silently deleting the user's workspace registration.
+            // Keep the path in config (caller never prunes) and surface it in
+            // list() so CLI/UI can warn — do not silently drop registrations.
             warn!(workspace = %path, %error, "configured workspace unavailable");
+            if let Err(retain_error) = workspaces.retain_unavailable(path, error.to_string()) {
+                warn!(
+                    workspace = %path,
+                    %retain_error,
+                    "failed to retain unavailable workspace in registry"
+                );
+            }
         }
+    }
+}
+
+async fn watch_available_workspaces(
+    workspaces: &Arc<WorkspaceManagerImpl>,
+    watcher: Option<&fswatch::Watcher>,
+) {
+    let Some(watcher) = watcher else {
+        return;
+    };
+    match workspaces.list().await {
+        Ok(list) => {
+            for ws in list {
+                if ws.available {
+                    watcher.add_workspace(&ws.id, &ws.path);
+                }
+            }
+        }
+        Err(error) => warn!(%error, "list workspaces for fswatch attach failed"),
     }
 }
 

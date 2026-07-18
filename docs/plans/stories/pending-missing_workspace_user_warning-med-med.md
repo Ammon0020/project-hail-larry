@@ -1,6 +1,6 @@
 # Story: Missing workspace — user-visible warning (not auto-prune)
 
-> **Status:** pending | **Urgency:** med | **Difficulty:** med  
+> **Status:** done (Rust) / pending (Go prune revert) | **Urgency:** med | **Difficulty:** med  
 > **Scope:** Go daemon (and Rust port parity when S-WORKSPACE / S-DAEMON land)
 
 ## Goal
@@ -41,12 +41,12 @@ network mount). Auto-prune is surprising and destructive without consent.
 
 ## Acceptance criteria
 
-- [ ] Missing/invalid workspace paths stay registered until the user removes them
-- [ ] UI (and CLI status/list) shows a clear warning for unavailable workspaces
-- [ ] Daemon logs a warning but does not auto-delete from config
-- [ ] User can still `app remove-folder` / Settings remove to clean up
+- [x] Missing/invalid workspace paths stay registered until the user removes them
+- [x] UI (and CLI status/list) shows a clear warning for unavailable workspaces
+- [x] Daemon logs a warning but does not auto-delete from config
+- [x] User can still `app remove-folder` / Settings remove to clean up
 - [ ] Optional: “retry load” once path becomes available (watch or manual refresh)
-- [ ] Tests cover “path gone → still in config + unavailable in list”
+- [x] Tests cover “path gone → still in config + unavailable in list”
 - [ ] Revert or gate the temporary auto-prune in `daemon.go` when this ships
 
 ## Notes for implementor

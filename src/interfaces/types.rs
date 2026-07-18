@@ -486,12 +486,22 @@ pub struct FileNode {
 }
 
 /// Registered workspace descriptor. Mirrors Go `interfaces.WorkspaceInfo`.
+///
+/// `available` / `error` are Rust UX extensions (missing-path warning). Healthy
+/// entries omit them on the wire (`skip_serializing_if`) so existing goldens
+/// stay compatible.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceInfo {
     pub id: String,
     pub path: String,
     pub name: String,
+    /// False when the path failed to load (missing/invalid). Defaults true.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub available: bool,
+    /// Human-readable load failure; empty when available.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub error: String,
 }
 
 // ============================================================================
@@ -778,4 +788,12 @@ pub fn go_zero_time() -> DateTime<Utc> {
 /// `createdAt`/`updatedAt` omitempty).
 fn is_zero_datetime(dt: &DateTime<Utc>) -> bool {
     *dt == go_zero_time()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
