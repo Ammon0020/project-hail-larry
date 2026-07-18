@@ -26,6 +26,11 @@ interface McpPopoutProps {
   togglingServer: string | null
   /** Closes the popout (outside-click + escape). */
   onClose: () => void
+  /**
+   * Opens app Settings focused on the MCP Servers section. Called before
+   * `onClose` when the Settings header button is clicked.
+   */
+  onOpenMcpSettings?: () => void
 }
 
 /**
@@ -51,6 +56,7 @@ export function McpPopout({
   onToggle,
   togglingServer,
   onClose,
+  onOpenMcpSettings,
 }: McpPopoutProps) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -103,21 +109,26 @@ export function McpPopout({
           )}
         </span>
         <div className="flex gap-1">
-          {/* v1: store/settings buttons are no-ops — they just close the
-              popout. No backend wiring yet. */}
+          {/* Store: no marketplace yet — disabled with an honest label. */}
           <button
-            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-white/[0.05] transition"
-            title="MCP store"
-            aria-label="MCP store"
-            onClick={onClose}
+            type="button"
+            disabled
+            className="p-1 rounded text-muted-foreground opacity-40 cursor-not-allowed"
+            title="MCP store (coming soon)"
+            aria-label="MCP store (coming soon)"
           >
             <ShoppingBag className="w-3.5 h-3.5" />
           </button>
+          {/* Settings: close popout and open app Settings → MCP Servers. */}
           <button
+            type="button"
             className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-white/[0.05] transition"
             title="MCP settings"
             aria-label="MCP settings"
-            onClick={onClose}
+            onClick={() => {
+              onOpenMcpSettings?.()
+              onClose()
+            }}
           >
             <Settings className="w-3.5 h-3.5" />
           </button>

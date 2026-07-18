@@ -65,6 +65,7 @@ export function ChatPanel({
   actions,
   workspaceId,
   style,
+  onOpenMcpSettings,
 }: {
   events: AppEvent[]
   /** All events across all sessions — used only to compute the running
@@ -85,6 +86,11 @@ export function ChatPanel({
   workspaceId: string
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
   style?: CSSProperties
+  /**
+   * Opens app Settings focused on the MCP Servers section. Forwarded from
+   * App → ChatComposer → McpPopout Settings icon.
+   */
+  onOpenMcpSettings?: () => void
 }) {
   const {
     onSendMessage,
@@ -546,6 +552,7 @@ export function ChatPanel({
         onToggleMcpServer={handleToggleMcpServer}
         mcpTogglingServer={mcpTogglingServer}
         onMcpPopoutOpen={loadMcpStatus}
+        onOpenMcpSettings={onOpenMcpSettings}
         effectiveModelId={effectiveModelId}
         onModelChange={handleModelChange}
         input={input}

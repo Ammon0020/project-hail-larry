@@ -90,7 +90,6 @@ impl Daemon {
 
         // 2. Filesystem watcher before workspace load so startup + grace
         // registrations can attach watches. Init failure is non-fatal (Go parity).
-        // note_app_write is not wired yet — FileSync has no write hook; STATUS gap.
         let fs_watcher = match new_filesystem_watcher(Arc::clone(&events)) {
             Ok(watcher) => Some(Arc::new(watcher)),
             Err(error) => {
@@ -101,6 +100,12 @@ impl Daemon {
 
         // 3. Workspace manager first so grace-delayed registrations can call it.
         let workspaces = Arc::new(WorkspaceManagerImpl::new());
+        // Suppress fswatch echoes of our own writes (Go SetOnWrite → NoteAppWrite).
+        if let Some(watcher) = fs_watcher.clone() {
+            workspaces.set_on_write(Arc::new(move |abs_path: &str| {
+                watcher.note_app_write(abs_path);
+            }));
+        }
         let registrar: Arc<dyn WorkspaceRegistrar> = Arc::new(DaemonWorkspaceRegistrar {
             workspaces: Arc::clone(&workspaces),
             fs_watcher: fs_watcher.clone(),

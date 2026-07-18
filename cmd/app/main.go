@@ -17,6 +17,7 @@ import (
 
 	"github.com/adama/local-agent/internal/config"
 	"github.com/adama/local-agent/internal/daemon"
+	"github.com/adama/local-agent/internal/interfaces"
 	"github.com/adama/local-agent/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -240,19 +241,10 @@ func runRemoveFolder(cmd *cobra.Command, args []string) error {
 
 	// Build a workspace manager from the persisted config so we can resolve
 	// the ID to a path and call Remove. This mirrors how the daemon loads
-	// workspaces on startup.
-	wsMgr := workspace.NewManager()
-	for _, wsPath := range cfg.Workspaces {
-		if _, regErr := wsMgr.Register(context.Background(), wsPath); regErr != nil {
-			// Skip paths that no longer exist on disk.
-			continue
-		}
-	}
-
-	// Find the workspace to get its path before removing.
-	workspaces, err := wsMgr.List(context.Background())
+	// workspaces on startup (including unavailable retained roots).
+	wsMgr, workspaces, err := loadConfiguredWorkspaces(cfg)
 	if err != nil {
-		return fmt.Errorf("list workspaces: %w", err)
+		return err
 	}
 	var wsPath string
 	for _, ws := range workspaces {
@@ -293,18 +285,9 @@ func runListFolders(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Build a workspace manager from the persisted config so IDs are
-	// resolved consistently (deterministic hash of the path).
-	wsMgr := workspace.NewManager()
-	for _, wsPath := range cfg.Workspaces {
-		if _, regErr := wsMgr.Register(context.Background(), wsPath); regErr != nil {
-			continue
-		}
-	}
-
-	workspaces, err := wsMgr.List(context.Background())
+	_, workspaces, err := loadConfiguredWorkspaces(cfg)
 	if err != nil {
-		return fmt.Errorf("list workspaces: %w", err)
+		return err
 	}
 
 	if len(workspaces) == 0 {
@@ -312,11 +295,39 @@ func runListFolders(cmd *cobra.Command, _ []string) error {
 	}
 
 	for _, ws := range workspaces {
-		if err := writef(cmd.OutOrStdout(), "%s\t%s\t%s\n", ws.ID, ws.Name, ws.Path); err != nil {
+		if err := writeWorkspaceLine(cmd.OutOrStdout(), ws); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// loadConfiguredWorkspaces registers every config path (retaining unavailable
+// ones) and returns the manager plus sorted list — shared by list/remove/status.
+func loadConfiguredWorkspaces(cfg *config.Config) (*workspace.Manager, []interfaces.WorkspaceInfo, error) {
+	wsMgr := workspace.NewManager()
+	for _, wsPath := range cfg.Workspaces {
+		if _, regErr := wsMgr.Register(context.Background(), wsPath); regErr != nil {
+			// Keep missing workspace registrations in config; surface them to
+			// the operator rather than silently pruning state.
+			if _, retainErr := wsMgr.RetainUnavailable(wsPath, regErr.Error()); retainErr != nil {
+				return nil, nil, fmt.Errorf("retain unavailable workspace %s: %w", wsPath, retainErr)
+			}
+		}
+	}
+	workspaces, err := wsMgr.List(context.Background())
+	if err != nil {
+		return nil, nil, fmt.Errorf("list workspaces: %w", err)
+	}
+	return wsMgr, workspaces, nil
+}
+
+// writeWorkspaceLine prints one workspace row; unavailable roots get a clear marker.
+func writeWorkspaceLine(w io.Writer, ws interfaces.WorkspaceInfo) error {
+	if interfaces.WorkspaceAvailable(ws) {
+		return writef(w, "%s\t%s\t%s\n", ws.ID, ws.Name, ws.Path)
+	}
+	return writef(w, "%s\t%s\t%s\tUNAVAILABLE: %s\n", ws.ID, ws.Name, ws.Path, ws.Error)
 }
 
 func newPairCommand() *cobra.Command {
@@ -641,8 +652,13 @@ func writeStatus(w io.Writer, cfg *config.Config, pid int) error {
 			return err
 		}
 	}
-	for _, ws := range cfg.Workspaces {
-		if err := writef(w, "  - %s\n", ws); err != nil {
+	// Resolve availability so missing roots show UNAVAILABLE like list-folders.
+	_, workspaces, err := loadConfiguredWorkspaces(cfg)
+	if err != nil {
+		return err
+	}
+	for _, ws := range workspaces {
+		if err := writeWorkspaceLine(w, ws); err != nil {
 			return err
 		}
 	}

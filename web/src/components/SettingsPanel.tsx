@@ -58,6 +58,8 @@ export function SettingsPanel({
   onDeleteAgent,
   onAutodetect,
   activeSessionId,
+  activeSection,
+  onSectionChange,
 }: {
   agents: Agent[]
   onAddAgent: (a: Agent) => Promise<void>
@@ -68,8 +70,19 @@ export function SettingsPanel({
    *  section can call the session-scoped provider endpoints. When null the
    *  section renders a muted "open a session" hint instead of fetching. */
   activeSessionId?: string | null
+  /**
+   * Controlled settings section (Agents / MCP / General). Owned by App so
+   * deep-links (e.g. MCP popout Settings icon) can focus a section.
+   */
+  activeSection?: 'agents' | 'mcp' | 'general'
+  /** Called when the user picks a different settings section. */
+  onSectionChange?: (section: 'agents' | 'mcp' | 'general') => void
 }) {
-  const [activeTab, setActiveTab] = useState<'agents' | 'mcp' | 'general'>('agents')
+  // Prefer controlled section from App when provided; otherwise local state
+  // (keeps the panel usable in isolation / Storybook).
+  const [localTab, setLocalTab] = useState<'agents' | 'mcp' | 'general'>('agents')
+  const activeTab = activeSection ?? localTab
+  const setActiveTab = onSectionChange ?? setLocalTab
   const [isDetecting, setIsDetecting] = useState(false)
   const [showMobileNav, setShowMobileNav] = useState(false)
   const [localTheme, setLocalTheme] = useState<Theme>(getStoredTheme())

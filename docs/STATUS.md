@@ -1,6 +1,6 @@
 # Project Status — Local Agent Interface
 
-> Last updated: 2026-07-17. Source of truth for task-level status. Keep < 150 lines.
+> Last updated: 2026-07-18. Source of truth for task-level status. Keep < 150 lines.
 > Architecture: `docs/plans/Blueprint.md`. Work streams: `docs/plans/execution-plan.md`.
 > Deferred findings/gaps: `docs/known-issues.md`. Open decisions: `docs/plans/OpenItems.md`.
 > This file is a status snapshot — full change detail lives in git history and the plans.
@@ -22,18 +22,19 @@
 
 ## Active TODO
 
-- [x] **Missing workspace user warning** — Rust: keep path in config; list/CLI
-  show `available:false` + error (Go still has temp prune in `daemon.go`).
+- [x] **Missing workspace user warning** — Go+Rust: keep path in config; list/CLI
+  show `available:false` + error; no auto-prune on daemon load.
 - [ ] **Editor on mobile** — CodeMirror touch optimization.
-- [ ] **Profile mode (Code/Ask/Plan)** — composer selector is a UI placeholder; needs to be sent with the prompt.
-- [ ] **MCP store/settings icons** — popout header icons are no-ops.
+- [x] **Profile mode (Code/Ask/Plan)** — composer sends `profile`; Rust REST
+  sets session profile; context pipeline injects instructions.
+- [x] **MCP store/settings icons** — Settings opens MCP section; store disabled
+  (coming soon).
 - [ ] **QR/pair scheme selection** — `app pair`/QR encode the HTTPS URL only; let device pick, or encode both.
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — fswatch wired into daemon (emit→EventBus; add/remove
-  on register). Gap: `note_app_write` not hooked (FileSync has no write hook).
-  Daemon on :7337 for UI.
+- [ ] **Rust backend port** — fswatch + `note_app_write` via workspace
+  `set_on_write`. Daemon on :7337 for UI. Next: release CI / remaining gaps.
 
 ## Blocked
 
@@ -41,10 +42,13 @@
 
 ## Recent Changes (2026-07)
 
+- **07-18** — Go **missing-workspace** parity: `WorkspaceInfo.available`/`error`
+  (omit when healthy via `*bool`); `RetainUnavailable`; daemon WARN without
+  prune; CLI list/status `UNAVAILABLE:`.
 - **07-17** — Rust **fswatch + missing-workspace**: Daemon owns `Option<Watcher>`;
   emit → EventBus; add/remove on register paths. `WorkspaceInfo.available`/
   `error` (omit when healthy); retain unavailable in manager; CLI UNAVAILABLE.
-  Gap: `note_app_write` unwired; Go still auto-prunes.
+  Gap: `note_app_write` unwired.
 - **07-17** — Rust **S-BUILD** polish: `build.rs` fails if `web/dist/index.html`
   missing; `[profile.release] strip = true`; `docs/development/building.md`
   (`cc`/bundled SQLite); build.sh/ps1 epilogue → `local_agent start`. Deferred:
@@ -91,7 +95,6 @@
 - Rust: pending-action daemon registrar wiring; contract black-box mostly green
   (`CONTRACT_BACKEND=rust`); MCP JSON parse-error text still ignored.
 - Rust fswatch: `note_app_write` not wired (no FileSync write hook yet).
-- Go: missing-workspace still auto-prunes in `daemon.go` (Rust warns instead).
 - Rust HTTP limits: Hyper's native header deadline is HTTP/1-only; body
   timing starts at handler entry, and an expired response body closes its stream.
 - Rust's global 10 MiB body cap is stricter than Go's 50 MiB file-write exception.

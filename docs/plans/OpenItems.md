@@ -12,7 +12,9 @@ Tracked gaps and decisions to address in the Local Agent Interface blueprint and
 
 ## 4. Lower Priority / Future
 
-- [ ] **Missing workspace user warning** — Do not auto-prune missing/invalid workspace paths from config; show a user-visible warning (UI list + CLI) and let the user remove them. Temporary auto-prune lives in `daemon.go` today. Story: `docs/plans/stories/pending-missing_workspace_user_warning-med-med.md`
+- [x] **Missing workspace user warning** — Done (Go+Rust): retain unavailable
+  roots, list/CLI `available:false` + error, no config auto-prune. Story:
+  `docs/plans/stories/pending-missing_workspace_user_warning-med-med.md`
 - [ ] **Team collaboration** — Shared workspaces, multiple operators
 - [ ] **Editor on mobile** — CodeMirror 6 is lighter than Monaco but still needs touch-optimized configuration (larger line heights, disable drag-and-drop, simplified gutter) for small edits on phones
 - [ ] **Session replay** — Implementation details

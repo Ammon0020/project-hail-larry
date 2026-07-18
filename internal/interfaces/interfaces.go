@@ -172,10 +172,23 @@ const (
 )
 
 // WorkspaceInfo describes a registered workspace.
+//
+// Available / Error surface missing or invalid roots without pruning config.
+// Healthy entries omit both on the wire: Available is nil (omitempty) and Error
+// is empty. Unavailable entries set Available to a pointer-to-false so JSON
+// includes `"available":false` (a bare bool with omitempty would drop false).
 type WorkspaceInfo struct {
-	ID   string `json:"id"`
-	Path string `json:"path"`
-	Name string `json:"name"`
+	ID        string `json:"id"`
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	Available *bool  `json:"available,omitempty"` // nil = healthy; &false = unavailable
+	Error     string `json:"error,omitempty"`
+}
+
+// WorkspaceAvailable reports whether the workspace root is usable.
+// Nil Available means healthy (field omitted on the wire).
+func WorkspaceAvailable(ws WorkspaceInfo) bool {
+	return ws.Available == nil || *ws.Available
 }
 
 // WorkspaceManager is the contract for workspace operations.

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
@@ -58,15 +58,19 @@ impl WorkspaceEntry {
     }
 }
 
+/// Callback after a successful app write (absolute path). Used by fswatch to
+/// suppress the matching on-disk change event — Go `SetOnWrite`.
+pub type OnWriteFn = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// In-memory registry and workspace-scoped filesystem service.
 ///
 /// The registry lock protects only its map. Every disk operation first copies
 /// a workspace root out of the lock, so a slow tree walk or search never
-/// blocks registration and removal. File writes are serialized per file by
-/// [`FileSync`]. Unavailable entries (missing paths) stay listed so the UI/CLI
-/// can warn without pruning config.
+/// blocks registration and removal. Unavailable entries (missing paths) stay
+/// listed so the UI/CLI can warn without pruning config.
 pub struct Manager {
     workspaces: RwLock<HashMap<String, WorkspaceEntry>>,
+    on_write: RwLock<Option<OnWriteFn>>,
 }
 
 impl Manager {
@@ -75,6 +79,15 @@ impl Manager {
     pub fn new() -> Self {
         Self {
             workspaces: RwLock::new(HashMap::new()),
+            on_write: RwLock::new(None),
+        }
+    }
+
+    /// Register a hook invoked with the absolute path after each successful
+    /// [`WorkspaceManager::write_file`]. Call once at daemon wiring time.
+    pub fn set_on_write(&self, hook: OnWriteFn) {
+        if let Ok(mut slot) = self.on_write.write() {
+            *slot = Some(hook);
         }
     }
 
@@ -230,11 +243,19 @@ impl WorkspaceManager for Manager {
         let root = self.root_for(workspace_id)?;
         let rel_path = rel_path.to_string();
         let content = content.to_string();
-        tokio::task::spawn_blocking(move || {
+        let (revision, abs_path) = tokio::task::spawn_blocking(move || {
             write_file(&root, &rel_path, &content, expected_revision)
         })
         .await
-        .map_err(|err| AppError::internal(format!("write task failed: {err}")))?
+        .map_err(|err| AppError::internal(format!("write task failed: {err}")))??;
+
+        // Notify outside the registry lock (Go WriteFile → onWrite).
+        if let Ok(guard) = self.on_write.read() {
+            if let Some(hook) = guard.as_ref() {
+                hook(&abs_path);
+            }
+        }
+        Ok(revision)
     }
 
     async fn search(
@@ -309,7 +330,7 @@ fn write_file(
     rel_path: &str,
     content: &str,
     expected_revision: i64,
-) -> Result<i64, AppError> {
+) -> Result<(i64, String), AppError> {
     let path = Manager::safe_path(root, rel_path)?;
     if expected_revision > 0 {
         let metadata = fs::symlink_metadata(&path)
@@ -327,7 +348,8 @@ fn write_file(
         }
     }
     fs::write(&path, content).map_err(|err| AppError::internal(format!("write file: {err}")))?;
-    Ok(crate::files::content_revision(content.as_bytes()))
+    let abs = path.to_string_lossy().into_owned();
+    Ok((crate::files::content_revision(content.as_bytes()), abs))
 }
 
 fn build_tree(

@@ -2,12 +2,15 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/adama/local-agent/internal/interfaces"
 )
 
 // createTestDir creates a temporary directory structure for testing.
@@ -549,4 +552,118 @@ func TestConcurrentMapAccess(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// TestRetainUnavailableListsAndBlocksOps verifies missing paths stay listed
+// with available:false semantics, block file ops, and can still be removed.
+func TestRetainUnavailableListsAndBlocksOps(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	missing := "/tmp/local-agent-missing-workspace-definitely-gone"
+
+	info, err := m.RetainUnavailable(missing, "stat path: no such file or directory")
+	if err != nil {
+		t.Fatalf("retain unavailable: %v", err)
+	}
+	if interfaces.WorkspaceAvailable(info) {
+		t.Fatal("expected unavailable workspace")
+	}
+	if info.Error == "" {
+		t.Fatal("expected non-empty error")
+	}
+	if len(info.ID) != 16 {
+		t.Fatalf("expected 16-char id, got %q", info.ID)
+	}
+
+	listed, err := m.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("expected 1 workspace, got %d", len(listed))
+	}
+	if interfaces.WorkspaceAvailable(listed[0]) {
+		t.Fatal("listed entry should be unavailable")
+	}
+	if listed[0].ID != info.ID {
+		t.Fatalf("id mismatch: %s vs %s", listed[0].ID, info.ID)
+	}
+
+	if _, err := m.FileTree(ctx, info.ID); err == nil {
+		t.Fatal("file tree on unavailable workspace should fail")
+	} else if !strings.Contains(err.Error(), "workspace unavailable") {
+		t.Fatalf("expected unavailable error, got: %v", err)
+	}
+
+	if err := m.Remove(ctx, info.ID); err != nil {
+		t.Fatalf("remove unavailable: %v", err)
+	}
+	listed, err = m.List(ctx)
+	if err != nil {
+		t.Fatalf("list after remove: %v", err)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("expected empty list, got %d", len(listed))
+	}
+}
+
+// TestRegisterReplacesUnavailableEntry ensures a later successful Register
+// clears the retained unavailable marker for the same path.
+func TestRegisterReplacesUnavailableEntry(t *testing.T) {
+	m := NewManager()
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	if _, err := m.RetainUnavailable(dir, "temporary mount missing"); err != nil {
+		t.Fatalf("retain: %v", err)
+	}
+	restored, err := m.Register(ctx, dir)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if !interfaces.WorkspaceAvailable(restored) {
+		t.Fatal("restored workspace should be available")
+	}
+	if restored.Error != "" {
+		t.Fatalf("expected empty error, got %q", restored.Error)
+	}
+	listed, err := m.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 1 || !interfaces.WorkspaceAvailable(listed[0]) {
+		t.Fatalf("expected one available workspace, got %+v", listed)
+	}
+}
+
+// TestWorkspaceInfoJSONOmitsHealthyFields keeps contract goldens valid:
+// healthy entries must omit available/error; unavailable must include both.
+func TestWorkspaceInfoJSONOmitsHealthyFields(t *testing.T) {
+	healthy := interfaces.WorkspaceInfo{ID: "abc", Path: "/tmp/x", Name: "x"}
+	data, err := json.Marshal(healthy)
+	if err != nil {
+		t.Fatalf("marshal healthy: %v", err)
+	}
+	s := string(data)
+	if strings.Contains(s, "available") || strings.Contains(s, "error") {
+		t.Fatalf("healthy JSON should omit available/error, got %s", s)
+	}
+
+	available := false
+	unavail := interfaces.WorkspaceInfo{
+		ID: "abc", Path: "/tmp/x", Name: "x",
+		Available: &available,
+		Error:     "stat path: gone",
+	}
+	data, err = json.Marshal(unavail)
+	if err != nil {
+		t.Fatalf("marshal unavailable: %v", err)
+	}
+	s = string(data)
+	if !strings.Contains(s, `"available":false`) {
+		t.Fatalf("expected available:false, got %s", s)
+	}
+	if !strings.Contains(s, `"error":"stat path: gone"`) {
+		t.Fatalf("expected error field, got %s", s)
+	}
 }

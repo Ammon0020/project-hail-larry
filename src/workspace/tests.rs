@@ -362,3 +362,39 @@ async fn successful_register_replaces_unavailable_entry() {
     assert_eq!(listed.len(), 1);
     assert!(listed[0].available);
 }
+
+#[tokio::test]
+async fn write_file_invokes_on_write_hook_with_absolute_path() {
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    let manager = manager();
+    let dir = fixture();
+    let workspace = manager
+        .register(&dir.path().to_string_lossy())
+        .await
+        .unwrap();
+
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen_hook = Arc::clone(&seen);
+    manager.set_on_write(Arc::new(move |abs| {
+        seen_hook.lock().unwrap().push(abs.to_string());
+    }));
+
+    manager
+        .write_file(&workspace.id, "hooked.txt", "updated", 0)
+        .await
+        .unwrap();
+
+    let paths = seen.lock().unwrap().clone();
+    assert_eq!(paths.len(), 1);
+    assert!(
+        paths[0].ends_with("hooked.txt"),
+        "expected abs path ending in hooked.txt, got {}",
+        paths[0]
+    );
+    assert!(
+        Path::new(&paths[0]).is_absolute(),
+        "on_write must receive an absolute path"
+    );
+}

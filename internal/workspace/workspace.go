@@ -24,6 +24,13 @@ import (
 	"github.com/adama/local-agent/internal/search"
 )
 
+// workspaceEntry is one registered root — usable or retained-as-unavailable.
+type workspaceEntry struct {
+	path string
+	// err is set when the path failed validation; empty when the root is usable.
+	err string
+}
+
 // Manager implements interfaces.WorkspaceManager.
 //
 // The workspaces map is accessed from concurrent HTTP handlers (registration,
@@ -31,9 +38,11 @@ import (
 // by mu. To avoid holding the lock during slow disk I/O (file tree walks, git
 // commands, file reads/writes), methods copy the needed data (the workspace
 // path) out under the lock and perform I/O after releasing it.
+// Unavailable entries (missing paths) stay listed so the UI/CLI can warn
+// without pruning config.
 type Manager struct {
 	mu         sync.RWMutex
-	workspaces map[string]string // id -> path
+	workspaces map[string]workspaceEntry // id -> entry
 
 	// Optional lifecycle hooks, set by the daemon to wire the filesystem
 	// watcher. They are invoked WITHOUT holding mu (to avoid coupling the
@@ -49,7 +58,7 @@ type Manager struct {
 // NewManager creates a new workspace Manager.
 func NewManager() *Manager {
 	return &Manager{
-		workspaces: make(map[string]string),
+		workspaces: make(map[string]workspaceEntry),
 	}
 }
 
@@ -78,6 +87,60 @@ func (m *Manager) SetOnRemove(fn func(id string)) {
 	m.mu.Unlock()
 }
 
+// workspaceID returns the deterministic path-hash ID used by Register and
+// RetainUnavailable (first 16 hex chars of SHA-256 of the absolute path).
+func workspaceID(absPath string) string {
+	h := sha256.Sum256([]byte(absPath))
+	return hex.EncodeToString(h[:])[:16]
+}
+
+func (e workspaceEntry) toInfo(id string) interfaces.WorkspaceInfo {
+	info := interfaces.WorkspaceInfo{
+		ID:   id,
+		Path: e.path,
+		Name: filepath.Base(e.path),
+	}
+	if e.err != "" {
+		available := false
+		info.Available = &available
+		info.Error = e.err
+	}
+	return info
+}
+
+// RetainUnavailable keeps a configured path that failed to load so List/CLI
+// can warn. Does not touch config. ID matches Register (hash of Abs path).
+// Replaces any prior entry for that id. Does not invoke onRegister (no watch).
+func (m *Manager) RetainUnavailable(path, loadErr string) (interfaces.WorkspaceInfo, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		// Fall back to the configured string so the entry still lists.
+		absPath = path
+	}
+	id := workspaceID(absPath)
+	entry := workspaceEntry{path: absPath, err: loadErr}
+	info := entry.toInfo(id)
+
+	m.mu.Lock()
+	m.workspaces[id] = entry
+	m.mu.Unlock()
+	return info, nil
+}
+
+// rootFor copies out a usable workspace root, or errors if missing/unavailable.
+func (m *Manager) rootFor(id string) (string, error) {
+	m.mu.RLock()
+	entry, ok := m.workspaces[id]
+	m.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("workspace not found: %s", id)
+	}
+	if entry.err != "" {
+		return "", fmt.Errorf("workspace unavailable: %s", entry.err)
+	}
+	return entry.path, nil
+}
+
 // Register adds a directory as a workspace.
 // Returns the workspace info with a generated ID.
 func (m *Manager) Register(_ context.Context, path string) (interfaces.WorkspaceInfo, error) {
@@ -95,14 +158,13 @@ func (m *Manager) Register(_ context.Context, path string) (interfaces.Workspace
 		return interfaces.WorkspaceInfo{}, fmt.Errorf("not a directory: %s", absPath)
 	}
 
-	// Generate a deterministic ID from the path hash.
-	h := sha256.Sum256([]byte(absPath))
-	id := hex.EncodeToString(h[:])[:16]
+	id := workspaceID(absPath)
+	entry := workspaceEntry{path: absPath}
 
 	// All disk I/O is done before acquiring the lock; only the map write is
 	// guarded to avoid holding the mutex during slow filesystem operations.
 	m.mu.Lock()
-	m.workspaces[id] = absPath
+	m.workspaces[id] = entry
 	onRegister := m.onRegister
 	m.mu.Unlock()
 
@@ -112,27 +174,17 @@ func (m *Manager) Register(_ context.Context, path string) (interfaces.Workspace
 		onRegister(id, absPath)
 	}
 
-	name := filepath.Base(absPath)
-
-	return interfaces.WorkspaceInfo{
-		ID:   id,
-		Path: absPath,
-		Name: name,
-	}, nil
+	return entry.toInfo(id), nil
 }
 
-// List returns all registered workspaces.
+// List returns all registered workspaces (including unavailable retained ones).
 func (m *Manager) List(_ context.Context) ([]interfaces.WorkspaceInfo, error) {
 	// Snapshot the map under the read lock, then release it before sorting so
 	// we never hold the lock longer than necessary.
 	m.mu.RLock()
 	workspaces := make([]interfaces.WorkspaceInfo, 0, len(m.workspaces))
-	for id, path := range m.workspaces {
-		workspaces = append(workspaces, interfaces.WorkspaceInfo{
-			ID:   id,
-			Path: path,
-			Name: filepath.Base(path),
-		})
+	for id, entry := range m.workspaces {
+		workspaces = append(workspaces, entry.toInfo(id))
 	}
 	m.mu.RUnlock()
 
@@ -193,13 +245,9 @@ const maxReadFileSize = 50 * 1024 * 1024
 // still computed (from the sampled bytes) so the optimistic-lock check works
 // defensively if a save is ever attempted.
 func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (content string, revision int64, isBinary bool, previewable bool, err error) {
-	// Copy the workspace path out under the read lock, then perform all disk
-	// I/O without holding the mutex.
-	m.mu.RLock()
-	wsPath, ok := m.workspaces[workspaceID]
-	m.mu.RUnlock()
-	if !ok {
-		return "", 0, false, false, fmt.Errorf("workspace not found: %s", workspaceID)
+	wsPath, err := m.rootFor(workspaceID)
+	if err != nil {
+		return "", 0, false, false, err
 	}
 
 	// Prevent path traversal outside the workspace.
@@ -272,11 +320,9 @@ func (m *Manager) ReadFile(_ context.Context, workspaceID, relPath string) (cont
 // entirely into memory. Access is still bounded by auth (requireAuth) and
 // path validation (safeJoin + symlink rejection).
 func (m *Manager) FilePath(_ context.Context, workspaceID, relPath string) (string, error) {
-	m.mu.RLock()
-	wsPath, ok := m.workspaces[workspaceID]
-	m.mu.RUnlock()
-	if !ok {
-		return "", fmt.Errorf("workspace not found: %s", workspaceID)
+	wsPath, err := m.rootFor(workspaceID)
+	if err != nil {
+		return "", err
 	}
 
 	fullPath, err := safeJoin(wsPath, relPath)
@@ -446,13 +492,9 @@ var noiseDirs = map[string]bool{
 // Hidden files/directories (starting with .) are excluded. Symlinks are
 // skipped to avoid cycles, and recursion is depth-limited.
 func (m *Manager) FileTree(_ context.Context, workspaceID string) ([]interfaces.FileNode, error) {
-	// Look up the workspace path under the read lock and copy it out, then
-	// release the lock before the (potentially slow) recursive directory walk.
-	m.mu.RLock()
-	path, ok := m.workspaces[workspaceID]
-	m.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("workspace not found: %s", workspaceID)
+	path, err := m.rootFor(workspaceID)
+	if err != nil {
+		return nil, err
 	}
 
 	return buildFileTree(path, "", 0, new(int))
@@ -464,13 +506,9 @@ func (m *Manager) FileTree(_ context.Context, workspaceID string) ([]interfaces.
 // a Go-native walker otherwise. All returned paths are relative to the
 // workspace root.
 func (m *Manager) Search(ctx context.Context, workspaceID string, pattern string, opts search.Options) ([]search.Result, error) {
-	// Copy the workspace path out under the read lock, then release it before
-	// the (potentially slow) search walk.
-	m.mu.RLock()
-	wsPath, ok := m.workspaces[workspaceID]
-	m.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("workspace not found: %s", workspaceID)
+	wsPath, err := m.rootFor(workspaceID)
+	if err != nil {
+		return nil, err
 	}
 
 	opts.Pattern = pattern
@@ -690,11 +728,9 @@ func (m *Manager) WriteFile(_ context.Context, workspaceID, relPath, content str
 	// I/O (read-check + write) without holding the mutex. The map is only read
 	// here; the file-level optimistic locking is handled by the content-hash
 	// comparison below.
-	m.mu.RLock()
-	wsPath, ok := m.workspaces[workspaceID]
-	m.mu.RUnlock()
-	if !ok {
-		return 0, fmt.Errorf("workspace not found: %s", workspaceID)
+	wsPath, err := m.rootFor(workspaceID)
+	if err != nil {
+		return 0, err
 	}
 
 	// Prevent path traversal outside the workspace.

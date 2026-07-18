@@ -37,6 +37,11 @@ interface ChatComposerProps {
    * ChatPanel can refresh health status on demand. Not fired on close.
    */
   onMcpPopoutOpen?: () => void
+  /**
+   * Opens app Settings focused on the MCP Servers section. Forwarded to
+   * McpPopout's Settings header button.
+   */
+  onOpenMcpSettings?: () => void
   /** Active profile mode (Code / Ask / Plan). */
   profile: 'Code' | 'Ask' | 'Plan'
   /** Callback when the user changes the profile mode. */
@@ -75,6 +80,7 @@ export function ChatComposer({
   onToggleMcpServer,
   mcpTogglingServer,
   onMcpPopoutOpen,
+  onOpenMcpSettings,
   profile,
   onProfileChange,
 }: ChatComposerProps) {
@@ -220,6 +226,7 @@ export function ChatComposer({
                   onToggle={onToggleMcpServer}
                   togglingServer={mcpTogglingServer}
                   onClose={handleMcpPopoutClose}
+                  onOpenMcpSettings={onOpenMcpSettings}
                 />
               )}
             </div>

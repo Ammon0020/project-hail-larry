@@ -362,9 +362,12 @@ func newFilesystemWatcher(srv *server.Server, workspaceMgr *workspace.Manager) *
 	workspaceMgr.SetOnRemove(fsWatcher.RemoveWorkspace)
 	// Workspaces registered at startup (above) predate the watcher, so add
 	// them now; runtime registrations go through the SetOnRegister hook.
+	// Skip unavailable retained roots — nothing on disk to watch.
 	if wss, lerr := workspaceMgr.List(context.Background()); lerr == nil {
 		for _, ws := range wss {
-			fsWatcher.AddWorkspace(ws.ID, ws.Path)
+			if interfaces.WorkspaceAvailable(ws) {
+				fsWatcher.AddWorkspace(ws.ID, ws.Path)
+			}
 		}
 	}
 	return fsWatcher
@@ -414,12 +417,12 @@ func New(cfg *Config) (*Daemon, error) {
 	}
 	for _, wsPath := range appCfg.Workspaces {
 		if _, regErr := workspaceMgr.Register(context.Background(), wsPath); regErr != nil {
-			// Missing/invalid paths WARN every start until removed. Drop them
-			// from the persisted list so a stale fixture path (or deleted
-			// folder) does not spam logs forever; re-add with `app add-folder`.
-			log.Printf("WARNING: failed to load workspace %s: %v — removing from config", wsPath, regErr)
-			if remErr := appCfg.RemoveWorkspacePath(wsPath); remErr != nil {
-				log.Printf("WARNING: could not remove stale workspace %s: %v", wsPath, remErr)
+			// Keep the path in config until the user removes it. Surface the
+			// failure in List/CLI so operators can reconnect the drive or
+			// run remove-folder — do not silently prune registrations.
+			log.Printf("WARNING: failed to load workspace %s: %v", wsPath, regErr)
+			if _, retainErr := workspaceMgr.RetainUnavailable(wsPath, regErr.Error()); retainErr != nil {
+				log.Printf("WARNING: could not retain unavailable workspace %s: %v", wsPath, retainErr)
 			}
 		}
 	}

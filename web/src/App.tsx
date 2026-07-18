@@ -122,6 +122,10 @@ export default function App() {
     activeTabId !== 'settings' ? activeTabId : null
   )
 
+  // Settings panel section (Agents / MCP / General) — owned here so deep-links
+  // (MCP popout Settings icon) can focus a section without an event bus.
+  const [settingsSection, setSettingsSection] = useState<'agents' | 'mcp' | 'general'>('agents')
+
   useEffect(() => {
     if (activeTabId && activeTabId !== 'settings') {
       lastCodeTabIdRef.current = activeTabId
@@ -304,9 +308,11 @@ export default function App() {
   }
 
   /** Opens the settings tab (singleton id 'settings'). If already open,
-   *  activates it; otherwise creates and activates it. Settings tabs are
-   *  not persisted to localStorage (filtered out in the persistence effect). */
-  const openSettingsTab = useCallback(() => {
+   *  activates it; otherwise creates and activates it. Optional `section`
+   *  focuses Agents / MCP / General. Settings tabs are not persisted to
+   *  localStorage (filtered out in the persistence effect). */
+  const openSettingsTab = useCallback((section?: 'agents' | 'mcp' | 'general') => {
+    if (section) setSettingsSection(section)
     setOpenTabs((prev) => {
       if (prev.some((t) => t.id === 'settings')) return prev
       return [...prev, {
@@ -844,6 +850,8 @@ export default function App() {
           onDeleteAgent: backend.deleteAgent,
           onAutodetect: backend.autodetectAgents,
           activeSessionId,
+          activeSection: settingsSection,
+          onSectionChange: setSettingsSection,
         }}
         hideTabBar={isDesktop}
         wrap={wrap}
@@ -924,6 +932,10 @@ export default function App() {
           },
         }}
         style={isDesktop ? { width: rightPanelWidth } : undefined}
+        onOpenMcpSettings={() => {
+          openSettingsTab('mcp')
+          if (!isDesktop) setMobileView('editor')
+        }}
       />
 
       </div>

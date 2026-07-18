@@ -88,6 +88,9 @@ export function EditorPane({
     /** Id of the active chat session, or null when none is open. Threaded
      *  through to the Providers (advanced) section of SettingsPanel. */
     activeSessionId?: string | null
+    /** Controlled settings section — Agents / MCP / General. */
+    activeSection?: 'agents' | 'mcp' | 'general'
+    onSectionChange?: (section: 'agents' | 'mcp' | 'general') => void
   }
   hideTabBar?: boolean
   wrap?: boolean
