@@ -527,3 +527,38 @@ async fn timestamp_set_when_zero() {
     let events = store.query("s1", 0, 1).await.unwrap();
     assert_eq!(events[0].timestamp, e.timestamp);
 }
+
+#[tokio::test]
+async fn parses_go_time_string_timestamps_from_legacy_db() {
+    use rusqlite::Connection;
+
+    let dir = TempDir::new().expect("tempdir");
+    let db_path = dir.path().join("legacy_events.db");
+    // Create schema via Store, then release so we can insert raw Go timestamps.
+    {
+        let _store = Store::open(&db_path).expect("open store");
+    }
+
+    let conn = Connection::open(&db_path).unwrap();
+    // Legacy Go database/sql encoding of time.Time (see user DB row id=1).
+    conn.execute(
+        "INSERT INTO events (type, session_id, timestamp, payload) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![
+            "PromptSubmitted",
+            "legacy-sess",
+            "2026-06-30 02:18:34.296832823 +0000 UTC",
+            r#"{"role":"user","content":"hi"}"#,
+        ],
+    )
+    .unwrap();
+    drop(conn);
+
+    let store = Store::open(&db_path).unwrap();
+    let events = store.query("legacy-sess", 0, 10).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].content, "hi");
+    assert_eq!(
+        events[0].timestamp.to_rfc3339(),
+        "2026-06-30T02:18:34.296832823+00:00"
+    );
+}

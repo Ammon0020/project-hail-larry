@@ -385,9 +385,10 @@ fn parse_event_type(s: &str) -> Result<EventType, AppError> {
 
 /// Parse a stored timestamp string.
 ///
-/// Tries the common SQLite datetime form first, then RFC3339 — matching Go
-/// `scanEvents`. An unparseable timestamp is a hard error so we never invent
-/// `now()` and corrupt replay order.
+/// Accepts SQLite datetime, RFC3339, and Go `time.Time.String()` forms written
+/// by the legacy Go driver (`2006-01-02 15:04:05.999999999 -0700 MST`). An
+/// unparseable timestamp is a hard error so we never invent `now()` and corrupt
+/// replay order.
 fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, AppError> {
     // "2006-01-02 15:04:05" (Go first parse path).
     if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
@@ -397,8 +398,19 @@ fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, AppError> {
     if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f") {
         return Ok(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc));
     }
-    // RFC3339 / RFC3339Nano (Go second parse path + our write format).
+    // RFC3339 / RFC3339Nano (our write format).
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    // Go database/sql time.Time text: "2026-06-30 02:18:34.296832823 +0000 UTC"
+    if let Ok(dt) = DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f %z %Z") {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    if let Ok(dt) = DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S %z %Z") {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    // Offset without zone name.
+    if let Ok(dt) = DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f %z") {
         return Ok(dt.with_timezone(&Utc));
     }
     Err(AppError::internal(format!("parse timestamp {s:?}")))
