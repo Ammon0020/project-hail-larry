@@ -30,11 +30,9 @@
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — Contract black-box green (67/2 ignore). Lazy
-  persisted-session restore done. **S-BUILD** polish done (`build.rs` requires
-  `web/dist/index.html`, release `strip`, docs). Daemon left running for UI
-  smoke at :7337/:7338. Deferred: native Win/macOS **release artifact + SPA
-  smoke** CI (basic `cargo` jobs already in `rust-ci.yml`).
+- [ ] **Rust backend port** — Contract green; S-BUILD + lazy session restore
+  done. `add-folder` hot-syncs into a running daemon (loopback). Daemon on
+  :7337/:7338 for UI. Next: fswatch wiring, missing-workspace UX, release CI.
 
 ## Blocked
 

@@ -343,20 +343,13 @@ async fn cancel_revocation(
     State(state): State<AppState>,
     body: Result<Json<CancelActionRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
-    let Json(request) = decode_json_body(body)?;
-    if request.action_id.is_empty() {
-        return Err(ApiResponseError::bad_request("missing 'actionId'"));
-    }
-    state
-        .pairing
-        .cancel_revocation(&request.action_id)
-        .map_err(cancel_pending_error)?;
-
-    let mut event = Event::new(0, EventType::DeviceRevocationCancelled, "", Utc::now());
-    event.request_id = request.action_id;
-    record_event(&state, event).await;
-
-    Ok(Json(json!({"status": "cancelled"})))
+    cancel_pending_action(
+        &state,
+        body,
+        |id| state.pairing.cancel_revocation(id),
+        EventType::DeviceRevocationCancelled,
+    )
+    .await
 }
 
 /// `GET /api/pending-actions` — all grace-period pending actions.
@@ -449,7 +442,7 @@ async fn remove_workspace(
     let workspace = workspaces
         .into_iter()
         .find(|workspace| workspace.id == id)
-        .ok_or_else(|| ApiResponseError::not_found(&format!("workspace {id} not found")))?;
+        .ok_or_else(|| ApiResponseError::not_found(format!("workspace {id} not found")))?;
     state.workspaces.remove(&id).await.map_err(app_error)?;
     if let Err(error) = state.config.write().remove_workspace(&workspace.path) {
         // Already removed from the live manager; config drift is loud but not
@@ -474,12 +467,7 @@ where
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let addr = parts
-            .extensions
-            .get::<axum::extract::ConnectInfo<SocketAddr>>()
-            .map(|connect| connect.0.to_string())
-            .unwrap_or_else(|| "127.0.0.1:0".to_string());
-        Ok(Self(addr))
+        Ok(Self(peer_addr_string(&parts.extensions)))
     }
 }
 
@@ -488,20 +476,13 @@ async fn cancel_workspace_registration(
     State(state): State<AppState>,
     body: Result<Json<CancelActionRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
-    let Json(request) = decode_json_body(body)?;
-    if request.action_id.is_empty() {
-        return Err(ApiResponseError::bad_request("missing 'actionId'"));
-    }
-    state
-        .pairing
-        .cancel_workspace_registration(&request.action_id)
-        .map_err(cancel_pending_error)?;
-
-    let mut event = Event::new(0, EventType::WorkspaceRegistrationCancelled, "", Utc::now());
-    event.request_id = request.action_id;
-    record_event(&state, event).await;
-
-    Ok(Json(json!({"status": "cancelled"})))
+    cancel_pending_action(
+        &state,
+        body,
+        |id| state.pairing.cancel_workspace_registration(id),
+        EventType::WorkspaceRegistrationCancelled,
+    )
+    .await
 }
 
 async fn file_tree(
@@ -943,13 +924,9 @@ async fn require_auth(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    let remote_addr = request
-        .extensions()
-        .get::<axum::extract::ConnectInfo<SocketAddr>>()
-        .map(|connect| connect.0.to_string())
-        // Direct Router tests lack ConnectInfo; treating them as loopback
-        // mirrors the host-only test/CLI path and never opens a LAN request.
-        .unwrap_or_else(|| "127.0.0.1:0".to_string());
+    // Direct Router tests lack ConnectInfo; peer_addr_string treats that as
+    // loopback so host-only tests never open a LAN request.
+    let remote_addr = peer_addr_string(request.extensions());
     match authorize_request(
         &state.pairing,
         &remote_addr,
@@ -1111,9 +1088,38 @@ fn revocation_grace_period(state: &AppState) -> Duration {
     Duration::from_secs(u64::try_from(secs).unwrap_or(0))
 }
 
+/// Socket address string for loopback checks. Missing `ConnectInfo` (unit tests)
+/// defaults to loopback so host-only paths stay open without LAN exposure.
+fn peer_addr_string(extensions: &axum::http::Extensions) -> String {
+    extensions
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|connect| connect.0.to_string())
+        .unwrap_or_else(|| "127.0.0.1:0".to_string())
+}
+
 /// Device ID from Bearer/`deviceId` query — empty on loopback-only requests.
 fn device_id_from_request(headers: &HeaderMap, query: Option<&str>) -> String {
     extract_credential(headers, query).0
+}
+
+/// Shared cancel flow for grace-period pending actions (decode → cancel → event).
+async fn cancel_pending_action(
+    state: &AppState,
+    body: Result<Json<CancelActionRequest>, JsonRejection>,
+    cancel: impl FnOnce(&str) -> Result<(), PairingError>,
+    event_type: EventType,
+) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    if request.action_id.is_empty() {
+        return Err(ApiResponseError::bad_request("missing 'actionId'"));
+    }
+    cancel(&request.action_id).map_err(cancel_pending_error)?;
+
+    let mut event = Event::new(0, event_type, "", Utc::now());
+    event.request_id = request.action_id;
+    record_event(state, event).await;
+
+    Ok(Json(json!({"status": "cancelled"})))
 }
 
 /// Persist + broadcast a pending-action event; failures are logged, not fatal.
