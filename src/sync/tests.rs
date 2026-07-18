@@ -336,6 +336,8 @@ async fn reconnect_replays_then_dedupes_live() {
         .expect("e3");
 
     let hub = Hub::with_event_bus(Arc::clone(&bus));
+    // Production path: EventBus publish fans out through the hub (Go Broadcast).
+    bus.set_live_fanout(Arc::clone(&hub) as Arc<dyn crate::events::LiveFanout>);
     let (port, server) = serve_hub(Arc::clone(&hub)).await;
     let origin = same_origin(port);
 
@@ -360,7 +362,7 @@ async fn reconnect_replays_then_dedupes_live() {
     }
     assert_eq!(got_ids, vec![e2.id, e3.id]);
 
-    // Live via EventBus publish (reconnect feed path).
+    // Live via EventBus → Hub LiveFanout (not the old subscribe feed loop).
     let e4 = bus
         .append_and_publish(sample_event(0, "four"))
         .await
@@ -377,11 +379,54 @@ async fn reconnect_replays_then_dedupes_live() {
     let ev: Event = serde_json::from_str(&text).expect("json");
     assert_eq!(ev.id, e4.id);
 
-    // After the feed noted last_seen_id, Hub::broadcast of the same event
-    // must not produce a duplicate frame.
+    // After last_seen_id advanced, Hub::broadcast of the same event must not
+    // produce a duplicate frame.
     hub.broadcast(&e4);
     let dup = tokio::time::timeout(Duration::from_millis(200), ws.next()).await;
     assert!(dup.is_err(), "unexpected duplicate live frame");
+
+    let _ = ws.send(Message::Close(None)).await;
+    hub.shutdown();
+    server.abort();
+}
+
+/// UI connects to `/ws` without `?after=` — live stream must still arrive.
+#[tokio::test]
+async fn live_without_after_via_fanout() {
+    let (bus, _dir) = test_bus().await;
+    let bus = Arc::new(bus);
+    let hub = Hub::with_event_bus(Arc::clone(&bus));
+    bus.set_live_fanout(Arc::clone(&hub) as Arc<dyn crate::events::LiveFanout>);
+
+    let (port, server) = serve_hub(Arc::clone(&hub)).await;
+    let origin = same_origin(port);
+    let (mut ws, status) = connect_ws(port, &origin, "").await.expect("ws");
+    assert_eq!(status, 101);
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while hub.client_count() < 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("registered");
+
+    let stored = bus
+        .append_and_publish(sample_event(0, "stream-chunk"))
+        .await
+        .expect("publish");
+
+    let msg = tokio::time::timeout(Duration::from_secs(3), ws.next())
+        .await
+        .expect("timeout live")
+        .expect("closed")
+        .expect("err");
+    let Message::Text(text) = msg else {
+        panic!("expected text, got {msg:?}");
+    };
+    let ev: Event = serde_json::from_str(&text).expect("json");
+    assert_eq!(ev.id, stored.id);
+    assert_eq!(ev.content, "stream-chunk");
 
     let _ = ws.send(Message::Close(None)).await;
     hub.shutdown();

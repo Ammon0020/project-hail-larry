@@ -5,10 +5,14 @@
 //! to SQLite and only then sent to live subscribers. That guarantees
 //! persist-before-publish ordering.
 //!
-//! Reconnection follows subscribe → replay from durable cursor → deduplicate by
-//! ID → switch to live delivery ([`EventBus::subscribe`]).
+//! Live WebSocket delivery uses an optional [`LiveFanout`] bridge (Go
+//! `SyncHub.Broadcast`). The UI connects to `/ws` without `?after=`, so the hub
+//! fan-out is the production path; `?after=` reconnect replay remains separate.
+//!
+//! In-process subscribers still use [`EventBus::subscribe`] (subscribe → replay
+//! → dedupe by ID → live channel).
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -24,6 +28,16 @@ use crate::interfaces::{AppError, Event, EventPublisher, EventStore};
 /// re-subscribe with a durable cursor.
 const BROADCAST_CAPACITY: usize = 1024;
 
+/// Fan-out already-persisted events to connected WebSocket clients.
+///
+/// Mirrors Go `server.recordEvent` → `SyncHub.Broadcast`. Implemented by
+/// [`crate::sync::Hub`] and installed via [`EventBus::set_live_fanout`] so the
+/// events crate does not depend on sync (avoids a module cycle).
+pub trait LiveFanout: Send + Sync {
+    /// Deliver one durable event to every eligible live client.
+    fn fanout(&self, event: &Event);
+}
+
 /// Event store + live publisher with reconnect-friendly subscription.
 ///
 /// Implements both [`EventStore`] (delegates to the inner store) and
@@ -32,13 +46,20 @@ const BROADCAST_CAPACITY: usize = 1024;
 pub struct EventBus {
     store: Store,
     tx: broadcast::Sender<Event>,
+    /// Optional WebSocket hub bridge. `Arc` so [`EventBus`] clones share one
+    /// slot; the daemon calls [`Self::set_live_fanout`] once after building the hub.
+    fanout: Arc<RwLock<Option<Arc<dyn LiveFanout>>>>,
 }
 
 impl EventBus {
     /// Create a bus wrapping an existing store.
     pub fn new(store: Store) -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
-        Self { store, tx }
+        Self {
+            store,
+            tx,
+            fanout: Arc::new(RwLock::new(None)),
+        }
     }
 
     /// Open a store at `db_path` and wrap it in a bus.
@@ -49,6 +70,20 @@ impl EventBus {
     /// Borrow the underlying durable store (prune, count, pragmas, …).
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// Install (or replace) the WebSocket fan-out target for live delivery.
+    ///
+    /// Production wires the sync [`crate::sync::Hub`] here so `/ws` clients that
+    /// omit `?after=` still receive stream updates in real time.
+    pub fn set_live_fanout(&self, fanout: Arc<dyn LiveFanout>) {
+        match self.fanout.write() {
+            Ok(mut guard) => *guard = Some(fanout),
+            Err(poisoned) => {
+                warn!("event bus fanout lock poisoned; recovering");
+                *poisoned.into_inner() = Some(fanout);
+            }
+        }
     }
 
     /// Persist then publish: durable ID is assigned before any subscriber sees
@@ -64,7 +99,7 @@ impl EventBus {
         Ok(stored)
     }
 
-    /// Broadcast an already-persisted event to live subscribers.
+    /// Broadcast an already-persisted event to in-process and WebSocket listeners.
     ///
     /// No-op (Ok) when there are zero receivers — matches typical hub semantics.
     fn publish_live(&self, event: &Event) {
@@ -73,8 +108,16 @@ impl EventBus {
                 tracing::trace!(id = event.id, receivers = n, "event published live");
             }
             Err(_) => {
-                // Zero receivers: still durable; live clients will pick up via replay.
+                // Zero in-process receivers: still durable; WS fan-out may still run.
             }
+        }
+        // Go parity: every durable event reaches connected `/ws` clients.
+        let fanout = match self.fanout.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        if let Some(fanout) = fanout {
+            fanout.fanout(event);
         }
     }
 

@@ -34,7 +34,7 @@
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — MCP `session/new` + startup agent autodetect done.
+- [ ] **Rust backend port** — Live WS stream fan-out fixed (EventBus → Hub).
   Next: `session/load` + `acpSessionId`; 50 MiB write body; story AC check-off.
   Daemon on :7337 for UI.
 
@@ -44,6 +44,9 @@
 
 ## Recent Changes (2026-07)
 
+- **07-18** — Rust **live chat streaming**: EventBus `LiveFanout` → Hub
+  broadcast (Go Append→Broadcast). UI `/ws` omits `?after=`; without this
+  bridge stream updates stayed in SQLite until refresh/prompt end.
 - **07-18** — Rust **MCP → session/new**: `ClientDeps.mcp_config_path`; after
   Initialize, capability-filtered servers attached via `.mcp_servers(...)`.
   Malformed mcp.json warns and continues empty (Go parity).

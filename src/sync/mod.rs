@@ -9,10 +9,11 @@
 //! - Auth-gated handshake (`deviceId` + `secret` query params) with loopback bypass
 //! - Origin CSRF defense (empty Origin → 403; Origin host must match Host)
 //! - Keepalive ping/pong (30s interval, 10s timeout)
-//! - Optional reconnect replay via [`crate::events::EventBus::subscribe`] (`after` query)
-//! - Strict lagged recovery: re-subscribe from
-//!   [`crate::events::EventSubscription::last_seen_id`] instead of silently
-//!   dropping events
+//! - Live fan-out via [`Hub::broadcast`] (wired from [`crate::events::EventBus`]
+//!   through [`crate::events::LiveFanout`] — Go `SyncHub.Broadcast` parity)
+//! - Optional reconnect replay via durable query (`?after=` cursor), then live
+//!   continues through [`Hub::broadcast`]
+//! - Strict lagged recovery: durable resync instead of silently dropping events
 //!
 //! Serve with `into_make_service_with_connect_info::<SocketAddr>()` so
 //! [`ConnectInfo`] can supply the peer address for loopback detection.
@@ -38,7 +39,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::events::{SharedEventBus, SubRecv};
+use crate::events::{LiveFanout, SharedEventBus};
 use crate::interfaces::{Event, EventStore};
 
 /// How often the keepalive task pings each client (matches Go `pingInterval`).
@@ -145,7 +146,7 @@ impl Hub {
     /// Serialize `event` as JSON and fan out to every connected client.
     ///
     /// Uses non-blocking `try_send` so a slow client cannot stall the hub.
-    /// Events already delivered via EventBus replay (ID ≤ `last_seen_id`) are
+    /// Events already delivered via reconnect replay (ID ≤ `last_seen_id`) are
     /// skipped to avoid duplicates. Unlike Go (which silently skips full
     /// buffers), a full buffer triggers a durable EventBus resync when a bus is
     /// configured; without a bus the slow client is dropped so loss is loud.
@@ -165,7 +166,7 @@ impl Hub {
             let Some(entry) = self.clients.get(&id) else {
                 continue;
             };
-            // Dedupe against EventBus reconnect replay.
+            // Dedupe against reconnect replay / prior delivery.
             if event.id > 0 && event.id <= entry.last_seen_id.load(Ordering::Relaxed) {
                 continue;
             }
@@ -257,6 +258,12 @@ impl Hub {
                 }
             }
         });
+    }
+}
+
+impl LiveFanout for Hub {
+    fn fanout(&self, event: &Event) {
+        self.broadcast(event);
     }
 }
 
@@ -414,7 +421,9 @@ async fn run_client_pumps(hub: Arc<Hub>, socket: WebSocket, after: Option<i64>) 
         read_pump(stream, read_cancel, last_pong_r).await;
     });
 
-    // Reconnect feed only when the client supplied `after` and a bus exists.
+    // Reconnect replay when the client supplied `after` and a bus exists.
+    // Live delivery always goes through Hub::broadcast (EventBus LiveFanout);
+    // replaying here only fills the gap, then this task exits.
     let feed_task = match (after, hub.bus.as_ref()) {
         (Some(cursor), Some(bus)) => {
             let bus = Arc::clone(bus);
@@ -422,10 +431,17 @@ async fn run_client_pumps(hub: Arc<Hub>, socket: WebSocket, after: Option<i64>) 
             let cancel_feed = cancel.clone();
             let hub_feed = Arc::clone(&hub);
             Some(tokio::spawn(async move {
-                if let Err(err) =
-                    event_bus_feed(bus, tx_feed, cursor, cancel_feed, client_id, hub_feed).await
-                {
-                    warn!(client_id, %err, "sync: event-bus feed error");
+                match resync_replay_only(&bus, &tx_feed, cursor, &cancel_feed).await {
+                    Ok(last) => {
+                        hub_feed.note_delivered(client_id, last);
+                        debug!(
+                            client_id,
+                            last, "sync: reconnect replay complete; live via hub broadcast"
+                        );
+                    }
+                    Err(err) => {
+                        warn!(client_id, %err, "sync: reconnect replay error");
+                    }
                 }
             }))
         }
@@ -535,60 +551,6 @@ async fn read_pump(
                     Some(Err(err)) => {
                         debug!(%err, "sync: websocket read error");
                         return;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Feed a client from the event bus: subscribe → replay → live; re-subscribe on lag.
-async fn event_bus_feed(
-    bus: SharedEventBus,
-    tx: mpsc::Sender<Vec<u8>>,
-    mut after_id: i64,
-    cancel: CancellationToken,
-    client_id: u64,
-    hub: Arc<Hub>,
-) -> Result<(), String> {
-    loop {
-        if cancel.is_cancelled() {
-            return Ok(());
-        }
-        let mut sub = bus
-            .subscribe(after_id)
-            .await
-            .map_err(|e| format!("subscribe after={after_id}: {e}"))?;
-
-        loop {
-            tokio::select! {
-                _ = cancel.cancelled() => return Ok(()),
-                outcome = sub.recv_or_lag() => {
-                    match outcome {
-                        SubRecv::Event(event) => {
-                            hub.note_delivered(client_id, event.id);
-                            let data = serde_json::to_vec(&event)
-                                .map_err(|e| format!("marshal event: {e}"))?;
-                            tokio::select! {
-                                _ = cancel.cancelled() => return Ok(()),
-                                result = tx.send(data) => {
-                                    if result.is_err() {
-                                        return Ok(());
-                                    }
-                                }
-                            }
-                        }
-                        SubRecv::Lagged { skipped } => {
-                            after_id = sub.last_seen_id();
-                            warn!(
-                                client_id,
-                                skipped,
-                                after_id,
-                                "sync: event-bus lagged; re-subscribing from durable cursor"
-                            );
-                            break;
-                        }
-                        SubRecv::Closed => return Ok(()),
                     }
                 }
             }

@@ -20,5 +20,5 @@ mod store;
 #[cfg(test)]
 mod tests;
 
-pub use publisher::{EventBus, EventSubscription, SharedEventBus, SubRecv};
+pub use publisher::{EventBus, EventSubscription, LiveFanout, SharedEventBus, SubRecv};
 pub use store::{Store, DEFAULT_PRUNE_INTERVAL, DEFAULT_PRUNE_MAX_ROWS};

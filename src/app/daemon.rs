@@ -141,6 +141,9 @@ impl Daemon {
         acp.load_conversations()
             .context("load persisted ACP conversations")?;
         let hub = Hub::with_event_bus(Arc::clone(&events));
+        // Go parity: Append → SyncHub.Broadcast. Without this, `/ws` clients that
+        // omit `?after=` (the UI) never receive live stream updates.
+        events.set_live_fanout(Arc::clone(&hub) as Arc<dyn crate::events::LiveFanout>);
 
         // 5. Supporting stores consumed by REST upload/MCP routes.
         let uploads = Arc::new(Mutex::new(
