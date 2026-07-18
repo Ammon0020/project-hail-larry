@@ -1845,6 +1845,13 @@ mod tests {
                 .and_then(|v| v.to_str().ok()),
             Some("inline")
         );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_SECURITY_POLICY)
+                .and_then(|v| v.to_str().ok()),
+            Some("frame-ancestors 'self'")
+        );
         let bytes = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body");
@@ -1917,7 +1924,7 @@ mod tests {
     #[tokio::test]
     async fn preview_requires_auth_for_non_loopback() {
         // Unit test uses a non-loopback ConnectInfo peer. Full LAN + query-param
-        // credential fallback is covered by require_auth middleware tests.
+        // credential fallback is covered by the query-auth test below.
         let (_state_dir, state) = state();
         let (_site, ws) = preview_fixture_workspace(&state).await;
 
@@ -1931,6 +1938,26 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn preview_accepts_query_credentials_for_non_loopback() {
+        let (_state_dir, state, cred) = pending_actions_state(0, false);
+        let (_site, ws) = preview_fixture_workspace(&state).await;
+
+        let response = oneshot_peer(
+            state,
+            Request::builder()
+                .uri(format!(
+                    "/preview/{}/index.html?deviceId={}&secret={}",
+                    ws.id, cred.id, cred.secret
+                ))
+                .body(Body::empty())
+                .expect("request"),
+            "10.0.0.1:9",
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     // --- Workspace file mutations (delete / rename / mkdir) ---

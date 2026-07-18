@@ -16,8 +16,10 @@ Prevent workspace preview JavaScript from accessing IDE device credentials
 ## Acceptance criteria
 
 - [x] Preview scripts cannot read parent `localStorage`.
-- [x] Relative CSS/JS/images still load (subresource URLs + query auth).
-- [x] Documented in known-issues as mitigated.
+- [x] Relative CSS/JS/images load on loopback, where the server auth bypass
+  applies. LAN subresource authentication remains a follow-up because browsers
+  do not copy query credentials from the entry URL to relative requests.
+- [x] Documented in known-issues as mitigated, with residual risks recorded.
 
 ## Out of scope
 

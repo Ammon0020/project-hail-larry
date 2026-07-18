@@ -96,9 +96,11 @@ Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic
 - **sec-preview-same-origin-scripts (Medium — mitigated 2026-07-18):** Browse
   preview iframe no longer uses `allow-same-origin` (opaque origin; scripts
   run but cannot read IDE `localStorage`). Preview responses add
-  `frame-ancestors 'self'`. Residual: workspace JS can still exfiltrate via
-  network if the HTML loads third-party scripts; separate preview origin or
-  scoped tokens remain optional hardening.
+  `frame-ancestors 'self'`. Relative assets resolve correctly on loopback,
+  where auth is bypassed, but a LAN browser does not propagate the entry
+  URL's query credentials to relative subresource requests; scoped preview
+  tokens/cookies remain follow-up work. Workspace JS can also exfiltrate via
+  network if it loads third-party scripts.
 
 ## Rust port — Go daemon deleted (cutover)
 

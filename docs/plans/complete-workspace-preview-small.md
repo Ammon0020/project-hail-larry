@@ -9,7 +9,9 @@
 
 Let users open a "browse preview" tab that renders a multi-file static site from
 the current workspace inside the IDE, with relative asset paths (CSS, JS, images)
-resolving against the workspace root.
+resolving against the workspace root. Loopback previews currently support these
+assets; LAN subresource authentication remains open because query credentials
+are not inherited by relative requests.
 
 ## Why a separate epic
 
@@ -22,6 +24,8 @@ tab kind, with clear follow-ons (live reload, dev-server proxy).
 
 - Backend `GET /preview/{workspace_id}/{*path}` with Content-Type + inline
   disposition, reusing `file_path` containment and the same auth as `/raw`.
+  Relative asset requests work on loopback; LAN credential propagation is
+  deferred.
 - Frontend "Open Preview" on `.html`/`.htm` file-tree context menu.
 - `Tab.kind: 'preview'` + `BrowsePreview` sandboxed iframe.
 - Sandbox: `allow-scripts` only (opaque origin — no parent `localStorage` access).

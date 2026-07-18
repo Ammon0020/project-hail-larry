@@ -61,7 +61,8 @@
   `docs/plans/acp-session-history/` (PROBE→BROWSE→OPEN→SYNC; FALLBACK; MIGRATE).
   Blocked on epic Decision Needed Q1–Q8.
 - [~] **Workspace static preview** — serve + browse tab + live-reload + sandbox
-  hardening done; dev-server proxy / mobile UX / auto-index still open.
+  hardening done; LAN relative-asset auth propagation, dev-server proxy /
+  mobile UX / auto-index still open.
   `docs/plans/complete-workspace-preview-small.md`.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation,
   enhanced diagnostics.
