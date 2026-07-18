@@ -34,9 +34,9 @@
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — MCP `session/new` handoff done. Next: `session/load`
-  + persist `acpSessionId`; 50 MiB write body; contract MCP parse-text; story
-  AC mass check-off. Daemon on :7337 for UI.
+- [ ] **Rust backend port** — MCP `session/new` + startup agent autodetect done.
+  Next: `session/load` + `acpSessionId`; 50 MiB write body; story AC check-off.
+  Daemon on :7337 for UI.
 
 ## Blocked
 
