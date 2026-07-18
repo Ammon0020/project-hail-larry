@@ -570,6 +570,31 @@ impl ACPClient for Client {
             .ok_or_else(|| AppError::not_found_id("session", session_id))
     }
 
+    /// Live-only projection of negotiated session-history caps (S-HIST-PROBE).
+    ///
+    /// Does **not** cold-start an agent (epic Q8 still open). Dormant sessions
+    /// return [`SessionHistoryCapabilities::unavailable`]; unknown ids 404.
+    fn session_history_capabilities(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::interfaces::SessionHistoryCapabilities, AppError> {
+        if let Some(caps) = self
+            .sessions_read()?
+            .get(session_id)
+            .map(|entry| entry.caps)
+        {
+            return Ok(caps.to_history_capabilities(true));
+        }
+        if self.dormant_read()?.contains_key(session_id) {
+            tracing::debug!(
+                session_id,
+                "session history caps unavailable: agent not live (cold-start deferred to Q8)"
+            );
+            return Ok(crate::interfaces::SessionHistoryCapabilities::unavailable());
+        }
+        Err(AppError::not_found_id("session", session_id))
+    }
+
     fn list_sessions(&self) -> Vec<Session> {
         let Ok(live) = self.sessions_read() else {
             tracing::error!("ACP session registry lock poisoned during list_sessions");
@@ -1362,13 +1387,23 @@ async fn run_actor_inner(
                 .block_task()
                 .await
                 .map_err(|_| agent_client_protocol::Error::internal_error())?;
-            let caps = SessionCaps::from_agent_capabilities(
-                init.agent_capabilities.providers.is_some(),
-                init.agent_capabilities.prompt_capabilities.embedded_context,
-            );
+            let agent_caps = &init.agent_capabilities;
+            let session_caps = &agent_caps.session_capabilities;
+            let caps = SessionCaps {
+                providers_supported: agent_caps.providers.is_some(),
+                embedded_context: agent_caps.prompt_capabilities.embedded_context,
+                can_list_sessions: session_caps.list.is_some(),
+                can_load_session: agent_caps.load_session,
+                can_resume_session: session_caps.resume.is_some(),
+                can_close_session: session_caps.close.is_some(),
+                can_delete_session: session_caps.delete.is_some(),
+            };
             tracing::debug!(
                 providers_supported = caps.providers_supported,
                 embedded_context = caps.embedded_context,
+                can_list_sessions = caps.can_list_sessions,
+                can_load_session = caps.can_load_session,
+                can_resume_session = caps.can_resume_session,
                 "ACP initialize capabilities cached"
             );
             // MCP is additive: malformed/missing config must not block session create.

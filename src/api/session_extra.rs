@@ -79,6 +79,20 @@ pub async fn export_session(
         .into_response())
 }
 
+/// `GET /api/sessions/{id}/capabilities` — live initialize session-history caps.
+///
+/// Auth-gated via the shared API router. Does not cold-start agents (Q8 open).
+pub async fn session_capabilities(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<crate::interfaces::SessionHistoryCapabilities>, ApiResponseError> {
+    state
+        .acp
+        .session_history_capabilities(&session_id)
+        .map(Json)
+        .map_err(app_error)
+}
+
 /// `POST /api/sessions/{id}/context` — update open-files / selection tracker.
 pub async fn session_context(
     State(state): State<AppState>,

@@ -1,6 +1,6 @@
 # Story S-HIST-PROBE: Capability Probe + Harness Matrix
 
-> **Status:** pending | **Difficulty:** small
+> **Status:** complete | **Difficulty:** small
 > **Epic:** [agent-owned session history](../pending-acp-agent-session-history-med.md).
 > **Depends on:** none (research-first; unblocks browse/open/fallback).
 > **Blocks:** S-HIST-BROWSE, S-HIST-OPEN, S-HIST-FALLBACK (capability gates).
@@ -39,15 +39,19 @@ caps instead of guessing.
 
 ## Acceptance criteria
 
-- [ ] Written harness matrix checked in (markdown table) with verified or
+- [x] Written harness matrix checked in (markdown table) with verified or
       explicitly "unknown / not probed" cells — no invented ✅.
-- [ ] Live `initialize` caps for list / loadSession / resume readable by the
+      → `docs/plans/acp-session-history/harness-session-history-matrix.md`
+- [x] Live `initialize` caps for list / loadSession / resume readable by the
       client (test or contract fixture).
-- [ ] Agents lacking list and/or load are identifiable so S-HIST-FALLBACK can
-      gate UX.
-- [ ] Unit/integration coverage for cap projection (mock agent with/without
-      list+load).
-- [ ] `cargo test -q` (scoped) + lint clean for touched Rust; no UI redesign.
+      → `GET /api/sessions/{id}/capabilities` + `SessionHistoryCapabilities`
+- [x] Agents lacking list and/or load are identifiable so S-HIST-FALLBACK can
+      gate UX. (`available && !canListSessions && !canLoadSession`)
+- [x] Unit/integration coverage for cap projection (mock agent with/without
+      list+load). (`src/acp/providers.rs` tests)
+- [x] `cargo test -q` (scoped) + lint clean for touched Rust; no UI redesign.
+- [ ] ~~Cold-start probe when agent is not warm~~ — **deferred** (epic Q8
+      open). Live-only readout ships; dormant → `available: false`.
 
 ## Out of scope
 
@@ -60,3 +64,4 @@ caps instead of guessing.
 
 - Epic Q8 — **Probe cost:** may we spawn/initialize an agent solely to list
   history, or only probe when a worker is already warm?
+  **Shipped:** live-only. Follow-on when Q8 locks.

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { previewFileUrl } from '@/lib/api'
+import { api, previewFileUrl } from '@/lib/api'
 import type { AppEvent } from '@/types'
 
 /** Coalesce bursty FileWritten / FileChangedOnDisk into one iframe remount. */
@@ -24,10 +24,28 @@ export function BrowsePreview({
   /** Shared backend event list (same WS stream as useBackend) — no extra socket. */
   events?: AppEvent[]
 }) {
-  // Bumping the key remounts the iframe (manual refresh + live reload).
-  // Remount is more reliable than contentWindow.location.reload() under sandbox.
-  const [reloadKey, setReloadKey] = useState(0)
-  const src = previewFileUrl(workspaceId, entryPath)
+  // A fresh session remounts the sandboxed iframe for manual and live reloads.
+  const [previewSessionVersion, setPreviewSessionVersion] = useState(0)
+  const [previewToken, setPreviewToken] = useState<string>()
+  const [sessionError, setSessionError] = useState<string>()
+  const src = previewToken ? previewFileUrl(workspaceId, entryPath, previewToken) : ''
+
+  useEffect(() => {
+    let cancelled = false
+    setPreviewToken(undefined)
+    setSessionError(undefined)
+    if (!workspaceId) return
+    void api.createPreviewSession(workspaceId)
+      .then(({ token }) => {
+        if (!cancelled) setPreviewToken(token)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setSessionError(error instanceof Error ? error.message : 'Unable to authorize preview')
+        }
+      })
+    return () => { cancelled = true }
+  }, [workspaceId, previewSessionVersion])
 
   // Highest event id already considered — skip historical events on mount.
   const processedIdRef = useRef<number | null>(null)
@@ -58,7 +76,7 @@ export function BrowsePreview({
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
       debounceRef.current = undefined
-      setReloadKey((k) => k + 1)
+      setPreviewSessionVersion((version) => version + 1)
     }, LIVE_RELOAD_DEBOUNCE_MS)
   }, [events, workspaceId])
 
@@ -77,7 +95,7 @@ export function BrowsePreview({
         </span>
         <button
           type="button"
-          onClick={() => setReloadKey((k) => k + 1)}
+          onClick={() => setPreviewSessionVersion((version) => version + 1)}
           className="flex items-center gap-1.5 font-medium text-foreground hover:text-primary transition px-2 py-0.5 rounded"
           title="Reload preview"
         >
@@ -89,16 +107,25 @@ export function BrowsePreview({
         Sandbox: allow-scripts only (no allow-same-origin). The iframe gets an
         opaque origin so workspace HTML/JS cannot read the IDE's localStorage or
         call authenticated APIs as the parent app. Relative CSS/JS/image URLs
-        still load via normal subresource requests (auth via query params).
+        use the HttpOnly, path-scoped preview cookie.
         allow-top-navigation stays OFF so the preview cannot redirect the IDE.
       */}
-      <iframe
-        key={reloadKey}
-        src={src}
-        title={`Preview: ${entryPath}`}
-        className="flex-1 w-full border-0 bg-white"
-        sandbox="allow-scripts"
-      />
+      {sessionError ? (
+        <div className="flex-1 flex items-center justify-center text-sm text-destructive">
+          Preview authorization failed: {sessionError}
+        </div>
+      ) : previewToken ? (
+        <iframe
+          src={src}
+          title={`Preview: ${entryPath}`}
+          className="flex-1 w-full border-0 bg-white"
+          sandbox="allow-scripts"
+        />
+      ) : (
+        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+          Authorizing preview…
+        </div>
+      )}
     </div>
   )
 }

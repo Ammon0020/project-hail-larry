@@ -527,6 +527,43 @@ pub struct SessionInfo {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Negotiated ACP session-history caps from a live `initialize` (S-HIST-PROBE).
+///
+/// Returned by `GET /api/sessions/{id}/capabilities`. When [`Self::available`]
+/// is false the agent process is not warm — do not infer missing list/load
+/// (epic Q8 cold-start probe still open).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistoryCapabilities {
+    /// True when caps were read from a live agent `initialize` response.
+    pub available: bool,
+    /// `sessionCapabilities.list` advertised.
+    pub can_list_sessions: bool,
+    /// `agentCapabilities.loadSession` advertised.
+    pub can_load_session: bool,
+    /// `sessionCapabilities.resume` advertised.
+    pub can_resume_session: bool,
+    /// `sessionCapabilities.close` advertised (optional lifecycle).
+    pub can_close_session: bool,
+    /// `sessionCapabilities.delete` advertised (optional lifecycle).
+    pub can_delete_session: bool,
+}
+
+impl SessionHistoryCapabilities {
+    /// Caps for a known session that has no live initialize yet (dormant).
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self {
+            available: false,
+            can_list_sessions: false,
+            can_load_session: false,
+            can_resume_session: false,
+            can_close_session: false,
+            can_delete_session: false,
+        }
+    }
+}
+
 /// Alias matching Go `type Session = SessionInfo`.
 pub type Session = SessionInfo;
 

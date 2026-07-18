@@ -1,6 +1,7 @@
 # Epic: Workspace Static Preview
 
-> **Status:** Partial — serve + tab + live-reload done; dev-server proxy open.
+> **Status:** Partial — serve + tab + live-reload + LAN asset auth done;
+> dev-server proxy open.
 > **Owner:** —. **Created:** 2026-07-18. **Updated:** 2026-07-18.
 > **Related:** Blueprint §13 (file serving), `src/api/mod.rs` (`preview_file` /
 > `raw_file`), `web/src/components/BrowsePreview.tsx`.
@@ -58,3 +59,4 @@ file events match the preview's `workspaceId`.
 |---|---|---|---|
 | [S-PREVIEW-SERVE](workspace-preview/complete-browse-preview-small.md) | Browse preview tab + serving route | small | complete |
 | [S-PREVIEW-LIVE-RELOAD](workspace-preview/complete-browse-preview-live-reload-small.md) | Live reload on file change | small | complete |
+| [S-PREVIEW-LAN-AUTH](workspace-preview/complete-preview-lan-auth-small.md) | Scoped LAN subresource authentication | small | complete |

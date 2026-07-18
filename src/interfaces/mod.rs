@@ -41,7 +41,8 @@ pub use types::{
     EventMeta, EventPayload, EventType, FileNode, PairingSession, PendingActionInfo,
     PermissionDecision, PermissionOption, PermissionOptionInfo, PermissionRequest,
     PermissionResponse, ProviderCurrentConfig, ProviderInfo, SearchOptions, SearchResult, Session,
-    SessionInfo, TypedEvent, WorkspaceInfo, FILE_NODE_TYPE_FILE, FILE_NODE_TYPE_FOLDER,
+    SessionHistoryCapabilities, SessionInfo, TypedEvent, WorkspaceInfo, FILE_NODE_TYPE_FILE,
+    FILE_NODE_TYPE_FOLDER,
     PENDING_ACTION_TYPE_REVOCATION, PENDING_ACTION_TYPE_WORKSPACE_REGISTRATION,
 };
 pub use wire::{event_to_json_pretty, typed_event, typed_event_to_wire, wire_to_typed_event};

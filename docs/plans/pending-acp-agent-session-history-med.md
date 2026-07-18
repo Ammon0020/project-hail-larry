@@ -30,7 +30,7 @@ Architecture Direction remains a **working hypothesis** until Q1–Q2 lock.
 
 | ID | Story | Size | Depends on | Acceptance |
 |----|-------|------|------------|------------|
-| S-HIST-PROBE | [Capability probe + harness matrix](acp-session-history/pending-hist-probe-small.md) | small | — | story AC |
+| S-HIST-PROBE | [Capability probe + harness matrix](acp-session-history/pending-hist-probe-small.md) | small | — | ✅ complete (live-only; Q8 open) |
 | S-HIST-BROWSE | [Browse agent sessions by cwd](acp-session-history/pending-hist-browse-med.md) | med | PROBE; Q7/Q8 | story AC |
 | S-HIST-OPEN | [Open/load past session into UI](acp-session-history/pending-hist-open-med.md) | med | PROBE, BROWSE; Q1/Q4 | story AC |
 | S-HIST-SYNC | [Thin multi-UI active-session index](acp-session-history/pending-hist-sync-med.md) | med | OPEN; Q2 (Q1) | story AC |

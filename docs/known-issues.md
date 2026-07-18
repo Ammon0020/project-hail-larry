@@ -98,9 +98,11 @@ Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic
   run but cannot read IDE `localStorage`). Preview responses add
   `frame-ancestors 'self'`. Relative assets resolve correctly on loopback,
   where auth is bypassed, but a LAN browser does not propagate the entry
-  URL's query credentials to relative subresource requests; scoped preview
-  tokens/cookies remain follow-up work. Workspace JS can also exfiltrate via
-  network if it loads third-party scripts.
+  URL's query credentials to relative subresource requests; preview now uses
+  a 30-minute workspace-scoped in-memory ticket exchanged for an HttpOnly,
+  path-scoped cookie. The residual risk is exposure of that short-lived ticket
+  in the entry URL/server logs; `Referrer-Policy: no-referrer` limits onward
+  Referer leakage. Workspace JS can still exfiltrate via third-party requests.
 
 ## Rust port — Go daemon deleted (cutover)
 

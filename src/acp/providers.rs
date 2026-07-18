@@ -38,26 +38,47 @@ pub const PROVIDERS_UNSUPPORTED_MSG: &str = "agent does not support the provider
 pub const MODEL_SWITCH_UNSUPPORTED_MSG: &str = "agent does not advertise a model config option; \
 live model switch requires session/set_config_option (rebind fallback deferred to S-ACP-CONTEXT)";
 
-/// Per-session capability cache captured from `initialize` (+ room for CONTEXT).
+/// Per-session capability cache captured from `initialize`.
 ///
-/// `embedded_context` is stored now so S-ACP-CONTEXT can read it without
-/// rewriting the initialize path; provider code only gates on
-/// `providers_supported`.
+/// Provider RPCs gate on `providers_supported`. Context injection gates on
+/// `embedded_context`. Session-history stories (BROWSE/OPEN/FALLBACK) gate on
+/// the `can_*` fields — live-only until epic Q8 (cold-start probe) locks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SessionCaps {
     /// `agentCapabilities.providers != null` from Initialize.
     pub providers_supported: bool,
     /// `promptCapabilities.embeddedContext` from Initialize (CONTEXT).
     pub embedded_context: bool,
+    /// `sessionCapabilities.list` present (`{}` or richer).
+    pub can_list_sessions: bool,
+    /// Top-level `agentCapabilities.loadSession`.
+    pub can_load_session: bool,
+    /// `sessionCapabilities.resume` present.
+    pub can_resume_session: bool,
+    /// `sessionCapabilities.close` present.
+    pub can_close_session: bool,
+    /// `sessionCapabilities.delete` present.
+    pub can_delete_session: bool,
 }
 
 impl SessionCaps {
-    /// Build caps from an initialize response's agent capability block.
+    /// Project cached initialize caps into the stable REST/UI shape.
+    ///
+    /// When `available` is false (dormant session, no live initialize), all
+    /// capability booleans are false — callers must not treat that as
+    /// "agent lacks list/load"; cold-start policy is still Decision Needed (Q8).
     #[must_use]
-    pub fn from_agent_capabilities(providers_supported: bool, embedded_context: bool) -> Self {
-        Self {
-            providers_supported,
-            embedded_context,
+    pub fn to_history_capabilities(self, available: bool) -> crate::interfaces::SessionHistoryCapabilities {
+        if !available {
+            return crate::interfaces::SessionHistoryCapabilities::unavailable();
+        }
+        crate::interfaces::SessionHistoryCapabilities {
+            available: true,
+            can_list_sessions: self.can_list_sessions,
+            can_load_session: self.can_load_session,
+            can_resume_session: self.can_resume_session,
+            can_close_session: self.can_close_session,
+            can_delete_session: self.can_delete_session,
         }
     }
 }
@@ -312,6 +333,67 @@ mod tests {
             AppError::Unsupported(msg) => assert_eq!(msg, PROVIDERS_UNSUPPORTED_MSG),
             other => panic!("expected Unsupported, got {other}"),
         }
+    }
+
+    #[test]
+    fn history_caps_projection_with_list_and_load() {
+        let caps = SessionCaps {
+            providers_supported: false,
+            embedded_context: true,
+            can_list_sessions: true,
+            can_load_session: true,
+            can_resume_session: false,
+            can_close_session: false,
+            can_delete_session: false,
+        };
+        let projected = caps.to_history_capabilities(true);
+        assert!(projected.available);
+        assert!(projected.can_list_sessions);
+        assert!(projected.can_load_session);
+        assert!(!projected.can_resume_session);
+        assert!(!projected.can_close_session);
+        assert!(!projected.can_delete_session);
+        let json = serde_json::to_value(projected).expect("serialize");
+        assert_eq!(json["available"], true);
+        assert_eq!(json["canListSessions"], true);
+        assert_eq!(json["canLoadSession"], true);
+        assert_eq!(json["canResumeSession"], false);
+    }
+
+    #[test]
+    fn history_caps_projection_without_list_or_load() {
+        let caps = SessionCaps::default();
+        let projected = caps.to_history_capabilities(true);
+        assert!(projected.available);
+        assert!(!projected.can_list_sessions);
+        assert!(!projected.can_load_session);
+        assert!(!projected.can_resume_session);
+        // FALLBACK story can gate on: available && !canList && !canLoad
+        assert!(
+            projected.available && !projected.can_list_sessions && !projected.can_load_session,
+            "agents lacking list+load must be identifiable"
+        );
+    }
+
+    #[test]
+    fn history_caps_unavailable_when_not_live() {
+        let caps = SessionCaps {
+            providers_supported: true,
+            embedded_context: true,
+            can_list_sessions: true,
+            can_load_session: true,
+            can_resume_session: true,
+            can_close_session: true,
+            can_delete_session: true,
+        };
+        let projected = caps.to_history_capabilities(false);
+        assert!(!projected.available);
+        assert!(!projected.can_list_sessions);
+        assert!(!projected.can_load_session);
+        assert_eq!(
+            projected,
+            crate::interfaces::SessionHistoryCapabilities::unavailable()
+        );
     }
 
     #[test]

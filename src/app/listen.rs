@@ -19,7 +19,7 @@ use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::Router;
+use axum::{Extension, Router};
 use http_body::Body as HttpBody;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder as ConnectionBuilder;
@@ -33,6 +33,7 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tracing::{info, warn};
 
+use crate::api::TlsConnection;
 use crate::config::Config;
 
 use super::daemon::{resolved_https_port, BoundAddresses};
@@ -150,7 +151,9 @@ async fn serve_https(
     router: Router,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let make_service = router.into_make_service_with_connect_info::<SocketAddr>();
+    let make_service = router
+        .layer(Extension(TlsConnection))
+        .into_make_service_with_connect_info::<SocketAddr>();
     info!(address = %listener.local_addr().context("read HTTPS listener address")?, "serving HTTPS endpoint");
     let mut connections = JoinSet::new();
     loop {

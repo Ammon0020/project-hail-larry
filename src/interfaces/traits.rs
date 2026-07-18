@@ -153,6 +153,13 @@ pub trait ACPClient: Send + Sync {
     /// Metadata for a single session by ID.
     fn get_session_info(&self, session_id: &str) -> Result<SessionInfo, AppError>;
 
+    /// Live `initialize` session-history caps (list/load/resume). Auth consumers
+    /// use this for BROWSE/OPEN/FALLBACK gates. Does not cold-start agents.
+    fn session_history_capabilities(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::interfaces::SessionHistoryCapabilities, AppError>;
+
     /// All conversations, newest activity first.
     fn list_sessions(&self) -> Vec<Session>;
 

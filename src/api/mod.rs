@@ -26,6 +26,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use chrono::Utc;
+use rand::Rng;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{debug, error, warn};
@@ -53,6 +54,14 @@ const MAX_EVENT_LIMIT: i32 = 10_000;
 const DEFAULT_EVENT_LIMIT: i32 = 1_000;
 const PAIR_RATE_PER_MINUTE: f64 = 5.0;
 const PAIR_RATE_BURST: f64 = 5.0;
+const PREVIEW_TOKEN_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// Marks a request that arrived over the daemon's native TLS listener.
+///
+/// The listener adds this before routing so security-sensitive handlers do not
+/// infer transport security from a client-controlled header.
+#[derive(Clone, Copy)]
+pub(crate) struct TlsConnection;
 
 /// Concrete services shared by handlers. Construction is owned by
 /// [`crate::app::listen`], keeping HTTP handlers free of global state.
@@ -72,12 +81,19 @@ pub struct AppState {
     /// External filesystem watcher. `None` when notify init failed.
     pub fs_watcher: Option<Arc<crate::fswatch::Watcher>>,
     pair_rate: Arc<Mutex<HashMap<String, PairRateBucket>>>,
+    /// In-memory, workspace-scoped preview tickets with short expiry.
+    preview_tokens: Arc<Mutex<HashMap<String, PreviewToken>>>,
 }
 
 /// Per-IP token bucket matching Go's five-request burst and 5/minute refill.
 struct PairRateBucket {
     tokens: f64,
     updated_at: Instant,
+}
+
+struct PreviewToken {
+    workspace_id: String,
+    expires_at: Instant,
 }
 
 impl AppState {
@@ -112,6 +128,7 @@ impl AppState {
             uploads,
             fs_watcher,
             pair_rate: Arc::new(Mutex::new(HashMap::new())),
+            preview_tokens: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -143,6 +160,10 @@ pub fn router(state: AppState) -> Router {
             get(read_file).delete(delete_file),
         )
         .route("/api/workspaces/{id}/raw", get(raw_file))
+        .route(
+            "/api/workspaces/{id}/preview-session",
+            post(create_preview_session),
+        )
         // Browse-preview virtual root: path-based so relative asset URLs resolve.
         // Bare `/preview/{id}` (no file) returns 404 — no SPA fallback.
         .route("/preview/{id}", get(preview_empty))
@@ -165,6 +186,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/sessions/{id}/export",
             get(session_extra::export_session),
+        )
+        .route(
+            "/api/sessions/{id}/capabilities",
+            get(session_extra::session_capabilities),
         )
         .route(
             "/api/sessions/{id}/context",
@@ -578,6 +603,57 @@ async fn raw_file(
 ) -> Result<Response, ApiResponseError> {
     let path = required_query(query.path, "path")?;
     serve_workspace_file(&state, &id, &path).await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewSessionResponse {
+    token: String,
+    expires_in_seconds: u64,
+}
+
+/// Creates a one-time ticket used only to bootstrap a preview cookie.
+async fn create_preview_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<PreviewSessionResponse>, ApiResponseError> {
+    let exists = state
+        .workspaces
+        .list()
+        .await
+        .map_err(app_error)?
+        .into_iter()
+        .any(|workspace| workspace.id == id);
+    if !exists {
+        return Err(ApiResponseError::not_found(format!(
+            "workspace {id} not found"
+        )));
+    }
+    let token = new_preview_token();
+    let now = Instant::now();
+    let mut tokens = state
+        .preview_tokens
+        .lock()
+        .map_err(|_| ApiResponseError::internal("preview token store lock poisoned"))?;
+    tokens.retain(|_, ticket| ticket.expires_at > now);
+    tokens.insert(
+        token.clone(),
+        PreviewToken {
+            workspace_id: id,
+            expires_at: now + PREVIEW_TOKEN_TTL,
+        },
+    );
+    Ok(Json(PreviewSessionResponse {
+        token,
+        expires_in_seconds: PREVIEW_TOKEN_TTL.as_secs(),
+    }))
+}
+
+/// Creates a 256-bit opaque value for a preview ticket or cookie.
+fn new_preview_token() -> String {
+    let mut bytes = [0_u8; 32];
+    rand::rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
 }
 
 /// 404 for `/preview/{id}` with no file path — never fall through to the SPA.
@@ -1106,8 +1182,108 @@ async fn require_auth(
         request.uri().query(),
     ) {
         Ok(()) => next.run(request).await,
+        Err(error) if request.method() == Method::GET || request.method() == Method::HEAD => {
+            let Some(preview_auth) = preview_authorization(&state, request.uri(), request.headers()) else {
+                return error.into_response();
+            };
+            let secure = request.extensions().get::<TlsConnection>().is_some();
+            let mut response = next.run(request).await;
+            if let Some(token) = preview_auth.cookie_token {
+                let mut cookie = format!(
+                    "preview_token={token}; Path=/preview/{}/; HttpOnly; SameSite=Lax; Max-Age={}",
+                    preview_auth.workspace_id,
+                    PREVIEW_TOKEN_TTL.as_secs()
+                );
+                if secure {
+                    cookie.push_str("; Secure");
+                }
+                if let Ok(value) = HeaderValue::from_str(&cookie) {
+                    response.headers_mut().append(header::SET_COOKIE, value);
+                }
+            }
+            response
+        }
         Err(error) => error.into_response(),
     }
+}
+
+struct PreviewAuthorization {
+    workspace_id: String,
+    /// A fresh cookie value when an entry ticket was consumed.
+    cookie_token: Option<String>,
+}
+
+/// Authenticates a preview read and exchanges an entry ticket for a cookie.
+///
+/// Query tickets are intentionally one-time: URLs may reach browser history or
+/// server logs, while the replacement value is HttpOnly and path-scoped.
+fn preview_authorization(
+    state: &AppState,
+    uri: &Uri,
+    headers: &HeaderMap,
+) -> Option<PreviewAuthorization> {
+    let mut segments = uri.path().split('/').filter(|segment| !segment.is_empty());
+    if segments.next()? != "preview" {
+        return None;
+    }
+    let workspace_id = segments.next()?.to_string();
+    let entry_token = uri.query().and_then(|query| {
+        query.split('&').find_map(|part| {
+            let (name, value) = part.split_once('=')?;
+            (name == "previewToken").then_some(value)
+        })
+    });
+    if let Some(token) = entry_token {
+        return exchange_preview_ticket(state, &workspace_id, token).map(|cookie_token| {
+            PreviewAuthorization {
+                workspace_id,
+                cookie_token: Some(cookie_token),
+            }
+        });
+    }
+    let cookie_token = headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|cookie| {
+                let (name, value) = cookie.trim().split_once('=')?;
+                (name == "preview_token").then_some(value)
+            })
+        });
+    let token = cookie_token?;
+    let tokens = state.preview_tokens.lock().ok()?;
+    let ticket = tokens.get(token)?;
+    (ticket.expires_at > Instant::now() && ticket.workspace_id == workspace_id).then_some(
+        PreviewAuthorization {
+            workspace_id,
+            cookie_token: None,
+        },
+    )
+}
+
+/// Consumes an entry ticket and returns a fresh cookie token for its workspace.
+fn exchange_preview_ticket(
+    state: &AppState,
+    workspace_id: &str,
+    entry_token: &str,
+) -> Option<String> {
+    let now = Instant::now();
+    let mut tokens = state.preview_tokens.lock().ok()?;
+    tokens.retain(|_, ticket| ticket.expires_at > now);
+    let expires_at = match tokens.get(entry_token) {
+        Some(ticket) if ticket.workspace_id == workspace_id => ticket.expires_at,
+        _ => return None,
+    };
+    tokens.remove(entry_token);
+    let cookie_token = new_preview_token();
+    tokens.insert(
+        cookie_token.clone(),
+        PreviewToken {
+            workspace_id: workspace_id.to_owned(),
+            expires_at,
+        },
+    );
+    Some(cookie_token)
 }
 
 /// Limit unauthenticated pairing requests before they allocate QR sessions or
@@ -1958,6 +2134,139 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn preview_session_cookie_authenticates_relative_asset() {
+        let (_state_dir, state, cred) = pending_actions_state(0, false);
+        let (_site, ws) = preview_fixture_workspace(&state).await;
+        let session = oneshot_peer(
+            state.clone(),
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/workspaces/{}/preview-session", ws.id))
+                .header(header::AUTHORIZATION, bearer(&cred))
+                .body(Body::empty())
+                .expect("request"),
+            "10.0.0.1:9",
+        )
+        .await;
+        assert_eq!(session.status(), StatusCode::OK);
+        let token = json_body(session).await["token"]
+            .as_str()
+            .expect("preview token")
+            .to_owned();
+
+        let entry = oneshot_peer(
+            state.clone(),
+            Request::builder()
+                .uri(format!(
+                    "/preview/{}/index.html?previewToken={token}",
+                    ws.id
+                ))
+                .body(Body::empty())
+                .expect("request"),
+            "10.0.0.1:9",
+        )
+        .await;
+        assert_eq!(entry.status(), StatusCode::OK);
+        let cookie = entry
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .expect("preview cookie");
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains(&format!("Path=/preview/{}/", ws.id)));
+        assert_ne!(cookie.split(';').next(), Some(format!("preview_token={token}").as_str()));
+
+        let asset = oneshot_peer(
+            state.clone(),
+            Request::builder()
+                .uri(format!("/preview/{}/styles.css", ws.id))
+                .header(header::COOKIE, cookie.split(';').next().expect("cookie pair"))
+                .body(Body::empty())
+                .expect("request"),
+            "10.0.0.1:9",
+        )
+        .await;
+        assert_eq!(asset.status(), StatusCode::OK);
+
+        let replay = oneshot_peer(
+            state,
+            Request::builder()
+                .uri(format!("/preview/{}/index.html?previewToken={token}", ws.id))
+                .body(Body::empty())
+                .expect("request"),
+            "10.0.0.1:9",
+        )
+        .await;
+        assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn tls_preview_entry_sets_secure_cookie() {
+        let (_state_dir, state, cred) = pending_actions_state(0, false);
+        let (_site, ws) = preview_fixture_workspace(&state).await;
+        let session = oneshot_peer(
+            state.clone(),
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/workspaces/{}/preview-session", ws.id))
+                .header(header::AUTHORIZATION, bearer(&cred))
+                .body(Body::empty())
+                .expect("request"),
+            "10.0.0.1:9",
+        )
+        .await;
+        let token = json_body(session).await["token"]
+            .as_str()
+            .expect("preview token")
+            .to_owned();
+        let mut request = Request::builder()
+            .uri(format!("/preview/{}/index.html?previewToken={token}", ws.id))
+            .body(Body::empty())
+            .expect("request");
+        request.extensions_mut().insert(TlsConnection);
+        let entry = oneshot_peer(state, request, "10.0.0.1:9").await;
+        let cookie = entry
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .expect("preview cookie");
+        assert!(cookie.contains("; Secure"));
+    }
+
+    #[tokio::test]
+    async fn preview_token_wrong_workspace_is_rejected() {
+        let (_state_dir, state, cred) = pending_actions_state(0, false);
+        let (_site, first) = preview_fixture_workspace(&state).await;
+        let (_other_site, second) = preview_fixture_workspace(&state).await;
+        let session = oneshot_peer(
+            state.clone(),
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/workspaces/{}/preview-session", first.id))
+                .header(header::AUTHORIZATION, bearer(&cred))
+                .body(Body::empty())
+                .expect("request"),
+            "10.0.0.1:9",
+        )
+        .await;
+        let session_body = json_body(session).await;
+        let token = session_body["token"].as_str().expect("preview token");
+        let response = oneshot_peer(
+            state,
+            Request::builder()
+                .uri(format!(
+                    "/preview/{}/index.html?previewToken={token}",
+                    second.id
+                ))
+                .body(Body::empty())
+                .expect("request"),
+            "10.0.0.1:9",
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     // --- Workspace file mutations (delete / rename / mkdir) ---

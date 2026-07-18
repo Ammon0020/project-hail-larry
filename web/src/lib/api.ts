@@ -77,16 +77,19 @@ export function rawFileUrl(workspaceId: string, path: string): string {
 /**
  * Builds a URL for the browse-preview endpoint (GET /preview/{id}/{path}).
  * Top-level `/preview/...` (not under `/api`) so relative asset URLs in the
- * iframe resolve correctly. Credentials are appended as query params the same
- * way as rawFileUrl — media tags / iframes cannot set Authorization headers.
+ * iframe resolve correctly. A one-time ticket bootstraps an HttpOnly preview
+ * cookie, allowing relative assets to load without exposing device credentials.
  */
-export function previewFileUrl(workspaceId: string, entryPath: string): string {
+export function previewFileUrl(workspaceId: string, entryPath: string, previewToken?: string): string {
   const segments = entryPath
     .split(/[/\\]+/)
     .filter(Boolean)
     .map(encodeURIComponent)
     .join('/')
-  const qs = appendDeviceCredential(new URLSearchParams()).toString()
+  const params = previewToken
+    ? new URLSearchParams({ previewToken })
+    : new URLSearchParams()
+  const qs = params.toString()
   return `/preview/${encodeURIComponent(workspaceId)}/${segments}${qs ? `?${qs}` : ''}`
 }
 
@@ -220,6 +223,11 @@ export const api = {
     }),
   getFileTree: (workspaceId: string) =>
     apiFetch<FileNode[]>(`/workspaces/${workspaceId}/files`),
+  createPreviewSession: (workspaceId: string) =>
+    apiFetch<{ token: string; expiresInSeconds: number }>(
+      `/workspaces/${workspaceId}/preview-session`,
+      { method: 'POST' },
+    ),
   readFile: (workspaceId: string, path: string) =>
     apiFetch<{ content: string; revision: number; path: string; isBinary?: boolean; previewable?: boolean }>(
       `/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
