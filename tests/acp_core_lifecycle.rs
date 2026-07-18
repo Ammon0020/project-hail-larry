@@ -53,6 +53,7 @@ async fn client_with_workspace() -> (Arc<Client>, TempDir, String) {
         permissions,
         event_bus,
         conversation_store: local_agent::acp::ConversationStore::new(None),
+        mcp_config_path: None,
     }));
 
     (client, directory, workspace.id)

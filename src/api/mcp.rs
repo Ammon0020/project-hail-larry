@@ -152,6 +152,7 @@ mod tests {
             permissions: permissions.clone(),
             event_bus: events.clone(),
             conversation_store: crate::acp::ConversationStore::new(None),
+            mcp_config_path: None,
         }));
         AppState::new(
             config,
@@ -260,6 +261,7 @@ mod tests {
             permissions: permissions.clone(),
             event_bus: events.clone(),
             conversation_store: crate::acp::ConversationStore::new(None),
+            mcp_config_path: None,
         }));
         let state = AppState::new(
             config,

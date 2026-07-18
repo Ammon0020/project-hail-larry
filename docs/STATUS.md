@@ -29,12 +29,14 @@
   sets session profile; context pipeline injects instructions.
 - [x] **MCP store/settings icons** — Settings opens MCP section; store disabled
   (coming soon).
-- [ ] **QR/pair scheme selection** — `app pair`/QR encode the HTTPS URL only; let device pick, or encode both.
+- [ ] **QR/pair scheme selection** — pair QR currently encodes **HTTP** (not
+  HTTPS-only); product choice: HTTPS when TLS on, both URLs, or device picker.
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — fswatch + `note_app_write` via workspace
-  `set_on_write`. Daemon on :7337 for UI. Next: release CI / remaining gaps.
+- [ ] **Rust backend port** — MCP `session/new` handoff done. Next: `session/load`
+  + persist `acpSessionId`; 50 MiB write body; contract MCP parse-text; story
+  AC mass check-off. Daemon on :7337 for UI.
 
 ## Blocked
 
@@ -42,13 +44,15 @@
 
 ## Recent Changes (2026-07)
 
-- **07-18** — Go **missing-workspace** parity: `WorkspaceInfo.available`/`error`
-  (omit when healthy via `*bool`); `RetainUnavailable`; daemon WARN without
-  prune; CLI list/status `UNAVAILABLE:`.
-- **07-17** — Rust **fswatch + missing-workspace**: Daemon owns `Option<Watcher>`;
-  emit → EventBus; add/remove on register paths. `WorkspaceInfo.available`/
-  `error` (omit when healthy); retain unavailable in manager; CLI UNAVAILABLE.
-  Gap: `note_app_write` unwired.
+- **07-18** — Rust **MCP → session/new**: `ClientDeps.mcp_config_path`; after
+  Initialize, capability-filtered servers attached via `.mcp_servers(...)`.
+  Malformed mcp.json warns and continues empty (Go parity).
+- **07-18** — Rust **fswatch `note_app_write`** via workspace `set_on_write`;
+  MCP Settings icon → Settings MCP tab; Go missing-workspace retain (ignore if
+  Rust-only focus).
+- **07-18** — Go **missing-workspace** parity: `available`/`error`; no prune.
+- **07-17** — Rust **fswatch + missing-workspace**: Daemon `Option<Watcher>`;
+  emit → EventBus; `WorkspaceInfo.available`/`error`; CLI UNAVAILABLE.
 - **07-17** — Rust **S-BUILD** polish: `build.rs` fails if `web/dist/index.html`
   missing; `[profile.release] strip = true`; `docs/development/building.md`
   (`cc`/bundled SQLite); build.sh/ps1 epilogue → `local_agent start`. Deferred:
@@ -90,11 +94,13 @@
 
 ## Known Gaps (summary — see `docs/known-issues.md`)
 
-- Go ACP SDK still missing `mcp/message` relay (Rust path unblocked).
-- Mobile editor touch; profile mode not wired; pair QR scheme selection.
-- Rust: pending-action daemon registrar wiring; contract black-box mostly green
-  (`CONTRACT_BACKEND=rust`); MCP JSON parse-error text still ignored.
-- Rust fswatch: `note_app_write` not wired (no FileSync write hook yet).
-- Rust HTTP limits: Hyper's native header deadline is HTTP/1-only; body
-  timing starts at handler entry, and an expired response body closes its stream.
-- Rust's global 10 MiB body cap is stricter than Go's 50 MiB file-write exception.
+- Rust: no ACP `session/load` yet (restart always `session/new`; need
+  durable `acpSessionId`).
+- Rust MCP-over-ACP broker unused (`unstable_mcp_over_acp`); inline MCP via
+  session/new is the path today. Go SDK still missing `mcp/message`.
+- Pair QR scheme product choice (currently HTTP); mobile editor touch.
+- Contract: MCP JSON parse-error text ignored; autodetect golden ignored.
+- Global 10 MiB body cap vs Go 50 MiB file-write exception.
+- Story AC checkboxes largely stale (implementation ahead of docs).
+- S-BUILD native Win/macOS release+SPA smoke CI deferred.
+- Hyper HTTP/2 header deadline unavailable; body timing starts at handler.

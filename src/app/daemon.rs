@@ -133,6 +133,7 @@ impl Daemon {
             conversation_store: ConversationStore::new(Some(
                 Path::new(&config.data_dir).join("conversations.json"),
             )),
+            mcp_config_path: Some(mcp_config_path.clone()),
         }));
         // Metadata only — actors start lazily on prompt/cancel/providers/rebind.
         acp.load_conversations()

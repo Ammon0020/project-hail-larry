@@ -14,13 +14,13 @@ use std::sync::{Arc, Mutex, RwLock};
 use agent_client_protocol::schema::v1::{
     CancelNotification, ClientCapabilities, ContentBlock, CreateTerminalRequest,
     CreateTerminalResponse, EmbeddedResource, EmbeddedResourceResource, FileSystemCapabilities,
-    InitializeRequest, KillTerminalRequest, KillTerminalResponse, NewSessionRequest, PromptRequest,
-    ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionId, SessionNotification, TerminalExitStatus,
-    TerminalOutputRequest, TerminalOutputResponse, TextContent, TextResourceContents,
-    WaitForTerminalExitRequest, WaitForTerminalExitResponse, WriteTextFileRequest,
-    WriteTextFileResponse,
+    InitializeRequest, KillTerminalRequest, KillTerminalResponse, McpCapabilities, McpServer,
+    NewSessionRequest, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    ReleaseTerminalRequest, ReleaseTerminalResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome, SessionId,
+    SessionNotification, TerminalExitStatus, TerminalOutputRequest, TerminalOutputResponse,
+    TextContent, TextResourceContents, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{
@@ -74,6 +74,8 @@ pub struct ClientDeps {
     pub event_bus: SharedEventBus,
     /// Optional durable metadata file; `None` is useful for isolated tests.
     pub conversation_store: ConversationStore,
+    /// Path to `mcp.json`. `None` skips MCP attachment on session/new (tests).
+    pub mcp_config_path: Option<PathBuf>,
 }
 
 /// Session status stored in the in-memory registry during the core port.
@@ -316,6 +318,7 @@ impl Client {
             sessions: Arc::clone(&self.sessions),
             event_bus: Arc::clone(&self.deps.event_bus),
             prompt_cancel: Arc::clone(&prompt_cancel),
+            mcp_config_path: self.deps.mcp_config_path.clone(),
         };
         tokio::spawn(run_actor(actor, receiver, ready_tx, registered_rx));
 
@@ -750,6 +753,7 @@ impl ACPClient for Client {
                 sessions: Arc::clone(&self.sessions),
                 event_bus: Arc::clone(&self.deps.event_bus),
                 prompt_cancel: Arc::clone(&prompt_cancel),
+                mcp_config_path: self.deps.mcp_config_path.clone(),
             },
             receiver,
             ready_tx,
@@ -1067,6 +1071,8 @@ struct ActorConfig {
     stderr_tail: Arc<Mutex<StderrTail>>,
     sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
     prompt_cancel: Arc<AtomicBool>,
+    /// Optional `mcp.json` path passed through to session/new.
+    mcp_config_path: Option<PathBuf>,
 }
 
 async fn run_actor(
@@ -1348,8 +1354,15 @@ async fn run_actor_inner(
                 embedded_context = caps.embedded_context,
                 "ACP initialize capabilities cached"
             );
+            // MCP is additive: malformed/missing config must not block session create.
+            let mcp_servers = load_session_mcp_servers(
+                config.mcp_config_path.as_deref(),
+                &init.agent_capabilities.mcp_capabilities,
+            );
             let session = cx
-                .send_request(NewSessionRequest::new(config.workspace_path.clone()))
+                .send_request(
+                    NewSessionRequest::new(config.workspace_path.clone()).mcp_servers(mcp_servers),
+                )
                 .block_task()
                 .await
                 .map_err(|_| agent_client_protocol::Error::internal_error())?;
@@ -2104,6 +2117,36 @@ fn terminal_cwd(root: &Path, cwd: Option<&Path>) -> Result<Option<String>, AppEr
     }
 }
 
+/// Load enabled MCP servers for session/new, filtered by agent capabilities.
+///
+/// Missing path / missing file / parse errors yield an empty list (Go parity:
+/// MCP is additive and must not block session creation).
+fn load_session_mcp_servers(path: Option<&Path>, caps: &McpCapabilities) -> Vec<McpServer> {
+    let Some(path) = path else {
+        return Vec::new();
+    };
+    match crate::mcp::File::load(path).and_then(|file| file.to_acp(caps)) {
+        Ok(servers) => {
+            if !servers.is_empty() {
+                tracing::debug!(
+                    path = %path.display(),
+                    count = servers.len(),
+                    "attaching MCP servers to session/new"
+                );
+            }
+            servers
+        }
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "loading mcp config; continuing without mcp servers"
+            );
+            Vec::new()
+        }
+    }
+}
+
 async fn read_text_file(
     deps: HandlerDeps,
     request: ReadTextFileRequest,
@@ -2413,6 +2456,7 @@ mod tests {
             permissions: permissions.clone(),
             event_bus,
             conversation_store,
+            mcp_config_path: None,
         }));
         (client, permissions, tempdir, workspace.id)
     }
@@ -2726,5 +2770,50 @@ mod tests {
             .close_session(session_id)
             .await
             .expect("close restored session");
+    }
+
+    #[test]
+    fn load_session_mcp_servers_attaches_enabled_stdio() {
+        use agent_client_protocol::schema::v1::{McpCapabilities, McpServer};
+        use std::fs;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "mcpServers": {
+    "echo": {
+      "command": "echo",
+      "args": ["hi"]
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://example.com/mcp",
+      "enabled": true
+    },
+    "off": {
+      "command": "false",
+      "enabled": false
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        // Default caps: stdio always ok; http/sse off unless advertised.
+        let stdio_only = super::load_session_mcp_servers(Some(&path), &McpCapabilities::new());
+        assert_eq!(stdio_only.len(), 1);
+        assert!(matches!(stdio_only[0], McpServer::Stdio(_)));
+
+        let with_http =
+            super::load_session_mcp_servers(Some(&path), &McpCapabilities::new().http(true));
+        assert_eq!(with_http.len(), 2);
+
+        // Malformed config must not fail session create.
+        fs::write(&path, "{not-json").unwrap();
+        assert!(super::load_session_mcp_servers(Some(&path), &McpCapabilities::new()).is_empty());
+        assert!(super::load_session_mcp_servers(None, &McpCapabilities::new()).is_empty());
     }
 }

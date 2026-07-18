@@ -30,7 +30,14 @@ to preserve formatting), health checks for stdio/http/sse transports.
 
 ## Acceptance Criteria
 
-- [ ] `mcp.json` read/modify/write behavior matches raw Go contract fixtures
-- [ ] Server config CRUD (add/remove/update by name)
-- [ ] Health status: green (healthy) / red (error) / gray (unknown)
-- [ ] `cargo test mcp` passes
+- [x] `mcp.json` read/modify/write behavior matches raw Go contract fixtures
+- [x] Server config CRUD (add/remove/update by name)
+- [x] Health status: green (healthy) / red (error) / gray (unknown)
+- [x] `cargo test mcp` passes
+- [x] Enabled servers reach ACP `session/new` (capability-filtered; soft-fail)
+
+## Remaining / related
+
+- MCP-over-ACP broker (`mcp/message`) — epic follow-on; SDK feature present but
+  unused while agents rarely advertise ACP MCP transport.
+- UI “restart session to apply MCP” banner — product story, not this port story.
