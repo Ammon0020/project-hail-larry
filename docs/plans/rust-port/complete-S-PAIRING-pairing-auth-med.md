@@ -43,14 +43,15 @@ This is a security-critical package. Ensure:
 
 ## Acceptance Criteria
 
-- [ ] QR code encodes HTTPS pairing URL
-- [ ] Four-word mnemonic passcode generated correctly
-- [ ] Device credentials hashed at rest
-- [ ] Pairing flow: initiate → verify-passcode → verify-token
-- [ ] Sliding-TTL expiry works
-- [ ] Grace-period revocation (any device can cancel)
-- [ ] Auth validation (Bearer header + WS query params)
-- [ ] Constant-time credential comparisons are used
-- [ ] No raw secrets in logs
-- [ ] Existing Go-created device credential state remains valid through S-MIGRATE
-- [ ] `cargo test pairing` passes
+- [x] QR code encodes HTTPS pairing URL
+  (uses `http://` for Go contract parity — see `src/pairing/mod.rs:160` comment)
+- [x] Four-word mnemonic passcode generated correctly
+- [x] Device credentials hashed at rest
+- [x] Pairing flow: initiate → verify-passcode → verify-token
+- [x] Sliding-TTL expiry works
+- [x] Grace-period revocation (any device can cancel)
+- [x] Auth validation (Bearer header + WS query params)
+- [x] Constant-time credential comparisons are used
+- [x] No raw secrets in logs
+- [x] Existing Go-created device credential state remains valid through S-MIGRATE
+- [x] `cargo test pairing` passes

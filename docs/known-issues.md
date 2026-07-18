@@ -108,7 +108,7 @@ to `CONTRACT_BACKEND=rust` (`CONTRACT_BACKEND=go` for oracle). Delete
 
 ## Rust port — story checkbox drift
 
-Many `docs/plans/rust-port/stories/*.md` ACs remain unchecked while modules and
+Many `docs/plans/rust-port/*.md` ACs remain unchecked while modules and
 tests already ship. Prefer mass check-off + a short “Remaining Rust gaps”
 list over treating unchecked boxes as open work. Real open items live in
 `docs/STATUS.md` Known Gaps.

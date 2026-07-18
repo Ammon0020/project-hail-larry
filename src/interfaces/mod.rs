@@ -20,7 +20,7 @@
 //! - Public wire contract is the flat Go JSON shape; do not expose a serde enum
 //!   as the public contract without S-CONTRACT fixtures.
 //!
-//! See `docs/plans/rust-port/stories/S-INTERFACES-traits.md`.
+//! See `docs/plans/rust-port/complete-S-INTERFACES-traits-med.md`.
 
 pub mod error;
 pub mod traits;

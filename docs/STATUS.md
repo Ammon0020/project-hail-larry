@@ -35,11 +35,11 @@
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Agent-owned session history** — epic drafted (needs stories): browse/
   resume chats via agent `session/list`+`load` by `cwd`; thin multi-UI index.
-  `docs/plans/acp-agent-session-history/epic.md`.
+  `docs/plans/pending-acp-agent-session-history-med.md`.
 - [ ] **Workspace static preview** — epic drafted: render a multi-file static
   site from the workspace in a preview tab (new `/preview/{id}/*` route +
-  iframe). Story `pending-browse-preview-tab-low-small`.
-  `docs/plans/workspace-preview/epic.md`.
+  iframe). Story `pending-browse-preview-small`.
+  `docs/plans/pending-workspace-preview-small.md`.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
 - [ ] **Rust backend port** — Near cutover: `session/load` + `acpSessionId`,
   live WS fan-out, 50 MiB file-write body, Rust-default `build.sh` /
@@ -62,7 +62,7 @@
   clear id on rebind; REST `SessionInfo` stays free of `acpSessionId`.
 - **07-18** — Epic draft: **agent-owned ACP session history** (list/load by
   `cwd`, cross-editor resume, thin sync). Needs flesh-out — no stories yet.
-  `docs/plans/acp-agent-session-history/epic.md`.
+  `docs/plans/pending-acp-agent-session-history-med.md`.
 - **07-18** — Rust **live chat streaming**: EventBus `LiveFanout` → Hub
   broadcast (Go Append→Broadcast). UI `/ws` omits `?after=`; without this
   bridge stream updates stayed in SQLite until refresh/prompt end.
@@ -122,6 +122,11 @@
   session/new is the path today. Go SDK still missing `mcp/message`.
 - Pair QR scheme product choice (currently HTTP); mobile editor touch.
 - Contract: MCP JSON parse-error text ignored; autodetect golden ignored.
-- Story AC checkboxes largely stale (implementation ahead of docs).
 - S-BUILD native Win/macOS release+SPA smoke CI deferred.
 - Hyper HTTP/2 header deadline unavailable; body timing starts at handler.
+- **2026-07-18 audit:** 22/28 rust-port stories verified COMPLETE (ACs checked
+  off); 6 renamed `complete-`→`active-` with gaps tracked in
+  `docs/plans/other_tasks/`: S-BUILD (release CI), S-CONTRACT (WS replay+CI
+  gate), S-ACP-SPIKE (real-agent E2E), S-FILES (merge deferred to frontend),
+  S-ACP-CORE (agent process descendants not killed), S-SERVER (workspace
+  registration loopback bypass divergence — contract test failing).

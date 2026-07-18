@@ -32,9 +32,9 @@ full pure-Rust ripgrep first.
 
 ## Acceptance Criteria
 
-- [ ] Regex and substring search work
-- [ ] Prefer `rg --json` when present; native fallback when not
-- [ ] Ignore patterns skip configured directories
-- [ ] Results include file path, line number, matching line, context
-- [ ] Binary files skipped without errors
-- [ ] `cargo test search` passes
+- [x] Regex and substring search work
+- [x] Prefer `rg --json` when present; native fallback when not
+- [x] Ignore patterns skip configured directories
+- [x] Results include file path, line number, matching line, context
+- [x] Binary files skipped without errors
+- [x] `cargo test search` passes

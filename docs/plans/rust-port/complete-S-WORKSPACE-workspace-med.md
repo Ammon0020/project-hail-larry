@@ -31,10 +31,10 @@ serving), `Search` (delegates to S-SEARCH).
 
 ## Acceptance Criteria
 
-- [ ] Register/List/Remove workspaces
-- [ ] FileTree generates correct recursive tree with ignore patterns
-- [ ] ReadFile returns content, revision, binary flag, previewable flag
-- [ ] WriteFile uses optimistic revision (delegates to S-FILES)
-- [ ] FilePath validates path traversal + symlinks
-- [ ] Search delegates to S-SEARCH
-- [ ] `cargo test workspace` passes
+- [x] Register/List/Remove workspaces
+- [x] FileTree generates correct recursive tree with ignore patterns
+- [x] ReadFile returns content, revision, binary flag, previewable flag
+- [x] WriteFile uses optimistic revision (delegates to S-FILES)
+- [x] FilePath validates path traversal + symlinks
+- [x] Search delegates to S-SEARCH
+- [x] `cargo test workspace` passes

@@ -15,7 +15,7 @@
 //!   magic-byte image detection.
 //! - [`tests`] — port of `internal/uploads/uploads_test.go`.
 //!
-//! See `docs/plans/rust-port/stories/S-UPLOADS-uploads.md`.
+//! See `docs/plans/rust-port/complete-S-UPLOADS-uploads-med.md`.
 
 use std::fs;
 use std::io::Read;

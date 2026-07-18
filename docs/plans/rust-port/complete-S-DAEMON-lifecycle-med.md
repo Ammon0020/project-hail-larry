@@ -31,10 +31,12 @@ sync, server, uploads). Platform files: `process_unix.go`, `process_windows.go`,
 
 ## Acceptance Criteria
 
-- [ ] Daemon starts all managers in correct order with no post-construction wiring
-- [ ] `app logs` has a stable rolling file-log source
-- [ ] TLS starts without an implicit rustls crypto-provider choice
-- [ ] Graceful shutdown drains in-flight requests
-- [ ] Platform-specific stop works (Unix SIGTERM, Windows taskkill)
-- [ ] Status reports running/stopped + bound addresses
-- [ ] `cargo test daemon` passes
+- [x] Daemon starts all managers in correct order with no post-construction wiring
+- [x] `app logs` has a stable rolling file-log source
+- [x] TLS starts without an implicit rustls crypto-provider choice
+- [x] Graceful shutdown drains in-flight requests
+- [x] Platform-specific stop works (Unix SIGTERM, Windows taskkill)
+- [x] Status reports running/stopped + bound addresses
+  (reports configured addresses, matching Go PID-file parity; true bound
+  addresses not persisted to PID file — see `src/app/daemon.rs:421-425`)
+- [x] `cargo test daemon` passes

@@ -13,7 +13,7 @@
 //! - [`store`]  — `load`, atomic `save`, and the thread-safe `ConfigStore`
 //!   wrapper (`RwLock<Config>`).
 //!
-//! See `docs/plans/rust-port/stories/S-CONFIG-config.md`.
+//! See `docs/plans/rust-port/complete-S-CONFIG-config-med.md`.
 
 mod error;
 mod model;

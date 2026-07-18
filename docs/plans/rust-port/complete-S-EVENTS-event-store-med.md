@@ -38,5 +38,6 @@ Port the append-only event log backed by SQLite (WAL mode). Implements
 - [x] `cargo test events` passes
 - [x] No SQLite lock contention under concurrent appends
 - [x] Persist-before-publish ordering and reconnect replay handoff are tested
-- [ ] Opens the Go-created event DB fixture without schema or payload drift
+- [x] Opens the Go-created event DB fixture without schema or payload drift
+  (implemented in `src/migrate/validate.rs` + tested in `src/migrate/tests.rs:287`)
   (S-MIGRATE owns the fixture; schema/payload here match Go)

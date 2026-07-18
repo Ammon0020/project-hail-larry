@@ -11,7 +11,7 @@
 //! - [`publisher`] — [`EventBus`] (`EventStore` + `EventPublisher` + subscribe
 //!   handoff: subscribe → replay → dedupe by ID → live delivery)
 //!
-//! See `docs/plans/rust-port/stories/S-EVENTS-event-store.md`.
+//! See `docs/plans/rust-port/complete-S-EVENTS-event-store-med.md`.
 
 mod payload;
 mod publisher;

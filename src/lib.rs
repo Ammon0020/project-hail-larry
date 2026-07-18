@@ -1,7 +1,7 @@
 //! Local Agent Interface — Rust backend (port of the Go daemon).
 //!
 //! Single Cargo package with focused modules mirroring the Go `internal/`
-//! layout. See `docs/plans/rust-port/epic.md` for the architecture decisions
+//! layout. See `docs/plans/active-rust-port-hard.md` for the architecture decisions
 //! and `docs/rust-ecosystem/` for crate selection rationale.
 //!
 //! Module map (Go `internal/` → Rust `src/`):

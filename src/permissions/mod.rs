@@ -10,7 +10,7 @@
 //! - [`manager`] — [`Manager`] + [`AuditEntry`] + stale sweeper
 //!
 //! Durable policy / audit storage is post-parity work; the in-memory maps are
-//! the initial port. See `docs/plans/rust-port/stories/S-PERMISSIONS-permissions.md`.
+//! the initial port. See `docs/plans/rust-port/complete-S-PERMISSIONS-permissions-med.md`.
 
 mod manager;
 mod sink;

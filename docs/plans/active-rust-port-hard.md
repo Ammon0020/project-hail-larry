@@ -1,7 +1,7 @@
 # Epic: Convert Go Backend to Rust
 
 > **Status:** Planning hardening. **Owner:** —. **Estimate:** Moderate-hard; implementation starts only after Phase 0 gates pass.
-> Library references: `docs/rust-ecosystem/`. Stories: `stories/`.
+> Library references: `docs/rust-ecosystem/`. Stories: `rust-port/`.
 
 ## Goal
 
@@ -99,37 +99,37 @@ serialize identically; durable event IDs and replay semantics are tested.
 
 | Story | Title | Phase | Depends on |
 |---|---|---:|---|
-| [S-ARCH](stories/S-ARCH-architecture.md) | Architecture and dependency decisions | 0 | — |
-| [S-ACP-SPIKE](stories/S-ACP-SPIKE-sdk-proof.md) | ACP SDK proof of capability | 0 | S-ARCH |
-| [S-CONTRACT](stories/S-CONTRACT-compatibility.md) | Go/Rust contract differential harness | 0 | — |
-| [S-PATHUTIL](stories/S-PATHUTIL-path-utils.md) | Path traversal and symlink utilities | 1 | — |
-| [S-INTERFACES](stories/S-INTERFACES-traits.md) | Shared wire types, traits, and errors | 1 | S-PATHUTIL |
-| [S-CONFIG](stories/S-CONFIG-config.md) | Config storage | 1 | — |
-| [S-EVENTS](stories/S-EVENTS-event-store.md) | SQLite event store | 1 | S-INTERFACES |
-| [S-MIGRATE](stories/S-MIGRATE-existing-state.md) | Existing state compatibility/migration | 1 | S-CONFIG, S-EVENTS, S-CONTRACT |
-| [S-SEARCH](stories/S-SEARCH-search.md) | Workspace content search | 2 | S-INTERFACES |
-| [S-FILES](stories/S-FILES-file-sync-merge.md) | Revision tracking and three-way merge | 2 | S-PATHUTIL, S-INTERFACES |
-| [S-SHELL](stories/S-SHELL-shell-executor.md) | Workspace subprocess runner | 2 | S-PATHUTIL |
-| [S-FSWATCH](stories/S-FSWATCH-file-watcher.md) | On-disk change detection | 2 | S-EVENTS |
-| [S-UPLOADS](stories/S-UPLOADS-uploads.md) | File upload store | 2 | S-PATHUTIL |
-| [S-PERMISSIONS](stories/S-PERMISSIONS-permissions.md) | Permission manager | 2 | S-EVENTS, S-INTERFACES |
-| [S-MCP](stories/S-MCP-mcp-config.md) | MCP configuration and health | 3 | S-CONFIG |
-| [S-PAIRING](stories/S-PAIRING-pairing-auth.md) | QR pairing and device auth | 3 | S-CONFIG, S-MIGRATE |
-| [S-WORKSPACE](stories/S-WORKSPACE-workspace.md) | Workspace manager | 3 | S-FILES, S-SEARCH, S-PATHUTIL |
-| [S-ACP-CORE](stories/S-ACP-CORE-session-transport.md) | ACP sessions and transport handlers | 3 | S-ACP-SPIKE, S-EVENTS, S-FILES, S-SHELL, S-PERMISSIONS |
-| [S-ACP-STREAM](stories/S-ACP-STREAM-events.md) | ACP updates to ordered app events | 3 | S-ACP-CORE, S-CONTRACT |
-| [S-ACP-CONTEXT](stories/S-ACP-CONTEXT-conversation.md) | Context, conversation, terminal, profiles | 3 | S-ACP-CORE, S-EVENTS, S-CONFIG |
-| [S-ACP-PROVIDERS](stories/S-ACP-PROVIDERS-providers.md) | Provider management | 3 | S-ACP-CORE |
-| [S-ACP-AUTODETECT](stories/S-ACP-AUTODETECT-registry.md) | Agent registry and autodetection | 3 | S-CONFIG |
-| [S-SYNC](stories/S-SYNC-websocket-hub.md) | WebSocket sync hub | 4 | S-EVENTS, S-PAIRING |
-| [S-SERVER](stories/S-SERVER-http-api.md) | HTTP, TLS, REST, and WS wiring | 4 | S-CONTRACT, S-MIGRATE, S-SYNC, all service stories |
-| [S-DAEMON](stories/S-DAEMON-lifecycle.md) | Lifecycle and composition root | 4 | S-SERVER, all service stories |
-| [S-CLI](stories/S-CLI-cli.md) | CLI commands | 4 | S-DAEMON |
-| [S-BUILD](stories/S-BUILD-build-release.md) | Build, embed, and release | 5 | S-CLI |
+| [S-ARCH](rust-port/complete-S-ARCH-architecture-med.md) | Architecture and dependency decisions | 0 | — |
+| [S-ACP-SPIKE](rust-port/active-S-ACP-SPIKE-sdk-proof-med.md) | ACP SDK proof of capability | 0 | S-ARCH |
+| [S-CONTRACT](rust-port/active-S-CONTRACT-compatibility-med.md) | Go/Rust contract differential harness | 0 | — |
+| [S-PATHUTIL](rust-port/complete-S-PATHUTIL-path-utils-med.md) | Path traversal and symlink utilities | 1 | — |
+| [S-INTERFACES](rust-port/complete-S-INTERFACES-traits-med.md) | Shared wire types, traits, and errors | 1 | S-PATHUTIL |
+| [S-CONFIG](rust-port/complete-S-CONFIG-config-med.md) | Config storage | 1 | — |
+| [S-EVENTS](rust-port/complete-S-EVENTS-event-store-med.md) | SQLite event store | 1 | S-INTERFACES |
+| [S-MIGRATE](rust-port/complete-S-MIGRATE-existing-state-med.md) | Existing state compatibility/migration | 1 | S-CONFIG, S-EVENTS, S-CONTRACT |
+| [S-SEARCH](rust-port/complete-S-SEARCH-search-med.md) | Workspace content search | 2 | S-INTERFACES |
+| [S-FILES](rust-port/active-S-FILES-file-sync-merge-med.md) | Revision tracking and three-way merge | 2 | S-PATHUTIL, S-INTERFACES |
+| [S-SHELL](rust-port/complete-S-SHELL-shell-executor-med.md) | Workspace subprocess runner | 2 | S-PATHUTIL |
+| [S-FSWATCH](rust-port/complete-S-FSWATCH-file-watcher-med.md) | On-disk change detection | 2 | S-EVENTS |
+| [S-UPLOADS](rust-port/complete-S-UPLOADS-uploads-med.md) | File upload store | 2 | S-PATHUTIL |
+| [S-PERMISSIONS](rust-port/complete-S-PERMISSIONS-permissions-med.md) | Permission manager | 2 | S-EVENTS, S-INTERFACES |
+| [S-MCP](rust-port/complete-S-MCP-mcp-config-med.md) | MCP configuration and health | 3 | S-CONFIG |
+| [S-PAIRING](rust-port/complete-S-PAIRING-pairing-auth-med.md) | QR pairing and device auth | 3 | S-CONFIG, S-MIGRATE |
+| [S-WORKSPACE](rust-port/complete-S-WORKSPACE-workspace-med.md) | Workspace manager | 3 | S-FILES, S-SEARCH, S-PATHUTIL |
+| [S-ACP-CORE](rust-port/active-S-ACP-CORE-session-transport-med.md) | ACP sessions and transport handlers | 3 | S-ACP-SPIKE, S-EVENTS, S-FILES, S-SHELL, S-PERMISSIONS |
+| [S-ACP-STREAM](rust-port/complete-S-ACP-STREAM-events-med.md) | ACP updates to ordered app events | 3 | S-ACP-CORE, S-CONTRACT |
+| [S-ACP-CONTEXT](rust-port/complete-S-ACP-CONTEXT-conversation-med.md) | Context, conversation, terminal, profiles | 3 | S-ACP-CORE, S-EVENTS, S-CONFIG |
+| [S-ACP-PROVIDERS](rust-port/complete-S-ACP-PROVIDERS-providers-med.md) | Provider management | 3 | S-ACP-CORE |
+| [S-ACP-AUTODETECT](rust-port/complete-S-ACP-AUTODETECT-registry-med.md) | Agent registry and autodetection | 3 | S-CONFIG |
+| [S-SYNC](rust-port/complete-S-SYNC-websocket-hub-med.md) | WebSocket sync hub | 4 | S-EVENTS, S-PAIRING |
+| [S-SERVER](rust-port/active-S-SERVER-http-api-med.md) | HTTP, TLS, REST, and WS wiring | 4 | S-CONTRACT, S-MIGRATE, S-SYNC, all service stories |
+| [S-DAEMON](rust-port/complete-S-DAEMON-lifecycle-med.md) | Lifecycle and composition root | 4 | S-SERVER, all service stories |
+| [S-CLI](rust-port/complete-S-CLI-cli-med.md) | CLI commands | 4 | S-DAEMON |
+| [S-BUILD](rust-port/active-S-BUILD-build-release-med.md) | Build, embed, and release | 5 | S-CLI |
 
 ## Superseded Story
 
-`stories/S-ACP-acp-client.md` is retained as the source inventory and split-work
+`rust-port/complete-S-ACP-acp-client-med.md` is retained as the source inventory and split-work
 index only. It is not an implementation dependency; use the six ACP successor
 stories in this epic instead.
 

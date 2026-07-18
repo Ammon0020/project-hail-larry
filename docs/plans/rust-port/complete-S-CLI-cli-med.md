@@ -28,9 +28,9 @@ specific service install/uninstall.
 
 ## Acceptance Criteria
 
-- [ ] All CLI commands work identically to Go version
-- [ ] `app start` / `app start --background` work
-- [ ] `app pair` generates QR + mnemonic
-- [ ] `app install-service` / `app uninstall-service` work per platform
-- [ ] `app logs` shows recent log output
-- [ ] `cargo test cli` passes
+- [x] All CLI commands work identically to Go version
+- [x] `app start` / `app start --background` work
+- [x] `app pair` generates QR + mnemonic
+- [x] `app install-service` / `app uninstall-service` work per platform
+- [x] `app logs` shows recent log output
+- [x] `cargo test cli` passes

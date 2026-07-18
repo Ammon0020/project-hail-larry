@@ -18,7 +18,7 @@ Tracked gaps and decisions to address in the Local Agent Interface blueprint and
 - [ ] **Team collaboration** — Shared workspaces, multiple operators
 - [ ] **Editor on mobile** — CodeMirror 6 is lighter than Monaco but still needs touch-optimized configuration (larger line heights, disable drag-and-drop, simplified gutter) for small edits on phones
 - [ ] **Session replay** — Superseded/expanded by agent-owned history epic:
-  `docs/plans/acp-agent-session-history/epic.md` (list/load by `cwd`; epic
+  `docs/plans/pending-acp-agent-session-history-med.md` (list/load by `cwd`; epic
   still needs flesh-out + stories). Keep until that epic locks direction.
 - [ ] **Developer terminal UI** — Optional Phase 3 power-user feature — noted in Blueprint Phase 3
 - [ ] **ACP sub-workers** — Deferred until next ACP release (~next quarter)

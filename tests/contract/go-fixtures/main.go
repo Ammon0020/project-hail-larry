@@ -1,5 +1,5 @@
 // Package main is the Go-side compatibility fixture generator for story
-// S-CONTRACT (docs/plans/rust-port/stories/S-CONTRACT-compatibility.md).
+// S-CONTRACT (docs/plans/rust-port/active-S-CONTRACT-compatibility-med.md).
 //
 // It captures golden fixtures FROM the current Go daemon so the future Rust
 // port can prove external equivalence via a differential runner. The harness

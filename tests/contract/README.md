@@ -5,7 +5,7 @@ can prove external equivalence via a differential test. The Go daemon is treated
 as the compatibility oracle: every fixture here is the byte-stable, redacted
 shape the Rust implementation must reproduce.
 
-Story: `docs/plans/rust-port/stories/S-CONTRACT-compatibility.md`
+Story: `docs/plans/rust-port/active-S-CONTRACT-compatibility-med.md`
 
 ## Layout
 
