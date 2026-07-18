@@ -55,6 +55,7 @@ List relevant folder to see task status. Delete tasks after review.
 **Folder hierarchy**
 ```
 docs/plans/
+├── Blueprint.md  # summary of the app. Ignore for now - needs updating. 
 ├── status-epic-difficulty.md
 ├── epic/
 │   └── status-story-difficulty.md
