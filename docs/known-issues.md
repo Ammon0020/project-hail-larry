@@ -3,6 +3,13 @@
 Gaps and deferred work tracked from review passes. Each entry is a one-line
 note so the next agent can pick it up without re-reading the full review file.
 
+## Agent-owned history migration — explicitly deferred
+
+Deferred by Product on 2026-07-18. Local `conversations.json` metadata and
+SQLite event transcripts remain the fallback/archive while agent-owned history
+is designed for capable harnesses. Revisit only after S-HIST-BROWSE and
+S-HIST-OPEN establish that path; do not partially rewrite stored history.
+
 ## Image upload — Claude Code inline-image delivery gap
 
 The image upload flow (Mode B) is implemented per ACP spec: when an agent

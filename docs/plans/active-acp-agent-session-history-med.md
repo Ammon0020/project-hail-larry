@@ -1,7 +1,7 @@
 # Epic: Agent-Owned ACP Session History
 
-> **Status:** In progress — probe and fallback complete; browse/open remain
-> decision-blocked.
+> **Status:** In progress — probe, fallback, and migration defer complete;
+> browse/open remain decision-blocked.
 > **Owner:** —. **Created:** 2026-07-18. **Updated:** 2026-07-18.
 > **Related:** `docs/reference/acp/responsibilities.md`,
 > `docs/plans/acp-spec-compliance.md` (§4.4 list reconcile, §4.6 fork/resume/close),
@@ -20,8 +20,8 @@ talked to the same agent, filtered by folder/workspace when useful.
 
 ## Status of this epic
 
-Probe and fallback are complete. Browse, open, sync, and migration remain
-blocked on their listed decisions (do not invent answers in code).
+Probe, fallback, and the migration defer are complete. Browse, open, and sync
+remain blocked on their listed decisions (do not invent answers in code).
 
 Architecture Direction remains a **working hypothesis** until Q1–Q2 lock.
 
@@ -36,10 +36,9 @@ Architecture Direction remains a **working hypothesis** until Q1–Q2 lock.
 | S-HIST-OPEN | [Open/load past session into UI](acp-session-history/pending-hist-open-med.md) | med | PROBE, BROWSE; Q1/Q4 | story AC |
 | S-HIST-SYNC | [Thin multi-UI active-session index](acp-session-history/pending-hist-sync-med.md) | med | OPEN; Q2 (Q1) | story AC |
 | S-HIST-FALLBACK | [Fallback without list/load](acp-session-history/complete-hist-fallback-med.md) | med | PROBE; Q3 | ✅ complete |
-| S-HIST-MIGRATE | [Local history migrate or defer](acp-session-history/pending-hist-migrate-small.md) | small | Q6 (Q5) | story AC |
+| S-HIST-MIGRATE | [Local history migrate or defer](acp-session-history/complete-hist-migrate-small.md) | small | Q6 (Q5) | ✅ deferred |
 
-**Next sequence:** lock Q7/Q8, then BROWSE → OPEN → SYNC; MIGRATE last or
-docs-only defer after Q6.
+**Next sequence:** lock Q7/Q8, then BROWSE → OPEN → SYNC.
 
 ---
 
@@ -54,7 +53,7 @@ Do **not** invent answers. Record locks here when product decides.
 | Q3 | **Agents without list/load** — retain local `conversations.json` + events; no paste-id or new-session-only mode. | FALLBACK | **locked 2026-07-18** |
 | Q4 | **`load` vs `resume`** — first open = load (full replay); reconnect with known title = resume? | OPEN | open |
 | Q5 | **Delete / rename** — client-local only vs agent `session/delete` / `session_info_update`? | MIGRATE (deprecate), later UX | open |
-| Q6 | **Migration** — keep forever / one-time import / deprecate / **explicit defer**? | MIGRATE | open |
+| Q6 | **Migration** — keep forever / one-time import / deprecate / explicit defer? | MIGRATE | **deferred 2026-07-18** |
 | Q7 | **Path canonicalization** — map workspace ↔ `cwd` when other editors used different abs paths (symlink, case, `..`)? | BROWSE | open |
 | Q8 | **Probe cost** — may history UI cold-start an agent process to list, or only when warm? | PROBE, BROWSE | open |
 
@@ -194,4 +193,3 @@ Implications (pending Q1–Q2):
 
 1. Lock Q7/Q8 for BROWSE (and Q1/Q4 before OPEN).
 2. Implement BROWSE → OPEN → SYNC.
-3. Resolve or explicitly defer migration per Q6.

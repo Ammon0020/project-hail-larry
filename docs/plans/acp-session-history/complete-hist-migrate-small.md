@@ -1,6 +1,6 @@
 # Story S-HIST-MIGRATE: Local History Migration (or Explicit Defer)
 
-> **Status:** pending | **Difficulty:** small
+> **Status:** complete | **Difficulty:** small
 > **Epic:** [agent-owned session history](../active-acp-agent-session-history-med.md).
 > **Depends on:** epic migration Decision Needed; ideally after S-HIST-OPEN +
 > S-HIST-FALLBACK so both stores' roles are clear.
@@ -35,17 +35,16 @@ below left unchecked, and a known-issues bullet — still closes the
 
 ## Acceptance criteria
 
-- [ ] Epic Q6 decision recorded as locked **or** explicitly deferred with
-      owner/date.
+- [x] Epic Q6 is explicitly deferred by Product on 2026-07-18.
 - [ ] If A: document dual-read behavior (agent list + local) and tests that
       legacy rows still open via fallback.
 - [ ] If B: migration runs once, is idempotent, fails loudly on corrupt
       state, leaves an audit/log of migrated vs orphaned ids.
 - [ ] If C: legacy read-only UI + no new writes for capable harnesses;
       incapable harnesses unchanged (S-HIST-FALLBACK).
-- [ ] If deferred: `docs/known-issues.md` + STATUS note; no partial schema
+- [x] Deferred: `docs/known-issues.md` + STATUS note; no partial schema
       rewrite.
-- [ ] Lint/tests clean if code ships; docs-only defer needs STATUS update only.
+- [x] Docs-only defer; existing lint/tests remain clean.
 
 ## Out of scope
 
@@ -55,6 +54,7 @@ below left unchecked, and a known-issues bullet — still closes the
 
 ## Decision Needed
 
-- Epic Q6 — **Migration** (keep / import / deprecate / defer).
-- Related: Epic Q5 — **Delete / rename** (client-local vs agent) before any
-  deprecate path removes UI affordances.
+- Epic Q6 — **explicitly deferred 2026-07-18 by Product.** Revisit after
+  BROWSE/OPEN establish the capable-agent history path.
+- Q5 remains open but does not require a schema change while migration is
+  deferred.
