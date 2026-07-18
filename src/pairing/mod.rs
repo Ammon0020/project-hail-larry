@@ -622,9 +622,9 @@ fn generate_passcode() -> Result<String, PairingError> {
 fn word_list() -> &'static Vec<&'static str> {
     static WORDS: std::sync::OnceLock<Vec<&str>> = std::sync::OnceLock::new();
     WORDS.get_or_init(|| {
-        include_str!("../../internal/pairing/words.go")
+        // BIP-39 English word list (formerly shared with Go via words.go).
+        include_str!("words.txt")
             .lines()
-            .flat_map(|line| line.split('"').skip(1).step_by(2))
             .filter(|word| !word.is_empty())
             .collect()
     })

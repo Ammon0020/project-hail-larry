@@ -475,6 +475,46 @@ fn remove_pid(data_dir: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::STATE_DIR_ENV_VAR;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate `LOCAL_AGENT_STATE_DIR` (same pattern as
+    /// `config::tests`). Without this, parallel tests race on the env var.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Run a sync `body` with `LOCAL_AGENT_STATE_DIR` pointing at `dir`.
+    ///
+    /// Daemon construction may call `Config::save` after ACP autodetect. That
+    /// write targets `resolved_state_dir()`, not `config.data_dir` — so tests
+    /// must isolate the state dir or they overwrite `~/.local-agent/config.toml`
+    /// with ephemeral `/tmp/.tmp…` paths (2026-07-18 incident).
+    fn with_state_dir<R>(dir: &Path, body: impl FnOnce() -> R) -> R {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prior = std::env::var_os(STATE_DIR_ENV_VAR);
+        std::env::set_var(STATE_DIR_ENV_VAR, dir);
+        let res = body();
+        match prior {
+            Some(v) => std::env::set_var(STATE_DIR_ENV_VAR, v),
+            None => std::env::remove_var(STATE_DIR_ENV_VAR),
+        }
+        res
+    }
+
+    /// Current-thread runtime so we can hold `ENV_LOCK` across `Daemon::new`
+    /// (std `MutexGuard` is `!Send` and cannot live across `.await` in a
+    /// `#[tokio::test]`).
+    fn block_on_isolated<F, T>(state_dir: &Path, fut: F) -> T
+    where
+        F: std::future::Future<Output = T>,
+    {
+        with_state_dir(state_dir, || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(fut)
+        })
+    }
 
     #[test]
     fn https_port_defaults_to_http_plus_one() {
@@ -486,46 +526,52 @@ mod tests {
         assert_eq!(resolved_https_port(&config).expect("resolve port"), 7338);
     }
 
-    #[tokio::test]
-    async fn daemon_composes_and_cancels_cleanly() {
+    #[test]
+    fn daemon_composes_and_cancels_cleanly() {
         let state = tempfile::tempdir().expect("temporary state");
-        let config = Config {
-            data_dir: state.path().display().to_string(),
-            db_path: state.path().join("events.db").display().to_string(),
-            tls_cert_dir: state.path().join("tls").display().to_string(),
-            port: 0,
-            tls_enabled: false,
-            ..Config::default()
-        };
-        // Construction opens every durable manager without binding sockets.
-        let daemon = Daemon::new(config).await.expect("compose daemon");
-        daemon.cancel();
-        assert!(daemon.cancel.is_cancelled());
+        block_on_isolated(state.path(), async {
+            let config = Config {
+                data_dir: state.path().display().to_string(),
+                db_path: state.path().join("events.db").display().to_string(),
+                tls_cert_dir: state.path().join("tls").display().to_string(),
+                port: 0,
+                tls_enabled: false,
+                ..Config::default()
+            };
+            // Construction opens every durable manager without binding sockets.
+            // `refresh_agents_on_startup` may persist autodetected agents via
+            // Config::save — must land in `state`, never ~/.local-agent.
+            let daemon = Daemon::new(config).await.expect("compose daemon");
+            daemon.cancel();
+            assert!(daemon.cancel.is_cancelled());
+        });
     }
 
-    #[tokio::test]
-    async fn daemon_start_stop_smoke_drains_http_listener() {
+    #[test]
+    fn daemon_start_stop_smoke_drains_http_listener() {
         let state = tempfile::tempdir().expect("temporary state");
-        let config = Config {
-            data_dir: state.path().display().to_string(),
-            db_path: state.path().join("events.db").display().to_string(),
-            tls_cert_dir: state.path().join("tls").display().to_string(),
-            host: "127.0.0.1".to_string(),
-            // Port zero asks the OS for an isolated ephemeral listener.
-            port: 0,
-            tls_enabled: false,
-            ..Config::default()
-        };
-        let daemon = Daemon::new(config).await.expect("compose daemon");
-        let cancellation = CancellationToken::new();
-        let stop = cancellation.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            stop.cancel();
+        block_on_isolated(state.path(), async {
+            let config = Config {
+                data_dir: state.path().display().to_string(),
+                db_path: state.path().join("events.db").display().to_string(),
+                tls_cert_dir: state.path().join("tls").display().to_string(),
+                host: "127.0.0.1".to_string(),
+                // Port zero asks the OS for an isolated ephemeral listener.
+                port: 0,
+                tls_enabled: false,
+                ..Config::default()
+            };
+            let daemon = Daemon::new(config).await.expect("compose daemon");
+            let cancellation = CancellationToken::new();
+            let stop = cancellation.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                stop.cancel();
+            });
+            daemon
+                .run(cancellation)
+                .await
+                .expect("start and stop daemon");
         });
-        daemon
-            .run(cancellation)
-            .await
-            .expect("start and stop daemon");
     }
 }

@@ -55,6 +55,9 @@ fn default_config_has_sensible_values() {
 }
 /// Saving always targets the active state directory, not the persisted
 /// `data_dir`, which may refer to a previous installation location.
+///
+/// Both paths are under the process temp dir, so the temp-mismatch guard
+/// allows the write (harness / unit-test pattern).
 #[test]
 fn save_uses_active_state_dir_when_data_dir_differs() {
     let state_dir = tempfile::tempdir().expect("state tempdir");
@@ -68,6 +71,54 @@ fn save_uses_active_state_dir_when_data_dir_differs() {
         assert!(state_dir.path().join("config.toml").is_file());
         assert!(!stored_data_dir.path().join("config.toml").exists());
     });
+}
+
+/// Regression for 2026-07-18 host config poison: `Daemon::new` tests built a
+/// Config with `/tmp/.tmp…` data_dir and called `save` while
+/// `LOCAL_AGENT_STATE_DIR` was unset, so `resolved_state_dir` was the real
+/// `~/.local-agent`. Refuse that write when the active state dir is outside
+/// the process temp directory.
+#[test]
+fn save_refuses_temp_data_dir_when_state_dir_is_not_temp() {
+    // Place the "user" state dir outside temp (under target/) so the guard
+    // can distinguish it from an ephemeral data_dir. Never touches $HOME.
+    let home_state = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test-config-state-dir-mismatch-guard");
+    let _ = fs::remove_dir_all(&home_state);
+    fs::create_dir_all(&home_state).expect("create non-temp state dir");
+    let marker = home_state.join("config.toml");
+    fs::write(&marker, "port = 7337\nhost = \"marker\"\n").expect("write marker");
+
+    let ephemeral = tempfile::tempdir().expect("ephemeral data dir");
+    with_state_dir(&home_state, || {
+        let mut cfg = Config::default_or_error().expect("default");
+        // Reproduce the daemon unit-test shape that poisoned the host config.
+        cfg.data_dir = ephemeral.path().to_string_lossy().to_string();
+        cfg.db_path = ephemeral
+            .path()
+            .join("events.db")
+            .to_string_lossy()
+            .to_string();
+        cfg.port = 0;
+        cfg.tls_enabled = false;
+        cfg.workspaces.clear();
+
+        let err = cfg
+            .save()
+            .expect_err("save must refuse temp data_dir into non-temp state dir");
+        assert!(
+            matches!(err, ConfigError::StateDirMismatch { .. }),
+            "expected StateDirMismatch, got {err:?}"
+        );
+    });
+
+    let after = fs::read_to_string(&marker).expect("marker must survive");
+    assert!(
+        after.contains("marker"),
+        "non-temp state config.toml must not be overwritten; got:\n{after}"
+    );
+    let _ = fs::remove_dir_all(&home_state);
 }
 
 /// `TestDefaultRevocationGracePeriod` (Go): default grace period is 300s and

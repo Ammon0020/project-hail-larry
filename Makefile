@@ -1,4 +1,4 @@
-.PHONY: all build-frontend build build-go test test-contract lint lint-rust vet clean
+.PHONY: all build-frontend build test test-contract lint-rust clean mockagent
 
 # Build the frontend into web/dist (required by Rust build.rs / rust-embed).
 build-frontend:
@@ -10,39 +10,26 @@ build: build-frontend
 	mkdir -p bin
 	cp -f target/release/local_agent bin/local_agent
 
-# Legacy Go oracle binary (optional).
-build-go: build-frontend
-	rm -rf internal/server/dist/*
-	cp -r web/dist/* internal/server/dist/
-	go build -o bin/app ./cmd/app
-
 # Run Rust unit tests (quiet).
 test:
 	cargo test -q --all-targets
 
-# Run the black-box contract differential runner against the Rust backend
-# (default). Use CONTRACT_BACKEND=go to compare against the legacy Go oracle.
+# Black-box contract suite against the Rust backend.
 # The `contract` feature gate keeps this out of `cargo test --all-targets`.
 test-contract:
-	CONTRACT_BACKEND=$${CONTRACT_BACKEND:-rust} cargo test --test contract_runner --features contract -- --nocapture
-
-# Run golangci-lint (cross-platform: Windows, macOS, Linux).
-lint:
-	golangci-lint run
+	CONTRACT_BACKEND=rust cargo test --test contract_runner --features contract -- --nocapture
 
 # Run cargo clippy (Rust). Deny levels come from [lints] in Cargo.toml;
 # -D warnings matches CI so local runs catch the same bar.
 lint-rust:
 	cargo clippy --all-targets -- -D warnings
 
-# Run go vet (legacy Go tree).
-vet:
-	go vet ./...
+# Build the Go mock ACP agent used by Rust spike/ACP tests.
+mockagent:
+	go build -o bin/mockagent ./cmd/mockagent
 
 # Clean build artifacts.
 clean:
 	rm -rf bin/
 	rm -rf web/dist/
-	rm -rf internal/server/dist/*
-	touch internal/server/dist/.gitkeep
 	cargo clean

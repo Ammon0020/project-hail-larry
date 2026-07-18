@@ -64,10 +64,8 @@
   `docs/plans/pending-workspace-preview-small.md`.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation,
   enhanced diagnostics.
-- [ ] **Rust backend port** — Near cutover: story AC check-off done for
-  S-CONTRACT / S-ACP-CORE / S-FILES / S-SERVER / S-ACP-SPIKE / S-BUILD.
-  Next: delete Go tree after smoke. Go behind `BUILD_GO=1` /
-  `CONTRACT_BACKEND=go`. Daemon on :7337 for UI.
+- [x] **Rust backend port** — Cutover complete: Go `cmd/app` + `internal/`
+  deleted; `cmd/mockagent` kept for tests. Stories closed. Daemon on :7337.
 
 ## Blocked
 
@@ -77,6 +75,11 @@
 
 ## Recent Changes (2026-07)
 
+- **07-18** — **Go backend deleted** (`cmd/app`, `internal/`, go-fixtures).
+  Build Rust-only; `CONTRACT_BACKEND=go` panics clearly; `go.mod` = mockagent.
+- **07-18** — **Config poison fix**: `Config::save` refuses temp `data_dir` when
+  state dir is not under temp; daemon tests set `LOCAL_AGENT_STATE_DIR`;
+  contract harness uses fake `HOME` under state dir. See known-issues.
 - **07-18** — **S-SERVER closed**: routes/auth/rate-limit/TLS/dual listeners/
   SPA embed/WS hub/body caps/Origin; `api`+`app` tests green; S-CONTRACT
   parity. Plan → `complete-S-SERVER-http-api-med.md`.
@@ -114,15 +117,12 @@
 
 ## Known Gaps (summary — see `docs/known-issues.md`)
 
-- Go tree still in-repo (optional `BUILD_GO=1`); delete after smoke + contract
-  confidence. Re-run `local_agent install-service` if units still point at `app`.
+- Re-run `local_agent install-service` if units still point at legacy `app`.
 - Rust MCP-over-ACP broker unused (`unstable_mcp_over_acp`); inline MCP via
-  session/new is the path today. Go SDK still missing `mcp/message`.
+  session/new is the path today.
 - Pair QR scheme product choice (currently HTTP); mobile editor touch.
 - Contract ignored: MCP JSON parse-error text; autodetect golden. Slow-client
   WS only unit-tested (not black-box).
-- S-BUILD native Win/macOS release+SPA smoke CI shipped (see complete plans).
 - Hyper HTTP/2 header deadline unavailable; body timing starts at handler.
-- **2026-07-18:** rust-port stories closed: S-CONTRACT, S-ACP-CORE, S-FILES,
-  S-SERVER, S-ACP-SPIKE (real-agent E2E opt-in), S-BUILD. Next: Go tree delete
-  after smoke.
+- **2026-07-18:** Rust cutover complete — Go `cmd/app` + `internal/` deleted;
+  only `cmd/mockagent` remains. All rust-port stories closed.

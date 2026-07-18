@@ -15,6 +15,7 @@
 //! `mcp.WriteFileAtomic`.
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::error::ConfigError;
@@ -99,12 +100,71 @@ impl Config {
     /// `save` writes the config to the active state directory atomically with
     /// mode `0600`. The state directory is created if missing. Mirrors Go
     /// `Save` → `mcp.WriteFileAtomic`.
+    ///
+    /// # State-dir mismatch guard
+    ///
+    /// `save` always targets [`Self::resolved_state_dir`] (env override or
+    /// `~/.local-agent`), **not** the persisted `data_dir` field. If `data_dir`
+    /// points under the process temp directory while the active state dir does
+    /// not, this refuses to write — otherwise a daemon/unit-test config with
+    /// ephemeral paths can poison the real user config (see known-issues).
     pub fn save(&self) -> Result<(), ConfigError> {
+        let state_dir = Self::resolved_state_dir()?;
+        if let Some(data_dir) = non_empty_path(&self.data_dir) {
+            if is_dangerous_temp_data_dir(data_dir, &state_dir) {
+                return Err(ConfigError::StateDirMismatch {
+                    data_dir: data_dir.display().to_string(),
+                    state_dir: state_dir.display().to_string(),
+                });
+            }
+        }
         let toml_str = toml::to_string_pretty(self)?;
-        let config_path = Self::resolved_state_dir()?.join(CONFIG_FILE_NAME);
+        let config_path = state_dir.join(CONFIG_FILE_NAME);
         fsutil::atomic_write(&config_path, toml_str.as_bytes(), Some(CONFIG_FILE_PERM))?;
         Ok(())
     }
+}
+
+/// True when `data_dir` is under the process temp dir but `state_dir` is not.
+///
+/// Both-under-temp is allowed (contract harness + unit tests). Equal paths are
+/// never dangerous. Legacy installs where `data_dir` and the active state dir
+/// diverge outside temp (moved install) are still allowed.
+fn is_dangerous_temp_data_dir(data_dir: &Path, state_dir: &Path) -> bool {
+    if paths_equal_loose(data_dir, state_dir) {
+        return false;
+    }
+    let tmp = std::env::temp_dir();
+    path_is_under(data_dir, &tmp) && !path_is_under(state_dir, &tmp)
+}
+
+fn non_empty_path(s: &str) -> Option<&Path> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(Path::new(s))
+    }
+}
+
+/// Prefix check with a best-effort absolute form (no canonicalize — paths may
+/// not exist yet when `save` creates the state dir).
+fn path_is_under(path: &Path, root: &Path) -> bool {
+    let path = absolute_approx(path);
+    let root = absolute_approx(root);
+    path.starts_with(&root)
+}
+
+fn paths_equal_loose(a: &Path, b: &Path) -> bool {
+    a == b || absolute_approx(a) == absolute_approx(b)
+}
+
+fn absolute_approx(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// `ConfigStore` wraps a `Config` in an `RwLock` for thread-safe shared access

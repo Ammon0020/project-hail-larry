@@ -71,9 +71,13 @@ impl BackendHarness {
             PathBuf::from(p)
         } else {
             match backend.as_str() {
-                "go" => build_go_binary(&repo_root).await,
                 "rust" => build_rust_binary(&repo_root).await,
-                other => panic!("unknown CONTRACT_BACKEND: {other} (expected 'go' or 'rust')"),
+                "go" => panic!(
+                    "CONTRACT_BACKEND=go is no longer supported — the Go daemon \
+                     (cmd/app, internal/) was removed at Rust cutover. Use \
+                     CONTRACT_BACKEND=rust (default)."
+                ),
+                other => panic!("unknown CONTRACT_BACKEND: {other} (expected 'rust')"),
             }
         };
 
@@ -216,30 +220,6 @@ fn find_repo_root() -> PathBuf {
     );
 }
 
-/// Build the Go binary (`go build -o /tmp/contract-local-agent ./cmd/app`).
-async fn build_go_binary(repo_root: &Path) -> PathBuf {
-    let bin_path = std::env::temp_dir().join("contract-local-agent");
-    eprintln!(
-        "[contract] building Go binary: go build -o {} ./cmd/app",
-        bin_path.display()
-    );
-
-    let output = tokio::process::Command::new("go")
-        .args(["build", "-o", bin_path.to_str().unwrap(), "./cmd/app"])
-        .current_dir(repo_root)
-        .output()
-        .await
-        .expect("run go build");
-
-    if !output.status.success() {
-        eprintln!("[contract] go build failed:");
-        eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
-        panic!("go build failed");
-    }
-    bin_path
-}
-
 /// Build the Rust binary (`cargo build --bin local_agent`).
 async fn build_rust_binary(repo_root: &Path) -> PathBuf {
     eprintln!("[contract] building Rust binary: cargo build --bin local_agent");
@@ -348,12 +328,17 @@ async fn start_backend(binary: &Path, state_dir: &Path, backend: &str) -> Result
 
     // Neutralize autodetect so only the fixture-agent from the seed config
     // appears in /api/agents. Autodetect checks PATH first, then falls back
-    // to absolute searchPaths that expand ~ to $HOME. Setting both PATH and
-    // HOME to non-existent paths makes find_first_command return None for
-    // every agent spec (Go and Rust). The binary path is absolute so it
-    // doesn't need PATH.
+    // to absolute searchPaths that expand ~ via dirs::home_dir (passwd
+    // fallback — NOT just $HOME). A fake home under the isolated state dir
+    // keeps dirs::home_dir from resolving the real user home if any code path
+    // ever drops LOCAL_AGENT_STATE_DIR. PATH=/dev/null still blocks PATH hits.
+    let fake_home = state_dir.join("fake-home");
+    std::fs::create_dir_all(&fake_home)
+        .with_context(|| format!("create fake home {}", fake_home.display()))?;
     cmd.env("PATH", "/dev/null");
-    cmd.env("HOME", "/dev/null");
+    cmd.env("HOME", &fake_home);
+    // Windows Known Folder / USERPROFILE fallback for dirs::home_dir.
+    cmd.env("USERPROFILE", &fake_home);
 
     cmd.spawn().context("failed to spawn backend subprocess")
 }

@@ -6,7 +6,7 @@ Self-hosted, cross-platform web IDE with built-in AI. A Rust daemon serves thin 
 
 ## App workflow
 
-1. `app add-folder` registers a workspace; `app pair` creates a QR code or mnemonic for device pairing.
+1. `local_agent add-folder` registers a workspace; `local_agent pair` creates a QR code or mnemonic for device pairing.
 2. Paired devices open the web IDE; additional devices authenticate from the lock screen with the mnemonic.
 3. The user selects an agent harness and model, then prompts beside the code. The agent streams responses and proposed tool actions to the chat.
 4. Approved client-side actions read/write workspace files or run scoped shell commands. Edits sync live; concurrent changes use revision tracking and a three-way merge.
@@ -20,8 +20,8 @@ Self-hosted, cross-platform web IDE with built-in AI. A Rust daemon serves thin 
 ## Layout
 
 ```
-cmd/app/        CLI
-internal/       daemon, server, ACP, auth/pairing, files, shell, sync, storage
+src/            Rust daemon + CLI (`local_agent`)
+cmd/mockagent/  Go mock ACP agent for tests (only remaining Go binary)
 web/            React/Vite/Tailwind frontend
 docs/           plans, specs, references, reviews, status, known issues
 ```
@@ -36,11 +36,10 @@ docs/           plans, specs, references, reviews, status, known issues
 
 ## Development
 
-- Use `./build.sh` on Linux/macOS or `.\build.ps1` on Windows (Rust
-  `local_agent` by default; `BUILD_GO=1` for the legacy Go binary).
+- Use `./build.sh` on Linux/macOS or `.\build.ps1` on Windows → `bin/local_agent`.
 - Before completion, run relevant checks quietly: `cargo test -q --all-targets`,
   `cargo clippy -q --all-targets -- -D warnings`, frontend build/lint, and
-  `make test-contract` (Rust-primary) when touching the HTTP/WS surface.
+  `make test-contract` when touching the HTTP/WS surface.
 - For Rust changes, run `cargo test -q --all-targets`, `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt --check -q`.
 - Record unrelated test failures in `docs/known-issues.md`; do not expand scope.
 - Keep `docs/STATUS.md` honest and current. Keep it under 100 lines and 90 characters per line. 

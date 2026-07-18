@@ -92,12 +92,11 @@ Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic
   would eliminate the leakage vector if a reverse proxy is ever placed in
   front.
 
-## Rust port — Go binary optional; tree not deleted yet
+## Rust port — Go daemon deleted (cutover)
 
-`build.sh` / `build.ps1` / `Makefile` default to Rust (`bin/local_agent`).
-Legacy Go builds via `BUILD_GO=1` / `make build-go`. Contract harness defaults
-to `CONTRACT_BACKEND=rust` (`CONTRACT_BACKEND=go` for oracle). Delete
-`cmd/app` + `internal/` after a smoke pass and when no longer needed as oracle.
+**Done 2026-07-18.** `cmd/app` and `internal/` removed. Remaining Go:
+`cmd/mockagent` only (`go.mod` depends on `acp-go-sdk`). Re-run
+`local_agent install-service` if systemd/launchd/HKCU still point at `app`.
 
 ## Rust port — story checkbox drift
 
@@ -108,9 +107,15 @@ list over treating unchecked boxes as open work. Real open items live in
 
 ## Contract harness — real `~/.local-agent/config.toml` overwrite risk
 
-Observed 2026-07-18: host `config.toml` had contract-seed paths
-(`dataDir=/tmp/.tmphPVTXR`, `port=0`, empty workspaces). Harness is supposed
-to isolate via `LOCAL_AGENT_STATE_DIR` only — investigate any save path that
-can write the real home config during contract runs. Restored from
-`config.json` + agents section; backup at
-`~/.local-agent/config.toml.contract-poisoned.bak`.
+**Fixed 2026-07-18.** Root cause: `Daemon::new` unit tests in `src/app/daemon.rs`
+built a `Config` with tempfile `data_dir` / `events.db` / `port=0` and called
+`refresh_agents_on_startup` → `Config::save` **without** `LOCAL_AGENT_STATE_DIR`.
+`save` writes to `resolved_state_dir()` (real `~/.local-agent`), not `data_dir`,
+so autodetected agents + temp layout overwrote the host config (matched
+`config.toml.*.bak`: `port=0`, `/tmp/.tmp…/events.db`, empty workspaces, real
+agents). Mitigations: (1) `Config::save` refuses temp `data_dir` when the
+active state dir is not under temp; (2) daemon tests set `LOCAL_AGENT_STATE_DIR`;
+(3) contract harness uses a process-scoped fake `HOME` under the isolated state
+dir instead of `HOME=/dev/null` (dirs passwd fallback). Regression:
+`save_refuses_temp_data_dir_when_state_dir_is_not_temp`. Backups retained at
+`~/.local-agent/config.toml.*.bak`.
