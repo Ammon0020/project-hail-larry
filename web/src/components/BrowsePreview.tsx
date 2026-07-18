@@ -5,6 +5,8 @@ import type { AppEvent } from '@/types'
 
 /** Coalesce bursty FileWritten / FileChangedOnDisk into one iframe remount. */
 const LIVE_RELOAD_DEBOUNCE_MS = 250
+const PREVIEW_AUTH_ROUTE_UNAVAILABLE =
+  'Preview authorization needs a server restart to finish updating.'
 
 /**
  * Browse-preview tab — renders a multi-file static site from the workspace
@@ -41,7 +43,13 @@ export function BrowsePreview({
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          setSessionError(error instanceof Error ? error.message : 'Unable to authorize preview')
+          setSessionError(
+            error instanceof Error && error.message === 'Method Not Allowed'
+              ? PREVIEW_AUTH_ROUTE_UNAVAILABLE
+              : error instanceof Error
+                ? error.message
+                : 'Unable to authorize preview',
+          )
         }
       })
     return () => { cancelled = true }
@@ -111,8 +119,15 @@ export function BrowsePreview({
         allow-top-navigation stays OFF so the preview cannot redirect the IDE.
       */}
       {sessionError ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-destructive">
-          Preview authorization failed: {sessionError}
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center text-sm text-destructive">
+          <p>Preview authorization failed: {sessionError}</p>
+          <button
+            type="button"
+            onClick={() => setPreviewSessionVersion((version) => version + 1)}
+            className="rounded px-2 py-1 font-medium text-foreground hover:text-primary"
+          >
+            Retry preview
+          </button>
         </div>
       ) : previewToken ? (
         <iframe

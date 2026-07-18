@@ -18,8 +18,8 @@ Tracked gaps and decisions to address in the Local Agent Interface blueprint and
 - [ ] **Team collaboration** — Shared workspaces, multiple operators
 - [x] **Editor on mobile** — CodeMirror touch config in `EditorPane.tsx`:
   scaled line height, no text DnD/fold gutter, soft-keyboard keep-in-view
-- [ ] **Session replay** — Superseded by agent-owned history epic (stories
-  drafted): `docs/plans/pending-acp-agent-session-history-med.md` →
+- [ ] **Session replay** — Superseded by the active agent-owned history epic:
+  `docs/plans/active-acp-agent-session-history-med.md` →
   `docs/plans/acp-session-history/`. Keep until epic Q1–Q8 lock direction.
 - [ ] **Developer terminal UI** — Optional Phase 3 power-user feature — noted in Blueprint Phase 3
 - [ ] **ACP sub-workers** — Deferred until next ACP release (~next quarter)

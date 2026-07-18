@@ -376,6 +376,20 @@ mod tests {
     }
 
     #[test]
+    fn history_caps_projection_distinguishes_list_and_load() {
+        for (can_list_sessions, can_load_session) in [(false, true), (true, false)] {
+            let projected = SessionCaps {
+                can_list_sessions,
+                can_load_session,
+                ..SessionCaps::default()
+            }
+            .to_history_capabilities(true);
+            assert_eq!(projected.can_list_sessions, can_list_sessions);
+            assert_eq!(projected.can_load_session, can_load_session);
+        }
+    }
+
+    #[test]
     fn history_caps_unavailable_when_not_live() {
         let caps = SessionCaps {
             providers_supported: true,

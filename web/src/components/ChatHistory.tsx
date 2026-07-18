@@ -1,6 +1,7 @@
 import { useState, useEffect, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Plus, X, Pencil, Trash2, Check, Download, Search, ChevronDown, ChevronUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import type { SessionHistoryCapabilities } from '@/lib/api'
 import type { Session, SessionStatus } from '@/types'
 
 /** Maps session status to status dot styling. */
@@ -155,6 +156,7 @@ export function ChatHistory({
   onRenameSession,
   onDeleteSession,
   onExportSession,
+  historyCapabilities,
 }: {
   sessions: Session[]
   workspaces: { id: string; name: string }[]
@@ -165,6 +167,8 @@ export function ChatHistory({
   onRenameSession: (sessionId: string, name: string) => void
   onDeleteSession: (sessionId: string) => void
   onExportSession: (sessionId: string) => void
+  /** Live caps for the selected session; unavailable means the agent is cold. */
+  historyCapabilities?: SessionHistoryCapabilities
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -195,6 +199,13 @@ export function ChatHistory({
   // workspace is unknown (e.g. a session whose workspace was unregistered).
   const workspaceName = (id: string): string =>
     workspaces.find((w) => w.id === id)?.name ?? id
+  const historyFallbackMessage = !historyCapabilities?.available
+    ? null
+    : !historyCapabilities.canListSessions
+      ? 'This agent cannot browse its saved sessions. Showing Local Agent history.'
+      : !historyCapabilities.canLoadSession
+        ? 'This agent cannot reopen agent-owned sessions. Showing Local Agent history.'
+        : null
 
   // Filter the session list by the selected workspace. Sessions with no
   // workspace field (legacy) are only shown under "all" — they don't match a
@@ -294,6 +305,12 @@ export function ChatHistory({
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
+
+        {historyFallbackMessage && (
+          <p className="rounded bg-muted px-2 py-1.5 text-xs text-muted-foreground" role="status">
+            {historyFallbackMessage}
+          </p>
+        )}
 
         {/* Workspace filter — show-all model: sessions from every workspace
             are listed, with an optional filter to narrow to one. */}

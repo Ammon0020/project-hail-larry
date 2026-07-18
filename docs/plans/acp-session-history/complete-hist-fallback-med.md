@@ -1,7 +1,7 @@
 # Story S-HIST-FALLBACK: Agents Without list / load
 
-> **Status:** pending | **Difficulty:** med
-> **Epic:** [agent-owned session history](../pending-acp-agent-session-history-med.md).
+> **Status:** complete | **Difficulty:** med
+> **Epic:** [agent-owned session history](../active-acp-agent-session-history-med.md).
 > **Depends on:** S-HIST-PROBE; epic "agents without list/load" decision.
 > **Independent of:** S-HIST-MIGRATE (migration is separate).
 
@@ -34,15 +34,15 @@ the agent-owned history flow for capable harnesses.
 
 ## Acceptance criteria
 
-- [ ] Harness without list: ChatHistory still shows local conversations;
-      no empty "agent history" dead end.
-- [ ] Harness without load: local resume/rebind still works; no spurious
-      LoadSession RPC.
-- [ ] Harness with list+load: fallback path does not override agent browse
-      (regression test).
-- [ ] User-visible explanation when agent history is unsupported.
-- [ ] Tests for both capability combinations (matrix subset).
-- [ ] Lint/tests clean for touched packages.
+- [x] Harness without list: ChatHistory retains local conversations; no empty
+      "agent history" dead end.
+- [x] Harness without load: existing load gate keeps local restart/rebind
+      behavior and does not send `session/load`.
+- [x] Harness with list+load: fallback notice is absent, preserving the future
+      agent-history browse path.
+- [x] User-visible explanation when live caps show list/load is unsupported.
+- [x] Tests cover list/load capability combinations (`src/acp/providers.rs`).
+- [x] Rust + frontend lint/tests/build clean.
 
 ## Out of scope
 
@@ -52,6 +52,5 @@ the agent-owned history flow for capable harnesses.
 
 ## Decision Needed
 
-- Epic Q3 — confirm fallback = keep local `conversations.json` (+ events),
-  vs alternatives (new-session-only, paste id). **Do not implement
-  alternatives until locked.**
+- Epic Q3 — **locked 2026-07-18:** retain local `conversations.json` + events.
+  Do not add paste-session-id or new-session-only modes.

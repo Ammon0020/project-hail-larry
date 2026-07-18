@@ -31,9 +31,8 @@
 - [ ] **Multi-user** — multi-device/single-user is decided; multi-user is future.
 - [ ] **ACP futures** — workers, session lifecycle, elicitation, NES, audio,
   and ACP inspector.
-- [ ] **Agent-owned history** — PROBE complete: matrix and live
-  `GET /api/sessions/{id}/capabilities`; Q8 cold-start remains open. Next:
-  BROWSE/OPEN/FALLBACK. See `docs/plans/pending-acp-agent-session-history-med.md`.
+- [~] **Agent-owned history** — PROBE + fallback complete; local history remains
+  for agents without list/load. Q7/Q8 still block browse.
 - [~] **Workspace preview** — serving, browse tab, live reload, sandbox, and
   LAN relative-asset auth complete; dev-server proxy, mobile UX, and auto-index
   remain. See `docs/plans/complete-workspace-preview-small.md`.

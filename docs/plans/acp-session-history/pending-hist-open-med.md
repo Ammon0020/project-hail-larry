@@ -1,7 +1,7 @@
 # Story S-HIST-OPEN: Open / Load a Past Agent Session
 
 > **Status:** pending | **Difficulty:** med
-> **Epic:** [agent-owned session history](../pending-acp-agent-session-history-med.md).
+> **Epic:** [agent-owned session history](../active-acp-agent-session-history-med.md).
 > **Depends on:** S-HIST-PROBE, S-HIST-BROWSE; epic load-vs-resume + transcript
 > cache decisions for complete AC.
 > **Blocks:** S-HIST-SYNC (active session after open); informs S-HIST-FALLBACK.

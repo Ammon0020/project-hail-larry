@@ -1,7 +1,7 @@
 # Story S-HIST-PROBE: Capability Probe + Harness Matrix
 
 > **Status:** complete | **Difficulty:** small
-> **Epic:** [agent-owned session history](../pending-acp-agent-session-history-med.md).
+> **Epic:** [agent-owned session history](../active-acp-agent-session-history-med.md).
 > **Depends on:** none (research-first; unblocks browse/open/fallback).
 > **Blocks:** S-HIST-BROWSE, S-HIST-OPEN, S-HIST-FALLBACK (capability gates).
 

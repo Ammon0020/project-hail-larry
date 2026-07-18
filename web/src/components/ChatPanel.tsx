@@ -1,7 +1,7 @@
-import { useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
+import { useEffect, useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
 import { WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { UploadResult } from '@/lib/api'
+import { api, type SessionHistoryCapabilities, type UploadResult } from '@/lib/api'
 import { isSessionNotFound } from '@/lib/errors'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatComposer } from './ChatComposer'
@@ -125,6 +125,10 @@ export function ChatPanel({
     : (agentForModel?.models[0]?.id ?? '')
 
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false)
+  const [historyCapabilityState, setHistoryCapabilityState] = useState<{
+    sessionId: string
+    caps?: SessionHistoryCapabilities
+  }>()
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -192,6 +196,20 @@ export function ChatPanel({
   // ensures the stored model belongs to the effective agent, so switching to a
   // session with a different agent doesn't show a stale model from the old one.
   const activeSession = sessions.find((s) => s.id === activeSessionId)
+  useEffect(() => {
+    let cancelled = false
+    if (!activeSessionId || !chatHistoryOpen) {
+      return () => { cancelled = true }
+    }
+    void api.getSessionHistoryCapabilities(activeSessionId)
+      .then((caps) => {
+        if (!cancelled) setHistoryCapabilityState({ sessionId: activeSessionId, caps })
+      })
+      .catch(() => {
+        if (!cancelled) setHistoryCapabilityState({ sessionId: activeSessionId })
+      })
+    return () => { cancelled = true }
+  }, [activeSessionId, chatHistoryOpen])
   const effectiveAgentId = activeSession?.agentId || selectedAgent || agents[0]?.id || ''
   const currentAgent = agents.find((a) => a.id === effectiveAgentId)
   const userSelectedModel =
@@ -513,6 +531,11 @@ export function ChatPanel({
           onSelectSession={handleSelectAndOpen}
           onRenameSession={onRenameSession}
           onExportSession={onExportSession}
+          historyCapabilities={
+            historyCapabilityState?.sessionId === activeSessionId
+              ? historyCapabilityState.caps
+              : undefined
+          }
           onDeleteSession={(id) => {
             if (id === activeSessionId) onSelectSession('')
             onDeleteSession(id)

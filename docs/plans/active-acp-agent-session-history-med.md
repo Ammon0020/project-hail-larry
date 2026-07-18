@@ -1,6 +1,7 @@
 # Epic: Agent-Owned ACP Session History
 
-> **Status:** Stories drafted — **not implementing** (decisions still open).
+> **Status:** In progress — probe and fallback complete; browse/open remain
+> decision-blocked.
 > **Owner:** —. **Created:** 2026-07-18. **Updated:** 2026-07-18.
 > **Related:** `docs/reference/acp/responsibilities.md`,
 > `docs/plans/acp-spec-compliance.md` (§4.4 list reconcile, §4.6 fork/resume/close),
@@ -19,8 +20,8 @@ talked to the same agent, filtered by folder/workspace when useful.
 
 ## Status of this epic
 
-Executable **story breakdown exists**. Implementation is blocked on the
-**Decision Needed** items below (do not invent answers in code).
+Probe and fallback are complete. Browse, open, sync, and migration remain
+blocked on their listed decisions (do not invent answers in code).
 
 Architecture Direction remains a **working hypothesis** until Q1–Q2 lock.
 
@@ -30,15 +31,15 @@ Architecture Direction remains a **working hypothesis** until Q1–Q2 lock.
 
 | ID | Story | Size | Depends on | Acceptance |
 |----|-------|------|------------|------------|
-| S-HIST-PROBE | [Capability probe + harness matrix](acp-session-history/pending-hist-probe-small.md) | small | — | ✅ complete (live-only; Q8 open) |
+| S-HIST-PROBE | [Capability probe + harness matrix](acp-session-history/complete-hist-probe-small.md) | small | — | ✅ complete (live-only; Q8 open) |
 | S-HIST-BROWSE | [Browse agent sessions by cwd](acp-session-history/pending-hist-browse-med.md) | med | PROBE; Q7/Q8 | story AC |
 | S-HIST-OPEN | [Open/load past session into UI](acp-session-history/pending-hist-open-med.md) | med | PROBE, BROWSE; Q1/Q4 | story AC |
 | S-HIST-SYNC | [Thin multi-UI active-session index](acp-session-history/pending-hist-sync-med.md) | med | OPEN; Q2 (Q1) | story AC |
-| S-HIST-FALLBACK | [Fallback without list/load](acp-session-history/pending-hist-fallback-med.md) | med | PROBE; Q3 | story AC |
+| S-HIST-FALLBACK | [Fallback without list/load](acp-session-history/complete-hist-fallback-med.md) | med | PROBE; Q3 | ✅ complete |
 | S-HIST-MIGRATE | [Local history migrate or defer](acp-session-history/pending-hist-migrate-small.md) | small | Q6 (Q5) | story AC |
 
-**Suggested sequence:** PROBE → BROWSE → OPEN → SYNC; FALLBACK after PROBE
-(parallel with BROWSE once Q3 locked); MIGRATE last or docs-only defer.
+**Next sequence:** lock Q7/Q8, then BROWSE → OPEN → SYNC; MIGRATE last or
+docs-only defer after Q6.
 
 ---
 
@@ -50,7 +51,7 @@ Do **not** invent answers. Record locks here when product decides.
 |---|-------|--------|--------|
 | Q1 | **Zero durable transcript vs cache** — replay-from-agent on every device open, or daemon cache of last loaded transcript for multi-UI / offline sidebar? | OPEN, SYNC | open |
 | Q2 | **Active-session sync shape** — e.g. `workspaceId → { agentId, acpSessionId, title }` only? | SYNC | open |
-| Q3 | **Agents without list/load** — keep local `conversations.json`+events (story default), new-session-only, or paste session id? | FALLBACK | open |
+| Q3 | **Agents without list/load** — retain local `conversations.json` + events; no paste-id or new-session-only mode. | FALLBACK | **locked 2026-07-18** |
 | Q4 | **`load` vs `resume`** — first open = load (full replay); reconnect with known title = resume? | OPEN | open |
 | Q5 | **Delete / rename** — client-local only vs agent `session/delete` / `session_info_update`? | MIGRATE (deprecate), later UX | open |
 | Q6 | **Migration** — keep forever / one-time import / deprecate / **explicit defer**? | MIGRATE | open |
@@ -191,6 +192,6 @@ Implications (pending Q1–Q2):
 
 ## Next step
 
-1. Lock Q1–Q8 (or defer Q5/Q6 explicitly).
-2. Start S-HIST-PROBE (matrix + live caps) — least blocked.
-3. Then BROWSE → OPEN → SYNC; FALLBACK once Q3 locked; MIGRATE per Q6.
+1. Lock Q7/Q8 for BROWSE (and Q1/Q4 before OPEN).
+2. Implement BROWSE → OPEN → SYNC.
+3. Resolve or explicitly defer migration per Q6.

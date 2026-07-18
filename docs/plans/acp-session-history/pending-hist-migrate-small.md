@@ -1,7 +1,7 @@
 # Story S-HIST-MIGRATE: Local History Migration (or Explicit Defer)
 
 > **Status:** pending | **Difficulty:** small
-> **Epic:** [agent-owned session history](../pending-acp-agent-session-history-med.md).
+> **Epic:** [agent-owned session history](../active-acp-agent-session-history-med.md).
 > **Depends on:** epic migration Decision Needed; ideally after S-HIST-OPEN +
 > S-HIST-FALLBACK so both stores' roles are clear.
 > **Blocks:** none for MVP browse/open if migration is deferred.

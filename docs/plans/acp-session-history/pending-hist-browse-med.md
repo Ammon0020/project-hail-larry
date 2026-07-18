@@ -1,7 +1,7 @@
 # Story S-HIST-BROWSE: Browse Agent Sessions by cwd / Workspace
 
 > **Status:** pending | **Difficulty:** med
-> **Epic:** [agent-owned session history](../pending-acp-agent-session-history-med.md).
+> **Epic:** [agent-owned session history](../active-acp-agent-session-history-med.md).
 > **Depends on:** S-HIST-PROBE (cap gate); epic path-canonicalization decision
 > for correct filtering.
 > **Blocks:** S-HIST-OPEN (needs selectable list).

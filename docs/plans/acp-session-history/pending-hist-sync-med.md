@@ -1,7 +1,7 @@
 # Story S-HIST-SYNC: Thin Multi-UI Active-Session Index
 
 > **Status:** pending | **Difficulty:** med
-> **Epic:** [agent-owned session history](../pending-acp-agent-session-history-med.md).
+> **Epic:** [agent-owned session history](../active-acp-agent-session-history-med.md).
 > **Depends on:** S-HIST-OPEN (writes active selection); epic active-session
 > shape decision.
 > **Parallel-friendly with:** S-HIST-FALLBACK (after shape locked).

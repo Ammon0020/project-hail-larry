@@ -158,6 +158,16 @@ export interface WorkspaceInfo {
   name: string
 }
 
+/** Live agent-session history support. `available: false` means not warm. */
+export interface SessionHistoryCapabilities {
+  available: boolean
+  canListSessions: boolean
+  canLoadSession: boolean
+  canResumeSession: boolean
+  canCloseSession: boolean
+  canDeleteSession: boolean
+}
+
 export interface FileNode {
   name: string
   type: 'folder' | 'file'
@@ -228,6 +238,8 @@ export const api = {
       `/workspaces/${workspaceId}/preview-session`,
       { method: 'POST' },
     ),
+  getSessionHistoryCapabilities: (sessionId: string) =>
+    apiFetch<SessionHistoryCapabilities>(`/sessions/${sessionId}/capabilities`),
   readFile: (workspaceId: string, path: string) =>
     apiFetch<{ content: string; revision: number; path: string; isBinary?: boolean; previewable?: boolean }>(
       `/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
