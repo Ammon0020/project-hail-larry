@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use agent_client_protocol::schema::v1::{
     CancelNotification, ClientCapabilities, ContentBlock, CreateTerminalRequest,
     CreateTerminalResponse, EmbeddedResource, EmbeddedResourceResource, FileSystemCapabilities,
-    InitializeRequest, KillTerminalRequest, KillTerminalResponse, McpCapabilities, McpServer,
-    NewSessionRequest, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    Implementation, InitializeRequest, KillTerminalRequest, KillTerminalResponse, McpCapabilities,
+    McpServer, NewSessionRequest, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
     ReleaseTerminalRequest, ReleaseTerminalResponse, RequestPermissionOutcome,
     RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome, SessionId,
     SessionNotification, TerminalExitStatus, TerminalOutputRequest, TerminalOutputResponse,
@@ -64,6 +64,12 @@ const MAX_TERMINALS_PER_SESSION: usize = 16;
 const MAX_TERMINAL_OUTPUT_BYTES: usize = DEFAULT_MAX_OUTPUT_BYTES;
 /// Safe default for a model-switch rebind transfer (256 KiB).
 const MODEL_SWITCH_TRANSFER_BYTES: i64 = 256 * 1024;
+
+/// ACP `clientInfo.name` — must be non-empty; agents (e.g. Mistral Vibe) forward
+/// it into provider metadata that rejects blank values. Matches Go transport.
+const ACP_CLIENT_NAME: &str = "LocalAgentInterface";
+/// ACP `clientInfo.version` — same Go parity constraint as [`ACP_CLIENT_NAME`].
+const ACP_CLIENT_VERSION: &str = "1.0";
 
 /// Constructor-only dependencies for ACP core.
 pub struct ClientDeps {
@@ -1333,11 +1339,19 @@ async fn run_actor_inner(
             agent_client_protocol::on_receive_request!(),
         )
         .connect_with(transport, |cx: ConnectionTo<Agent>| async move {
-            let initialize = InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
-                ClientCapabilities::new().fs(FileSystemCapabilities::new()
-                    .read_text_file(true)
-                    .write_text_file(true)),
-            );
+            // clientInfo is required by agents that forward name/version into
+            // upstream provider metadata (Mistral rejects empty strings).
+            let initialize = InitializeRequest::new(ProtocolVersion::V1)
+                .client_info(Implementation::new(ACP_CLIENT_NAME, ACP_CLIENT_VERSION))
+                .client_capabilities(
+                    ClientCapabilities::new()
+                        .fs(
+                            FileSystemCapabilities::new()
+                                .read_text_file(true)
+                                .write_text_file(true),
+                        )
+                        .terminal(true),
+                );
             // Keep the InitializeResponse: providers + embeddedContext caps are
             // cached on the session entry so later RPCs can gate without re-probe.
             let init = cx
@@ -2815,5 +2829,21 @@ mod tests {
         fs::write(&path, "{not-json").unwrap();
         assert!(super::load_session_mcp_servers(Some(&path), &McpCapabilities::new()).is_empty());
         assert!(super::load_session_mcp_servers(None, &McpCapabilities::new()).is_empty());
+    }
+
+    #[test]
+    fn initialize_client_info_is_non_empty() {
+        use agent_client_protocol::schema::v1::{Implementation, InitializeRequest};
+        use agent_client_protocol::schema::ProtocolVersion;
+
+        let req = InitializeRequest::new(ProtocolVersion::V1).client_info(Implementation::new(
+            super::ACP_CLIENT_NAME,
+            super::ACP_CLIENT_VERSION,
+        ));
+        let info = req.client_info.expect("client_info must be set");
+        assert!(!info.name.is_empty(), "client name must not be empty");
+        assert!(!info.version.is_empty(), "client version must not be empty");
+        assert_eq!(info.name, "LocalAgentInterface");
+        assert_eq!(info.version, "1.0");
     }
 }
