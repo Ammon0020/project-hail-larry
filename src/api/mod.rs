@@ -138,9 +138,18 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/workspaces/{id}/files", get(file_tree))
         // POST write lives on a sibling router with a 50 MiB body cap (below).
-        .route("/api/workspaces/{id}/file", get(read_file))
+        .route(
+            "/api/workspaces/{id}/file",
+            get(read_file).delete(delete_file),
+        )
         .route("/api/workspaces/{id}/raw", get(raw_file))
+        // Browse-preview virtual root: path-based so relative asset URLs resolve.
+        // Bare `/preview/{id}` (no file) returns 404 — no SPA fallback.
+        .route("/preview/{id}", get(preview_empty))
+        .route("/preview/{id}/{*path}", get(preview_file))
         .route("/api/workspaces/{id}/search", get(search))
+        .route("/api/workspaces/{id}/rename", post(rename_path))
+        .route("/api/workspaces/{id}/mkdir", post(mkdir))
         .route("/api/events", get(events))
         .route("/api/events/{session_id}", get(session_events))
         .route("/api/agents", get(list_agents).post(upsert_agent))
@@ -294,28 +303,37 @@ async fn pair_verify_passcode(
     State(state): State<AppState>,
     body: Result<Json<PairVerifyRequest>, JsonRejection>,
 ) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
-    let Json(request) = decode_json_body(body)?;
-    state
-        .pairing
-        .verify_passcode(
+    pair_verify(state, body, |pairing, request| {
+        pairing.verify_passcode(
             request.passcode.as_deref().unwrap_or_default(),
             request.device_name,
         )
-        .map(Json)
-        .map_err(pairing_error)
+    })
 }
 
 async fn pair_verify_token(
     State(state): State<AppState>,
     body: Result<Json<PairVerifyRequest>, JsonRejection>,
 ) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
-    let Json(request) = decode_json_body(body)?;
-    state
-        .pairing
-        .verify_token(
+    pair_verify(state, body, |pairing, request| {
+        pairing.verify_token(
             request.token.as_deref().unwrap_or_default(),
             request.device_name,
         )
+    })
+}
+
+/// Shared decode + verify path for passcode and QR-token pairing.
+fn pair_verify(
+    state: AppState,
+    body: Result<Json<PairVerifyRequest>, JsonRejection>,
+    verify: impl FnOnce(
+        &PairingManager,
+        PairVerifyRequest,
+    ) -> Result<crate::interfaces::DeviceCredential, PairingError>,
+) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    verify(&state.pairing, request)
         .map(Json)
         .map_err(pairing_error)
 }
@@ -559,24 +577,59 @@ async fn raw_file(
     Query(query): Query<FileQuery>,
 ) -> Result<Response, ApiResponseError> {
     let path = required_query(query.path, "path")?;
+    serve_workspace_file(&state, &id, &path).await
+}
+
+/// 404 for `/preview/{id}` with no file path — never fall through to the SPA.
+async fn preview_empty() -> Result<Response, ApiResponseError> {
+    Err(ApiResponseError::not_found("preview path required"))
+}
+
+/// Serves a workspace file at `/preview/{id}/{*path}` so relative URLs in an
+/// iframe (CSS/JS/images) resolve against the preview root rather than a
+/// query-string raw endpoint.
+async fn preview_file(
+    State(state): State<AppState>,
+    Path((id, path)): Path<(String, String)>,
+) -> Result<Response, ApiResponseError> {
+    // Trailing slash / empty wildcard → no file to serve.
+    let rel = path.trim_matches('/');
+    if rel.is_empty() {
+        return Err(ApiResponseError::not_found("preview path required"));
+    }
+    serve_workspace_file(&state, &id, rel).await
+}
+
+/// Shared body for `/raw` and `/preview`: resolve via workspace containment,
+/// read bytes, set Content-Type + inline disposition.
+async fn serve_workspace_file(
+    state: &AppState,
+    workspace_id: &str,
+    rel_path: &str,
+) -> Result<Response, ApiResponseError> {
     let absolute = state
         .workspaces
-        .file_path(&id, &path)
+        .file_path(workspace_id, rel_path)
         .await
         .map_err(app_error)?;
     let data = tokio::fs::read(&absolute)
         .await
-        .map_err(|error| ApiResponseError::internal(format!("read raw file: {error}")))?;
-    // Go http.ServeFile uses mime.TypeByExtension then sniffing. Prefer the
-    // extension so README.md is text/markdown; charset=utf-8.
+        .map_err(|error| ApiResponseError::internal(format!("read workspace file: {error}")))?;
+    // Prefer extension so README.md is text/markdown; charset=utf-8 for text.
     let content_type = content_type_for_path(std::path::Path::new(&absolute), &data);
     let mut response = Response::new(Body::from(data));
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_static("inline"),
     );
+    // Avoid leaking deviceId/secret query params via Referer when the preview
+    // HTML loads third-party (or cross-path) subresources.
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
     let content_type = HeaderValue::try_from(content_type).map_err(|error| {
-        ApiResponseError::internal(format!("derive raw file content type: {error}"))
+        ApiResponseError::internal(format!("derive file content type: {error}"))
     })?;
     response
         .headers_mut()
@@ -637,6 +690,74 @@ async fn write_file(
         .await
         .map_err(app_error)?;
     Ok(Json(json!({"revision": revision, "path": request.path})))
+}
+
+/// `DELETE /api/workspaces/{id}/file?path=` — remove a file or empty directory.
+async fn delete_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let path = required_query(query.path, "path")?;
+    state
+        .workspaces
+        .delete_path(&id, &path)
+        .await
+        .map_err(app_error)?;
+    Ok(Json(json!({"status": "deleted"})))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenamePathRequest {
+    from: String,
+    to: String,
+}
+
+/// `POST /api/workspaces/{id}/rename` — rename/move within the workspace.
+/// Overwrite is rejected with 409 when the destination already exists.
+async fn rename_path(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<RenamePathRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    if request.from.is_empty() || request.to.is_empty() {
+        return Err(ApiResponseError::bad_request(
+            "from and to paths are required",
+        ));
+    }
+    state
+        .workspaces
+        .rename_path(&id, &request.from, &request.to)
+        .await
+        .map_err(app_error)?;
+    Ok(Json(json!({"status": "renamed"})))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MkdirRequest {
+    path: String,
+}
+
+/// `POST /api/workspaces/{id}/mkdir` — create a directory (parents as needed).
+/// Idempotent if the path already exists as a directory; 409 if it is a file.
+async fn mkdir(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<MkdirRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    if request.path.is_empty() {
+        return Err(ApiResponseError::bad_request("path is required"));
+    }
+    state
+        .workspaces
+        .mkdir(&id, &request.path)
+        .await
+        .map_err(app_error)?;
+    Ok(Json(json!({"status": "created"})))
 }
 
 #[derive(Deserialize, Default)]
@@ -943,8 +1064,17 @@ async fn respond_permission(
 /// SPA fallback serving embedded frontend assets. Uses `OriginalUri` rather
 /// than `Path<String>` so the root path `/` (zero segments) is handled without
 /// a `Path` extraction error.
+///
+/// Paths under `/preview/` never fall through to the SPA: browsers/clients
+/// may normalize `../` out of a preview URL (e.g. `/preview/id/../../../etc/passwd`
+/// → `/etc/passwd` or similar), and serving the IDE shell there would mask
+/// traversal attempts. Unmatched preview URLs are 404.
 async fn spa_fallback(OriginalUri(uri): OriginalUri) -> Response {
-    let path = uri.path().trim_start_matches('/');
+    let path = uri.path();
+    if path == "/preview" || path.starts_with("/preview/") {
+        return ApiResponseError::not_found("preview path not found").into_response();
+    }
+    let path = path.trim_start_matches('/');
     embed::serve(path.to_string()).await
 }
 
@@ -1207,53 +1337,40 @@ pub(crate) struct ApiResponseError {
 }
 
 impl ApiResponseError {
-    fn bad_request(message: impl Into<String>) -> Self {
+    /// Shared constructor for status + message pairs used by handlers.
+    fn new(status: StatusCode, message: impl Into<String>) -> Self {
         Self {
-            status: StatusCode::BAD_REQUEST,
+            status,
             message: message.into(),
         }
+    }
+
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, message)
     }
 
     fn unauthorized(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::UNAUTHORIZED,
-            message: message.into(),
-        }
+        Self::new(StatusCode::UNAUTHORIZED, message)
     }
 
     fn forbidden(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::FORBIDDEN,
-            message: message.into(),
-        }
+        Self::new(StatusCode::FORBIDDEN, message)
     }
 
     fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            message: message.into(),
-        }
+        Self::new(StatusCode::NOT_FOUND, message)
     }
 
     fn rate_limited(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::TOO_MANY_REQUESTS,
-            message: message.into(),
-        }
+        Self::new(StatusCode::TOO_MANY_REQUESTS, message)
     }
 
     fn service_unavailable(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            message: message.into(),
-        }
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, message)
     }
 
     fn internal(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: message.into(),
-        }
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }
 }
 
@@ -1662,5 +1779,230 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = json_body(response).await;
         assert_eq!(body["error"], "invalid request body");
+    }
+
+    // --- Browse preview route (`GET /preview/{id}/{*path}`) ---
+
+    /// Registers a temp workspace with a small static site fixture.
+    async fn preview_fixture_workspace(
+        state: &AppState,
+    ) -> (tempfile::TempDir, crate::interfaces::WorkspaceInfo) {
+        let site = tempfile::tempdir().expect("preview fixture dir");
+        tokio::fs::write(
+            site.path().join("index.html"),
+            b"<!DOCTYPE html><html><link rel=\"stylesheet\" href=\"./styles.css\"><body>hi</body></html>",
+        )
+        .await
+        .expect("write index.html");
+        tokio::fs::write(site.path().join("styles.css"), b"body{color:red}")
+            .await
+            .expect("write styles.css");
+        let info = state
+            .workspaces
+            .register(site.path().to_str().expect("utf-8 path"))
+            .await
+            .expect("register workspace");
+        (site, info)
+    }
+
+    #[tokio::test]
+    async fn preview_serves_html_inline_with_content_type() {
+        let (_state_dir, state) = state();
+        let (_site, ws) = preview_fixture_workspace(&state).await;
+
+        let response = oneshot(
+            state,
+            Request::builder()
+                .uri(format!("/preview/{}/index.html", ws.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let ctype = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            ctype.starts_with("text/html"),
+            "expected text/html, got {ctype}"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_DISPOSITION)
+                .and_then(|v| v.to_str().ok()),
+            Some("inline")
+        );
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert!(
+            String::from_utf8_lossy(&bytes).contains("styles.css"),
+            "body should be the fixture HTML"
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_rejects_path_traversal() {
+        let (_state_dir, state) = state();
+        let (_site, ws) = preview_fixture_workspace(&state).await;
+
+        // Literal `..` segments (tower/axum may keep these on Request::builder).
+        let response = oneshot(
+            state.clone(),
+            Request::builder()
+                .uri(format!("/preview/{}/../../../etc/passwd", ws.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert!(
+            response.status() == StatusCode::BAD_REQUEST
+                || response.status() == StatusCode::FORBIDDEN
+                || response.status() == StatusCode::NOT_FOUND,
+            "traversal must be rejected, got {}",
+            response.status()
+        );
+
+        // Percent-encoded dots — what a non-normalizing client can send; must
+        // hit WorkspaceMgr.file_path containment (not SPA).
+        let response = oneshot(
+            state,
+            Request::builder()
+                .uri(format!(
+                    "/preview/{}/{}etc/passwd",
+                    ws.id, "%2e%2e/%2e%2e/%2e%2e/"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert!(
+            response.status() == StatusCode::BAD_REQUEST
+                || response.status() == StatusCode::FORBIDDEN
+                || response.status() == StatusCode::NOT_FOUND,
+            "encoded traversal must be rejected, got {}",
+            response.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_empty_path_returns_404() {
+        let (_state_dir, state) = state();
+        let (_site, ws) = preview_fixture_workspace(&state).await;
+
+        let response = oneshot(
+            state,
+            Request::builder()
+                .uri(format!("/preview/{}", ws.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn preview_requires_auth_for_non_loopback() {
+        // Unit test uses a non-loopback ConnectInfo peer. Full LAN + query-param
+        // credential fallback is covered by require_auth middleware tests.
+        let (_state_dir, state) = state();
+        let (_site, ws) = preview_fixture_workspace(&state).await;
+
+        let response = oneshot_peer(
+            state,
+            Request::builder()
+                .uri(format!("/preview/{}/index.html", ws.id))
+                .body(Body::empty())
+                .expect("request"),
+            "10.0.0.1:9",
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // --- Workspace file mutations (delete / rename / mkdir) ---
+
+    #[tokio::test]
+    async fn file_mutations_happy_path_and_errors() {
+        let (_state_dir, state) = state();
+        let site = tempfile::tempdir().expect("workspace dir");
+        tokio::fs::write(site.path().join("a.txt"), b"hello")
+            .await
+            .expect("write a.txt");
+        let ws = state
+            .workspaces
+            .register(site.path().to_str().expect("utf-8"))
+            .await
+            .expect("register");
+
+        // mkdir
+        let mkdir = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/workspaces/{}/mkdir", ws.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"path":"src/foo"}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(mkdir.status(), StatusCode::OK);
+        assert_eq!(json_body(mkdir).await["status"], "created");
+        assert!(site.path().join("src/foo").is_dir());
+
+        // rename
+        let rename = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/workspaces/{}/rename", ws.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"from":"a.txt","to":"b.txt"}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(rename.status(), StatusCode::OK);
+        assert_eq!(json_body(rename).await["status"], "renamed");
+
+        // delete
+        let delete = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/workspaces/{}/file?path=b.txt", ws.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(delete.status(), StatusCode::OK);
+        assert_eq!(json_body(delete).await["status"], "deleted");
+
+        // delete missing → 404
+        let missing = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/workspaces/{}/file?path=gone.txt", ws.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+        // traversal → 400
+        let traversal = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/workspaces/{}/mkdir", ws.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"path":"../outside"}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(traversal.status(), StatusCode::BAD_REQUEST);
     }
 }

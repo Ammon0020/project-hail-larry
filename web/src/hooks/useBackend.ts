@@ -50,9 +50,24 @@ export function useBackend() {
   const mountedRef = useRef(true)
   // Holds the pending reconnect timer so it can be cleared on unmount.
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // Debounces file-tree refreshes triggered by FileWritten / FileChangedOnDisk
+  // bursts (bulk agent edits, rapid on-disk saves) so we hit getFileTree once.
+  const treeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // Latest refreshFileTree — connectWebSocket's onmessage closes over this ref
+  // so reconnects always call the current implementation.
+  const refreshFileTreeRef = useRef<() => Promise<void>>(async () => {})
   // Reconnect attempt counter for exponential backoff. Reset to 0 on every
   // successful ws.onopen so a long-lived connection doesn't ramp the delay.
   const reconnectAttemptRef = useRef(0)
+
+  /** Coalesce rapid file events into one tree reload (~200ms after the last). */
+  function scheduleFileTreeRefresh() {
+    if (treeRefreshTimerRef.current) clearTimeout(treeRefreshTimerRef.current)
+    treeRefreshTimerRef.current = setTimeout(() => {
+      treeRefreshTimerRef.current = undefined
+      void refreshFileTreeRef.current()
+    }, 200)
+  }
 
   /**
    * Computes the next reconnect delay using exponential backoff (base 1s,
@@ -219,14 +234,14 @@ export function useBackend() {
         }
         // File-written events (agent created/modified a file via ACP) and
         // external file changes (FileChangedOnDisk, from the backend fs watcher)
-        // trigger a file-tree refresh so the explorer shows new/removed files
-        // without a manual reload. Only refresh when the event's workspace
-        // matches the active workspace.
+        // trigger a debounced file-tree refresh so the explorer shows
+        // new/removed files without a manual reload. Only refresh when the
+        // event's workspace matches the active workspace.
         if (event.type === 'FileWritten' || event.type === 'FileChangedOnDisk') {
           const evtWs = event.workspaceId
           const active = activeWorkspaceRef.current
           if (!evtWs || !active || evtWs === active.id) {
-            refreshFileTree()
+            scheduleFileTreeRefresh()
           }
         }
       } catch {
@@ -419,8 +434,8 @@ export function useBackend() {
   // ---- File actions ----
   /**
    * Reloads the file tree for the active workspace from the backend. Called
-   * after a FileWritten event so the explorer reflects agent-created files
-   * without a manual refresh.
+   * after a FileWritten / FileChangedOnDisk event (debounced) so the explorer
+   * reflects agent-created and external files without a manual refresh.
    */
   const refreshFileTree = useCallback(async () => {
     const ws = activeWorkspaceRef.current
@@ -431,6 +446,7 @@ export function useBackend() {
       // Workspace may have been removed; leave the tree as-is.
     }
   }, [])
+  refreshFileTreeRef.current = refreshFileTree
 
   const readFile = useCallback(async (path: string, workspaceId?: string) => {
     const wsId = workspaceId || activeWorkspaceRef.current?.id || ''
@@ -443,6 +459,46 @@ export function useBackend() {
       return await api.saveFile(wsId, path, content, expectedRevision)
     },
     [],
+  )
+
+  /** Deletes a file (or empty folder) then refreshes the explorer tree. */
+  const deleteFile = useCallback(
+    async (path: string) => {
+      const wsId = activeWorkspaceRef.current?.id || ''
+      await api.deleteFile(wsId, path)
+      await refreshFileTree()
+    },
+    [refreshFileTree],
+  )
+
+  /** Renames/moves a path then refreshes the explorer tree. */
+  const renameFile = useCallback(
+    async (from: string, to: string) => {
+      const wsId = activeWorkspaceRef.current?.id || ''
+      await api.renameFile(wsId, from, to)
+      await refreshFileTree()
+    },
+    [refreshFileTree],
+  )
+
+  /** Creates a directory then refreshes the explorer tree. */
+  const mkdir = useCallback(
+    async (path: string) => {
+      const wsId = activeWorkspaceRef.current?.id || ''
+      await api.mkdir(wsId, path)
+      await refreshFileTree()
+    },
+    [refreshFileTree],
+  )
+
+  /** Creates an empty file (expectedRevision 0) then refreshes the tree. */
+  const createFile = useCallback(
+    async (path: string) => {
+      const wsId = activeWorkspaceRef.current?.id || ''
+      await api.saveFile(wsId, path, '', 0)
+      await refreshFileTree()
+    },
+    [refreshFileTree],
   )
 
   // ---- Session actions ----
@@ -632,6 +688,7 @@ export function useBackend() {
       window.removeEventListener('online', onOnline)
       document.removeEventListener('visibilitychange', onVisibility)
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      if (treeRefreshTimerRef.current) clearTimeout(treeRefreshTimerRef.current)
       wsRef.current?.close()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run-once-on-mount: opens the single WebSocket; must not re-run on every render.
@@ -655,6 +712,11 @@ export function useBackend() {
     registerWorkspace,
     readFile,
     saveFile,
+    deleteFile,
+    renameFile,
+    mkdir,
+    createFile,
+    refreshFileTree,
     createSession,
     sendPrompt,
     uploadFile,

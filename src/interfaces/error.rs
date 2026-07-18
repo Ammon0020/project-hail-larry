@@ -37,6 +37,10 @@ pub enum AppError {
     #[error("stale revision: file has been modified since last read")]
     StaleRevision,
 
+    /// Resource conflict (e.g. rename target exists, mkdir path is a file).
+    #[error("{0}")]
+    Conflict(String),
+
     /// Agent or feature is not supported (e.g. providers capability missing).
     #[error("unsupported: {0}")]
     Unsupported(String),
@@ -108,6 +112,11 @@ impl AppError {
         Self::Validation(msg.into())
     }
 
+    /// Convenience constructor for conflict failures (HTTP 409).
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self::Conflict(msg.into())
+    }
+
     /// Convenience constructor for unsupported capabilities.
     pub fn unsupported(msg: impl Into<String>) -> Self {
         Self::Unsupported(msg.into())
@@ -168,7 +177,7 @@ impl ApiError {
 /// - unauthorized → 401
 /// - forbidden → 403
 /// - not found → 404
-/// - stale revision → 409
+/// - stale revision / conflict → 409
 /// - rate limited → 429
 /// - unsupported → 501
 /// - internal / config / other → 500
@@ -181,6 +190,7 @@ pub fn map_api_error(err: &AppError) -> ApiError {
             ApiStatusCode::CONFLICT,
             "stale revision: file has been modified since last read",
         ),
+        AppError::Conflict(msg) => ApiError::new(ApiStatusCode::CONFLICT, msg.clone()),
         AppError::Unsupported(msg) => ApiError::new(ApiStatusCode::NOT_IMPLEMENTED, msg.clone()),
         AppError::Validation(msg) => ApiError::new(ApiStatusCode::BAD_REQUEST, msg.clone()),
         AppError::Unauthorized(msg) => ApiError::new(ApiStatusCode::UNAUTHORIZED, msg.clone()),

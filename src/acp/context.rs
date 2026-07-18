@@ -473,6 +473,15 @@ mod tests {
         ) -> Result<i64, AppError> {
             Err(AppError::unsupported("not needed"))
         }
+        async fn delete_path(&self, _id: &str, _path: &str) -> Result<(), AppError> {
+            Err(AppError::unsupported("not needed"))
+        }
+        async fn rename_path(&self, _id: &str, _from: &str, _to: &str) -> Result<(), AppError> {
+            Err(AppError::unsupported("not needed"))
+        }
+        async fn mkdir(&self, _id: &str, _path: &str) -> Result<(), AppError> {
+            Err(AppError::unsupported("not needed"))
+        }
         async fn search(
             &self,
             _id: &str,

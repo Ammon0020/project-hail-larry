@@ -5,7 +5,7 @@ import { CommandPalette, type Command as PaletteCommand } from '@/components/Com
 import { ActivityBar } from '@/components/ActivityBar'
 import { LeftSidebar } from '@/components/LeftSidebar'
 import { EditorPane } from '@/components/EditorPane'
-import { TabBar } from '@/components/TabBar'
+import { TabBar, editorTabPreviewState } from '@/components/TabBar'
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { Banner } from '@/components/ui/Banner'
 import { cn } from '@/lib/utils'
@@ -43,6 +43,85 @@ function narrowStatus(raw: string): SessionStatus {
 function readValidString<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   const v = localStorage.getItem(key)
   return v && (allowed as readonly string[]).includes(v) ? (v as T) : fallback
+}
+
+/**
+ * Joins a workspace root with a relative path using the root's path separator
+ * (Windows `\` vs POSIX `/`). Used for "Copy Path" absolute clipboard values.
+ */
+function joinWorkspacePath(root: string, relative: string): string {
+  const sep = root.includes('\\') ? '\\' : '/'
+  const cleaned = relative.replace(/^[/\\]+/, '').replace(/[/\\]+/g, sep)
+  const base = root.replace(/[/\\]+$/, '')
+  return cleaned ? `${base}${sep}${cleaned}` : base
+}
+
+/** True when `path` is `prefix` or a descendant (folder delete / rename remap). */
+function pathIsUnder(path: string, prefix: string): boolean {
+  const n = path.replace(/\\/g, '/')
+  const p = prefix.replace(/\\/g, '/')
+  return n === p || n.startsWith(`${p}/`)
+}
+
+/** Remaps a path after a rename of `from` → `to` (exact match or descendant). */
+function remapAfterRename(path: string, from: string, to: string): string {
+  const n = path.replace(/\\/g, '/')
+  const f = from.replace(/\\/g, '/')
+  const t = to.replace(/\\/g, '/')
+  if (n === f) return to
+  if (n.startsWith(`${f}/`)) return `${t}${n.slice(f.length)}`
+  return path
+}
+
+/** Browse-preview tab id: `preview:{workspaceId}:{entryPath}`. */
+function previewTabId(workspaceId: string, entryPath: string): string {
+  return `preview:${workspaceId}:${entryPath}`
+}
+
+/** Joins a folder path with a new child name (POSIX-normalized). */
+function joinUnderParent(parentPath: string, name: string): string {
+  const trimmed = name.trim()
+  if (!parentPath) return trimmed
+  return `${parentPath.replace(/\\/g, '/').replace(/\/$/, '')}/${trimmed}`
+}
+
+/**
+ * True when an open-tab id is the file at `path`, a descendant file id under
+ * a folder `path`, or a browse-preview tab for that path / under it.
+ */
+function tabIdTouchesPath(
+  tabId: string,
+  path: string,
+  workspaceId: string | undefined,
+): boolean {
+  if (tabId === path) return true
+  if (!tabId.startsWith('preview:') && pathIsUnder(tabId, path)) return true
+  if (!workspaceId || !tabId.startsWith('preview:')) return false
+  const prefix = `preview:${workspaceId}:`
+  if (!tabId.startsWith(prefix)) return false
+  return pathIsUnder(tabId.slice(prefix.length), path)
+}
+
+/** Remaps a tab id after renaming `from` → `to` (file tabs and preview tabs). */
+function remapTabIdAfterRename(
+  tabId: string,
+  from: string,
+  to: string,
+  workspaceId: string | undefined,
+): string {
+  if (tabId === from) return to
+  if (workspaceId && tabId.startsWith('preview:')) {
+    const prefix = `preview:${workspaceId}:`
+    if (tabId.startsWith(prefix)) {
+      const oldPath = tabId.slice(prefix.length)
+      if (pathIsUnder(oldPath, from)) {
+        return previewTabId(workspaceId, remapAfterRename(oldPath, from, to))
+      }
+    }
+    return tabId
+  }
+  if (pathIsUnder(tabId, from)) return remapAfterRename(tabId, from, to)
+  return tabId
 }
 
 /**
@@ -249,9 +328,11 @@ export default function App() {
    *  survives a page reload (UI Spec §6.2 — UI Persistence). */
   useEffect(() => {
     try {
-      // Settings tabs are not persisted — they're synthetic, not files.
-      // Preview tabs are transient and not persisted either.
-      const persistable = openTabs.filter((t) => t.kind !== 'settings' && !t.isPreview)
+      // Settings and browse-preview tabs are synthetic / session-only — not
+      // persisted. Transient isPreview file tabs are also excluded.
+      const persistable = openTabs.filter(
+        (t) => t.kind !== 'settings' && t.kind !== 'preview' && !t.isPreview,
+      )
       localStorage.setItem('lai:openTabs', JSON.stringify(persistable))
     } catch {
       // Ignore serialization errors (e.g. quota exceeded).
@@ -271,7 +352,9 @@ export default function App() {
   // (ACP spec item 1.3).
   useEffect(() => {
     if (!activeSessionId || !backend.activeWorkspace) return
-    const openFiles = openTabs.map((t) => t.path)
+    const openFiles = openTabs
+      .filter((t) => t.kind !== 'settings' && t.kind !== 'preview')
+      .map((t) => t.path)
     const recentEdits = openTabs.filter((t) => t.unsaved).map((t) => t.path)
     reportContext(activeSessionId, openFiles, recentEdits, editorSelection)
   }, [openTabs, activeSessionId, editorSelection, backend.activeWorkspace, reportContext])
@@ -388,8 +471,74 @@ export default function App() {
   )
 
   const handleCopyPath = useCallback((path: string) => {
+    const root = backend.activeWorkspace?.path
+    const absolute = root ? joinWorkspacePath(root, path) : path
+    navigator.clipboard?.writeText(absolute).catch(() => {})
+  }, [backend.activeWorkspace?.path])
+
+  const handleCopyRelativePath = useCallback((path: string) => {
     navigator.clipboard?.writeText(path).catch(() => {})
   }, [])
+
+  /** Renames a file/folder via API, remaps open tabs, refreshes the tree. */
+  const handleTreeRename = useCallback(
+    async (from: string, to: string) => {
+      try {
+        await backend.renameFile(from, to)
+        const wsId = backend.activeWorkspace?.id
+        setOpenTabs((prev) =>
+          prev.map((t) => {
+            if (t.kind === 'settings') return t
+            if (!pathIsUnder(t.path, from)) return t
+            const newPath = remapAfterRename(t.path, from, to)
+            const name = newPath.split(/[\\/]/).pop() || newPath
+            if (t.kind === 'preview') {
+              return {
+                ...t,
+                id: wsId ? previewTabId(wsId, newPath) : t.id,
+                path: newPath,
+                name: `Preview: ${name}`,
+              }
+            }
+            return { ...t, id: newPath, path: newPath, name }
+          }),
+        )
+        setActiveTabId((prev) =>
+          prev ? remapTabIdAfterRename(prev, from, to, wsId) : prev,
+        )
+      } catch (err) {
+        console.error('Rename failed:', err)
+        window.alert(err instanceof Error ? err.message : 'Rename failed')
+      }
+    },
+    [backend],
+  )
+
+  /** Deletes a file/folder after confirm; closes matching tabs. */
+  const handleTreeDelete = useCallback(
+    async (path: string, kind: 'file' | 'folder') => {
+      const label = kind === 'folder' ? `folder "${path}"` : `"${path}"`
+      if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return
+      try {
+        await backend.deleteFile(path)
+        const wsId = backend.activeWorkspace?.id
+        setOpenTabs((prev) => {
+          const next = prev.filter(
+            (t) => t.kind === 'settings' || !pathIsUnder(t.path, path),
+          )
+          setActiveTabId((active) => {
+            if (!active || !tabIdTouchesPath(active, path, wsId)) return active
+            return next.length > 0 ? next[next.length - 1].id : null
+          })
+          return next
+        })
+      } catch (err) {
+        console.error('Delete failed:', err)
+        window.alert(err instanceof Error ? err.message : 'Delete failed')
+      }
+    },
+    [backend],
+  )
 
   const handleKeepOpen = useCallback((id: string) => {
     setOpenTabs((prev) => prev.map((t) => (t.id === id ? { ...t, isPreview: false } : t)))
@@ -544,8 +693,8 @@ export default function App() {
 
   // ---- File operations ----
   const handleFileSelect = async (path: string) => {
-    // Check if tab already open
-    const existing = openTabs.find((t) => t.path === path)
+    // Check if tab already open (file tabs only — preview tabs share path)
+    const existing = openTabs.find((t) => t.path === path && t.kind !== 'preview')
     if (existing) {
       setActiveTabId(existing.id)
       if (!isDesktop) setMobileView('editor')
@@ -583,12 +732,80 @@ export default function App() {
     }
   }
 
+  /** Opens a persistent browse-preview tab for an HTML entry point. */
+  const handleOpenPreview = (entryPath: string) => {
+    const workspaceId = backend.activeWorkspace?.id
+    if (!workspaceId) return
+    const tabId = previewTabId(workspaceId, entryPath)
+    const existing = openTabs.find((t) => t.id === tabId)
+    if (existing) {
+      setActiveTabId(existing.id)
+      if (!isDesktop) setMobileView('editor')
+      return
+    }
+    const name = entryPath.split(/[\\/]/).pop() || entryPath
+    const tab: Tab = {
+      id: tabId,
+      name: `Preview: ${name}`,
+      path: entryPath,
+      content: '',
+      revision: 0,
+      unsaved: false,
+      language: 'html',
+      kind: 'preview',
+      workspaceId,
+      isPreview: false,
+    }
+    setOpenTabs((prev) => [...prev, tab])
+    setActiveTabId(tabId)
+    if (!isDesktop) setMobileView('editor')
+  }
+
+  /** Prompts for a name and creates an empty file under the folder, then opens it. */
+  const handleTreeNewFile = async (parentPath: string) => {
+    const name = window.prompt('New file name')
+    if (!name?.trim()) return
+    const rel = joinUnderParent(parentPath, name)
+    try {
+      await backend.createFile(rel)
+      await handleFileSelect(rel)
+    } catch (err) {
+      console.error('Create file failed:', err)
+      window.alert(err instanceof Error ? err.message : 'Create file failed')
+    }
+  }
+
+  /** Prompts for a name and creates a folder under the parent path. */
+  const handleTreeNewFolder = async (parentPath: string) => {
+    const name = window.prompt('New folder name')
+    if (!name?.trim()) return
+    const rel = joinUnderParent(parentPath, name)
+    try {
+      await backend.mkdir(rel)
+    } catch (err) {
+      console.error('Create folder failed:', err)
+      window.alert(err instanceof Error ? err.message : 'Create folder failed')
+    }
+  }
+
+  // Desktop header TabBar Preview button (EditorPane uses the same helper).
+  const activeEditorTab = openTabs.find((t) => t.id === activeTabId) ?? null
+  const previewUi = editorTabPreviewState(activeEditorTab)
+  const handleTabBarPreview = () => {
+    if (!activeEditorTab) return
+    if (previewUi.isHtmlEntry) {
+      handleOpenPreview(activeEditorTab.path)
+      return
+    }
+    handleToggleViewMode(activeEditorTab.id)
+  }
+
   // Opens a file from a search result and jumps the editor cursor to the
   // matched line. If the file is already open in a tab, just activates it and
   // sets the line; otherwise loads the file first, then sets the line after
   // the content is available so the editor can resolve the line position.
   const handleSearchResultSelect = async (path: string, lineNumber: number): Promise<void> => {
-    const existing = openTabs.find((t) => t.path === path)
+    const existing = openTabs.find((t) => t.path === path && t.kind !== 'preview')
     if (existing) {
       setActiveTabId(existing.id)
     } else {
@@ -736,11 +953,14 @@ export default function App() {
                 onSave={handleSave}
                 wrap={wrap}
                 onToggleWrap={() => setWrap(!wrap)}
+                showPreview={previewUi.show}
+                previewActive={previewUi.active}
+                onPreview={handleTabBarPreview}
                 onCloseOthers={handleCloseOthers}
                 onCloseSaved={handleCloseSaved}
                 onCloseToRight={handleCloseToRight}
                 onCopyPath={handleCopyPath}
-                onCopyRelativePath={handleCopyPath}
+                onCopyRelativePath={handleCopyRelativePath}
                 onKeepOpen={handleKeepOpen}
               />
             </div>
@@ -804,6 +1024,13 @@ export default function App() {
         fileTree={fileTree}
         visible={showLeftSidebar}
         onFileSelect={handleFileSelect}
+        onOpenPreview={handleOpenPreview}
+        onCopyPath={handleCopyPath}
+        onCopyRelativePath={handleCopyRelativePath}
+        onRename={handleTreeRename}
+        onDelete={handleTreeDelete}
+        onNewFile={handleTreeNewFile}
+        onNewFolder={handleTreeNewFolder}
         workspaces={backend.workspaces}
         activeWorkspace={backend.activeWorkspace}
         onWorkspaceSelect={backend.selectWorkspace}
@@ -857,13 +1084,15 @@ export default function App() {
         wrap={wrap}
         onToggleWrap={() => setWrap(!wrap)}
         onToggleViewMode={handleToggleViewMode}
+        onOpenBrowsePreview={handleOpenPreview}
+        events={backend.events as AppEvent[]}
         isDesktop={isDesktop}
         workspaceName={backend.activeWorkspace?.name}
         onCloseOthers={handleCloseOthers}
         onCloseSaved={handleCloseSaved}
         onCloseToRight={handleCloseToRight}
         onCopyPath={handleCopyPath}
-        onCopyRelativePath={handleCopyPath}
+        onCopyRelativePath={handleCopyRelativePath}
         onKeepOpen={handleKeepOpen}
         fontSize={fontSize}
         onFontSizeChange={setFontSize}

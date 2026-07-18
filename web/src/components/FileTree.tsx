@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState, type MutableRefObject } from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import {
   ChevronRight,
@@ -6,10 +6,24 @@ import {
   Folder,
   FolderOpen,
   Circle,
+  Eye,
+  File,
+  FilePlus,
+  FolderPlus,
+  Pencil,
+  Trash2,
+  Copy,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from '@/lib/fileIcon'
 import type { FileTreeNode } from '@/types'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 /**
  * Row variants for every tree-node kind. The base carries the shared layout
@@ -43,9 +57,128 @@ const labelStyles = 'flex-1 truncate'
 /** Chevron-width spacer reserved on file rows so icons align with folder icons. */
 const chevronSpacer = 'w-3.5 shrink-0'
 
+/** True when the file can open in a browse-preview tab (.html / .htm). */
+function isHtmlFile(name: string): boolean {
+  return /\.html?$/i.test(name)
+}
+
+/** Replaces the final path segment — used when committing an inline rename. */
+function replaceBasename(path: string, newName: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const idx = normalized.lastIndexOf('/')
+  if (idx === -1) return newName
+  return `${normalized.slice(0, idx + 1)}${newName}`
+}
+
+/** Props shared by every recursive tree node for context-menu actions. */
+interface TreeActions {
+  onFileSelect: (path: string) => void
+  onOpenPreview?: (path: string) => void
+  onCopyPath?: (path: string) => void
+  onCopyRelativePath?: (path: string) => void
+  onRename?: (from: string, to: string) => void | Promise<void>
+  onDelete?: (path: string, kind: 'file' | 'folder') => void | Promise<void>
+  onNewFile?: (parentPath: string) => void | Promise<void>
+  onNewFolder?: (parentPath: string) => void | Promise<void>
+}
+
+/** Long-press (500ms) → open context menu; move/end/cancel clears the timer. */
+function longPressHandlers(
+  timer: MutableRefObject<ReturnType<typeof setTimeout> | null>,
+  clear: () => void,
+  onOpen: () => void,
+  enabled = true,
+) {
+  return {
+    onTouchStart: () => {
+      if (!enabled) return
+      clear()
+      timer.current = setTimeout(onOpen, 500)
+    },
+    onTouchEnd: clear,
+    onTouchMove: clear,
+    onTouchCancel: clear,
+  }
+}
+
+/** Shared Copy / Rename / Delete items for file and folder context menus. */
+function PathMenuItems({
+  path,
+  kind,
+  actions,
+  onClose,
+  onStartRename,
+  /** When true and this block has items, insert a separator before them. */
+  precedeWithSeparator = false,
+}: {
+  path: string
+  kind: 'file' | 'folder'
+  actions: TreeActions
+  onClose: () => void
+  onStartRename?: () => void
+  precedeWithSeparator?: boolean
+}) {
+  const hasCopy = !!(actions.onCopyPath || actions.onCopyRelativePath)
+  const hasMutate = !!(actions.onRename || actions.onDelete)
+  if (!hasCopy && !hasMutate) return null
+
+  return (
+    <>
+      {precedeWithSeparator && <DropdownMenuSeparator />}
+      {actions.onCopyPath && (
+        <DropdownMenuItem
+          onSelect={() => {
+            actions.onCopyPath?.(path)
+            onClose()
+          }}
+        >
+          <Copy className="w-3.5 h-3.5" />
+          Copy Path
+        </DropdownMenuItem>
+      )}
+      {actions.onCopyRelativePath && (
+        <DropdownMenuItem
+          onSelect={() => {
+            actions.onCopyRelativePath?.(path)
+            onClose()
+          }}
+        >
+          <Copy className="w-3.5 h-3.5" />
+          Copy Relative Path
+        </DropdownMenuItem>
+      )}
+      {hasCopy && hasMutate && <DropdownMenuSeparator />}
+      {actions.onRename && onStartRename && (
+        <DropdownMenuItem
+          onSelect={() => {
+            onStartRename()
+            onClose()
+          }}
+        >
+          <Pencil className="w-3.5 h-3.5" />
+          Rename
+        </DropdownMenuItem>
+      )}
+      {actions.onDelete && (
+        <DropdownMenuItem
+          variant="destructive"
+          onSelect={() => {
+            void actions.onDelete?.(path, kind)
+            onClose()
+          }}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          Delete
+        </DropdownMenuItem>
+      )}
+    </>
+  )
+}
+
 /**
  * Recursive file tree node (Blueprint Sec 17 — file explorer).
- * Supports expand/collapse, unsaved-change indicators, and active file highlight.
+ * Supports expand/collapse, unsaved-change indicators, active file highlight,
+ * and a right-click / long-press context menu on every file and folder row.
  *
  * Indentation is produced by nesting each expanded folder's children inside a
  * `pl-[20px]` wrapper rather than computing a per-node margin. Each level of
@@ -60,29 +193,137 @@ function TreeNode({
   node,
   expandedPaths,
   onToggleExpand,
-  onFileSelect,
+  menuPath,
+  setMenuPath,
+  renamingPath,
+  setRenamingPath,
+  longPressTimer,
+  clearLongPress,
+  ...actions
 }: {
   node: FileTreeNode
   expandedPaths: Set<string>
   onToggleExpand: (path: string) => void
-  onFileSelect: (path: string) => void
-}) {
+  menuPath: string | null
+  setMenuPath: (path: string | null) => void
+  renamingPath: string | null
+  setRenamingPath: (path: string | null) => void
+  longPressTimer: MutableRefObject<ReturnType<typeof setTimeout> | null>
+  clearLongPress: () => void
+} & TreeActions) {
   const nodePath = node.path || node.name
+  const isFolder = node.type === 'folder'
+  const isRenaming = renamingPath === nodePath
+  const menuOpen = menuPath === nodePath
+  const [renameValue, setRenameValue] = useState(node.name)
 
-  if (node.type === 'folder') {
+  const openMenu = () => setMenuPath(nodePath)
+  const closeMenu = () => setMenuPath(null)
+  const touchHandlers = longPressHandlers(longPressTimer, clearLongPress, openMenu)
+  const startRename = () => {
+    setRenameValue(node.name)
+    setRenamingPath(nodePath)
+  }
+
+  const commitRename = () => {
+    const trimmed = renameValue.trim()
+    setRenamingPath(null)
+    if (!trimmed || trimmed === node.name || !actions.onRename) return
+    void actions.onRename(nodePath, replaceBasename(nodePath, trimmed))
+  }
+
+  const renameInput = (
+    <input
+      autoFocus
+      value={renameValue}
+      onChange={(e) => setRenameValue(e.target.value)}
+      onBlur={commitRename}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          commitRename()
+        } else if (e.key === 'Escape') {
+          e.preventDefault()
+          setRenameValue(node.name)
+          setRenamingPath(null)
+        }
+      }}
+      onClick={(e) => e.stopPropagation()}
+      className="flex-1 min-w-0 bg-background text-foreground text-sm rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring"
+      aria-label={`Rename ${node.name}`}
+    />
+  )
+
+  if (isFolder) {
     const isExpanded = expandedPaths.has(nodePath)
     const ChevronIcon = isExpanded ? ChevronDown : ChevronRight
     const FolderIcon = isExpanded ? FolderOpen : Folder
+
+    const folderRow = (
+      <div
+        className={rowStyles({ kind: 'folder' })}
+        onClick={() => {
+          if (!isRenaming) onToggleExpand(nodePath)
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          openMenu()
+        }}
+        {...touchHandlers}
+      >
+        <ChevronIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        <FolderIcon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-primary')} />
+        {isRenaming ? renameInput : <span className={labelStyles}>{node.name}</span>}
+      </div>
+    )
+
     return (
       <>
-        <div
-          className={rowStyles({ kind: 'folder' })}
-          onClick={() => onToggleExpand(nodePath)}
-        >
-          <ChevronIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <FolderIcon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-primary')} />
-          <span className={labelStyles}>{node.name}</span>
-        </div>
+        {isRenaming ? (
+          folderRow
+        ) : (
+          <DropdownMenu
+            open={menuOpen}
+            onOpenChange={(open) => {
+              if (!open) closeMenu()
+            }}
+          >
+            <DropdownMenuTrigger asChild>{folderRow}</DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {actions.onNewFile && (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void actions.onNewFile?.(nodePath)
+                    closeMenu()
+                  }}
+                >
+                  <FilePlus className="w-3.5 h-3.5" />
+                  New File
+                </DropdownMenuItem>
+              )}
+              {actions.onNewFolder && (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void actions.onNewFolder?.(nodePath)
+                    closeMenu()
+                  }}
+                >
+                  <FolderPlus className="w-3.5 h-3.5" />
+                  New Folder
+                </DropdownMenuItem>
+              )}
+              <PathMenuItems
+                path={nodePath}
+                kind="folder"
+                actions={actions}
+                onClose={closeMenu}
+                onStartRename={startRename}
+                precedeWithSeparator={!!(actions.onNewFile || actions.onNewFolder)}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {isExpanded && node.children && (
           // Indent children by the chevron + gap footprint (w-3.5 + gap-1.5 =
           // 20px) so nested icons line up under this folder's icon rather than
@@ -94,7 +335,13 @@ function TreeNode({
                 node={child}
                 expandedPaths={expandedPaths}
                 onToggleExpand={onToggleExpand}
-                onFileSelect={onFileSelect}
+                menuPath={menuPath}
+                setMenuPath={setMenuPath}
+                renamingPath={renamingPath}
+                setRenamingPath={setRenamingPath}
+                longPressTimer={longPressTimer}
+                clearLongPress={clearLongPress}
+                {...actions}
               />
             ))}
           </div>
@@ -108,21 +355,73 @@ function TreeNode({
   // icons at the same depth. Without it, files render ~20px left of sibling
   // folders because they lack the chevron glyph.
   const kind: RowKind = node.active ? 'active' : 'default'
+  const showPreview = !!actions.onOpenPreview && isHtmlFile(node.name)
 
-  return (
+  const fileRow = (
     <div
       className={rowStyles({ kind })}
-      onClick={() => onFileSelect(nodePath)}
+      onClick={() => {
+        if (!isRenaming) actions.onFileSelect(nodePath)
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        openMenu()
+      }}
+      {...touchHandlers}
     >
       <span className={chevronSpacer} aria-hidden />
       <FileIcon name={node.name} className="w-4 h-4 shrink-0" />
-      <span className={labelStyles}>{node.name}</span>
+      {isRenaming ? renameInput : <span className={labelStyles}>{node.name}</span>}
       {node.unsaved && (
         <div title="Unsaved changes" className="shrink-0">
           <Circle className="w-2 h-2 text-primary fill-primary" />
         </div>
       )}
     </div>
+  )
+
+  if (isRenaming) return fileRow
+
+  return (
+    <DropdownMenu
+      open={menuOpen}
+      onOpenChange={(open) => {
+        if (!open) closeMenu()
+      }}
+    >
+      <DropdownMenuTrigger asChild>{fileRow}</DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuItem
+          onSelect={() => {
+            actions.onFileSelect(nodePath)
+            closeMenu()
+          }}
+        >
+          <File className="w-3.5 h-3.5" />
+          Open
+        </DropdownMenuItem>
+        {showPreview && (
+          <DropdownMenuItem
+            onSelect={() => {
+              actions.onOpenPreview?.(nodePath)
+              closeMenu()
+            }}
+          >
+            <Eye className="w-3.5 h-3.5" />
+            Open Preview
+          </DropdownMenuItem>
+        )}
+        <PathMenuItems
+          path={nodePath}
+          kind="file"
+          actions={actions}
+          onClose={closeMenu}
+          onStartRename={startRename}
+          precedeWithSeparator
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -159,18 +458,46 @@ function saveExpandedPaths(workspaceId: string | null, expanded: Set<string>): v
   }
 }
 
+/** Sentinel menuPath for the empty explorer background (workspace root). */
+const ROOT_MENU_KEY = ''
+
 /** File tree container — renders the workspace file explorer. */
 export function FileTree({
   nodes,
   onFileSelect,
+  onOpenPreview,
+  onCopyPath,
+  onCopyRelativePath,
+  onRename,
+  onDelete,
+  onNewFile,
+  onNewFolder,
   workspaceId = null,
 }: {
   nodes: FileTreeNode[]
   onFileSelect: (path: string) => void
+  /** Opens a browse-preview tab for an HTML entry point (context menu). */
+  onOpenPreview?: (path: string) => void
+  onCopyPath?: (path: string) => void
+  onCopyRelativePath?: (path: string) => void
+  onRename?: (from: string, to: string) => void | Promise<void>
+  onDelete?: (path: string, kind: 'file' | 'folder') => void | Promise<void>
+  onNewFile?: (parentPath: string) => void | Promise<void>
+  onNewFolder?: (parentPath: string) => void | Promise<void>
   /** Active workspace ID — used to key localStorage persistence of expanded folders. */
   workspaceId?: string | null
 }) {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => loadExpandedPaths(workspaceId))
+  const [menuPath, setMenuPath] = useState<string | null>(null)
+  const [renamingPath, setRenamingPath] = useState<string | null>(null)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
 
   // Recompute the expanded set when the workspace changes (e.g. workspace switch
   // changes workspaceId). Without this, paths from the previous workspace linger
@@ -183,6 +510,8 @@ export function FileTree({
   if (workspaceId !== prevWorkspaceId) {
     setPrevWorkspaceId(workspaceId)
     setExpandedPaths(loadExpandedPaths(workspaceId))
+    setMenuPath(null)
+    setRenamingPath(null)
   }
 
   const handleToggleExpand = (path: string) => {
@@ -198,17 +527,120 @@ export function FileTree({
     })
   }
 
+  /** Ensures a folder is expanded after creating a child under it. */
+  const ensureExpanded = (path: string) => {
+    if (!path) return // workspace root — nothing to expand
+    setExpandedPaths((prev) => {
+      if (prev.has(path)) return prev
+      const next = new Set(prev)
+      next.add(path)
+      saveExpandedPaths(workspaceId, next)
+      return next
+    })
+  }
+
+  const wrapNewFile = onNewFile
+    ? async (parentPath: string) => {
+        ensureExpanded(parentPath)
+        await onNewFile(parentPath)
+      }
+    : undefined
+
+  const wrapNewFolder = onNewFolder
+    ? async (parentPath: string) => {
+        ensureExpanded(parentPath)
+        await onNewFolder(parentPath)
+      }
+    : undefined
+
+  const actions: TreeActions = {
+    onFileSelect,
+    onOpenPreview,
+    onCopyPath,
+    onCopyRelativePath,
+    onRename,
+    onDelete,
+    onNewFile: wrapNewFile,
+    onNewFolder: wrapNewFolder,
+  }
+
+  const openRootMenu = () => setMenuPath(ROOT_MENU_KEY)
+  const rootMenuOpen = menuPath === ROOT_MENU_KEY
+  const showRootCreate = !!(onNewFile || onNewFolder)
+  const rootTouchHandlers = longPressHandlers(
+    longPressTimer,
+    clearLongPress,
+    openRootMenu,
+    showRootCreate,
+  )
+
+  /** Empty-area fill: right-click / long-press → New File / New Folder at root. */
+  const backgroundFill = showRootCreate ? (
+    <DropdownMenu
+      open={rootMenuOpen}
+      onOpenChange={(open) => {
+        if (!open) setMenuPath(null)
+      }}
+    >
+      <DropdownMenuTrigger asChild>
+        <div
+          className="flex-1 min-h-12 outline-none"
+          aria-label="Explorer empty area"
+          onContextMenu={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            openRootMenu()
+          }}
+          {...rootTouchHandlers}
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {onNewFile && (
+          <DropdownMenuItem
+            onSelect={() => {
+              void wrapNewFile?.(ROOT_MENU_KEY)
+              setMenuPath(null)
+            }}
+          >
+            <FilePlus className="w-3.5 h-3.5" />
+            New File
+          </DropdownMenuItem>
+        )}
+        {onNewFolder && (
+          <DropdownMenuItem
+            onSelect={() => {
+              void wrapNewFolder?.(ROOT_MENU_KEY)
+              setMenuPath(null)
+            }}
+          >
+            <FolderPlus className="w-3.5 h-3.5" />
+            New Folder
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : (
+    <div className="flex-1 min-h-12" aria-hidden />
+  )
+
   return (
-    <div className="flex-1 overflow-y-auto px-2 pb-2 text-sm">
+    <div className="flex flex-1 flex-col min-h-0 overflow-y-auto px-2 pb-2 text-sm">
       {nodes.map((node) => (
         <TreeNode
           key={node.path || node.name}
           node={node}
           expandedPaths={expandedPaths}
           onToggleExpand={handleToggleExpand}
-          onFileSelect={onFileSelect}
+          menuPath={menuPath}
+          setMenuPath={setMenuPath}
+          renamingPath={renamingPath}
+          setRenamingPath={setRenamingPath}
+          longPressTimer={longPressTimer}
+          clearLongPress={clearLongPress}
+          {...actions}
         />
       ))}
+      {backgroundFill}
     </div>
   )
 }

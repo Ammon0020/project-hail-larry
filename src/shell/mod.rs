@@ -64,10 +64,6 @@ pub enum ShellError {
     #[error("spawn command: {0}")]
     Spawn(std::io::Error),
 
-    /// stdout/stderr could not be captured (pipe setup failure).
-    #[error("pipe setup: {0}")]
-    Pipe(std::io::Error),
-
     /// The command was cancelled (token fired or timeout elapsed) and the
     /// process group was signalled. The partial [`CommandResult`] is still
     /// returned to the caller alongside this error so streamed output is not

@@ -48,6 +48,19 @@ function authHeader(): string | null {
 }
 
 /**
+ * Appends deviceId/secret query params when a credential is stored.
+ * Used by raw + preview URLs (media/iframe tags cannot set Authorization).
+ */
+function appendDeviceCredential(params: URLSearchParams): URLSearchParams {
+  const cred = getDeviceCredential()
+  if (cred) {
+    params.set('deviceId', cred.id)
+    params.set('secret', cred.secret)
+  }
+  return params
+}
+
+/**
  * Builds a URL for the raw file serving endpoint (GET /api/workspaces/{id}/raw).
  * Unlike apiFetch, this is used directly in <img>, <video>, <iframe> src
  * attributes and fetch() blob downloads — browser media tags cannot set
@@ -57,13 +70,24 @@ function authHeader(): string | null {
  * entirely, so the host browser works without credentials.
  */
 export function rawFileUrl(workspaceId: string, path: string): string {
-  const params = new URLSearchParams({ path })
-  const cred = getDeviceCredential()
-  if (cred) {
-    params.set('deviceId', cred.id)
-    params.set('secret', cred.secret)
-  }
+  const params = appendDeviceCredential(new URLSearchParams({ path }))
   return `${API_BASE}/workspaces/${workspaceId}/raw?${params.toString()}`
+}
+
+/**
+ * Builds a URL for the browse-preview endpoint (GET /preview/{id}/{path}).
+ * Top-level `/preview/...` (not under `/api`) so relative asset URLs in the
+ * iframe resolve correctly. Credentials are appended as query params the same
+ * way as rawFileUrl — media tags / iframes cannot set Authorization headers.
+ */
+export function previewFileUrl(workspaceId: string, entryPath: string): string {
+  const segments = entryPath
+    .split(/[/\\]+/)
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join('/')
+  const qs = appendDeviceCredential(new URLSearchParams()).toString()
+  return `/preview/${encodeURIComponent(workspaceId)}/${segments}${qs ? `?${qs}` : ''}`
 }
 
 /**
@@ -204,6 +228,24 @@ export const api = {
     apiFetch<{ revision: number; path: string }>(`/workspaces/${workspaceId}/file`, {
       method: 'POST',
       body: JSON.stringify({ path, content, expectedRevision }),
+    }),
+  /** DELETE /api/workspaces/{id}/file?path= — removes a file (or empty folder). */
+  deleteFile: (workspaceId: string, path: string) =>
+    apiFetch<{ status: string }>(
+      `/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
+      { method: 'DELETE' },
+    ),
+  /** POST /api/workspaces/{id}/rename — renames/moves a file or folder. */
+  renameFile: (workspaceId: string, from: string, to: string) =>
+    apiFetch<{ status: string }>(`/workspaces/${workspaceId}/rename`, {
+      method: 'POST',
+      body: JSON.stringify({ from, to }),
+    }),
+  /** POST /api/workspaces/{id}/mkdir — creates a directory (parents as needed). */
+  mkdir: (workspaceId: string, path: string) =>
+    apiFetch<{ status: string }>(`/workspaces/${workspaceId}/mkdir`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
     }),
   searchWorkspace: (workspaceId: string, opts: SearchOptions) => {
     const params = new URLSearchParams()

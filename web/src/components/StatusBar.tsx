@@ -26,7 +26,7 @@ export function StatusBar({
         <span className="hidden md:flex items-center gap-1"><TriangleAlert className="w-3 h-3" /> 0 warnings</span>
       </div>
       <div className="flex items-center gap-3">
-        {activeTab?.kind !== 'settings' && !activeTab?.isBinary && (
+        {activeTab?.kind !== 'settings' && activeTab?.kind !== 'preview' && !activeTab?.isBinary && (
           <div className="flex items-center gap-1">
             <button
               onClick={() => onFontSizeChange((s) => Math.max(8, s - 1))}
@@ -47,7 +47,13 @@ export function StatusBar({
             </button>
           </div>
         )}
-        <span className="hidden md:inline">{activeTab?.kind === 'settings' ? 'Settings' : (activeTab?.language || 'Plain Text')}</span>
+        <span className="hidden md:inline">
+          {activeTab?.kind === 'settings'
+            ? 'Settings'
+            : activeTab?.kind === 'preview'
+              ? 'Preview'
+              : (activeTab?.language || 'Plain Text')}
+        </span>
         <span className="hidden md:inline">UTF-8</span>
         <span className="hidden md:inline">LF</span>
         <span>Ln 1, Col 1</span>

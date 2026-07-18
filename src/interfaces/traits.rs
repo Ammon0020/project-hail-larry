@@ -88,6 +88,16 @@ pub trait WorkspaceManager: Send + Sync {
         expected_revision: i64,
     ) -> Result<i64, AppError>;
 
+    /// Delete a file or empty directory. Non-empty directories are rejected.
+    async fn delete_path(&self, workspace_id: &str, rel_path: &str) -> Result<(), AppError>;
+
+    /// Rename/move a path within the workspace. Fails if the destination exists.
+    async fn rename_path(&self, workspace_id: &str, from: &str, to: &str) -> Result<(), AppError>;
+
+    /// Create a directory (and parents as needed). Idempotent if it already
+    /// exists as a directory; conflicts if the path exists as a file.
+    async fn mkdir(&self, workspace_id: &str, rel_path: &str) -> Result<(), AppError>;
+
     /// Workspace-wide content search. DTOs live in `interfaces::types` so this
     /// trait does not depend on the search implementation.
     async fn search(

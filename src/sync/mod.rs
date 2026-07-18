@@ -87,25 +87,23 @@ impl Hub {
     /// Create a hub without an event bus (broadcast-only, Go parity).
     #[must_use]
     pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            clients: DashMap::new(),
-            next_id: AtomicU64::new(1),
-            auth: RwLock::new(None),
-            cancel: CancellationToken::new(),
-            bus: None,
-        })
+        Self::with_bus(None)
     }
 
     /// Create a hub that can replay/resync via the event bus when clients pass
     /// `?after=<id>` (or when a slow client's send buffer fills).
     #[must_use]
     pub fn with_event_bus(bus: SharedEventBus) -> Arc<Self> {
+        Self::with_bus(Some(bus))
+    }
+
+    fn with_bus(bus: Option<SharedEventBus>) -> Arc<Self> {
         Arc::new(Self {
             clients: DashMap::new(),
             next_id: AtomicU64::new(1),
             auth: RwLock::new(None),
             cancel: CancellationToken::new(),
-            bus: Some(bus),
+            bus,
         })
     }
 

@@ -726,6 +726,13 @@ fn error_map_stale_revision() {
 }
 
 #[test]
+fn error_map_conflict() {
+    let api = map_api_error(&AppError::conflict("destination already exists: b.txt"));
+    assert_eq!(api.status, ApiStatusCode::CONFLICT);
+    assert_eq!(api.body.error, "destination already exists: b.txt");
+}
+
+#[test]
 fn error_map_unsupported() {
     let api = map_api_error(&AppError::unsupported(
         "agent does not support provider management",

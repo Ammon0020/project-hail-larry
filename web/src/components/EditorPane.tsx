@@ -13,18 +13,18 @@ import { LanguageDescription, bracketMatching, foldGutter, indentOnInput, indent
 import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Prec, EditorSelection } from '@codemirror/state'
-import { TriangleAlert, FileText, RefreshCw, Eye, Code } from 'lucide-react'
+import { TriangleAlert, FileText, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { FileViewer } from '@/components/FileViewer'
+import { BrowsePreview } from '@/components/BrowsePreview'
 import { StatusBar } from '@/components/StatusBar'
-import { TabBar } from './TabBar'
+import { TabBar, editorTabPreviewState } from './TabBar'
 import { BreadcrumbBar } from './BreadcrumbBar'
-import type { Agent } from '@/types'
+import type { Agent, AppEvent, Tab } from '@/types'
 import type { Extension } from '@codemirror/state'
 import type { LanguageSupport } from '@codemirror/language'
-import type { Tab } from '@/types'
 
 /**
  * Editor pane — tabbed CodeMirror 6 with diff/save and status bar
@@ -49,6 +49,8 @@ export function EditorPane({
   wrap = false,
   onToggleWrap,
   onToggleViewMode,
+  onOpenBrowsePreview,
+  events,
   isDesktop,
   workspaceName,
   onCloseOthers,
@@ -96,9 +98,12 @@ export function EditorPane({
   wrap?: boolean
   onToggleWrap?: () => void
   /** Toggles a text-preview tab between edit (CodeMirror) and preview
-   *  (FileViewer) modes. Called when the user clicks the Preview/View Raw
-   *  button in the TabBar actions area. */
+   *  (FileViewer) modes for non-HTML previewable files. */
   onToggleViewMode?: (id: string) => void
+  /** Opens a browse-preview tab for HTML/HTM entry points (multi-file site). */
+  onOpenBrowsePreview?: (entryPath: string) => void
+  /** Backend event stream — forwarded to BrowsePreview for live reload. */
+  events?: AppEvent[]
   /** Whether the viewport is desktop-sized (≥1024px). When false, the editor
    *  applies touch-friendly theme tweaks: larger line height, wider gutters,
    *  bigger font, and disables mouse-only selection modes. */
@@ -123,6 +128,18 @@ export function EditorPane({
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
   const mobile = !(isDesktop ?? true)
+
+  // Preview in TabBar: HTML/HTM opens browse-preview; other previewable
+  // text types toggle FileViewer viewMode (shared with desktop header TabBar).
+  const previewUi = editorTabPreviewState(activeTab)
+  const handlePreviewAction = () => {
+    if (!activeTab) return
+    if (previewUi.isHtmlEntry) {
+      onOpenBrowsePreview?.(activeTab.path)
+      return
+    }
+    onToggleViewMode?.(activeTab.id)
+  }
 
   // Keep a ref to the latest onSave so the memoized CodeMirror Ctrl+S keybinding
   // always calls the fresh closure. Without this, the keybinding captures the
@@ -165,27 +182,37 @@ export function EditorPane({
     })
   }, [scrollToLine, activeTabId])
 
-  // On mobile, when the soft keyboard opens/closes the viewport height changes.
-  // Scroll the cursor back into view so the line being edited isn't hidden
-  // behind the keyboard. Only active on touch devices.
+  // On mobile, soft-keyboard open/close (and iOS visualViewport scroll) can hide
+  // the caret under the keyboard or bottom chrome. Keep the cursor in view.
   useEffect(() => {
     if (!mobile) return
-    const onResize = () => {
+    const keepCursorInView = () => {
       if (!activeTabId) return
       const view = editorViewsRef.current[activeTabId]
       if (!view) return
+      // Keyboard likely open when visualViewport is much shorter than the
+      // layout viewport — center the caret so it stays above the keyboard.
+      const vv = window.visualViewport
+      const keyboardLikelyOpen =
+        !!vv && vv.height < window.innerHeight * 0.75
       view.dispatch({
-        effects: EditorView.scrollIntoView(view.state.selection.main.head, { y: 'nearest' }),
+        effects: EditorView.scrollIntoView(view.state.selection.main.head, {
+          y: keyboardLikelyOpen ? 'center' : 'nearest',
+        }),
       })
     }
-    window.addEventListener('resize', onResize)
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', onResize)
+    window.addEventListener('resize', keepCursorInView)
+    const vv = window.visualViewport
+    if (vv) {
+      vv.addEventListener('resize', keepCursorInView)
+      // iOS pans the visual viewport on focus; resize alone is not enough.
+      vv.addEventListener('scroll', keepCursorInView)
     }
     return () => {
-      window.removeEventListener('resize', onResize)
-      if (window.visualViewport) {
-        window.visualViewport.removeEventListener('resize', onResize)
+      window.removeEventListener('resize', keepCursorInView)
+      if (vv) {
+        vv.removeEventListener('resize', keepCursorInView)
+        vv.removeEventListener('scroll', keepCursorInView)
       }
     }
   }, [mobile, activeTabId])
@@ -260,10 +287,11 @@ export function EditorPane({
    *     (without this, CodeMirror only occupies the height of its content).
    *  3. Search panel (Ctrl+F) — @codemirror/search.
    *  4. Autocompletion — @codemirror/autocomplete.
-   *  5. Language-level: bracket matching, fold gutter, indent-on-input,
+   *  5. Language-level: bracket matching, fold gutter (desktop), indent-on-input,
    *     2-space indent unit.
    *  6. View-level: active line + gutter highlight, draw selection,
-   *     highlight special chars, rectangular selection, crosshair cursor.
+   *     highlight special chars; desktop adds rectangular selection +
+   *     crosshair; mobile disables text DnD and sets scrollMargins for chrome.
    *  7. Standard keybindings: defaultKeymap + historyKeymap + indentWithTab.
    *  8. Line wrapping (conditional on the `wrap` toggle).
    *  9. Ctrl+S keybinding at the highest precedence so it overrides the
@@ -273,7 +301,27 @@ export function EditorPane({
    * closeBrackets, and other conveniences; the extensions below supplement it
    * with the features that make it feel like a real editor.
    */
+  // Mobile-aware basicSetup — fold/dropCursor must match extensions below so
+  // @uiw/react-codemirror does not fight our mobile touch tweaks.
+  const basicSetup = useMemo(
+    () => ({
+      lineNumbers: true,
+      foldGutter: !mobile,
+      dropCursor: !mobile,
+      highlightActiveLine: true,
+      autocompletion: true,
+      bracketMatching: true,
+      closeBrackets: true,
+      indentOnInput: true,
+    }),
+    [mobile],
+  )
+
   const getExtensions = (lang: string, tabPath: string): Extension[] => {
+    // ~1.9× font gives comfortable finger targets without a fixed px that
+    // drifts when the user changes StatusBar font size.
+    const mobileLineHeight = `${Math.round(fontSize * 1.9)}px`
+
     const exts: Extension[] = [
       ...getLanguageExtension(lang, tabPath),
 
@@ -296,7 +344,7 @@ export function EditorPane({
         '.cm-content': {
           minHeight: '100%',
           paddingBottom: '50vh',
-          ...(mobile ? { lineHeight: '28px' } : {}),
+          ...(mobile ? { lineHeight: mobileLineHeight } : {}),
         },
         '.cm-gutters': {
           minHeight: '100%',
@@ -313,9 +361,9 @@ export function EditorPane({
       // Autocompletion
       autocompletion(),
 
-      // Language-level features
+      // Language-level features (fold gutter skipped on mobile — tiny targets)
       bracketMatching(),
-      foldGutter(),
+      ...(!mobile ? [foldGutter()] : []),
       indentOnInput(),
       indentUnit.of('  '),
 
@@ -324,7 +372,16 @@ export function EditorPane({
       highlightActiveLineGutter(),
       drawSelection(),
       highlightSpecialChars(),
-      ...(!mobile ? [rectangularSelection(), crosshairCursor()] : []),
+      // Mouse-only / DnD affordances — skip on touch so long-press select
+      // and accidental drags do not fight the soft keyboard.
+      ...(!mobile
+        ? [rectangularSelection(), crosshairCursor()]
+        : [EditorView.dragMovesSelection.of(() => false)]),
+      // Reserve space for bottom nav (pb-16) + StatusBar so scrollIntoView
+      // does not tuck the caret under chrome when the keyboard is closed.
+      ...(mobile
+        ? [EditorView.scrollMargins.of(() => ({ bottom: 100 }))]
+        : []),
 
       // Standard keybindings: default + history + tab-to-indent
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
@@ -405,6 +462,9 @@ export function EditorPane({
           onSave={onSave}
           wrap={wrap}
           onToggleWrap={onToggleWrap}
+          showPreview={previewUi.show}
+          previewActive={previewUi.active}
+          onPreview={handlePreviewAction}
           onCloseOthers={onCloseOthers}
           onCloseSaved={onCloseSaved}
           onCloseToRight={onCloseToRight}
@@ -416,37 +476,11 @@ export function EditorPane({
 
       {/* Breadcrumb bar — shows the active file's path relative to the
           workspace root, between the tab bar and the editor content. */}
-      {activeTab && activeTab.kind !== 'settings' && (
+      {activeTab && activeTab.kind !== 'settings' && activeTab.kind !== 'preview' && (
         <BreadcrumbBar
           path={activeTab.path}
           workspaceName={workspaceName ?? 'workspace'}
         />
-      )}
-
-      {/* Preview / View Raw toggle — shown for text-preview files (SVG, CSV,
-          HTML, OBJ, etc.) that can be both edited in CodeMirror and viewed
-          in a visual preview. Binary-only files don't get this toggle since
-          they always show FileViewer. */}
-      {activeTab?.previewable && !activeTab.isBinary && onToggleViewMode && (
-        <div className="flex items-center gap-2 px-3 py-1 border-b border-border bg-panel text-xs text-muted-foreground shrink-0">
-          {activeTab.viewMode === 'preview' ? (
-            <button
-              type="button"
-              onClick={() => onToggleViewMode(activeTab.id)}
-              className="flex items-center gap-1.5 font-medium text-foreground hover:text-primary transition"
-            >
-              <Code className="w-3.5 h-3.5" /> View Raw
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onToggleViewMode(activeTab.id)}
-              className="flex items-center gap-1.5 font-medium text-foreground hover:text-primary transition"
-            >
-              <Eye className="w-3.5 h-3.5" /> Preview
-            </button>
-          )}
-        </div>
       )}
 
       {/* Changed-on-disk banner — shown when the active tab's file was modified
@@ -454,7 +488,7 @@ export function EditorPane({
           edits, so its content was NOT auto-refreshed. Offers a Reload that
           discards local edits and fetches the on-disk version. Uses the
           warning semantic token so it adapts to the active theme. */}
-      {activeTab?.changedOnDisk && activeTab.kind !== 'settings' && (
+      {activeTab?.changedOnDisk && activeTab.kind !== 'settings' && activeTab.kind !== 'preview' && (
         <div className="flex items-center justify-between gap-2 bg-warning/10 border-b border-warning/40 px-3 py-1.5 text-xs text-warning shrink-0">
           <span className="flex items-center gap-1.5">
             <TriangleAlert className="w-3.5 h-3.5" />
@@ -478,7 +512,20 @@ export function EditorPane({
           </div>
         )}
 
-        {tabs.filter(t => t.kind !== 'settings').map(tab => {
+        {tabs.filter(t => t.kind === 'preview').map(tab => (
+          <div
+            key={tab.id}
+            className={cn('absolute inset-0', activeTabId === tab.id ? 'block' : 'hidden')}
+          >
+            <BrowsePreview
+              workspaceId={tab.workspaceId ?? ''}
+              entryPath={tab.path}
+              events={events}
+            />
+          </div>
+        ))}
+
+        {tabs.filter(t => t.kind !== 'settings' && t.kind !== 'preview').map(tab => {
           // Binary files always go to FileViewer. Text-preview files (SVG,
           // CSV, HTML, OBJ, etc.) go to FileViewer only when the user has
           // toggled to preview mode; otherwise they edit in CodeMirror.
@@ -500,15 +547,7 @@ export function EditorPane({
               onCreateEditor={(view) => {
                 editorViewsRef.current[tab.id] = view
               }}
-              basicSetup={{
-                lineNumbers: true,
-                foldGutter: true,
-                highlightActiveLine: true,
-                autocompletion: true,
-                bracketMatching: true,
-                closeBrackets: true,
-                indentOnInput: true,
-              }}
+              basicSetup={basicSetup}
             />
           </div>
           )

@@ -56,6 +56,7 @@ export function useFileChangeDetection(
     )
 
     for (const tab of openTabs) {
+      if (tab.kind === 'settings' || tab.kind === 'preview') continue
       if (!changedPaths.has(tab.path) || tab.unsaved) continue
       readFile(tab.path, tab.workspaceId)
         .then((file) => {

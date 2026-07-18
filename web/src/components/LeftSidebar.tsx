@@ -16,6 +16,13 @@ export function LeftSidebar({
   fileTree,
   visible,
   onFileSelect,
+  onOpenPreview,
+  onCopyPath,
+  onCopyRelativePath,
+  onRename,
+  onDelete,
+  onNewFile,
+  onNewFolder,
   workspaces,
   activeWorkspace,
   onWorkspaceSelect,
@@ -28,6 +35,14 @@ export function LeftSidebar({
   fileTree: FileTreeNode[]
   visible: boolean
   onFileSelect: (path: string) => void
+  /** Opens a browse-preview tab for an HTML entry (file-tree context menu). */
+  onOpenPreview?: (path: string) => void
+  onCopyPath?: (path: string) => void
+  onCopyRelativePath?: (path: string) => void
+  onRename?: (from: string, to: string) => void | Promise<void>
+  onDelete?: (path: string, kind: 'file' | 'folder') => void | Promise<void>
+  onNewFile?: (parentPath: string) => void | Promise<void>
+  onNewFolder?: (parentPath: string) => void | Promise<void>
   workspaces: { id: string; name: string; path: string }[]
   activeWorkspace: { id: string; name: string; path: string } | null
   onWorkspaceSelect: (ws: { id: string; name: string; path: string }) => void
@@ -88,7 +103,18 @@ export function LeftSidebar({
           <div className="px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider shrink-0">
             Explorer
           </div>
-          <FileTree nodes={fileTree} onFileSelect={onFileSelect} workspaceId={activeWorkspace?.id ?? null} />
+          <FileTree
+            nodes={fileTree}
+            onFileSelect={onFileSelect}
+            onOpenPreview={onOpenPreview}
+            onCopyPath={onCopyPath}
+            onCopyRelativePath={onCopyRelativePath}
+            onRename={onRename}
+            onDelete={onDelete}
+            onNewFile={onNewFile}
+            onNewFolder={onNewFolder}
+            workspaceId={activeWorkspace?.id ?? null}
+          />
         </>
       )}
 

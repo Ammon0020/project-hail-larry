@@ -16,9 +16,10 @@ Tracked gaps and decisions to address in the Local Agent Interface blueprint and
   roots, list/CLI `available:false` + error, no config auto-prune. Story:
   `docs/plans/stories/pending-missing_workspace_user_warning-med-med.md`
 - [ ] **Team collaboration** — Shared workspaces, multiple operators
-- [ ] **Editor on mobile** — CodeMirror 6 is lighter than Monaco but still needs touch-optimized configuration (larger line heights, disable drag-and-drop, simplified gutter) for small edits on phones
-- [ ] **Session replay** — Superseded/expanded by agent-owned history epic:
-  `docs/plans/pending-acp-agent-session-history-med.md` (list/load by `cwd`; epic
-  still needs flesh-out + stories). Keep until that epic locks direction.
+- [x] **Editor on mobile** — CodeMirror touch config in `EditorPane.tsx`:
+  scaled line height, no text DnD/fold gutter, soft-keyboard keep-in-view
+- [ ] **Session replay** — Superseded by agent-owned history epic (stories
+  drafted): `docs/plans/pending-acp-agent-session-history-med.md` →
+  `docs/plans/acp-session-history/`. Keep until epic Q1–Q8 lock direction.
 - [ ] **Developer terminal UI** — Optional Phase 3 power-user feature — noted in Blueprint Phase 3
 - [ ] **ACP sub-workers** — Deferred until next ACP release (~next quarter)

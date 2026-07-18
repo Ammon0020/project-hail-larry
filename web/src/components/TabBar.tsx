@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Circle, X, Save, ChevronLeft, ChevronRight, WrapText, RefreshCw, Settings as SettingsIcon } from 'lucide-react'
+import { Circle, X, Save, ChevronLeft, ChevronRight, WrapText, RefreshCw, Settings as SettingsIcon, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from '@/lib/fileIcon'
 import type { Tab } from '@/types'
@@ -11,8 +11,27 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 /**
- * TabBar component — renders open editor tabs, scroll controls, and editor actions (Wrap, Save).
- * Reusable across the desktop header and the mobile EditorPane.
+ * Shared Preview-button state for the desktop header TabBar and mobile
+ * EditorPane TabBar (same active tab, two hosts). HTML/HTM → browse preview;
+ * other previewable text → FileViewer toggle (pressed when viewMode=preview).
+ */
+export function editorTabPreviewState(tab: Tab | null | undefined): {
+  show: boolean
+  active: boolean
+  isHtmlEntry: boolean
+} {
+  const eligible =
+    !!tab && tab.kind !== 'settings' && tab.kind !== 'preview'
+  const isHtmlEntry = eligible && /\.html?$/i.test(tab.path)
+  const show =
+    eligible && !tab.isBinary && (!!tab.previewable || isHtmlEntry)
+  const active = !isHtmlEntry && tab?.viewMode === 'preview'
+  return { show, active, isHtmlEntry }
+}
+
+/**
+ * TabBar — open editor tabs, scroll controls, and editor actions
+ * (Wrap, Preview, Save). Reused in the desktop header and mobile EditorPane.
  */
 export function TabBar({
   tabs,
@@ -22,6 +41,9 @@ export function TabBar({
   onSave,
   wrap = false,
   onToggleWrap,
+  showPreview = false,
+  previewActive = false,
+  onPreview,
   showEditorActions = true,
   onCloseOthers,
   onCloseSaved,
@@ -37,6 +59,11 @@ export function TabBar({
   onSave?: () => void
   wrap?: boolean
   onToggleWrap?: () => void
+  /** Show Preview for previewable text files (SVG/CSV/HTML/…) or HTML browse. */
+  showPreview?: boolean
+  /** True when single-file FileViewer preview mode is active (pressed state). */
+  previewActive?: boolean
+  onPreview?: () => void
   showEditorActions?: boolean
   onCloseOthers?: (id: string) => void
   onCloseSaved?: (id: string) => void
@@ -139,6 +166,7 @@ export function TabBar({
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId
             const isSettings = tab.kind === 'settings'
+            const isBrowsePreview = tab.kind === 'preview'
             const canMenu = !isSettings
             const menuOpen = canMenu && menuTabId === tab.id
             const tabDiv = (
@@ -177,14 +205,16 @@ export function TabBar({
               >
                 {isSettings ? (
                   <SettingsIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                ) : isBrowsePreview ? (
+                  <Eye className="w-3.5 h-3.5 text-muted-foreground" />
                 ) : (
                   <FileIcon name={tab.name} className="w-3.5 h-3.5" />
                 )}
                 <span className={cn('max-w-[120px] truncate', tab.isPreview && 'italic font-normal')}>{tab.name}</span>
-                {tab.unsaved && !isSettings && (
+                {tab.unsaved && !isSettings && !isBrowsePreview && (
                   <Circle className="w-2 h-2 text-primary fill-primary shrink-0" />
                 )}
-                {tab.changedOnDisk && !isSettings && (
+                {tab.changedOnDisk && !isSettings && !isBrowsePreview && (
                   <>
                     <RefreshCw className="w-3 h-3 text-warning shrink-0" aria-hidden="true" />
                     <span className="sr-only">Changed on disk</span>
@@ -264,8 +294,8 @@ export function TabBar({
         )}
       </div>
       
-      {/* Editor Actions */}
-      {showEditorActions && activeTab && activeTab.kind !== 'settings' && (
+      {/* Editor Actions — Wrap, Preview (supported types), Save */}
+      {showEditorActions && activeTab && activeTab.kind !== 'settings' && activeTab.kind !== 'preview' && (
         <div className="flex gap-1.5 px-3 py-1 @xl:py-0 @xl:pl-1.5 items-center justify-end w-full @xl:w-auto shrink-0 border-t border-border @xl:border-t-0 bg-panel @xl:bg-transparent">
           {onToggleWrap && (
             <button
@@ -282,6 +312,24 @@ export function TabBar({
               )}
             >
               <WrapText className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {showPreview && onPreview && (
+            <button
+              type="button"
+              aria-label={previewActive ? 'View raw source' : 'Preview'}
+              aria-pressed={previewActive}
+              title={previewActive ? 'View Raw' : 'Preview'}
+              onClick={onPreview}
+              className={cn(
+                'flex items-center gap-1 h-6 px-2 rounded text-xs font-semibold transition',
+                previewActive
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  : 'bg-secondary text-secondary-foreground hover:bg-accent',
+              )}
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span className="hidden @md:inline">{previewActive ? 'Raw' : 'Preview'}</span>
             </button>
           )}
           {onSave && (

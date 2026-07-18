@@ -90,7 +90,15 @@ Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic
   can't set headers on WS). Acceptable trade-off for direct LAN+TLS, but a
   short-lived single-use WS ticket exchanged via the authenticated REST API
   would eliminate the leakage vector if a reverse proxy is ever placed in
-  front.
+  front. Same pattern on `/raw` and `/preview` iframe URLs; preview responses
+  send `Referrer-Policy: no-referrer` to limit Referer leakage.
+
+- **sec-preview-same-origin-scripts (Medium):** Browse preview iframe uses
+  `sandbox="allow-scripts allow-same-origin"` on the IDE origin so multi-file
+  sites can run. Workspace (or agent-written) JS can read `localStorage`
+  device credentials and call authenticated APIs without a permission prompt.
+  Mitigate later: separate preview origin, drop `allow-same-origin`, or
+  short-lived preview tokens. See `complete-workspace-preview-small.md`.
 
 ## Rust port — Go daemon deleted (cutover)
 

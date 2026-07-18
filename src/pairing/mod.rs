@@ -303,8 +303,8 @@ impl Manager {
         requested_by: impl Into<String>,
         grace: Duration,
     ) -> Result<PendingActionInfo, PairingError> {
-        let info = {
-            let mut inner = lock(&self.inner);
+        // Device must exist before scheduling; duplicate check is type+device.
+        self.request_pending(grace, |inner| {
             let device = inner
                 .devices
                 .get(device_id)
@@ -315,21 +315,15 @@ impl Manager {
             }) {
                 return Err(PairingError::DuplicatePendingAction);
             }
-            let info = pending_info(
+            pending_info(
                 PENDING_ACTION_TYPE_REVOCATION,
                 device_id,
                 &device.name,
                 "",
                 requested_by.into(),
                 grace,
-            )?;
-            schedule_pending(&self.inner, &mut inner, info.clone(), grace);
-            info
-        };
-        if grace.is_zero() {
-            execute_pending(&self.inner, &info.id);
-        }
-        Ok(info)
+            )
+        })
     }
 
     pub fn cancel_revocation(&self, action_id: &str) -> Result<(), PairingError> {
@@ -342,22 +336,34 @@ impl Manager {
         requested_by: impl Into<String>,
         grace: Duration,
     ) -> Result<PendingActionInfo, PairingError> {
-        let info = {
-            let mut inner = lock(&self.inner);
+        // Duplicate check is type+path; no device lookup required.
+        self.request_pending(grace, |inner| {
             if inner.pending.values().any(|p| {
                 p.info.action_type == PENDING_ACTION_TYPE_WORKSPACE_REGISTRATION
                     && p.info.path == path
             }) {
                 return Err(PairingError::DuplicatePendingAction);
             }
-            let info = pending_info(
+            pending_info(
                 PENDING_ACTION_TYPE_WORKSPACE_REGISTRATION,
                 "",
                 "",
                 path,
                 requested_by.into(),
                 grace,
-            )?;
+            )
+        })
+    }
+
+    /// Build + schedule a pending action; execute immediately when grace is zero.
+    fn request_pending(
+        &self,
+        grace: Duration,
+        build: impl FnOnce(&mut Inner) -> Result<PendingActionInfo, PairingError>,
+    ) -> Result<PendingActionInfo, PairingError> {
+        let info = {
+            let mut inner = lock(&self.inner);
+            let info = build(&mut inner)?;
             schedule_pending(&self.inner, &mut inner, info.clone(), grace);
             info
         };

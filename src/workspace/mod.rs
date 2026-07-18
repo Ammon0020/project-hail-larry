@@ -133,6 +133,15 @@ impl Manager {
         let path = clean_path(root, rel_path)?;
         Ok(resolve_symlink(root, &path)?)
     }
+
+    /// Invoke the optional on-write hook (outside the registry lock).
+    fn notify_write(&self, abs_path: &str) {
+        if let Ok(guard) = self.on_write.read() {
+            if let Some(hook) = guard.as_ref() {
+                hook(abs_path);
+            }
+        }
+    }
 }
 
 impl Default for Manager {
@@ -250,12 +259,42 @@ impl WorkspaceManager for Manager {
         .map_err(|err| AppError::internal(format!("write task failed: {err}")))??;
 
         // Notify outside the registry lock (Go WriteFile → onWrite).
-        if let Ok(guard) = self.on_write.read() {
-            if let Some(hook) = guard.as_ref() {
-                hook(&abs_path);
-            }
-        }
+        self.notify_write(&abs_path);
         Ok(revision)
+    }
+
+    async fn delete_path(&self, workspace_id: &str, rel_path: &str) -> Result<(), AppError> {
+        let root = self.root_for(workspace_id)?;
+        let rel_path = rel_path.to_string();
+        let abs_path = tokio::task::spawn_blocking(move || delete_path(&root, &rel_path))
+            .await
+            .map_err(|err| AppError::internal(format!("delete task failed: {err}")))??;
+        self.notify_write(&abs_path);
+        Ok(())
+    }
+
+    async fn rename_path(&self, workspace_id: &str, from: &str, to: &str) -> Result<(), AppError> {
+        let root = self.root_for(workspace_id)?;
+        let from = from.to_string();
+        let to = to.to_string();
+        let (from_abs, to_abs) =
+            tokio::task::spawn_blocking(move || rename_path(&root, &from, &to))
+                .await
+                .map_err(|err| AppError::internal(format!("rename task failed: {err}")))??;
+        // Notify both ends so fswatch suppresses remove + create echoes.
+        self.notify_write(&from_abs);
+        self.notify_write(&to_abs);
+        Ok(())
+    }
+
+    async fn mkdir(&self, workspace_id: &str, rel_path: &str) -> Result<(), AppError> {
+        let root = self.root_for(workspace_id)?;
+        let rel_path = rel_path.to_string();
+        let abs_path = tokio::task::spawn_blocking(move || mkdir_path(&root, &rel_path))
+            .await
+            .map_err(|err| AppError::internal(format!("mkdir task failed: {err}")))??;
+        self.notify_write(&abs_path);
+        Ok(())
     }
 
     async fn search(
@@ -350,6 +389,98 @@ fn write_file(
     fs::write(&path, content).map_err(|err| AppError::internal(format!("write file: {err}")))?;
     let abs = path.to_string_lossy().into_owned();
     Ok((crate::files::content_revision(content.as_bytes()), abs))
+}
+
+/// Delete a file or empty directory under `root`. Returns the absolute path
+/// deleted (for on-write / fswatch suppression).
+fn delete_path(root: &Path, rel_path: &str) -> Result<String, AppError> {
+    let path = Manager::safe_path(root, rel_path)?;
+    // Never allow deleting the workspace root itself.
+    let root_canon = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    if path == root_canon {
+        return Err(AppError::validation("cannot delete workspace root"));
+    }
+    let metadata = fs::symlink_metadata(&path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::not_found(format!("path not found: {rel_path}"))
+        } else {
+            AppError::internal(format!("stat path: {err}"))
+        }
+    })?;
+    if metadata.is_dir() {
+        let mut entries = fs::read_dir(&path)
+            .map_err(|err| AppError::internal(format!("read directory: {err}")))?;
+        if entries.next().is_some() {
+            return Err(AppError::validation(
+                "directory is not empty; delete contents first",
+            ));
+        }
+        fs::remove_dir(&path)
+            .map_err(|err| AppError::internal(format!("remove directory: {err}")))?;
+    } else if metadata.file_type().is_file() {
+        fs::remove_file(&path).map_err(|err| AppError::internal(format!("remove file: {err}")))?;
+    } else {
+        return Err(AppError::validation(
+            "path is not a regular file or directory",
+        ));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Rename/move within the workspace. Destination must not already exist
+/// (overwrite rejected → 409 Conflict).
+fn rename_path(root: &Path, from: &str, to: &str) -> Result<(String, String), AppError> {
+    let from_path = Manager::safe_path(root, from)?;
+    let to_path = Manager::safe_path(root, to)?;
+    if from_path == to_path {
+        return Ok((
+            from_path.to_string_lossy().into_owned(),
+            to_path.to_string_lossy().into_owned(),
+        ));
+    }
+    fs::symlink_metadata(&from_path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::not_found(format!("path not found: {from}"))
+        } else {
+            AppError::internal(format!("stat source: {err}"))
+        }
+    })?;
+    if fs::symlink_metadata(&to_path).is_ok() {
+        return Err(AppError::conflict(format!(
+            "destination already exists: {to}"
+        )));
+    }
+    if let Some(parent) = to_path.parent() {
+        if !parent.exists() {
+            return Err(AppError::validation(
+                "destination parent directory does not exist",
+            ));
+        }
+    }
+    fs::rename(&from_path, &to_path)
+        .map_err(|err| AppError::internal(format!("rename path: {err}")))?;
+    Ok((
+        from_path.to_string_lossy().into_owned(),
+        to_path.to_string_lossy().into_owned(),
+    ))
+}
+
+/// Create a directory and any missing parents (`create_dir_all`). Idempotent
+/// when the path already exists as a directory; 409 if it exists as a file.
+fn mkdir_path(root: &Path, rel_path: &str) -> Result<String, AppError> {
+    let path = Manager::safe_path(root, rel_path)?;
+    match fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_dir() => Ok(path.to_string_lossy().into_owned()),
+        Ok(_) => Err(AppError::conflict(format!(
+            "path exists as a file: {rel_path}"
+        ))),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(&path)
+                .map_err(|err| AppError::internal(format!("create directory: {err}")))?;
+            Ok(path.to_string_lossy().into_owned())
+        }
+        Err(err) => Err(AppError::internal(format!("stat path: {err}"))),
+    }
 }
 
 fn build_tree(

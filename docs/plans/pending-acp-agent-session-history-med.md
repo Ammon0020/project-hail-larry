@@ -1,8 +1,10 @@
 # Epic: Agent-Owned ACP Session History
 
-> **Status:** Research captured — **needs to be fleshed out** (no stories yet).
-> **Owner:** —. **Created:** 2026-07-18.
-> **Related:** `docs/reference/acp/responsibilities.md`, `docs/plans/acp-spec-compliance.md` (§4.4 list reconcile, §4.6 fork/resume/close), Blueprint §9–12.
+> **Status:** Stories drafted — **not implementing** (decisions still open).
+> **Owner:** —. **Created:** 2026-07-18. **Updated:** 2026-07-18.
+> **Related:** `docs/reference/acp/responsibilities.md`,
+> `docs/plans/acp-spec-compliance.md` (§4.4 list reconcile, §4.6 fork/resume/close),
+> Blueprint §9–12. Stories: `docs/plans/acp-session-history/`.
 
 ## Goal
 
@@ -17,18 +19,46 @@ talked to the same agent, filtered by folder/workspace when useful.
 
 ## Status of this epic
 
-This document is a **findings dump + direction**, not an executable plan.
+Executable **story breakdown exists**. Implementation is blocked on the
+**Decision Needed** items below (do not invent answers in code).
 
-**Still needed before implementation:**
+Architecture Direction remains a **working hypothesis** until Q1–Q2 lock.
 
-- Story breakdown (browse, open, multi-UI sync, fallbacks, migration)
-- Explicit decisions on the open questions below
-- Capability matrix per harness (which agents advertise list / load / resume)
-- UX sketch for history when the agent is the source of truth
-- Migration story for existing `conversations.json` + SQLite event history
+---
 
-Do **not** treat the Architecture Direction section as locked — it is the
-working hypothesis from research.
+## Story Index
+
+| ID | Story | Size | Depends on | Acceptance |
+|----|-------|------|------------|------------|
+| S-HIST-PROBE | [Capability probe + harness matrix](acp-session-history/pending-hist-probe-small.md) | small | — | story AC |
+| S-HIST-BROWSE | [Browse agent sessions by cwd](acp-session-history/pending-hist-browse-med.md) | med | PROBE; Q7/Q8 | story AC |
+| S-HIST-OPEN | [Open/load past session into UI](acp-session-history/pending-hist-open-med.md) | med | PROBE, BROWSE; Q1/Q4 | story AC |
+| S-HIST-SYNC | [Thin multi-UI active-session index](acp-session-history/pending-hist-sync-med.md) | med | OPEN; Q2 (Q1) | story AC |
+| S-HIST-FALLBACK | [Fallback without list/load](acp-session-history/pending-hist-fallback-med.md) | med | PROBE; Q3 | story AC |
+| S-HIST-MIGRATE | [Local history migrate or defer](acp-session-history/pending-hist-migrate-small.md) | small | Q6 (Q5) | story AC |
+
+**Suggested sequence:** PROBE → BROWSE → OPEN → SYNC; FALLBACK after PROBE
+(parallel with BROWSE once Q3 locked); MIGRATE last or docs-only defer.
+
+---
+
+## Decision Needed (blocking implementation)
+
+Do **not** invent answers. Record locks here when product decides.
+
+| # | Topic | Blocks | Status |
+|---|-------|--------|--------|
+| Q1 | **Zero durable transcript vs cache** — replay-from-agent on every device open, or daemon cache of last loaded transcript for multi-UI / offline sidebar? | OPEN, SYNC | open |
+| Q2 | **Active-session sync shape** — e.g. `workspaceId → { agentId, acpSessionId, title }` only? | SYNC | open |
+| Q3 | **Agents without list/load** — keep local `conversations.json`+events (story default), new-session-only, or paste session id? | FALLBACK | open |
+| Q4 | **`load` vs `resume`** — first open = load (full replay); reconnect with known title = resume? | OPEN | open |
+| Q5 | **Delete / rename** — client-local only vs agent `session/delete` / `session_info_update`? | MIGRATE (deprecate), later UX | open |
+| Q6 | **Migration** — keep forever / one-time import / deprecate / **explicit defer**? | MIGRATE | open |
+| Q7 | **Path canonicalization** — map workspace ↔ `cwd` when other editors used different abs paths (symlink, case, `..`)? | BROWSE | open |
+| Q8 | **Probe cost** — may history UI cold-start an agent process to list, or only when warm? | PROBE, BROWSE | open |
+
+Also UX (non-blocking for PROBE): history UI sketch when agent is source of
+truth — draft during BROWSE/OPEN, not a separate gate.
 
 ---
 
@@ -73,40 +103,34 @@ surface them (client gap, not protocol gap).
 - `_meta` (optional, agent-specific)
 - `additionalDirectories` (when multi-root is in play)
 
-So yes: we can see which folder a chat is associated with. Filtering
-`session/list` with `cwd` scopes history to a workspace root. Omitting `cwd`
-returns a broader list (still each entry carries its own `cwd`).
-
-List supports cursor pagination (`cursor` / `nextCursor`). Content is
-intentionally **not** in the list response — open via load.
+Filtering `session/list` with `cwd` scopes history to a workspace root.
+Omitting `cwd` returns a broader list (each entry still carries its own `cwd`).
+List supports cursor pagination. Content is **not** in the list response.
 
 ### What we do today
 
 | Concern | Current behavior |
 |---------|------------------|
-| UI session list | Our `conversations.json` (daemon-owned metadata) |
+| UI session list | `conversations.json` (daemon-owned metadata) |
 | Chat transcript | SQLite event store; UIs sync via WebSocket + event replay |
-| Agent `session/list` | Used only to **reconcile** a known `acpSessionId` before load (`resolveACPSession`) — not exposed as history UI |
-| Agent `session/load` | Used on restart/resume for sessions **we already created** |
+| Agent `session/list` | Reconcile known `acpSessionId` before load (`resolve_acp_session`) — not history UI |
+| Agent `session/load` | Restart/resume for sessions **we** already created |
 | Foreign sessions (Zed, CLI, other editors) | Not discoverable or openable in our UI |
 
-We already have transport wrappers for `ListSessions` / `LoadSession` and
-persist `ACPSessionID` — the gap is product/architecture: agent registry as
-source of truth vs client event archive.
+Transport wrappers and `acpSessionId` persistence exist (Rust `src/acp/core.rs`,
+`store.rs`). Gap is product/architecture: agent registry as source of truth vs
+client event archive.
 
 ### Folder ↔ chat association
 
-- Workspace path in our app ≈ ACP `cwd` on `session/new` / `session/load` /
-  `session/list` filter.
-- Matching depends on **absolute path equality** (and agent behavior). Same
-  project opened via different path spellings (symlink, `..`, case) may not
-  match — needs a flesh-out decision (canonicalize? show unmatched under
-  “other folders”?).
+- Workspace path ≈ ACP `cwd` on `session/new` / `session/load` / `session/list`.
+- Matching depends on absolute path equality (and agent behavior). Alternate
+  spellings may not match — see **Q7**.
 - Multi-root: `additionalDirectories` on list/load when advertised.
 
 ---
 
-## Architecture direction (working hypothesis)
+## Architecture direction (working hypothesis — not locked)
 
 **Prefer agent-owned history; daemon owns thin sync state only.**
 
@@ -119,95 +143,54 @@ source of truth vs client event archive.
        activeSessionId, agentId, cwd/workspaceId, title cache?
 ```
 
-Implications:
+Implications (pending Q1–Q2):
 
-- We may **not** need a durable chat event archive for ACP transcripts if every
-  open is a load/resume against the agent and UIs are thin.
-- We **do** still need something shared across paired devices: at least which
-  `acpSessionId` is selected per workspace, and enough metadata to render the
-  sidebar without re-probing the agent on every paint (cache of last list
-  result is fine; authoritative list remains the agent).
-- Live turns still flow through the daemon (ACP client layer) so permissions,
-  FS, and shell stay client-owned — unchanged Blueprint principle.
-
-This is a deliberate pivot from “import foreign sessions into SQLite and keep
-storing everything ourselves.” Import-into-events remains a **fallback** for
-agents that lack list/load, or if multi-device replay economics demand a
-daemon-side cache — decide in flesh-out.
+- May not need a durable chat event archive for ACP transcripts if every open
+  is load/resume against the agent and UIs are thin.
+- Still need shared state across paired devices: at least which `acpSessionId`
+  is selected per workspace (+ metadata cache).
+- Live turns still flow through the daemon ACP client — Blueprint unchanged.
+- Import-into-events remains a **fallback** for agents lacking list/load, or if
+  multi-device economics demand a daemon cache — decide via Q1/Q3.
 
 ---
 
-## Open questions (must resolve when fleshing out)
+## Current code touchpoints
 
-1. **Zero durable transcript vs cache** — Is replay-from-agent on every device
-   open acceptable, or do we cache the last loaded transcript on the daemon for
-   fast multi-UI sync / offline sidebar previews?
-2. **Active-session sync** — Minimal shared state shape: map
-   `workspaceId → { agentId, acpSessionId, title }` only?
-3. **Agents without list/load** — Fallback UX (our old store? one-shot new
-   session only? paste session id?).
-4. **`load` vs `resume`** — First open = load (full replay); reconnect with
-   title already known = resume?
-5. **Delete / rename** — Client-local only vs agent `session/delete` /
-   `session_info_update`?
-6. **Migration** — Existing `conversations.json` + SQLite events: keep forever,
-   one-time import, or deprecate?
-7. **Path canonicalization** — How we map registered workspaces to `cwd`
-   filters when other editors used a different absolute path.
-8. **Probe cost** — Listing requires an initialized agent process; cold start
-   strategy for history UI.
-
----
-
-## Current code touchpoints (for later stories)
-
-- `internal/acp/transport.go` — `ListSessions`, `LoadSession`
-- `internal/acp/acp.go` — `resolveACPSession` (reconcile-only use of list)
-- `internal/acp/store.go` — `conversations.json`
-- `internal/server/api.go` — `handleListSessions` (our conversations, not agent)
-- Frontend chat history / tabs — driven by daemon session list + events
+- `src/acp/core.rs` — `ListSessionsRequest`, load path, `resolve_acp_session`
+- `src/acp/store.rs` — `conversations.json` / `StoredSession`
+- `src/api/` — REST session list (daemon conversations, not agent)
+- `web/src/components/ChatHistory.tsx` — UI driven by daemon sessions + events
+- `src/acp/agent_registry.rs`, `autodetect.rs` — harness matrix inputs
 
 ---
 
 ## Context7 / ACP resources
 
-Use Context7 when implementing or updating this epic. Prefer these library IDs:
-
 | Context7 library ID | Use for |
 |---------------------|---------|
-| `/websites/agentclientprotocol` | Canonical protocol docs site (session setup, list RFD, capabilities) |
+| `/websites/agentclientprotocol` | Protocol docs (session setup, list RFD, capabilities) |
 | `/agentclientprotocol/agent-client-protocol` | Spec / schema (list, load, SessionInfo) |
-| `/llmstxt/agentclientprotocol_llms-full_txt` | Broad llms-full dump when hunting edge cases |
-| `/agentclientprotocol/rust-sdk` | Rust port session APIs |
-| Resolve `coder/acp-go-sdk` via Context7 when touching Go transport | Go client method names / types |
+| `/llmstxt/agentclientprotocol_llms-full_txt` | Edge-case hunting |
+| `/agentclientprotocol/rust-sdk` | Rust session APIs |
 
-**Primary pages (also fetchable without Context7):**
+**Primary pages:**
 
-- [Session setup — new / load / resume](https://agentclientprotocol.com/protocol/v1/session-setup)  
-  Explicitly: load enables “sharing sessions between different Client instances”;
-  load replays history via `session/update`; resume does not replay.
-- [Session list RFD](https://agentclientprotocol.com/rfds/session-list)  
-  Discovery, `cwd` filter, pagination, SessionInfo fields; list ≠ load.
-- [Protocol overview](https://agentclientprotocol.com/protocol/overview)
-- Local notes: `docs/reference/acp/spec.md`, `docs/reference/acp/responsibilities.md`
-
-**Suggested Context7 queries:**
-
-- `session/list SessionInfo cwd title loadSession sessionCapabilities.list`
-- `session/load replay session/update vs session/resume`
-- `ListSessions LoadSession InitializeResponse AgentCapabilities` (SDK-specific)
+- [Session setup — new / load / resume](https://agentclientprotocol.com/protocol/v1/session-setup)
+- [Session list RFD](https://agentclientprotocol.com/rfds/session-list)
+- Local: `docs/reference/acp/spec.md`, `docs/reference/acp/responsibilities.md`
 
 ---
 
-## Out of scope (for now)
+## Out of scope (epic-wide)
 
-- Story-level estimates, acceptance criteria, or sprint sequencing
-- Changing Blueprint event-sourcing language until decisions above land
+- Implementing stories before Decision Needed items that each story marks
+- Changing Blueprint event-sourcing language until Q1 locks
 - Provider-specific (non-ACP) history importers
+- Multi-user private session histories
 
 ## Next step
 
-Flesh out this epic: lock architecture answers to the open questions, then
-split into stories (browse-by-cwd, open/load, thin multi-UI index, agent
-capability fallbacks, migration). Until then, keep using the current
-conversations + event store.
+1. Lock Q1–Q8 (or defer Q5/Q6 explicitly).
+2. Start S-HIST-PROBE (matrix + live caps) — least blocked.
+3. Then BROWSE → OPEN → SYNC; FALLBACK once Q3 locked; MIGRATE per Q6.

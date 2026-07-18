@@ -398,3 +398,154 @@ async fn write_file_invokes_on_write_hook_with_absolute_path() {
         "on_write must receive an absolute path"
     );
 }
+
+#[tokio::test]
+async fn delete_rename_mkdir_happy_paths() {
+    let manager = manager();
+    let dir = TempDir::new().unwrap();
+    let workspace = manager
+        .register(&dir.path().to_string_lossy())
+        .await
+        .unwrap();
+
+    manager.mkdir(&workspace.id, "src/foo").await.unwrap();
+    assert!(dir.path().join("src/foo").is_dir());
+    // Idempotent when the path already exists as a directory.
+    manager.mkdir(&workspace.id, "src/foo").await.unwrap();
+
+    manager
+        .write_file(&workspace.id, "src/foo/a.txt", "hi", 0)
+        .await
+        .unwrap();
+    manager
+        .rename_path(&workspace.id, "src/foo/a.txt", "src/foo/b.txt")
+        .await
+        .unwrap();
+    assert!(!dir.path().join("src/foo/a.txt").exists());
+    assert_eq!(
+        fs::read_to_string(dir.path().join("src/foo/b.txt")).unwrap(),
+        "hi"
+    );
+
+    manager
+        .delete_path(&workspace.id, "src/foo/b.txt")
+        .await
+        .unwrap();
+    assert!(!dir.path().join("src/foo/b.txt").exists());
+    manager.delete_path(&workspace.id, "src/foo").await.unwrap();
+    assert!(!dir.path().join("src/foo").exists());
+}
+
+#[tokio::test]
+async fn delete_missing_returns_not_found() {
+    let manager = manager();
+    let dir = TempDir::new().unwrap();
+    let workspace = manager
+        .register(&dir.path().to_string_lossy())
+        .await
+        .unwrap();
+    assert!(matches!(
+        manager.delete_path(&workspace.id, "missing.txt").await,
+        Err(AppError::NotFound { .. })
+    ));
+}
+
+#[tokio::test]
+async fn mutations_reject_path_traversal() {
+    let manager = manager();
+    let dir = TempDir::new().unwrap();
+    let workspace = manager
+        .register(&dir.path().to_string_lossy())
+        .await
+        .unwrap();
+    assert!(matches!(
+        manager.delete_path(&workspace.id, "../escape.txt").await,
+        Err(AppError::Path(_))
+    ));
+    assert!(matches!(
+        manager
+            .rename_path(&workspace.id, "a.txt", "../outside.txt")
+            .await,
+        Err(AppError::Path(_))
+    ));
+    assert!(matches!(
+        manager.mkdir(&workspace.id, "../outside").await,
+        Err(AppError::Path(_))
+    ));
+}
+
+#[tokio::test]
+async fn delete_rejects_non_empty_directory() {
+    let manager = manager();
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("keep")).unwrap();
+    fs::write(dir.path().join("keep/file.txt"), "x").unwrap();
+    let workspace = manager
+        .register(&dir.path().to_string_lossy())
+        .await
+        .unwrap();
+    assert!(matches!(
+        manager.delete_path(&workspace.id, "keep").await,
+        Err(AppError::Validation(msg)) if msg.contains("not empty")
+    ));
+}
+
+#[tokio::test]
+async fn rename_rejects_overwrite_and_mkdir_rejects_file() {
+    let manager = manager();
+    let dir = TempDir::new().unwrap();
+    let workspace = manager
+        .register(&dir.path().to_string_lossy())
+        .await
+        .unwrap();
+    manager
+        .write_file(&workspace.id, "a.txt", "one", 0)
+        .await
+        .unwrap();
+    manager
+        .write_file(&workspace.id, "b.txt", "two", 0)
+        .await
+        .unwrap();
+    assert!(matches!(
+        manager.rename_path(&workspace.id, "a.txt", "b.txt").await,
+        Err(AppError::Conflict(_))
+    ));
+    assert!(matches!(
+        manager.mkdir(&workspace.id, "a.txt").await,
+        Err(AppError::Conflict(_))
+    ));
+}
+
+#[tokio::test]
+async fn mutations_invoke_on_write_hook() {
+    use std::sync::Mutex;
+
+    let manager = manager();
+    let dir = TempDir::new().unwrap();
+    let workspace = manager
+        .register(&dir.path().to_string_lossy())
+        .await
+        .unwrap();
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen_hook = Arc::clone(&seen);
+    manager.set_on_write(Arc::new(move |abs| {
+        seen_hook.lock().unwrap().push(abs.to_string());
+    }));
+
+    manager.mkdir(&workspace.id, "d").await.unwrap();
+    manager
+        .write_file(&workspace.id, "d/f.txt", "x", 0)
+        .await
+        .unwrap();
+    manager
+        .rename_path(&workspace.id, "d/f.txt", "d/g.txt")
+        .await
+        .unwrap();
+    manager.delete_path(&workspace.id, "d/g.txt").await.unwrap();
+
+    let paths = seen.lock().unwrap().clone();
+    assert!(
+        paths.len() >= 4,
+        "expected mkdir/write/rename/delete hooks, got {paths:?}"
+    );
+}

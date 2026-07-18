@@ -39,10 +39,12 @@ export interface Tab {
    *  auto-refreshed. Surfaces a "changed on disk" indicator + Reload action.
    *  Clean tabs are refreshed silently instead of setting this flag. */
   changedOnDisk?: boolean
-  /** Tab content kind. 'file' (default) renders CodeMirror; 'settings' renders
-   *  the settings panel. Settings tabs use a synthetic path like 'settings'
-   *  and are not persisted to localStorage. */
-  kind?: 'file' | 'settings'
+  /** Tab content kind.
+   *  - `'file'` (default): CodeMirror / FileViewer for a workspace file
+   *  - `'settings'`: settings panel (synthetic path, not persisted)
+   *  - `'preview'`: browse-preview iframe for a multi-file static site
+   *    (distinct from `viewMode: 'preview'` / `isPreview` transient file tabs) */
+  kind?: 'file' | 'settings' | 'preview'
   /** True when the file is binary (image, executable, archive, etc.) and
    *  cannot be edited as text. The editor renders a placeholder or image
    *  preview instead of a CodeMirror instance. */
