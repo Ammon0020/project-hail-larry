@@ -392,9 +392,10 @@ struct RegisterWorkspaceRequest {
     path: String,
 }
 
-/// `POST /api/workspaces` — remote devices need the config gate; the host CLI
-/// (loopback) can always register immediately so `add-folder` updates the live
-/// daemon without a restart.
+/// `POST /api/workspaces` — gated by `allowRemoteWorkspaceRegistration`.
+/// Loopback does NOT bypass this policy (Go parity): host registration stays on
+/// `app add-folder` writing config; the HTTP surface stays closed when remote
+/// registration is disabled — including from 127.0.0.1 (contract harness).
 async fn register_workspace(
     State(state): State<AppState>,
     PeerAddr(remote_addr): PeerAddr,
@@ -405,7 +406,9 @@ async fn register_workspace(
     let Json(payload) = decode_json_body(body)?;
     let loopback = is_loopback_addr(&remote_addr);
     let allow_remote = state.config.read().allow_remote_workspace_registration;
-    if !allow_remote && !loopback {
+    // No loopback exception: Go returns 403 unconditionally when the flag is
+    // false; CLI add-folder persists config rather than calling this endpoint.
+    if !allow_remote {
         return Err(ApiResponseError::forbidden(
             "Remote workspace registration is disabled. Use 'app add-folder <path>' on the host, or set allowRemoteWorkspaceRegistration: true in config.",
         ));

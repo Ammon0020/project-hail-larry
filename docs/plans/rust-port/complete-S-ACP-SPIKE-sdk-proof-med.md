@@ -1,7 +1,8 @@
 # Story S-ACP-SPIKE: ACP SDK Proof of Capability
 
 > **Phase:** 0 | **Depends on:** S-ARCH | **Go source:** `internal/acp/`, `cmd/mockagent/`
-> **Status:** ✅ Complete (2026-07-15). Spike artifact: `tests/spike_acp.rs` (7 passing).
+> **Status:** ✅ Complete (2026-07-15; real-agent E2E 2026-07-18).
+> Spike artifact: `tests/spike_acp.rs` (8 tests; real-agent opt-in via env).
 
 ## Goal
 
@@ -43,12 +44,12 @@ integration proof; its verified API shape becomes the input to ACP stories.
   an error mid-prompt to tear down the dispatch loop, then `kill()`s + reaps
   the child and asserts the PID is gone within 2s. The client owns the child
   process tree (production contract).
-- [ ] A configured real agent completes an opt-in E2E prompt round trip
-  — **Deferred.** No real ACP agent (Claude Code / Codex CLI / Gemini CLI)
-  was configured in this environment. The spike proves the SDK against the
-  Go mockagent only; real-agent E2E is S-ACP-CORE / S-BUILD scope (it needs
-  API keys and `npx`-installed adapters). The `AcpAgent::claude_agent()` /
-  `codex()` / `google_gemini()` constructors are verified to exist.
+- [x] A configured real agent completes an opt-in E2E prompt round trip
+  — `spike_real_agent_prompt_round_trip` gated by `ACP_E2E_AGENT` (aliases:
+  `codex`/`cursor`/`vibe`/`claude`/`gemini`, or a free-form command). Skips
+  cleanly when unset (CI-safe). Verified 2026-07-18 with `ACP_E2E_AGENT=codex`
+  (`codex-acp`): initialize → session/new → prompt → stream → EndTurn → close.
+  Temp cwd only; does not write `~/.local-agent`.
 - [x] MCP relay availability is proven; absence has an isolated fallback design
   — `spike_mcp_relay_types_supported` verifies `mcp/connect`, `mcp/message`
   (request + notification + response), and `mcp/disconnect` types are
@@ -87,9 +88,9 @@ See `docs/rust-ecosystem/acp-rust-sdk.md` for the full reference. Highlights:
 - **v1 MCP standalone types don't impl `JsonRpcMessage`.** Must dispatch via
   the `AgentRequest`/`AgentResponse`/`AgentNotification` enums. (Standalone
   impls exist only for v2 draft.)
-- **Real-agent E2E not run** (no API keys / adapters configured). Deferred.
 - **Real PKCE dance not run** (mockagent returns empty `auth_methods`).
-  Auth *plumbing* verified; PKCE deferred to S-ACP-CORE.
+  Auth *plumbing* verified; PKCE deferred to S-ACP-CORE. Real-agent E2E
+  uses an already-authenticated Codex login when present.
 
 ### Retained workarounds
 
@@ -103,8 +104,9 @@ the SDK code-generates the full relay.
 go build -o /tmp/mockagent ./cmd/mockagent/
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --test spike_acp -- --nocapture   # 7 passed
-cargo test                                   # full suite green
+cargo test --test spike_acp -- --nocapture   # 8 passed (real-agent skipped)
+ACP_E2E_AGENT=codex cargo test --test spike_acp \
+  spike_real_agent_prompt_round_trip -- --nocapture
 ```
 
 ## Note: MCP relay fallback design (if ever needed)

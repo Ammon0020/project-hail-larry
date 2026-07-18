@@ -16,6 +16,7 @@
 //! - [`pairing`]    — QR + mnemonic pairing, device credentials (Go `pairing/`)
 //! - [`permissions`]— permission request/response, policies (Go `permissions/`)
 //! - [`pathutil`]   — path traversal + symlink containment (Go `pathutil/` + `workspace.safeJoin`)
+//! - [`procutil`]   — Unix process-group setup + kill for shell/ACP subprocess trees
 //! - [`search`]     — workspace content search (Go `search/`)
 //! - [`shell`]      — workspace-scoped subprocess runner (Go `shell/`)
 //! - [`sync`]       — WebSocket hub, broadcast, reconnection (Go `sync/`)
@@ -48,6 +49,7 @@ pub mod migrate;
 pub mod pairing;
 pub mod pathutil;
 pub mod permissions;
+pub mod procutil;
 pub mod search;
 pub mod shell;
 pub mod sync;

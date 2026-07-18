@@ -1,6 +1,7 @@
 # Story S-ACP-CORE: ACP Sessions and Transport Handlers
 
 > **Phase:** 3 | **Depends on:** S-ACP-SPIKE, S-EVENTS, S-FILES, S-SHELL, S-PERMISSIONS | **Go source:** `internal/acp/acp.go`, `internal/acp/transport.go`, `internal/acp/terminal.go`
+> **Status:** complete (2026-07-18)
 
 ## Goal
 
@@ -16,8 +17,15 @@ shell, and permissions services.
 
 ## Acceptance Criteria
 
-- [ ] Create/load/list/close and cancellation work with the verified SDK API
-- [ ] File and shell handlers preserve workspace and permission constraints
-- [ ] All session tasks and process descendants stop on cancellation/shutdown
-- [ ] No mutex/RwLock guard is held across `.await`
-- [ ] Mock-agent lifecycle and handler integration tests pass
+- [x] Create/load/list/close and cancellation work with the verified SDK API
+- [x] File and shell handlers preserve workspace and permission constraints
+- [x] All session tasks and process descendants stop on cancellation/shutdown
+- [x] No mutex/RwLock guard is held across `.await`
+- [x] Mock-agent lifecycle and handler integration tests pass
+
+## Notes
+
+- Process-group kill for the agent binary (not only terminals) lives in
+  `src/procutil/` and is wired from `run_actor_inner` (`src/acp/core.rs`).
+  Windows remains child-only (Job Object deferred). See
+  `docs/plans/other_tasks/complete-kill-agent-process-descendants-med-med.md`.

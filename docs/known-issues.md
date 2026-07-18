@@ -92,13 +92,6 @@ Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic
   would eliminate the leakage vector if a reverse proxy is ever placed in
   front.
 
-## Rust port — S-BUILD native release CI deferred
-
-Basic `cargo build`/`test` on macOS/Windows runners exists in
-`.github/workflows/rust-ci.yml` (stub `web/dist/index.html` for `build.rs`).
-Deferred: native **release artifact** builds with real frontend embed + SPA
-smoke tests on Win/macOS (see S-BUILD story).
-
 ## Rust port — Go binary optional; tree not deleted yet
 
 `build.sh` / `build.ps1` / `Makefile` default to Rust (`bin/local_agent`).
@@ -112,3 +105,12 @@ Many `docs/plans/rust-port/*.md` ACs remain unchecked while modules and
 tests already ship. Prefer mass check-off + a short “Remaining Rust gaps”
 list over treating unchecked boxes as open work. Real open items live in
 `docs/STATUS.md` Known Gaps.
+
+## Contract harness — real `~/.local-agent/config.toml` overwrite risk
+
+Observed 2026-07-18: host `config.toml` had contract-seed paths
+(`dataDir=/tmp/.tmphPVTXR`, `port=0`, empty workspaces). Harness is supposed
+to isolate via `LOCAL_AGENT_STATE_DIR` only — investigate any save path that
+can write the real home config during contract runs. Restored from
+`config.json` + agents section; backup at
+`~/.local-agent/config.toml.contract-poisoned.bak`.

@@ -69,6 +69,19 @@ func captureWS(h *harness, goldenDir string) error {
 		return fmt.Errorf("write keepalive fixture: %w", err)
 	}
 
+	// ?after= reconnect contract: documented for the black-box Rust runner,
+	// which seeds durable events via REST (pair/revoke) rather than OnEvent.
+	if err := writeJSONLFile(filepath.Join(outDir, "ws_after_replay.jsonl"), []wsFrame{
+		{Dir: "note", Note: "Reconnect contract: GET /ws?after=<cursor> replays durable events with id > cursor, then transitions to live Hub broadcast (EventBus LiveFanout). Slow-client buffer-full resync is covered in src/sync/tests.rs, not black-box."},
+		{Dir: "send", Note: "seed DeviceRevocationPending + DeviceRevocationCancelled via pair/revoke/cancel REST"},
+		{Dir: "send", Note: "connect ws://host/ws?after=<id_of_pending>"},
+		{Dir: "recv", Type: "text", Note: "replay DeviceRevocationCancelled (id > after)"},
+		{Dir: "send", Note: "pair+revoke another device while WS connected"},
+		{Dir: "recv", Type: "text", Note: "live DeviceRevocationPending via hub broadcast"},
+	}); err != nil {
+		return fmt.Errorf("write after_replay fixture: %w", err)
+	}
+
 	// Rejection cases: handler-level (no upgrade).
 	if err := captureWSRejection(h, outDir, "ws_auth_rejection", false, ""); err != nil {
 		return err

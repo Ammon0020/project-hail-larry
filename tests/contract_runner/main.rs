@@ -48,9 +48,10 @@
 //! - **REST**: every golden/rest/*.json fixture is replayed as an HTTP request
 //!   and the redacted response is compared (semantic JSON for object/array
 //!   bodies, exact bytes for error text and non-JSON content types).
-//! - **WebSocket**: origin rejection (403) and connection success. Auth
-//!   rejection and event broadcast are skipped (require non-loopback or
-//!   in-process broadcast triggering — see known limitations in the README).
+//! - **WebSocket**: origin rejection (403), connection success, live broadcast
+//!   (API-driven), `?after=` replay + live transition, and auth rejection
+//!   (non-loopback dial). Slow-client recovery is unit-tested in sync, not
+//!   black-box (see tests/contract/README.md).
 //! - **DTO**: the JSON shapes from API responses are structurally compared
 //!   against golden/dto/*.json fixtures to verify field names and omitempty
 //!   behavior.
@@ -480,6 +481,30 @@ async fn ws_connection_success() {
     banner("WS: connection_success");
     let h = BackendHarness::start().await;
     ws::test_connection_success(&h).await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn ws_live_broadcast() {
+    banner("WS: live_broadcast");
+    let h = BackendHarness::start().await;
+    ws::test_live_broadcast(&h).await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn ws_after_replay() {
+    banner("WS: after_replay");
+    let h = BackendHarness::start().await;
+    ws::test_after_replay_and_live(&h).await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn ws_auth_rejection() {
+    banner("WS: auth_rejection");
+    let h = BackendHarness::start().await;
+    ws::test_auth_rejection(&h).await;
     h.shutdown().await;
 }
 

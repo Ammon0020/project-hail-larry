@@ -16,8 +16,8 @@
 //! - Each command owns a [`tokio_util::sync::CancellationToken`]. On cancel
 //!   (or timeout) the entire process *group* is signalled, not just the
 //!   immediate child — so orphaned grandchildren of a shell pipeline cannot
-//!   survive daemon shutdown. Unix uses `setpgid(0,0)` + `killpg`; Windows
-//!   uses `CREATE_NEW_PROCESS_GROUP` + `kill` of the child handle.
+//!   survive daemon shutdown. Isolation and kill live in [`crate::procutil`]
+//!   (Unix `setpgid` + `killpg`; Windows `CREATE_NEW_PROCESS_GROUP` + child kill).
 //! - Captured/streamed output is bounded by [`Executor::max_output_bytes`]
 //!   per stream so a noisy command cannot exhaust daemon memory.
 //!
@@ -33,6 +33,9 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use crate::pathutil::{clean_path, PathError};
+#[cfg(unix)]
+use crate::procutil::kill_process_group;
+use crate::procutil::{configure_process_group, ProcessGroupCleanup};
 
 /// Default per-stream output cap (1 MiB). Matches the Go daemon's practical
 /// bound for captured command output; callers may override via
@@ -253,8 +256,8 @@ impl Executor {
         }
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
-        // Process-group setup is platform-specific (see unix/windows modules).
-        configure_process_group(&mut cmd);
+        // Process-group setup is platform-specific (see `crate::procutil`).
+        configure_process_group(cmd.as_std_mut());
 
         let mut child = match cmd.spawn() {
             Ok(c) => c,
@@ -316,12 +319,8 @@ impl Executor {
                 // Windows we kill the immediate child after the select when
                 // the borrow is released.
                 #[cfg(unix)]
-                {
-                    if let Some(pid) = pid {
-                        // SAFETY: killpg via negative pid signals the whole
-                        // process group we own. SIGKILL is non-catchable.
-                        unsafe { let _ = libc::kill(-(pid as i32), libc::SIGKILL); }
-                    }
+                if let Some(pid) = pid.and_then(|pid| i32::try_from(pid).ok()) {
+                    kill_process_group(pid);
                 }
                 // Return a sentinel; the real wait happens after the select
                 // drops the wait future and frees child for a fresh borrow.
@@ -559,101 +558,6 @@ where
         insert(&mut merged, &mut seen, k.into(), v.into());
     }
     merged
-}
-
-// ---------------------------------------------------------------------------
-// Platform-specific process-group handling.
-//
-// On Unix we put the child in its own process group via `setpgid(0,0)` in a
-// `pre_exec` hook, then kill the whole group with `killpg(-pgid, SIGKILL)` on
-// cancellation. This ensures grandchildren of a shell pipeline (e.g.
-// `find / | head`) die with the shell.
-//
-// On Windows we create a new process group (`CREATE_NEW_PROCESS_GROUP`) and
-// terminate via the child handle (which propagates to job-group children when
-// the daemon uses a Job Object; for now `child.kill()` suffices for the
-// immediate child, matching Go's `cmd.Process.Kill()` behaviour).
-// ---------------------------------------------------------------------------
-
-/// Kills the Unix process group when a running command future is dropped.
-///
-/// `tokio::process::Command::kill_on_drop` only handles the direct child. This
-/// guard extends that behavior to the dedicated process group configured below.
-/// On Windows, `kill_on_drop` remains deliberately bounded to the child handle:
-/// terminating descendants requires a Job Object and is not available without
-/// adding a platform dependency.
-#[cfg(unix)]
-struct ProcessGroupCleanup {
-    pgid: Option<i32>,
-}
-
-#[cfg(unix)]
-impl ProcessGroupCleanup {
-    fn new(pid: Option<u32>) -> Self {
-        Self {
-            pgid: pid.and_then(|pid| i32::try_from(pid).ok()),
-        }
-    }
-
-    fn disarm(&mut self) {
-        self.pgid = None;
-    }
-}
-
-#[cfg(unix)]
-impl Drop for ProcessGroupCleanup {
-    fn drop(&mut self) {
-        if let Some(pgid) = self.pgid {
-            // SAFETY: `pgid` identifies the dedicated group created by
-            // `configure_process_group`; negative PID addresses only that
-            // group. Errors mean it has already exited and require no action.
-            unsafe {
-                let _ = libc::kill(-pgid, libc::SIGKILL);
-            }
-        }
-    }
-}
-
-/// No additional drop behavior is needed on Windows because Tokio's
-/// `kill_on_drop` safely terminates the immediate child handle.
-#[cfg(not(unix))]
-struct ProcessGroupCleanup;
-
-#[cfg(not(unix))]
-impl ProcessGroupCleanup {
-    fn new(_pid: Option<u32>) -> Self {
-        Self
-    }
-
-    fn disarm(&mut self) {}
-}
-
-#[cfg(unix)]
-fn configure_process_group(cmd: &mut Command) {
-    // SAFETY: `setpgid` only touches the child's own state. The closure is
-    // called post-fork, pre-exec in the child. Return an error rather than
-    // spawning without group isolation: otherwise a later killpg could fail
-    // to contain descendants.
-    unsafe {
-        cmd.pre_exec(|| {
-            // setpgid(0, 0) puts the child into a new process group with pgid
-            // == child pid, making it safe to target with kill(-pid, signal).
-            if libc::setpgid(0, 0) == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-}
-
-#[cfg(windows)]
-fn configure_process_group(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    // CREATE_NEW_PROCESS_GROUP = 0x00000200. Children of this process form a
-    // new group; `child.kill()` terminates the immediate child. Full group
-    // kill requires a Job Object (deferred — Go also only kills the child).
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
 }
 
 /// Map a Unix signal number to its uppercase name (e.g. `9` → `"KILLED"`).

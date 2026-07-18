@@ -1,0 +1,6 @@
+{"dir":"note","note":"Reconnect contract: GET /ws?after=<cursor> replays durable events with id > cursor, then transitions to live Hub broadcast (EventBus LiveFanout). Slow-client buffer-full resync is covered in src/sync/tests.rs, not black-box."}
+{"dir":"send","note":"seed DeviceRevocationPending + DeviceRevocationCancelled via pair/revoke/cancel REST"}
+{"dir":"send","note":"connect ws://host/ws?after=<id_of_pending>"}
+{"dir":"recv","type":"text","note":"replay DeviceRevocationCancelled (id > after)"}
+{"dir":"send","note":"pair+revoke another device while WS connected"}
+{"dir":"recv","type":"text","note":"live DeviceRevocationPending via hub broadcast"}

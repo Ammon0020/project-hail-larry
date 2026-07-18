@@ -52,12 +52,14 @@ the `cc` crate finds MSVC build tools automatically.
 - [x] `./build.sh` produces working binary on Linux
 - [x] `.\build.ps1` produces working binary on Windows
 - [x] Frontend assets embedded (binary serves UI without `dist/` on disk)
-- [ ] Windows release artifact builds and passes smoke tests on native Windows CI
-- [ ] macOS release artifact builds and passes smoke tests on native macOS CI
+- [x] Windows release artifact builds and passes smoke tests on native Windows CI
+- [x] macOS release artifact builds and passes smoke tests on native macOS CI
 - [x] Required build.rs asset check fails clearly when frontend dist is missing
 - [x] Release binaries stripped (`strip = true` in `[profile.release]`)
 - [x] `cc` requirement documented
 
-> **Deferred (STATUS):** Native Win/macOS *release artifact + SPA smoke* CI.
-> `rust-ci.yml` already runs basic `cargo build`/`test` on those runners with a
-> stub `web/dist/index.html` so `build.rs` is satisfied without Node.
+> **CI (2026-07-18):** `release-macos` / `release-windows` in
+> `.github/workflows/rust-ci.yml` build a real SPA, release binary, upload
+> artifacts, and run `scripts/spa-smoke.{sh,ps1}`. Debug jobs still use a stub
+> `web/dist/index.html` so lint/test do not need Node. Signing / universal
+> binary / GitHub Releases remain out of scope.

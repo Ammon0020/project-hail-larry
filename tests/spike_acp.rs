@@ -54,8 +54,9 @@
 //!   Vec<AuthMethod>` and `AuthenticateRequest`/`AuthenticateResponse`. The
 //!   mockagent returns an empty `auth_methods` and a no-op `Authenticate`.
 //!   We verify the auth flow *shape* (types are reachable, an
-//!   `authenticate` round-trip succeeds) but not a real PKCE dance — that
-//!   requires a real agent and is deferred to S-ACP-CORE.
+//!   `authenticate` round-trip succeeds) but not a real PKCE dance.
+//! - **Real-agent E2E**: opt-in via `ACP_E2E_AGENT` (see
+//!   `spike_real_agent_prompt_round_trip`). CI skips when unset.
 
 // Spike test code is allowed to use `.unwrap()`/`.expect()`/`panic!()` for
 // fail-fast assertions. The crate-level `[lints.clippy]` policy in Cargo.toml
@@ -730,8 +731,252 @@ async fn spike_auth_flow_shape() {
 }
 
 // ---------------------------------------------------------------------------
-// helpers
+// Acceptance: opt-in real-agent E2E prompt round trip
 // ---------------------------------------------------------------------------
+
+/// Env var that enables [`spike_real_agent_prompt_round_trip`].
+///
+/// Values:
+/// - `codex` — local `codex-acp` on `$PATH`, else SDK `AcpAgent::codex()` (npx)
+/// - `cursor` — `agent acp` / `cursor-agent acp`
+/// - `vibe` — `vibe-acp`
+/// - `claude` / `gemini` — SDK npx helpers
+/// - any other non-empty string — passed to [`AcpAgent::from_str`] (shell form)
+///
+/// Unset / empty → test returns immediately (CI-safe). Does not touch
+/// `~/.local-agent`; uses a temp cwd only. Agent may still read its own
+/// credentials from its vendor config (e.g. Codex login).
+const ACP_E2E_AGENT_ENV: &str = "ACP_E2E_AGENT";
+
+/// Real agents are slower than mockagent; allow up to two minutes per step.
+const REAL_AGENT_STEP_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Resolve `ACP_E2E_AGENT` into an [`AcpAgent`] transport, or `None` to skip.
+fn resolve_real_agent_transport(spec: &str) -> Option<AcpAgent> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return None;
+    }
+    let transport = match spec {
+        "codex" => {
+            if command_on_path("codex-acp") {
+                AcpAgent::from_args(["codex-acp"]).expect("codex-acp args")
+            } else {
+                AcpAgent::codex()
+            }
+        }
+        "cursor" => {
+            let cmd = ["agent", "cursor-agent"]
+                .into_iter()
+                .find(|c| command_on_path(c))?;
+            AcpAgent::from_args([cmd, "acp"]).expect("cursor acp args")
+        }
+        "vibe" => {
+            if !command_on_path("vibe-acp") {
+                return None;
+            }
+            AcpAgent::from_args(["vibe-acp"]).expect("vibe-acp args")
+        }
+        "claude" => AcpAgent::claude_agent(),
+        "gemini" => AcpAgent::google_gemini(),
+        other => AcpAgent::from_str(other).unwrap_or_else(|e| {
+            panic!("ACP_E2E_AGENT={other:?} is not a valid agent command: {e}")
+        }),
+    };
+    Some(transport)
+}
+
+/// Best-effort `PATH` lookup for a bare command name (spike-only helper).
+fn command_on_path(command: &str) -> bool {
+    let path = std::path::Path::new(command);
+    if path.is_absolute() || command.contains('/') {
+        return path.is_file();
+    }
+    let Ok(path_env) = std::env::var("PATH") else {
+        return false;
+    };
+    for dir in std::env::split_paths(&path_env) {
+        if dir.join(command).is_file() {
+            return true;
+        }
+    }
+    false
+}
+
+async fn with_real_timeout<F, T>(label: &str, f: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    match tokio::time::timeout(REAL_AGENT_STEP_TIMEOUT, f).await {
+        Ok(v) => v,
+        Err(_) => panic!("real-agent step timed out after {REAL_AGENT_STEP_TIMEOUT:?}: {label}"),
+    }
+}
+
+/// AC: "A configured real agent completes an opt-in E2E prompt round trip."
+///
+/// Gated by `ACP_E2E_AGENT`. When unset, skips so CI does not need API keys
+/// or installed adapters. When set (e.g. `ACP_E2E_AGENT=codex`), drives
+/// initialize → session/new → prompt → stream → close against a live agent.
+#[tokio::test]
+#[allow(clippy::print_stderr)] // skip/success diagnostics for opt-in operators
+async fn spike_real_agent_prompt_round_trip() {
+    let Ok(spec) = std::env::var(ACP_E2E_AGENT_ENV) else {
+        eprintln!(
+            "skipping spike_real_agent_prompt_round_trip: set {ACP_E2E_AGENT_ENV}=codex \
+             (or cursor/vibe/claude/gemini) to enable"
+        );
+        return;
+    };
+    let Some(transport) = resolve_real_agent_transport(&spec) else {
+        eprintln!(
+            "skipping spike_real_agent_prompt_round_trip: agent for \
+             {ACP_E2E_AGENT_ENV}={spec:?} not found on PATH"
+        );
+        return;
+    };
+
+    // Isolated cwd — never the real ~/.local-agent or the repo tree root as
+    // a writable agent workspace. Agent vendor auth may still use home dirs.
+    let tmp = tempfile::tempdir().expect("temp cwd for real-agent E2E");
+    let cwd = tmp.path().to_path_buf();
+    let observed = Observed::default();
+    let agent_text_h = observed.agent_text.clone();
+    let permission_h = observed.permission_requested.clone();
+
+    let result = Client
+        .builder()
+        .name("local-agent-real-e2e")
+        .on_receive_notification(
+            async move |notif: SessionNotification, _cx: ConnectionTo<Agent>| {
+                if let SessionUpdate::AgentMessageChunk(chunk) = notif.update {
+                    if let Some(text) = chunk.content.as_text() {
+                        *agent_text_h.lock().await += &text;
+                    }
+                }
+                Ok(())
+            },
+            agent_client_protocol::on_receive_notification!(),
+        )
+        .on_receive_request(
+            async move |req: RequestPermissionRequest, responder, _cx: ConnectionTo<Agent>| {
+                *permission_h.lock().await = true;
+                let option_id = req
+                    .options
+                    .first()
+                    .map(|o| o.option_id.clone())
+                    .unwrap_or_else(|| {
+                        agent_client_protocol::schema::v1::PermissionOptionId::new("allow_once")
+                    });
+                responder.respond(RequestPermissionResponse::new(
+                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id)),
+                ))
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        // Real agents may read/write workspace files; keep I/O inside tmp.
+        .on_receive_request(
+            {
+                let cwd = cwd.clone();
+                async move |req: ReadTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
+                    let path = if req.path.is_absolute() {
+                        req.path
+                    } else {
+                        cwd.join(req.path)
+                    };
+                    let contents = tokio::fs::read_to_string(&path)
+                        .await
+                        .unwrap_or_else(|e| format!("[e2e read error] {e}"));
+                    responder.respond(ReadTextFileResponse::new(contents))
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let cwd = cwd.clone();
+                async move |req: WriteTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
+                    let path = if req.path.is_absolute() {
+                        req.path
+                    } else {
+                        cwd.join(req.path)
+                    };
+                    // Only allow writes under the temp cwd (fail loud otherwise).
+                    if !path.starts_with(&cwd) {
+                        return Err(agent_client_protocol::Error::internal_error().data(format!(
+                            "refusing write outside E2E cwd: {}",
+                            path.display()
+                        )));
+                    }
+                    if let Some(parent) = path.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    tokio::fs::write(&path, req.content)
+                        .await
+                        .map_err(|_| agent_client_protocol::Error::internal_error())?;
+                    responder.respond(WriteTextFileResponse::new())
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .connect_with(transport, {
+            let cwd = cwd.clone();
+            move |cx: ConnectionTo<Agent>| async move {
+                let init = with_real_timeout(
+                    "initialize",
+                    cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
+                        .block_task(),
+                )
+                .await
+                .expect("initialize failed");
+                assert_eq!(init.protocol_version, ProtocolVersion::V1);
+                assert!(
+                    init.agent_info.is_some(),
+                    "real agent should report agent_info"
+                );
+
+                let new_session = with_real_timeout(
+                    "session/new",
+                    cx.send_request(NewSessionRequest::new(cwd)).block_task(),
+                )
+                .await
+                .expect("session/new failed");
+                let session_id = new_session.session_id;
+                assert!(!session_id.0.is_empty(), "session id should be non-empty");
+
+                let prompt = vec![ContentBlock::Text(TextContent::new(
+                    "Reply with exactly the single word: pong",
+                ))];
+                let prompt_resp = with_real_timeout(
+                    "session/prompt",
+                    cx.send_request(PromptRequest::new(session_id, prompt))
+                        .block_task(),
+                )
+                .await
+                .expect("prompt failed");
+                assert_eq!(
+                    prompt_resp.stop_reason,
+                    StopReason::EndTurn,
+                    "expected end_turn from real agent"
+                );
+                Ok(())
+            }
+        })
+        .await;
+
+    result.expect("real-agent E2E connection failed");
+
+    let agent_text = observed.agent_text.lock().await.clone();
+    assert!(
+        !agent_text.is_empty(),
+        "expected at least one AgentMessageChunk from real agent; got empty stream"
+    );
+    eprintln!(
+        "ACP E2E ({spec}) ok: streamed {} chars; permission_requested={}",
+        agent_text.len(),
+        *observed.permission_requested.lock().await
+    );
+}
 
 impl Observed {
     /// Clone the `Arc<Mutex<_>>` handles so a handler closure can capture

@@ -179,6 +179,23 @@ impl BackendHarness {
     }
 }
 
+/// First non-loopback IPv4 address on this host, for dialing the daemon so the
+/// server sees a non-loopback peer (WS auth gate). Returns `None` when the host
+/// has no usable LAN/global IPv4 (rare; skip auth-rejection in that case).
+pub fn first_non_loopback_ipv4() -> Option<String> {
+    use std::net::{IpAddr, Ipv4Addr, UdpSocket};
+
+    // UDP connect does not send packets; it selects a route and reveals the
+    // local address the kernel would use for egress — typically a LAN IP.
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let ip = socket.local_addr().ok()?.ip();
+    match ip {
+        IpAddr::V4(v4) if !v4.is_loopback() && v4 != Ipv4Addr::UNSPECIFIED => Some(v4.to_string()),
+        _ => None,
+    }
+}
+
 /// Find the repo root by walking up from CWD looking for Cargo.toml + go.mod.
 fn find_repo_root() -> PathBuf {
     let cwd = std::env::current_dir().expect("get cwd");
@@ -268,10 +285,12 @@ fn write_seed_config(state_dir: &Path, repo_root: &Path, port: u16) -> Result<()
     let agents: Vec<local_agent::config::AgentInfo> =
         serde_json::from_str(SEED_AGENT_JSON).context("parse seed agent JSON")?;
 
-    // Go backend reads config.json (encoding/json camelCase tags).
+    // Bind 0.0.0.0 so WS auth-rejection can dial a non-loopback local address
+    // (peer RemoteAddr is then non-loopback). REST/WS success cases still use
+    // 127.0.0.1 and keep the loopback auth bypass.
     let json_config = serde_json::json!({
         "port": port,
-        "host": "127.0.0.1",
+        "host": "0.0.0.0",
         "dataDir": state_dir,
         "dbPath": &db_path,
         "workspaces": [&seed_ws_path],
@@ -289,7 +308,7 @@ fn write_seed_config(state_dir: &Path, repo_root: &Path, port: u16) -> Result<()
     // Rust backend reads config.toml (same camelCase field names via serde).
     let toml_config = local_agent::config::Config {
         port: i64::from(port),
-        host: "127.0.0.1".to_string(),
+        host: "0.0.0.0".to_string(),
         data_dir: state_dir.to_string_lossy().to_string(),
         db_path: db_path.to_string_lossy().to_string(),
         workspaces: vec![seed_ws_path.to_string_lossy().to_string()],

@@ -30,8 +30,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      # build.rs requires web/dist/index.html (SPA embed). CI uses a stub so
-      # Node/npm is not required for lint/test; release+SPA smoke is deferred.
+      # build.rs requires web/dist/index.html (SPA embed). Lint/test jobs use a
+      # stub so Node/npm is not required; real SPA embed is covered by
+      # release-macos / release-windows below.
       - name: Ensure SPA embed marker
         run: |
           mkdir -p web/dist
@@ -55,6 +56,30 @@ jobs:
           fi
       - name: cargo test
         run: cargo test --all-targets --locked
+
+  # Black-box API contract suite (feature-gated; not part of --all-targets).
+  # Builds the debug binary once, then runs the runner serially against it so a
+  # wire-breaking Rust change fails CI. Ignored cases (documented in
+  # tests/contract/README.md): rest_agents_autodetect_ok, rest_mcp_put_bad_body.
+  contract:
+    name: contract suite (Linux)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Ensure SPA embed marker
+        run: |
+          mkdir -p web/dist
+          if [ ! -f web/dist/index.html ]; then
+            printf '%s\n' '<!doctype html><title>Local Agent</title>' > web/dist/index.html
+          fi
+      - name: Build debug binary
+        run: cargo build --bin local_agent --locked
+      - name: Contract suite (Rust backend)
+        run: |
+          CONTRACT_BACKEND=rust CONTRACT_BINARY=./target/debug/local_agent \
+            cargo test -q --test contract_runner --features contract -- --test-threads=1
 
   build-macos:
     name: cargo build (macOS)
@@ -88,3 +113,63 @@ jobs:
         run: cargo build --locked
       - name: cargo test
         run: cargo test --all-targets --locked
+
+  # Native release artifact + real SPA embed + smoke (S-BUILD ACs).
+  # Independent of debug build-macos / build-test-windows so those stay fast.
+  release-macos:
+    name: release + SPA smoke (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend (real SPA)
+        working-directory: web
+        run: |
+          npm ci --quiet
+          npm run build --silent
+      - name: cargo build --release
+        run: cargo build --release --locked --bin local_agent
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: local_agent-macos
+          path: target/release/local_agent
+          if-no-files-found: error
+          retention-days: 14
+      - name: SPA smoke
+        run: bash scripts/spa-smoke.sh ./target/release/local_agent
+
+  release-windows:
+    name: release + SPA smoke (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend (real SPA)
+        working-directory: web
+        shell: pwsh
+        run: |
+          npm ci --quiet
+          npm run build --silent
+      - name: cargo build --release
+        run: cargo build --release --locked --bin local_agent
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: local_agent-windows
+          path: target/release/local_agent.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: SPA smoke
+        shell: pwsh
+        run: pwsh -File scripts/spa-smoke.ps1 -Binary .\target\release\local_agent.exe

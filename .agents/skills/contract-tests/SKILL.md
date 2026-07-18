@@ -15,17 +15,17 @@ The contract runner (`tests/contract_runner/`) is a Rust `cargo test` integratio
 ## How to run
 
 ```sh
-# Against the Go backend (default — builds go binary, boots it as subprocess):
+# Against the Rust backend (default via make):
 make test-contract
 
 # Or directly (note the --features contract flag — the runner is feature-gated):
 cargo test --test contract_runner --features contract -- --nocapture
 
-# Against the Rust backend:
-CONTRACT_BACKEND=rust cargo test --test contract_runner --features contract -- --nocapture
+# Against the Go backend (legacy oracle):
+CONTRACT_BACKEND=go cargo test --test contract_runner --features contract -- --nocapture
 
 # Use a pre-built binary:
-CONTRACT_BINARY=/path/to/local-agent cargo test --test contract_runner --features contract
+CONTRACT_BINARY=/path/to/local_agent cargo test --test contract_runner --features contract
 
 # Keep the state dir for debugging:
 CONTRACT_KEEP_STATE=1 cargo test --test contract_runner --features contract
@@ -42,7 +42,7 @@ cargo test --test contract_runner --features contract dto_ -- --nocapture
 ## What is tested
 
 - **REST** (45 tests): every `golden/rest/*.json` fixture replayed as HTTP. Semantic JSON comparison for object/array bodies, exact byte comparison for error text and non-JSON. Envelope (method, path, status, contentType) always exact.
-- **WebSocket** (2 tests): origin rejection (403 for cross-origin) and connection success (101 + ping/pong).
+- **WebSocket** (5 tests): origin rejection (403), connection success (101 + ping/pong), live broadcast (API-driven), `?after=` replay + live, auth rejection (401 via non-loopback).
 - **DTO** (3 tests): structural field name/type comparison against `golden/dto/*.json` with omitempty tolerance.
 - **Unit tests** (14): redactor and compare utilities.
 
@@ -50,14 +50,17 @@ cargo test --test contract_runner --features contract dto_ -- --nocapture
 
 - **CLI commands** — the CLI is a thin client over the REST API. Its output formatting (box-drawing, tables, help text) is presentation, not contract. The Go harness still captures CLI fixtures for documentation.
 - **`rest_agents_autodetect_ok`** — `#[ignore]` because autodetect results are machine-specific. The runner neutralizes autodetect (`PATH=/dev/null`, `HOME=/dev/null`) for reproducibility.
-- **WS auth rejection** — requires non-loopback TCP, can't be tested black-box.
-- **WS event broadcast** — requires in-process event triggering, can't be done black-box.
+- **`rest_mcp_put_bad_body`** — `#[ignore]`; Go `encoding/json` vs Rust `serde_json` parse-error text differs.
+- **WS slow-client recovery** — black-box infeasible; unit-tested in `src/sync/tests.rs`.
 
 ## Important: gated behind `contract` feature
 
-The contract runner is feature-gated (`#![cfg(feature = "contract")]`). Without `--features contract`, the test binary compiles to nothing — no tests, no dependencies pulled in, no Go subprocess. This keeps `cargo test --all-targets` (and CI) fast and dependency-free.
+The contract runner is feature-gated (`#![cfg(feature = "contract")]`). Without `--features contract`, the test binary compiles to nothing — no tests, no dependencies pulled in, no Go subprocess. This keeps `cargo test --all-targets` (and the main CI `test` job) fast and dependency-free.
 
 Always run it explicitly via `make test-contract` or `cargo test --test contract_runner --features contract`.
+
+**CI:** Linux job `contract` in `.github/workflows/rust-ci.yml` (after `test`) builds
+`./target/debug/local_agent` then runs the suite with `--test-threads=1`.
 
 ## Regenerating golden fixtures
 

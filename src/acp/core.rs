@@ -51,6 +51,7 @@ use crate::interfaces::{
     wire::typed_event_to_wire, ACPClient, AppError, Attachment, EventMeta, EventPayload,
     PermissionManager, ProviderInfo, Session, SessionInfo, TypedEvent, WorkspaceManager,
 };
+use crate::procutil::{configure_process_group, ProcessGroupCleanup};
 use crate::shell::{merge_env, Executor, DEFAULT_MAX_OUTPUT_BYTES};
 
 /// Maximum retained agent stderr diagnostic tail. Agent stderr is untrusted and
@@ -1186,10 +1187,17 @@ async fn run_actor_inner(
     ready: &mut Option<oneshot::Sender<Result<ActorStartup, AppError>>>,
     registered: &mut Option<oneshot::Receiver<()>>,
 ) -> Result<ActorExit, AppError> {
-    let mut command = Command::new(&config.agent.command);
-    command
+    // Build via std::process::Command so we can attach Unix process-group
+    // isolation (setpgid) before converting to async-process. kill_on_drop
+    // alone only terminates the direct child — descendants of the agent must
+    // die with the session on cancel/shutdown.
+    let mut std_cmd = std::process::Command::new(&config.agent.command);
+    std_cmd
         .args(&config.agent.args)
-        .current_dir(&config.workspace_path)
+        .current_dir(&config.workspace_path);
+    configure_process_group(&mut std_cmd);
+    let mut command = Command::from(std_cmd);
+    command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1197,6 +1205,9 @@ async fn run_actor_inner(
     let mut child = command
         .spawn()
         .map_err(|error| AppError::internal(format!("spawn ACP agent: {error}")))?;
+    // Guard until reaped: dropping the actor (panic / early return) still
+    // SIGKILLs the whole Unix process group, not just the agent PID.
+    let mut process_group_cleanup = ProcessGroupCleanup::new(Some(child.id()));
     let stdin = child
         .stdin
         .take()
@@ -1454,8 +1465,16 @@ async fn run_actor_inner(
         .await;
     handler_cancel.cancel();
     cancel_terminals(&terminals);
+    // Kill the agent process group (Unix) / child (Windows), then reap.
+    // Explicit kill covers the normal close path; ProcessGroupCleanup covers
+    // early returns / panics before this point.
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(child.id()) {
+        crate::procutil::kill_process_group(pid);
+    }
     let _ = child.kill();
     let _ = child.status().await;
+    process_group_cleanup.disarm();
     connected.map_err(|error| AppError::internal(format!("ACP connection: {error}")))
 }
 
@@ -2672,6 +2691,101 @@ mod tests {
         assert!(output.truncated);
         assert!(output.text.len() <= 5);
         assert!(std::str::from_utf8(output.text.as_bytes()).is_ok());
+    }
+
+    /// ACP agent spawn uses process-group isolation so descendants die on
+    /// shutdown (kill_on_drop alone only reaps the direct child).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn agent_process_group_kill_reaps_descendant() {
+        use std::process::Command as StdCommand;
+
+        use crate::procutil::{configure_process_group, ProcessGroupCleanup};
+
+        let dir = TempDir::new().expect("tempdir");
+        let pid_file = dir.path().join("descendant.pid");
+        let pid_path = pid_file.to_str().expect("utf-8 path").to_string();
+
+        // Mirror run_actor_inner: std Command → process group → async-process.
+        let mut std_cmd = StdCommand::new("sh");
+        std_cmd
+            .args([
+                "-c",
+                "sleep 30 & echo $! > \"$1\"; exec sleep 30",
+                "_",
+                &pid_path,
+            ])
+            .current_dir(dir.path());
+        configure_process_group(&mut std_cmd);
+        let mut command = async_process::Command::from(std_cmd);
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
+        let mut child = command.spawn().expect("spawn stand-in agent");
+        let mut cleanup = ProcessGroupCleanup::new(Some(child.id()));
+
+        let descendant = wait_for_pid_file(&pid_file, Duration::from_secs(2)).await;
+
+        // Same shutdown sequence as run_actor_inner after the actor loop ends.
+        if let Ok(pid) = i32::try_from(child.id()) {
+            crate::procutil::kill_process_group(pid);
+        }
+        let _ = child.kill();
+        let _ = child.status().await;
+        cleanup.disarm();
+
+        let mut exited = false;
+        for _ in 0..40 {
+            if process_is_gone_or_zombie(descendant) {
+                exited = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        if !exited {
+            // SAFETY: avoid leaking a sleep if the assertion fails.
+            unsafe {
+                libc::kill(descendant, libc::SIGKILL);
+            }
+        }
+        assert!(
+            exited,
+            "agent-spawned descendant {descendant} survived process-group kill"
+        );
+
+        async fn wait_for_pid_file(path: &Path, timeout: Duration) -> i32 {
+            let start = tokio::time::Instant::now();
+            loop {
+                if let Ok(contents) = std::fs::read_to_string(path) {
+                    let trimmed = contents.trim();
+                    if !trimmed.is_empty() {
+                        return trimmed.parse().expect("numeric descendant PID");
+                    }
+                }
+                assert!(
+                    start.elapsed() < timeout,
+                    "timed out waiting for descendant PID at {}",
+                    path.display()
+                );
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        }
+
+        fn process_is_gone_or_zombie(pid: i32) -> bool {
+            if unsafe { libc::kill(pid, 0) } == -1 {
+                return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            }
+            let stat_path = format!("/proc/{pid}/stat");
+            std::fs::read_to_string(stat_path)
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit_once(") ")
+                        .map(|(_, rest)| rest.starts_with('Z'))
+                })
+                .unwrap_or(false)
+        }
     }
 
     /// A prompt RPC must not monopolize the actor's control receiver.

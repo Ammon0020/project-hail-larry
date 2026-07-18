@@ -202,10 +202,11 @@ CONTRACT_KEEP_STATE=1 cargo test --test contract_runner --features contract
   object/array bodies, exact bytes for error text and non-JSON content types.
   Envelope fields (method, path, status, contentType) are always compared
   exactly.
-- **WebSocket** (2 tests): origin rejection (403 for cross-origin requests)
-  and connection success (101 Switching Protocols + ping/pong). Auth
-  rejection and event broadcast are skipped (require non-loopback or
-  in-process broadcast triggering — see Known Limitations below).
+- **WebSocket** (5 tests): origin rejection (403), connection success (101 +
+  ping/pong), live broadcast (pair+revoke → `DeviceRevocationPending`),
+  `?after=` replay + live transition, and auth rejection (401 via non-loopback
+  dial; harness binds `0.0.0.0`). Slow-client recovery is not black-box (see
+  Known Limitations).
 - **DTO** (3 tests): the JSON shapes from API responses are structurally
   compared against `golden/dto/*.json` fixtures to verify field names and
   omitempty behavior. The comparison is bidirectional with omitempty
@@ -229,18 +230,30 @@ contract surface that the Rust port must replicate.
   Rust `serde_json` disagree on the parse-error suffix for `{not json` while
   both return 400 + `invalid mcp config JSON: …`. Other bad-body cases cover
   the envelope contract.
-- **WebSocket auth rejection is not tested**. It requires a non-loopback TCP
-  connection, which the runner can't simulate (the server's loopback auth
-  bypass always applies).
-- **WebSocket event broadcast is not tested**. It requires driving in-process
-  `server.OnEvent` calls, which is not possible black-box. The runner could
-  trigger events via API calls (e.g., create a session), but the resulting
-  events would differ from the synthetic fixture events.
+- **WebSocket slow-client recovery is not tested black-box.** Filling the
+  64-deep send buffer and observing durable resync requires hub-internal
+  control. Unit coverage: `src/sync/tests.rs`
+  (`lagged_resync_from_bus_on_full_buffer`). Documented in
+  `golden/ws/ws_after_replay.jsonl`.
 - **CLI tests are not included**. The CLI is a thin client over the REST API.
   Its output formatting (box-drawing, table layouts, help text) is
   presentation, not contract. The Go in-process harness still captures CLI
   fixtures (`golden/cli/`) for documentation, but the runner doesn't test
   them.
+
+### CI
+
+Linux job `contract` in `.github/workflows/rust-ci.yml` (after `test`):
+
+```sh
+cargo build --bin local_agent --locked
+CONTRACT_BACKEND=rust CONTRACT_BINARY=./target/debug/local_agent \
+  cargo test -q --test contract_runner --features contract -- --test-threads=1
+```
+
+SPA embed stub matches other jobs. Goldens are checked in; regenerate manually
+via `go test ./tests/contract/go-fixtures/ -run TestGenerateFixtures`.
+
 
 ### Backend selection
 
