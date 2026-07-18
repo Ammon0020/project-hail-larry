@@ -24,7 +24,9 @@ tab kind, with clear follow-ons (live reload, dev-server proxy).
   disposition, reusing `file_path` containment and the same auth as `/raw`.
 - Frontend "Open Preview" on `.html`/`.htm` file-tree context menu.
 - `Tab.kind: 'preview'` + `BrowsePreview` sandboxed iframe.
-- Sandbox: `allow-scripts allow-same-origin` (no `allow-top-navigation`).
+- Sandbox: `allow-scripts` only (opaque origin — no parent `localStorage` access).
+  `frame-ancestors 'self'` on preview responses. Full separate-origin preview
+  deferred if opaque-origin breaks exotic sites.
 
 **Done (S-PREVIEW-LIVE-RELOAD):**
 
@@ -36,9 +38,8 @@ tab kind, with clear follow-ons (live reload, dev-server proxy).
 - Dev-server proxy (Vite, Next.js, etc.).
 - Mobile-specific preview UX.
 - Multi-entry workspace detection (auto-pick `index.html`).
-- **Security follow-on:** isolate preview from IDE origin (see known-issues
-  `sec-preview-same-origin-scripts`) — separate origin / no same-origin
-  sandbox / scoped preview token.
+- **Security follow-on:** separate preview origin if opaque-origin sandbox
+  breaks exotic multi-file sites (unlikely for static assets).
 
 ## Architecture
 

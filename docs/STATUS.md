@@ -60,8 +60,8 @@
   `docs/plans/pending-acp-agent-session-history-med.md` →
   `docs/plans/acp-session-history/` (PROBE→BROWSE→OPEN→SYNC; FALLBACK; MIGRATE).
   Blocked on epic Decision Needed Q1–Q8.
-- [~] **Workspace static preview** — serve + browse tab + live-reload done;
-  dev-server proxy / mobile UX / auto-index still open.
+- [~] **Workspace static preview** — serve + browse tab + live-reload + sandbox
+  hardening done; dev-server proxy / mobile UX / auto-index still open.
   `docs/plans/complete-workspace-preview-small.md`.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation,
   enhanced diagnostics.
@@ -76,6 +76,8 @@
 
 ## Recent Changes (2026-07)
 
+- **07-18** — **Preview sandbox hardening**: drop `allow-same-origin` on browse
+  preview iframe; `frame-ancestors 'self'` on preview responses.
 - **07-18** — **Browse preview live reload**: `FileWritten` /
   `FileChangedOnDisk` → debounced iframe remount via shared `backend.events`.
 - **07-18** — **Editor on mobile**: CodeMirror touch config — scaled lineHeight,

@@ -597,7 +597,17 @@ async fn preview_file(
     if rel.is_empty() {
         return Err(ApiResponseError::not_found("preview path required"));
     }
-    serve_workspace_file(&state, &id, rel).await
+    serve_workspace_file(&state, &id, rel)
+        .await
+        .map(|mut response| {
+            // Preview HTML may run scripts in a sandboxed iframe; confine who
+            // can embed these responses (IDE only, same origin).
+            response.headers_mut().insert(
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static("frame-ancestors 'self'"),
+            );
+            response
+        })
 }
 
 /// Shared body for `/raw` and `/preview`: resolve via workspace containment,

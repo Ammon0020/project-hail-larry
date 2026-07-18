@@ -93,12 +93,12 @@ Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic
   front. Same pattern on `/raw` and `/preview` iframe URLs; preview responses
   send `Referrer-Policy: no-referrer` to limit Referer leakage.
 
-- **sec-preview-same-origin-scripts (Medium):** Browse preview iframe uses
-  `sandbox="allow-scripts allow-same-origin"` on the IDE origin so multi-file
-  sites can run. Workspace (or agent-written) JS can read `localStorage`
-  device credentials and call authenticated APIs without a permission prompt.
-  Mitigate later: separate preview origin, drop `allow-same-origin`, or
-  short-lived preview tokens. See `complete-workspace-preview-small.md`.
+- **sec-preview-same-origin-scripts (Medium — mitigated 2026-07-18):** Browse
+  preview iframe no longer uses `allow-same-origin` (opaque origin; scripts
+  run but cannot read IDE `localStorage`). Preview responses add
+  `frame-ancestors 'self'`. Residual: workspace JS can still exfiltrate via
+  network if the HTML loads third-party scripts; separate preview origin or
+  scoped tokens remain optional hardening.
 
 ## Rust port — Go daemon deleted (cutover)
 

@@ -86,8 +86,10 @@ export function BrowsePreview({
         </button>
       </div>
       {/*
-        Sandbox policy: allow-scripts + allow-same-origin so the user's own
-        workspace HTML/CSS/JS can run (standard local-preview sandbox).
+        Sandbox: allow-scripts only (no allow-same-origin). The iframe gets an
+        opaque origin so workspace HTML/JS cannot read the IDE's localStorage or
+        call authenticated APIs as the parent app. Relative CSS/JS/image URLs
+        still load via normal subresource requests (auth via query params).
         allow-top-navigation stays OFF so the preview cannot redirect the IDE.
       */}
       <iframe
@@ -95,7 +97,7 @@ export function BrowsePreview({
         src={src}
         title={`Preview: ${entryPath}`}
         className="flex-1 w-full border-0 bg-white"
-        sandbox="allow-scripts allow-same-origin"
+        sandbox="allow-scripts"
       />
     </div>
   )
