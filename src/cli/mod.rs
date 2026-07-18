@@ -78,7 +78,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::Start { background } => start(background).await,
         Commands::Stop => stop(),
         Commands::Status => status(),
-        Commands::AddFolder { path } => add_folder(&path),
+        Commands::AddFolder { path } => add_folder(&path).await,
         Commands::RemoveFolder { id } => remove_folder(&id).await,
         Commands::ListFolders => list_folders().await,
         Commands::Pair => pair().await,
@@ -163,7 +163,7 @@ fn status() -> Result<()> {
     Ok(())
 }
 
-fn add_folder(path: &str) -> Result<()> {
+async fn add_folder(path: &str) -> Result<()> {
     let absolute = Path::new(path)
         .canonicalize()
         .with_context(|| format!("resolve workspace path {path}"))?;
@@ -176,6 +176,20 @@ fn add_folder(path: &str) -> Result<()> {
     config
         .add_workspace(&absolute)
         .context("save workspace configuration")?;
+
+    // When the daemon is already running, also register into its live manager
+    // so the UI sees the folder without a restart.
+    if daemon::status(&config)?.running {
+        local_request(
+            &config,
+            reqwest::Method::POST,
+            "/api/workspaces",
+            Some(json!({ "path": absolute })),
+        )
+        .await
+        .context("sync workspace into running daemon")?;
+    }
+
     let message = if existed {
         "Workspace already registered"
     } else {
@@ -194,6 +208,18 @@ async fn remove_folder(id: &str) -> Result<()> {
     config
         .remove_workspace(&workspace.path)
         .context("save workspace configuration")?;
+
+    if daemon::status(&config)?.running {
+        let path = format!("/api/workspaces/{}", workspace.id);
+        match local_request(&config, reqwest::Method::DELETE, &path, None).await {
+            Ok(_) => {}
+            // Config was already updated; a missing live entry just means the
+            // daemon never loaded this folder (e.g. added while stopped).
+            Err(error) if error.to_string().contains("HTTP 404") => {}
+            Err(error) => return Err(error).context("sync workspace removal into running daemon"),
+        }
+    }
+
     writeln!(
         io::stdout(),
         "Workspace removed: {} ({})",

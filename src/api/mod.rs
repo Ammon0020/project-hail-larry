@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, OriginalUri, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, OriginalUri, Path, Query, State};
+use axum::http::request::Parts;
 use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -123,6 +124,7 @@ pub fn router(state: AppState) -> Router {
             "/api/workspaces",
             get(list_workspaces).post(register_workspace),
         )
+        .route("/api/workspaces/{id}", delete(remove_workspace))
         .route(
             "/api/workspaces/cancel-registration",
             post(cancel_workspace_registration),
@@ -375,38 +377,49 @@ struct RegisterWorkspaceRequest {
     path: String,
 }
 
-/// `POST /api/workspaces` — gated by config; grace period yields 202 Accepted.
+/// `POST /api/workspaces` — remote devices need the config gate; the host CLI
+/// (loopback) can always register immediately so `add-folder` updates the live
+/// daemon without a restart.
 async fn register_workspace(
     State(state): State<AppState>,
+    PeerAddr(remote_addr): PeerAddr,
     headers: HeaderMap,
     uri: Uri,
     body: Result<Json<RegisterWorkspaceRequest>, JsonRejection>,
 ) -> Result<Response, ApiResponseError> {
-    let Json(request) = decode_json_body(body)?;
-    if !state.config.read().allow_remote_workspace_registration {
+    let Json(payload) = decode_json_body(body)?;
+    let loopback = is_loopback_addr(&remote_addr);
+    let allow_remote = state.config.read().allow_remote_workspace_registration;
+    if !allow_remote && !loopback {
         return Err(ApiResponseError::forbidden(
             "Remote workspace registration is disabled. Use 'app add-folder <path>' on the host, or set allowRemoteWorkspaceRegistration: true in config.",
         ));
     }
 
     let grace = revocation_grace_period(&state);
-    let requester = device_id_from_request(&headers, uri.query());
-
-    // Immediate path stays on WorkspaceManager. Grace > 0 goes through pairing
-    // so the action can be listed/cancelled; the daemon-wired registrar fires
-    // the real registration when the timer elapses.
-    if grace.is_zero() {
+    // Host CLI and zero-grace paths register immediately into the live manager.
+    if loopback || grace.is_zero() {
         let workspace = state
             .workspaces
-            .register(&request.path)
+            .register(&payload.path)
             .await
             .map_err(app_error)?;
+        // Keep config.toml aligned when the host CLI (or zero-grace remote)
+        // registers into a running daemon.
+        if let Err(error) = state.config.write().add_workspace(&workspace.path) {
+            warn!(
+                path = %workspace.path,
+                %error,
+                "registered workspace but failed to persist config"
+            );
+        }
         return Ok((StatusCode::CREATED, Json(workspace)).into_response());
     }
 
+    let requester = device_id_from_request(&headers, uri.query());
     let info = state
         .pairing
-        .request_workspace_registration(&request.path, requester, grace)
+        .request_workspace_registration(&payload.path, requester, grace)
         .map_err(pairing_error)?;
 
     let mut event = Event::new(0, EventType::WorkspaceRegistrationPending, "", Utc::now());
@@ -417,6 +430,57 @@ async fn register_workspace(
     record_event(&state, event).await;
 
     Ok((StatusCode::ACCEPTED, Json(info)).into_response())
+}
+
+/// `DELETE /api/workspaces/{id}` — host/loopback unregistration for
+/// `remove-folder` against a running daemon. LAN clients stay on the remote
+/// registration gate and cannot delete workspaces here.
+async fn remove_workspace(
+    State(state): State<AppState>,
+    PeerAddr(remote_addr): PeerAddr,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiResponseError> {
+    if !is_loopback_addr(&remote_addr) {
+        return Err(ApiResponseError::forbidden(
+            "Workspace removal from the network is disabled. Use 'app remove-folder <id>' on the host.",
+        ));
+    }
+    let workspaces = state.workspaces.list().await.map_err(app_error)?;
+    let workspace = workspaces
+        .into_iter()
+        .find(|workspace| workspace.id == id)
+        .ok_or_else(|| ApiResponseError::not_found(&format!("workspace {id} not found")))?;
+    state.workspaces.remove(&id).await.map_err(app_error)?;
+    if let Err(error) = state.config.write().remove_workspace(&workspace.path) {
+        // Already removed from the live manager; config drift is loud but not
+        // fatal for the CLI operator who may have already saved config.
+        warn!(
+            path = %workspace.path,
+            %error,
+            "removed live workspace but config persist failed"
+        );
+    }
+    Ok(Json(json!({ "status": "removed", "id": id })))
+}
+
+/// Peer address for loopback checks. Missing `ConnectInfo` (unit tests) is
+/// treated as loopback, matching `require_auth`.
+struct PeerAddr(String);
+
+impl<S> FromRequestParts<S> for PeerAddr
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let addr = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<SocketAddr>>()
+            .map(|connect| connect.0.to_string())
+            .unwrap_or_else(|| "127.0.0.1:0".to_string());
+        Ok(Self(addr))
+    }
 }
 
 /// `POST /api/workspaces/cancel-registration` — body `{"actionId":"..."}`.
@@ -1167,6 +1231,7 @@ mod tests {
     use super::*;
     use axum::body::to_bytes;
     use axum::body::Body;
+    use axum::extract::ConnectInfo;
     use tower::ServiceExt;
 
     fn state() -> (tempfile::TempDir, AppState) {
@@ -1234,7 +1299,18 @@ mod tests {
     }
 
     async fn oneshot(state: AppState, request: Request<Body>) -> Response {
+        oneshot_peer(state, request, "127.0.0.1:9").await
+    }
+
+    async fn oneshot_peer(state: AppState, mut request: Request<Body>, peer: &str) -> Response {
+        let addr: SocketAddr = peer.parse().expect("peer address");
+        request.extensions_mut().insert(ConnectInfo(addr));
         router(state).oneshot(request).await.expect("response")
+    }
+
+    fn bearer(cred: &crate::interfaces::DeviceCredential) -> HeaderValue {
+        HeaderValue::from_str(&format!("Bearer {}:{}", cred.id, cred.secret))
+            .expect("authorization header")
     }
 
     async fn json_body(response: Response) -> Value {
@@ -1443,15 +1519,17 @@ mod tests {
 
     #[tokio::test]
     async fn workspace_registration_disabled_returns_403() {
-        let (_dir, state, _cred) = pending_actions_state(300, false);
-        let response = oneshot(
+        let (_dir, state, cred) = pending_actions_state(300, false);
+        let response = oneshot_peer(
             state,
             Request::builder()
                 .method(Method::POST)
                 .uri("/api/workspaces")
                 .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, bearer(&cred))
                 .body(Body::from(r#"{"path":"/some/path"}"#))
                 .expect("request"),
+            "10.0.0.1:9",
         )
         .await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -1467,15 +1545,17 @@ mod tests {
 
     #[tokio::test]
     async fn workspace_registration_enabled_returns_accepted() {
-        let (_dir, state, _cred) = pending_actions_state(300, true);
-        let response = oneshot(
+        let (_dir, state, cred) = pending_actions_state(300, true);
+        let response = oneshot_peer(
             state,
             Request::builder()
                 .method(Method::POST)
                 .uri("/api/workspaces")
                 .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, bearer(&cred))
                 .body(Body::from(r#"{"path":"/some/path"}"#))
                 .expect("request"),
+            "10.0.0.1:9",
         )
         .await;
         assert_eq!(response.status(), StatusCode::ACCEPTED);
@@ -1486,15 +1566,17 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_workspace_registration_removes_pending_action() {
-        let (_dir, state, _cred) = pending_actions_state(300, true);
-        let reg = oneshot(
+        let (_dir, state, cred) = pending_actions_state(300, true);
+        let reg = oneshot_peer(
             state.clone(),
             Request::builder()
                 .method(Method::POST)
                 .uri("/api/workspaces")
                 .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, bearer(&cred))
                 .body(Body::from(r#"{"path":"/some/path"}"#))
                 .expect("request"),
+            "10.0.0.1:9",
         )
         .await;
         assert_eq!(reg.status(), StatusCode::ACCEPTED);
