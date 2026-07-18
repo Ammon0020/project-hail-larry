@@ -15,15 +15,20 @@ the `cc` requirement for bundled SQLite.
 
 ## Rust Build Flow
 
-1. `cd web/ && npm install && npm run build` → outputs `internal/server/dist/` (unchanged)
-2. `cargo build --release` → `rust-embed` macro embeds `dist/`, compiles binary
+1. `cd web/ && npm install && npm run build` → outputs `web/dist/`
+2. `cargo build --release` → `rust-embed` embeds `web/dist/`, compiles binary
+   (`build.rs` requires `web/dist/index.html`)
+
+Go still copies into `internal/server/dist/` for `go:embed`; Rust does not use
+that path.
 
 ### Build scripts
 
-- `build.sh` (Linux/macOS): `npm run build` in `web/`, then `cargo build --release`
+- `build.sh` (Linux/macOS): `npm run build` in `web/`, Go build, then
+  `cargo build --release` → `bin/local_agent`
 - `build.ps1` (Windows): same, PowerShell syntax
-- Required `build.rs`: assert `internal/server/dist/` exists and fail with a
-  clear "run npm run build first" message if missing.
+- Required `build.rs`: assert `web/dist/index.html` exists and fail with a
+  clear "run npm run build / ./build.sh" message if missing.
 - Pin supported Rust/toolchain and dependency versions after S-ARCH, commit the
   lockfile, and record dependency-age/security review in release CI.
 
@@ -39,16 +44,20 @@ the `cc` requirement for bundled SQLite.
 ### CGO / C compiler
 
 `rusqlite` "bundled" feature compiles SQLite C source → needs `cc`/`gcc`
-at build time. Document this in README. For Windows MSVC, needs the
-`cc` crate which finds MSVC build tools automatically.
+at build time. Documented in `docs/development/building.md`. For Windows MSVC,
+the `cc` crate finds MSVC build tools automatically.
 
 ## Acceptance Criteria
 
-- [ ] `./build.sh` produces working binary on Linux
-- [ ] `.\build.ps1` produces working binary on Windows
-- [ ] Frontend assets embedded (binary serves UI without `dist/` on disk)
+- [x] `./build.sh` produces working binary on Linux
+- [x] `.\build.ps1` produces working binary on Windows
+- [x] Frontend assets embedded (binary serves UI without `dist/` on disk)
 - [ ] Windows release artifact builds and passes smoke tests on native Windows CI
 - [ ] macOS release artifact builds and passes smoke tests on native macOS CI
-- [ ] Required build.rs asset check fails clearly when frontend dist is missing
-- [ ] Release binaries stripped (`strip = true` in `[profile.release]`)
-- [ ] `cc` requirement documented
+- [x] Required build.rs asset check fails clearly when frontend dist is missing
+- [x] Release binaries stripped (`strip = true` in `[profile.release]`)
+- [x] `cc` requirement documented
+
+> **Deferred (STATUS):** Native Win/macOS *release artifact + SPA smoke* CI.
+> `rust-ci.yml` already runs basic `cargo build`/`test` on those runners with a
+> stub `web/dist/index.html` so `build.rs` is satisfied without Node.

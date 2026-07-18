@@ -111,3 +111,10 @@ S-UPLOADS was verified by temporarily restoring the committed shell stub via
 `git show HEAD:src/shell/mod.rs`; the WIP file was preserved at
 `/tmp/shell_mod_wip.rs` and restored afterward. S-SHELL should rename its
 `Result` struct (e.g. `ShellResult`) or scope it to avoid the std collision.
+
+## Rust port — S-BUILD native release CI deferred
+
+Basic `cargo build`/`test` on macOS/Windows runners exists in
+`.github/workflows/rust-ci.yml` (stub `web/dist/index.html` for `build.rs`).
+Deferred: native **release artifact** builds with real frontend embed + SPA
+smoke tests on Win/macOS (see S-BUILD story).

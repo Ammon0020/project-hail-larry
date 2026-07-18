@@ -57,5 +57,5 @@ cargo build --release
 cp -f target/release/local_agent bin/local_agent
 
 echo "${GREEN}Build complete!${RESET}"
-echo "  Go binary:   bin/app        (installed globally as 'app')"
-echo "  Rust binary: bin/local_agent  (run with 'bin/local_agent --serve')"
+echo "  Go binary:   bin/app          (installed globally as 'app')"
+echo "  Rust binary: bin/local_agent   (run with 'bin/local_agent start')"

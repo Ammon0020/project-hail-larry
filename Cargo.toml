@@ -245,3 +245,8 @@ expect_used = "deny"      # no `.expect()` — same rationale as `unwrap_used`
 # must_use_candidate, doc_markdown) are NOT denied yet: 4 findings exist today
 # (see docs/known-issues.md). Deny them once those are fixed. Adding them as
 # `warn` here would be escalated to errors by CI's blanket `-D warnings`.
+
+# Release binaries: strip symbols for smaller single-binary distribution
+# (S-BUILD). Debug builds keep symbols for local development.
+[profile.release]
+strip = true

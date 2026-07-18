@@ -9,7 +9,7 @@
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
-#[folder = "internal/server/dist/"]
+#[folder = "$CARGO_MANIFEST_DIR/web/dist/"]
 struct FrontendAsset;
 
 // Usage:
@@ -19,21 +19,26 @@ match FrontendAsset::get("index.html") {
 }
 ```
 
-`rust-embed` embeds files at compile time, same as `go:embed`. The
-`internal/server/dist/` directory (populated by `npm run build` in `web/`)
-remains the source — only the embedding mechanism changes.
+`rust-embed` embeds files at compile time, same as `go:embed`. Vite writes the
+production SPA to **`web/dist/`**; that directory is the Rust embed root. Go
+still copies into `internal/server/dist/` for `go:embed` — the Rust build does
+**not** read that path.
 
 ### Build script coordination
 
-The current build flow: `build.sh` runs `npm run build` (outputs to
-`internal/server/dist/`), then `go build` embeds it. In Rust:
+1. `cd web && npm run build` → outputs to `web/dist/`
+2. `cargo build --release` → `rust-embed` reads `web/dist/` at compile time;
+   `build.rs` fails early if `web/dist/index.html` is missing
 
-1. `npm run build` → outputs to `internal/server/dist/` (unchanged)
-2. `cargo build` → `rust-embed` macro reads `dist/` at compile time
+`./build.sh` / `.\build.ps1` run the frontend build, then Go, then
+`cargo build --release`. See [docs/development/building.md](../development/building.md)
+for the `cc` / bundled-SQLite requirement.
 
-The `build.sh` / `build.ps1` scripts change the final step from `go build`
-to `cargo build`. A `build.rs` script is not needed unless you want to
-assert `dist/` exists and fail early with a clear message.
+### C compiler for bundled SQLite
+
+`rusqlite` with `bundled` compiles SQLite C source at build time — a C toolchain
+(`gcc`/`clang`/MSVC) must be on `PATH`. Documented in
+[docs/development/building.md](../development/building.md).
 
 ## Error Handling — `anyhow` + `thiserror`
 

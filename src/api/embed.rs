@@ -1,8 +1,9 @@
 //! Embedded single-page application assets.
 //!
-//! `web/dist` is present but normally empty, so `cargo test` and `cargo run
-//! -- --serve` do not require Node. Running `cd web && npm run build` supplies
-//! the production Vite build before compiling the Rust binary.
+//! Vite writes the production SPA to `web/dist/`. `build.rs` requires
+//! `web/dist/index.html` before `cargo build` succeeds; run
+//! `cd web && npm run build` or `./build.sh` first. Assets are baked in via
+//! `rust-embed` at compile time.
 
 use axum::body::Body;
 use axum::http::{header, HeaderValue, StatusCode};
@@ -72,16 +73,16 @@ mod tests {
     use super::*;
     use axum::body::to_bytes;
 
-    /// `/` must always return HTML that identifies Local Agent. When
-    /// `web/dist/index.html` was baked in at compile time that is a 200 SPA
-    /// entry; otherwise the development 503 fallback page.
+    /// `/` must return the embedded SPA when `web/dist/index.html` was present
+    /// at compile time (required by `build.rs`). Asserts a 200 HTML response
+    /// that identifies Local Agent — smoke that rust-embed baked the entry in.
     #[tokio::test]
-    async fn spa_entry_serves_html_or_clear_build_fallback() {
+    async fn spa_entry_serves_embedded_index() {
         let response = serve("/".to_string()).await;
-        let status = response.status();
-        assert!(
-            status == StatusCode::OK || status == StatusCode::SERVICE_UNAVAILABLE,
-            "unexpected SPA status: {status}"
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "build.rs requires web/dist/index.html; expected embedded SPA, not fallback"
         );
         let body = to_bytes(response.into_body(), 1024 * 1024)
             .await
@@ -91,11 +92,5 @@ mod tests {
             text.contains("Local Agent") || text.contains("<!"),
             "SPA response missing HTML marker"
         );
-        if status == StatusCode::SERVICE_UNAVAILABLE {
-            assert!(
-                text.contains("npm run build"),
-                "fallback page must tell developers how to build the frontend"
-            );
-        }
     }
 }

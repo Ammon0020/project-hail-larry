@@ -30,7 +30,7 @@ use async_process::Command;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::io::AsyncReadExt;
-use tokio::sync::{mpsc, oneshot, watch, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{mpsc, oneshot, watch, Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -130,16 +130,28 @@ impl SessionEntry {
 pub struct Client {
     deps: ClientDeps,
     sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
+    /// Durable sessions from `conversations.json` with no live actor yet.
+    ///
+    /// Loaded at daemon start; actors are spawned lazily on prompt / cancel /
+    /// provider / rebind (not at boot).
+    dormant: Arc<RwLock<HashMap<String, SessionInfo>>>,
+    /// Serializes dormant→live restores so concurrent ops cannot double-spawn.
+    restore_lock: AsyncMutex<()>,
     pipeline: Arc<PromptPipeline>,
 }
 
 impl Client {
     /// Creates an ACP client with all service dependencies supplied up front.
+    ///
+    /// Does not load `conversations.json` — call [`Self::load_conversations`]
+    /// after construction so a corrupt store fails daemon startup loudly.
     #[must_use]
     pub fn new(deps: ClientDeps) -> Self {
         Self {
             deps,
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            dormant: Arc::new(RwLock::new(HashMap::new())),
+            restore_lock: AsyncMutex::new(()),
             pipeline: Arc::new(PromptPipeline::default()),
         }
     }
@@ -152,22 +164,182 @@ impl Client {
 
     /// Load persisted conversation metadata without treating it as live transport state.
     ///
-    /// The daemon currently restores history through the event store; callers can
-    /// use this metadata for a durable conversation list before selecting a
-    /// session to resume. It intentionally does not fabricate an ACP actor.
+    /// Prefer [`Self::load_conversations`] at daemon start so list/get see
+    /// durable sessions. This raw store read remains for diagnostics.
     pub fn load_conversation_metadata(&self) -> Result<Vec<SessionInfo>, AppError> {
         self.deps.conversation_store.load()
     }
 
+    /// Restore durable conversation metadata into the dormant map (no actors).
+    ///
+    /// Mirrors Go `LoadConversations`: status becomes `idle`, live transports
+    /// are not started. Corrupt or unreadable stores return an error so the
+    /// daemon fails loudly rather than silently dropping the session list.
+    ///
+    /// # Errors
+    ///
+    /// Propagates store I/O/parse failures and poisoned registry locks.
+    pub fn load_conversations(&self) -> Result<(), AppError> {
+        let records = self.deps.conversation_store.load()?;
+        let live = self
+            .sessions
+            .read()
+            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
+        let mut dormant = self
+            .dormant
+            .write()
+            .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?;
+        dormant.clear();
+        for mut info in records {
+            if live.contains_key(&info.id) {
+                continue;
+            }
+            // Persisted running/failed bits are stale after restart; idle until
+            // the next prompt lazily starts an actor.
+            info.status = SessionState::Idle.as_str().to_string();
+            dormant.insert(info.id.clone(), info);
+        }
+        tracing::info!(
+            count = dormant.len(),
+            "loaded persisted ACP conversations; actors deferred until use"
+        );
+        Ok(())
+    }
+
     fn persist_sessions(&self) -> Result<(), AppError> {
-        let sessions = self
+        let live = self
+            .sessions
+            .read()
+            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
+        let dormant = self
+            .dormant
+            .read()
+            .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?;
+        // Live metadata wins for shared ids; dormant fills the rest so a
+        // create/rename cannot wipe conversations that have not been restored.
+        let mut by_id: HashMap<String, SessionInfo> =
+            HashMap::with_capacity(live.len() + dormant.len());
+        for info in dormant.values() {
+            by_id.insert(info.id.clone(), info.clone());
+        }
+        for entry in live.values() {
+            by_id.insert(entry.info.id.clone(), entry.info.clone());
+        }
+        let sessions = by_id.into_values().collect::<Vec<_>>();
+        self.deps.conversation_store.persist(&sessions)
+    }
+
+    fn has_live_session(&self, session_id: &str) -> Result<bool, AppError> {
+        Ok(self
             .sessions
             .read()
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
-            .values()
-            .map(|entry| entry.info.clone())
-            .collect::<Vec<_>>();
-        self.deps.conversation_store.persist(&sessions)
+            .contains_key(session_id))
+    }
+
+    /// Spawn an actor for a stored-but-not-live session, reusing durable
+    /// metadata. EventBus history keyed by `session_id` is left intact.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found when the id is neither live nor dormant, or any
+    /// agent/workspace/startup failure from the restore handshake.
+    async fn ensure_live_session(&self, session_id: &str) -> Result<(), AppError> {
+        if self.has_live_session(session_id)? {
+            return Ok(());
+        }
+        let _guard = self.restore_lock.lock().await;
+        if self.has_live_session(session_id)? {
+            return Ok(());
+        }
+        let info = {
+            let dormant = self
+                .dormant
+                .read()
+                .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?;
+            dormant
+                .get(session_id)
+                .cloned()
+                .ok_or_else(|| AppError::not_found_id("session", session_id))?
+        };
+        tracing::info!(
+            session_id,
+            agent_id = %info.agent_id,
+            model_id = %info.model_id,
+            "lazily restoring ACP session actor from durable metadata"
+        );
+        // Keep the dormant entry until registration succeeds so list/get never
+        // briefly lose the conversation if handshake fails.
+        self.register_live_session(info).await?;
+        self.dormant
+            .write()
+            .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?
+            .remove(session_id);
+        self.persist_sessions()?;
+        tracing::info!(session_id, "ACP session actor restored");
+        Ok(())
+    }
+
+    /// Start an agent actor and publish it under `info.id` without wiping history.
+    ///
+    /// Shared by [`ACPClient::create_session`] and lazy restore. The caller owns
+    /// durable persistence and dormant-map bookkeeping.
+    async fn register_live_session(&self, info: SessionInfo) -> Result<SessionInfo, AppError> {
+        let agent = self
+            .deps
+            .registry
+            .resolve(&info.agent_id, &info.model_id)
+            .map_err(AppError::validation)?;
+        let workspace = self
+            .deps
+            .workspaces
+            .list()
+            .await?
+            .into_iter()
+            .find(|workspace| workspace.id == info.workspace)
+            .ok_or_else(|| AppError::not_found_id("workspace", &info.workspace))?;
+        let workspace_path = PathBuf::from(workspace.path);
+        let id = info.id.clone();
+        let (commands, receiver) = mpsc::channel(ACTOR_COMMAND_CAPACITY);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let (registered_tx, registered_rx) = oneshot::channel();
+        let stderr_tail = Arc::new(Mutex::new(StderrTail::default()));
+        let prompt_cancel = Arc::new(AtomicBool::new(false));
+        let actor = ActorConfig {
+            local_session_id: id.clone(),
+            agent,
+            workspace_id: info.workspace.clone(),
+            workspace_path,
+            permissions: Arc::clone(&self.deps.permissions),
+            workspaces: Arc::clone(&self.deps.workspaces),
+            stderr_tail: Arc::clone(&stderr_tail),
+            sessions: Arc::clone(&self.sessions),
+            event_bus: Arc::clone(&self.deps.event_bus),
+            prompt_cancel: Arc::clone(&prompt_cancel),
+        };
+        tokio::spawn(run_actor(actor, receiver, ready_tx, registered_rx));
+
+        let result = ready_rx
+            .await
+            .map_err(|_| AppError::internal("ACP session actor exited during startup"))?;
+        let startup = result?;
+        let mut entry = SessionEntry {
+            info,
+            state: SessionState::Created,
+            commands,
+            stderr_tail,
+            prompt_cancel,
+            caps: startup.caps,
+            model_config_id: startup.model_config_id,
+        };
+        entry.apply_state(SessionState::Idle);
+        let published = entry.info.clone();
+        self.sessions
+            .write()
+            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
+            .insert(id, entry);
+        let _ = registered_tx.send(());
+        Ok(published)
     }
 
     fn session_for_command(
@@ -310,12 +482,13 @@ impl ACPClient for Client {
         model_id: &str,
         workspace_id: &str,
     ) -> Result<SessionInfo, AppError> {
-        let agent = self
+        // Validate early so a bad agent/workspace fails before allocating an id.
+        let _agent = self
             .deps
             .registry
             .resolve(agent_id, model_id)
             .map_err(AppError::validation)?;
-        let workspace = self
+        let _workspace = self
             .deps
             .workspaces
             .list()
@@ -323,7 +496,6 @@ impl ACPClient for Client {
             .into_iter()
             .find(|workspace| workspace.id == workspace_id)
             .ok_or_else(|| AppError::not_found_id("workspace", workspace_id))?;
-        let workspace_path = PathBuf::from(workspace.path);
         let id = format!("sess-{}", Uuid::new_v4().simple());
         let now = Utc::now();
         let info = SessionInfo {
@@ -336,51 +508,7 @@ impl ACPClient for Client {
             created_at: now,
             updated_at: now,
         };
-        let (commands, receiver) = mpsc::channel(ACTOR_COMMAND_CAPACITY);
-        let (ready_tx, ready_rx) = oneshot::channel();
-        let (registered_tx, registered_rx) = oneshot::channel();
-        let stderr_tail = Arc::new(Mutex::new(StderrTail::default()));
-        let prompt_cancel = Arc::new(AtomicBool::new(false));
-        let actor = ActorConfig {
-            local_session_id: id.clone(),
-            agent,
-            workspace_id: workspace_id.to_string(),
-            workspace_path,
-            permissions: Arc::clone(&self.deps.permissions),
-            workspaces: Arc::clone(&self.deps.workspaces),
-            stderr_tail: Arc::clone(&stderr_tail),
-            sessions: Arc::clone(&self.sessions),
-            event_bus: Arc::clone(&self.deps.event_bus),
-            prompt_cancel: Arc::clone(&prompt_cancel),
-        };
-        tokio::spawn(run_actor(actor, receiver, ready_tx, registered_rx));
-
-        // Do not publish a session until its agent has initialized and supplied
-        // an ACP session ID. A dead-on-arrival child is reported with its tail.
-        let result = ready_rx
-            .await
-            .map_err(|_| AppError::internal("ACP session actor exited during startup"))?;
-        let startup = result?;
-        let mut entry = SessionEntry {
-            info,
-            state: SessionState::Created,
-            commands,
-            stderr_tail,
-            prompt_cancel,
-            caps: startup.caps,
-            model_config_id: startup.model_config_id,
-        };
-        // Successful startup publishes as idle; status must match the enum.
-        entry.apply_state(SessionState::Idle);
-        let published = entry.info.clone();
-        self.sessions
-            .write()
-            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
-            .insert(id, entry);
-        // The actor waits for this handoff before accepting commands. That
-        // eliminates the race where a connection could exit just after startup
-        // but before its owning local session entry was registered.
-        let _ = registered_tx.send(());
+        let published = self.register_live_session(info).await?;
         if let Err(error) = self.persist_sessions() {
             // A failed create must not leave a live, invisible session behind.
             // Teardown is best-effort here; callers receive the original durable
@@ -393,19 +521,42 @@ impl ACPClient for Client {
     }
 
     fn get_session_info(&self, session_id: &str) -> Result<SessionInfo, AppError> {
-        self.sessions
+        if let Some(info) = self
+            .sessions
             .read()
             .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?
             .get(session_id)
             .map(|entry| entry.info.clone())
+        {
+            return Ok(info);
+        }
+        self.dormant
+            .read()
+            .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?
+            .get(session_id)
+            .cloned()
             .ok_or_else(|| AppError::not_found_id("session", session_id))
     }
 
     fn list_sessions(&self) -> Vec<Session> {
-        let Ok(sessions) = self.sessions.read() else {
+        let Ok(live) = self.sessions.read() else {
+            tracing::error!("ACP session registry lock poisoned during list_sessions");
             return Vec::new();
         };
-        let mut values: Vec<_> = sessions.values().map(|entry| entry.info.clone()).collect();
+        let Ok(dormant) = self.dormant.read() else {
+            tracing::error!("ACP dormant session lock poisoned during list_sessions");
+            return Vec::new();
+        };
+        let mut by_id: HashMap<String, SessionInfo> =
+            HashMap::with_capacity(live.len() + dormant.len());
+        for info in dormant.values() {
+            by_id.insert(info.id.clone(), info.clone());
+        }
+        // Live status/timestamps win when both maps contain the same id.
+        for entry in live.values() {
+            by_id.insert(entry.info.id.clone(), entry.info.clone());
+        }
+        let mut values: Vec<_> = by_id.into_values().collect();
         values.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
         values
     }
@@ -416,6 +567,9 @@ impl ACPClient for Client {
         content: &str,
         attachments: &[Attachment],
     ) -> Result<(), AppError> {
+        // Lazily restore a durable session after daemon restart before reserving
+        // the prompt slot. Event history stays in the EventBus under this id.
+        self.ensure_live_session(session_id).await?;
         // Enqueue the actor Prompt without yielding so Cancel cannot slip onto
         // an empty command channel between reservation and enqueue. Lifecycle
         // events are persisted inside `await_prompt` after the actor owns the
@@ -486,16 +640,30 @@ impl ACPClient for Client {
     }
 
     fn rename_session(&self, session_id: &str, name: &str) -> Result<(), AppError> {
-        let mut sessions = self
-            .sessions
-            .write()
-            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
-        let entry = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
-        entry.info.name = name.to_string();
-        entry.info.updated_at = Utc::now();
-        drop(sessions);
+        {
+            let mut sessions = self
+                .sessions
+                .write()
+                .map_err(|_| AppError::internal("ACP session registry lock poisoned"))?;
+            if let Some(entry) = sessions.get_mut(session_id) {
+                entry.info.name = name.to_string();
+                entry.info.updated_at = Utc::now();
+                drop(sessions);
+                self.persist_sessions()?;
+                return Ok(());
+            }
+        }
+        {
+            let mut dormant = self
+                .dormant
+                .write()
+                .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?;
+            let entry = dormant
+                .get_mut(session_id)
+                .ok_or_else(|| AppError::not_found_id("session", session_id))?;
+            entry.name = name.to_string();
+            entry.updated_at = Utc::now();
+        }
         self.persist_sessions()?;
         Ok(())
     }
@@ -507,6 +675,7 @@ impl ACPClient for Client {
         model_id: &str,
         max_transfer_bytes: i64,
     ) -> Result<SessionInfo, AppError> {
+        self.ensure_live_session(session_id).await?;
         let agent = self
             .deps
             .registry
@@ -647,6 +816,7 @@ impl ACPClient for Client {
     }
 
     async fn switch_model(&self, session_id: &str, model_id: &str) -> Result<(), AppError> {
+        self.ensure_live_session(session_id).await?;
         let (sender, model_config_id) = self.session_for_model_switch(session_id)?;
         let Some(config_id) = model_config_id else {
             let current = self.get_session_info(session_id)?;
@@ -714,6 +884,9 @@ impl ACPClient for Client {
     }
 
     async fn cancel_session(&self, session_id: &str) -> Result<(), AppError> {
+        // Stored-only sessions still need an actor so Cancel can reach the agent
+        // once a concurrent prompt restore races in; mirrors Go lazy start.
+        self.ensure_live_session(session_id).await?;
         let (sender, prompt_cancel) = self.session_for_command(session_id)?;
         // Mark sticky cancel before the actor observes Cancel so a prompt
         // reserved but not yet dequeued still fails when it starts.
@@ -727,6 +900,25 @@ impl ACPClient for Client {
     }
 
     async fn close_session(&self, session_id: &str) -> Result<(), AppError> {
+        // Dormant-only: delete durable metadata without spawning an agent just
+        // to tear it down (spawn failure would otherwise block conversation delete).
+        if !self.has_live_session(session_id)? {
+            let removed = self
+                .dormant
+                .write()
+                .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?
+                .remove(session_id);
+            if removed.is_none() {
+                return Err(AppError::not_found_id("session", session_id));
+            }
+            self.deps.permissions.clear_session(session_id);
+            self.pipeline.clear(session_id);
+            tracing::info!(
+                session_id,
+                "closed dormant ACP session without actor restore"
+            );
+            return self.persist_sessions();
+        }
         // Removing first makes close idempotent from the public registry's
         // perspective and prevents new work from being queued while teardown
         // is in progress. The actor still owns the sender copied below.
@@ -738,6 +930,12 @@ impl ACPClient for Client {
             .ok_or_else(|| AppError::not_found_id("session", session_id))?;
         // Closing removes only live transport state; durable events remain in
         // SQLite and the metadata list is atomically updated before return.
+        // Drop any stale dormant twin so persist cannot resurrect this id.
+        let _ = self
+            .dormant
+            .write()
+            .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?
+            .remove(session_id);
         let persist_result = self.persist_sessions();
         self.deps.permissions.clear_session(session_id);
         let (closed_tx, closed_rx) = oneshot::channel();
@@ -763,6 +961,7 @@ impl ACPClient for Client {
     }
 
     async fn list_providers(&self, session_id: &str) -> Result<Vec<ProviderInfo>, AppError> {
+        self.ensure_live_session(session_id).await?;
         let (sender, caps) = self.session_for_providers(session_id)?;
         require_providers_supported(caps)?;
         let (result_tx, result_rx) = oneshot::channel();
@@ -783,6 +982,7 @@ impl ACPClient for Client {
         base_url: &str,
         headers: std::collections::HashMap<String, String>,
     ) -> Result<(), AppError> {
+        self.ensure_live_session(session_id).await?;
         let (sender, caps) = self.session_for_providers(session_id)?;
         require_providers_supported(caps)?;
         let (result_tx, result_rx) = oneshot::channel();
@@ -802,6 +1002,7 @@ impl ACPClient for Client {
     }
 
     async fn disable_provider(&self, session_id: &str, id: &str) -> Result<(), AppError> {
+        self.ensure_live_session(session_id).await?;
         let (sender, caps) = self.session_for_providers(session_id)?;
         require_providers_supported(caps)?;
         let (result_tx, result_rx) = oneshot::channel();
@@ -2134,10 +2335,11 @@ mod tests {
     use crate::config::{AgentInfo, AgentModel};
     use crate::events::{EventBus, Store};
     use crate::interfaces::{
-        ACPClient, AppError, EventStore, PermissionDecision, PermissionManager, PermissionRequest,
-        WorkspaceManager,
+        ACPClient, AppError, Event, EventStore, EventType, PermissionDecision, PermissionManager,
+        PermissionRequest, SessionInfo, WorkspaceManager,
     };
     use crate::workspace::Manager as WorkspaceRegistry;
+    use chrono::Utc;
 
     const MOCKAGENT_BIN: &str = "/tmp/mockagent";
 
@@ -2175,8 +2377,11 @@ mod tests {
         }
     }
 
-    /// Create an isolated local ACP client backed by the deterministic Go fixture.
-    async fn mock_client() -> (Arc<Client>, Arc<RecordingPermissions>, TempDir) {
+    /// Create an isolated ACP client with a configurable conversation store and
+    /// no live sessions (used to simulate post-restart dormant metadata).
+    async fn mock_client_empty(
+        conversation_store: ConversationStore,
+    ) -> (Arc<Client>, Arc<RecordingPermissions>, TempDir, String) {
         assert!(
             Path::new(MOCKAGENT_BIN).exists(),
             "mockagent binary missing at {MOCKAGENT_BIN}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/`"
@@ -2207,10 +2412,17 @@ mod tests {
             workspaces,
             permissions: permissions.clone(),
             event_bus,
-            conversation_store: ConversationStore::new(None),
+            conversation_store,
         }));
+        (client, permissions, tempdir, workspace.id)
+    }
+
+    /// Create an isolated local ACP client backed by the deterministic Go fixture.
+    async fn mock_client() -> (Arc<Client>, Arc<RecordingPermissions>, TempDir) {
+        let (client, permissions, tempdir, workspace_id) =
+            mock_client_empty(ConversationStore::new(None)).await;
         let session = client
-            .create_session("mock", "mock-model", &workspace.id)
+            .create_session("mock", "mock-model", &workspace_id)
             .await
             .expect("create mock ACP session");
         assert_eq!(
@@ -2385,5 +2597,134 @@ mod tests {
             .close_session(&session.id)
             .await
             .expect("close rebound session");
+    }
+
+    /// After restart, `list_sessions` must surface durable metadata with no actors.
+    #[tokio::test]
+    async fn list_sessions_includes_stored_without_live_actors() {
+        let store_dir = TempDir::new().expect("store dir");
+        let store_path = store_dir.path().join("conversations.json");
+        let (client, _permissions, _workspace, workspace_id) =
+            mock_client_empty(ConversationStore::new(Some(store_path))).await;
+        let now = Utc::now();
+        client
+            .deps
+            .conversation_store
+            .persist(&[SessionInfo {
+                id: "sess-persisted".to_string(),
+                name: "Survived restart".to_string(),
+                // Stale running bit from the previous daemon process.
+                status: "running".to_string(),
+                agent_id: "mock".to_string(),
+                model_id: "mock-model".to_string(),
+                workspace: workspace_id,
+                created_at: now,
+                updated_at: now,
+            }])
+            .expect("seed conversations.json");
+
+        assert!(
+            client.list_sessions().is_empty(),
+            "store is not visible until load_conversations"
+        );
+        client
+            .load_conversations()
+            .expect("load durable conversations");
+
+        let listed = client.list_sessions();
+        assert_eq!(listed.len(), 1, "list must include stored session");
+        assert_eq!(listed[0].id, "sess-persisted");
+        assert_eq!(listed[0].name, "Survived restart");
+        assert_eq!(
+            listed[0].status, "idle",
+            "loaded sessions must be idle until an actor is restored"
+        );
+        assert!(
+            !client
+                .has_live_session("sess-persisted")
+                .expect("live lookup"),
+            "load_conversations must not auto-start actors"
+        );
+    }
+
+    /// Prompting a stored-only id starts an actor and must not wipe EventBus history.
+    #[tokio::test]
+    async fn prompt_on_stored_session_starts_actor_without_wiping_history() {
+        let store_dir = TempDir::new().expect("store dir");
+        let store_path = store_dir.path().join("conversations.json");
+        let (client, _permissions, _workspace, workspace_id) =
+            mock_client_empty(ConversationStore::new(Some(store_path))).await;
+        let now = Utc::now();
+        let session_id = "sess-restore-prompt";
+        client
+            .deps
+            .conversation_store
+            .persist(&[SessionInfo {
+                id: session_id.to_string(),
+                name: "Prior chat".to_string(),
+                status: "idle".to_string(),
+                agent_id: "mock".to_string(),
+                model_id: "mock-model".to_string(),
+                workspace: workspace_id,
+                created_at: now,
+                updated_at: now,
+            }])
+            .expect("seed conversations.json");
+        client
+            .load_conversations()
+            .expect("load durable conversations");
+
+        let mut prior = Event::new(0, EventType::PromptSubmitted, session_id, now);
+        prior.role = "user".to_string();
+        prior.content = "history from before restart".to_string();
+        client
+            .deps
+            .event_bus
+            .append_and_publish(prior)
+            .await
+            .expect("seed prior transcript");
+        let before = client
+            .deps
+            .event_bus
+            .query(session_id, 0, 100)
+            .await
+            .expect("query history before restore");
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].content, "history from before restart");
+
+        client
+            .send_prompt(session_id, "hello after restart", &[])
+            .await
+            .expect("prompt must lazily restore the actor");
+
+        assert!(
+            client.has_live_session(session_id).expect("live lookup"),
+            "prompt should promote the dormant session to a live actor"
+        );
+        let info = client
+            .get_session_info(session_id)
+            .expect("restored session info");
+        assert_eq!(info.name, "Prior chat");
+        assert_eq!(info.id, session_id);
+
+        let after = client
+            .deps
+            .event_bus
+            .query(session_id, 0, 100)
+            .await
+            .expect("query history after restore");
+        assert!(
+            after.len() > before.len(),
+            "restore prompt should append events without wiping prior history"
+        );
+        assert_eq!(
+            after[0].content, "history from before restart",
+            "EventBus history must survive actor restore"
+        );
+
+        client
+            .close_session(session_id)
+            .await
+            .expect("close restored session");
     }
 }

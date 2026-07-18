@@ -46,5 +46,5 @@ cargo build --release
 Copy-Item -Force "target\release\local_agent.exe" "bin\local_agent.exe"
 
 Write-Host "Build complete!" -ForegroundColor Green
-Write-Host "  Go binary:   bin\app.exe          (installed globally as 'app')" -ForegroundColor Green
-Write-Host "  Rust binary: bin\local_agent.exe  (run with 'bin\local_agent.exe --serve')" -ForegroundColor Green
+Write-Host "  Go binary:   bin\app.exe           (installed globally as 'app')" -ForegroundColor Green
+Write-Host "  Rust binary: bin\local_agent.exe    (run with 'bin\local_agent.exe start')" -ForegroundColor Green

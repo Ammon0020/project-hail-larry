@@ -30,9 +30,11 @@
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — Core port + daemon/CLI done. Contract black-box
-  against Rust (`CONTRACT_BACKEND=rust`) boots via seed `config.toml`; remaining
-  golden diffs tracked under known limitations (MCP JSON parse text).
+- [ ] **Rust backend port** — Contract black-box green (67/2 ignore). Lazy
+  persisted-session restore done. **S-BUILD** polish done (`build.rs` requires
+  `web/dist/index.html`, release `strip`, docs). Daemon left running for UI
+  smoke at :7337/:7338. Deferred: native Win/macOS **release artifact + SPA
+  smoke** CI (basic `cargo` jobs already in `rust-ci.yml`).
 
 ## Blocked
 
@@ -40,6 +42,14 @@
 
 ## Recent Changes (2026-07)
 
+- **07-17** — Rust **S-BUILD** polish: `build.rs` fails if `web/dist/index.html`
+  missing; `[profile.release] strip = true`; `docs/development/building.md`
+  (`cc`/bundled SQLite); build.sh/ps1 epilogue → `local_agent start`. Deferred:
+  native Win/macOS release+SPA smoke CI.
+- **07-17** — Rust **S-ACP-CONTEXT** lazy restore: `load_conversations` loads
+  metadata without actors; `list_sessions` merges store+live; prompt/cancel/
+  providers/rebind spawn actors reusing id/name/agent/model/workspace (EventBus
+  history kept). Close of dormant deletes metadata only.
 - **07-17** — Rust **contract black-box**: harness seeds `config.toml` (+ JSON
   for Go), PATH/HOME neutralize autodetect, log dir follows
   `LOCAL_AGENT_STATE_DIR`. API parity: Json rejection → JSON 400, not-found
@@ -62,7 +72,7 @@
 - **07-17** — Rust **S-DAEMON / S-CLI** foundation: daemon composition, PID
   status/stop, dual HTTP/HTTPS rustls listeners, clap tree. install-service stub.
 - **07-17** — Rust **S-ACP-CONTEXT**: conversations.json, prompt context,
-  export/transfer, idle rebind. Deferred: persisted-session lazy actor restore.
+  export/transfer, idle rebind. Deferred lazy actor restore → done above.
 - **07-17** — Rust **S-ACP-PROVIDERS** + **S-SERVER UI-smoke** + **S-SYNC** +
   **S-ACP-STREAM/CORE** (see git history). Provider REST was deferred → done above.
 - **07-17** — Focused Rust review cleanup; **S-MCP** / **S-PAIRING** /

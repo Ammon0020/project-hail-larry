@@ -30,6 +30,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # build.rs requires web/dist/index.html (SPA embed). CI uses a stub so
+      # Node/npm is not required for lint/test; release+SPA smoke is deferred.
+      - name: Ensure SPA embed marker
+        run: |
+          mkdir -p web/dist
+          if [ ! -f web/dist/index.html ]; then
+            printf '%s\n' '<!doctype html><title>Local Agent</title>' > web/dist/index.html
+          fi
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
@@ -39,6 +47,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Ensure SPA embed marker
+        run: |
+          mkdir -p web/dist
+          if [ ! -f web/dist/index.html ]; then
+            printf '%s\n' '<!doctype html><title>Local Agent</title>' > web/dist/index.html
+          fi
       - name: cargo test
         run: cargo test --all-targets --locked
 
@@ -48,6 +62,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Ensure SPA embed marker
+        run: |
+          mkdir -p web/dist
+          if [ ! -f web/dist/index.html ]; then
+            printf '%s\n' '<!doctype html><title>Local Agent</title>' > web/dist/index.html
+          fi
       - name: cargo build
         run: cargo build --locked
 
@@ -57,6 +77,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Ensure SPA embed marker
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path web\dist | Out-Null
+          if (-not (Test-Path web\dist\index.html)) {
+            Set-Content -Path web\dist\index.html -Value "<!doctype html><title>Local Agent</title>"
+          }
       - name: cargo build
         run: cargo build --locked
       - name: cargo test

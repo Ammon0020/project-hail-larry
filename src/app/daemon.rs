@@ -113,6 +113,9 @@ impl Daemon {
                 Path::new(&config.data_dir).join("conversations.json"),
             )),
         }));
+        // Metadata only — actors start lazily on prompt/cancel/providers/rebind.
+        acp.load_conversations()
+            .context("load persisted ACP conversations")?;
         let hub = Hub::with_event_bus(Arc::clone(&events));
 
         // 4. Supporting stores consumed by REST upload/MCP routes.
