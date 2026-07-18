@@ -43,14 +43,14 @@ docs/           plans, specs, references, reviews, status, known issues
   `make test-contract` (Rust-primary) when touching the HTTP/WS surface.
 - For Rust changes, run `cargo test -q --all-targets`, `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt --check -q`.
 - Record unrelated test failures in `docs/known-issues.md`; do not expand scope.
-- Keep `docs/STATUS.md` honest and current. Keep it under 150 lines and 90 characters per line.
+- Keep `docs/STATUS.md` honest and current. Keep it under 100 lines and 90 characters per line. 
 - For planning work, follow `.agents/skills/plan-management/SKILL.md`.
 - Discover work by listing `docs/plans/`, then the chosen epic folder. Use status-prefixed filenames; rename them when status changes. Keep plans concise and executable in one branch.
 - Suggest a commit message and tests when handing work off.
 - Add brief comments for non-obvious intent, constraints, and security-sensitive behavior. Do not comment code that is already self-explanatory.
 
 ## Plans
-List relevant folder to see task status. Delete tasks after review. 
+List relevant folder to see task status. Review after milestones. Delete task files after review. Add action items from review as stories unless they are immediately fixable. 
 
 **Folder hierarchy**
 ```
