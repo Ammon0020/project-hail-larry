@@ -1,28 +1,30 @@
-.PHONY: all build-frontend build-backend build test test-contract lint lint-rust vet clean
+.PHONY: all build-frontend build build-go test test-contract lint lint-rust vet clean
 
-# Build the frontend and copy it into the Go embed directory.
+# Build the frontend into web/dist (required by Rust build.rs / rust-embed).
 build-frontend:
 	cd web && npm run build
+
+# Default: frontend + Rust release binary → bin/local_agent
+build: build-frontend
+	cargo build --release
+	mkdir -p bin
+	cp -f target/release/local_agent bin/local_agent
+
+# Legacy Go oracle binary (optional).
+build-go: build-frontend
 	rm -rf internal/server/dist/*
 	cp -r web/dist/* internal/server/dist/
+	go build -o bin/app ./cmd/app
 
-# Build the Go binary with embedded frontend.
-build-backend:
-	go build -o bin/local-agent ./cmd/app
-
-# Build everything: frontend + backend.
-build: build-frontend build-backend
-
-# Run all tests.
+# Run Rust unit tests (quiet).
 test:
-	go test ./...
-	cd web && npm run build
+	cargo test -q --all-targets
 
-# Run the black-box contract differential runner against the Go backend.
-# Use CONTRACT_BACKEND=rust to test against the Rust backend instead.
+# Run the black-box contract differential runner against the Rust backend
+# (default). Use CONTRACT_BACKEND=go to compare against the legacy Go oracle.
 # The `contract` feature gate keeps this out of `cargo test --all-targets`.
 test-contract:
-	cargo test --test contract_runner --features contract -- --nocapture
+	CONTRACT_BACKEND=$${CONTRACT_BACKEND:-rust} cargo test --test contract_runner --features contract -- --nocapture
 
 # Run golangci-lint (cross-platform: Windows, macOS, Linux).
 lint:
@@ -33,7 +35,7 @@ lint:
 lint-rust:
 	cargo clippy --all-targets -- -D warnings
 
-# Run go vet.
+# Run go vet (legacy Go tree).
 vet:
 	go vet ./...
 
@@ -43,3 +45,4 @@ clean:
 	rm -rf web/dist/
 	rm -rf internal/server/dist/*
 	touch internal/server/dist/.gitkeep
+	cargo clean

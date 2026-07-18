@@ -43,9 +43,12 @@ use crate::sync::{is_loopback_addr, AuthChecker, Hub};
 use crate::uploads;
 use crate::workspace::Manager as WorkspaceManagerImpl;
 
-/// JSON body size limit for API requests other than the intentionally deferred
-/// upload surface. It caps malformed or abusive LAN requests before parsing.
+/// JSON body size limit for API requests other than file writes and uploads.
+/// Caps malformed or abusive LAN requests before parsing (Go `defaultMaxBodyBytes`).
 pub const MAX_API_BODY_BYTES: usize = 10 * 1024 * 1024;
+
+/// File-write exception matching Go `fileWriteMaxBodyBytes` (large editor saves).
+pub const FILE_WRITE_MAX_BODY_BYTES: usize = 50 * 1024 * 1024;
 const MAX_EVENT_LIMIT: i32 = 10_000;
 const DEFAULT_EVENT_LIMIT: i32 = 1_000;
 const PAIR_RATE_PER_MINUTE: f64 = 5.0;
@@ -134,7 +137,8 @@ pub fn router(state: AppState) -> Router {
             post(cancel_workspace_registration),
         )
         .route("/api/workspaces/{id}/files", get(file_tree))
-        .route("/api/workspaces/{id}/file", get(read_file).post(write_file))
+        // POST write lives on a sibling router with a 50 MiB body cap (below).
+        .route("/api/workspaces/{id}/file", get(read_file))
         .route("/api/workspaces/{id}/raw", get(raw_file))
         .route("/api/workspaces/{id}/search", get(search))
         .route("/api/events", get(events))
@@ -178,7 +182,20 @@ pub fn router(state: AppState) -> Router {
         .route("/api/mcp/status", get(mcp::get_mcp_status))
         .route("/api/permissions/pending", get(pending_permissions))
         .route("/api/permissions/{id}/respond", post(respond_permission))
+        .route_layer(middleware::from_fn_with_state(
+            auth_state.clone(),
+            require_auth,
+        ))
+        .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES))
+        .with_state(state.clone());
+
+    // Large editor saves need Go's 50 MiB write exception; a global 10 MiB
+    // DefaultBodyLimit cannot be raised per-route once applied as an outer
+    // layer, so write POST is a sibling authenticated router.
+    let file_write: Router = Router::new()
+        .route("/api/workspaces/{id}/file", post(write_file))
         .route_layer(middleware::from_fn_with_state(auth_state, require_auth))
+        .layer(DefaultBodyLimit::max(FILE_WRITE_MAX_BODY_BYTES))
         .with_state(state.clone());
 
     // The hub owns its own handshake authorization because WebSocket
@@ -195,6 +212,7 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             require_pair_rate_limit,
         ))
+        .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES))
         .with_state(state.clone());
     let public: Router = Router::new()
         .route("/health", get(health))
@@ -203,9 +221,9 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(public)
         .merge(protected)
+        .merge(file_write)
         .merge(state.hub.clone().into_router())
         .fallback(get(spa_fallback))
-        .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES))
 }
 
 fn pairing_auth_checker(manager: &PairingManager) -> AuthChecker {

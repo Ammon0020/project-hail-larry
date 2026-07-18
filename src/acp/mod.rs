@@ -23,4 +23,4 @@ pub use context::{EditorSelection, OpenFilesTracker};
 pub use conversation::export_conversation;
 pub use core::{Client, ClientDeps, SessionState, STDERR_TAIL_BYTES};
 pub use providers::SessionCaps;
-pub use store::ConversationStore;
+pub use store::{ConversationStore, StoredSession};

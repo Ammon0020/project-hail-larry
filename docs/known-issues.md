@@ -99,6 +99,13 @@ Basic `cargo build`/`test` on macOS/Windows runners exists in
 Deferred: native **release artifact** builds with real frontend embed + SPA
 smoke tests on Win/macOS (see S-BUILD story).
 
+## Rust port — Go binary optional; tree not deleted yet
+
+`build.sh` / `build.ps1` / `Makefile` default to Rust (`bin/local_agent`).
+Legacy Go builds via `BUILD_GO=1` / `make build-go`. Contract harness defaults
+to `CONTRACT_BACKEND=rust` (`CONTRACT_BACKEND=go` for oracle). Delete
+`cmd/app` + `internal/` after a smoke pass and when no longer needed as oracle.
+
 ## Rust port — story checkbox drift
 
 Many `docs/plans/rust-port/stories/*.md` ACs remain unchecked while modules and

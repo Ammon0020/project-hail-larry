@@ -182,17 +182,17 @@ interacts via the external API (HTTP, WebSocket, CLI subprocess).
 ### Running
 
 ```sh
-# Test against the Go backend (default — builds go binary, boots it, runs all tests):
-cargo test --test contract_runner -- --nocapture
+# Test against the Rust backend (default — builds local_agent, boots it, runs all tests):
+cargo test --test contract_runner --features contract -- --nocapture
 
-# Test against the Rust backend:
-CONTRACT_BACKEND=rust cargo test --test contract_runner -- --nocapture
+# Test against the legacy Go oracle:
+CONTRACT_BACKEND=go cargo test --test contract_runner --features contract -- --nocapture
 
 # Use a pre-built binary instead of building:
-CONTRACT_BINARY=/path/to/local-agent cargo test --test contract_runner
+CONTRACT_BINARY=/path/to/local_agent cargo test --test contract_runner --features contract
 
 # Keep the state dir for debugging:
-CONTRACT_KEEP_STATE=1 cargo test --test contract_runner
+CONTRACT_KEEP_STATE=1 cargo test --test contract_runner --features contract
 ```
 
 ### What the runner tests
@@ -244,10 +244,10 @@ contract surface that the Rust port must replicate.
 
 ### Backend selection
 
-- `CONTRACT_BACKEND=go` (default): builds `go build -o /tmp/contract-local-agent
-  ./cmd/app` and runs `local-agent start`.
-- `CONTRACT_BACKEND=rust`: uses `target/debug/local_agent` (or
+- `CONTRACT_BACKEND=rust` (default): builds `target/debug/local_agent` (or
   `CONTRACT_BINARY` override) and runs `local_agent start`.
+- `CONTRACT_BACKEND=go`: builds `go build -o /tmp/contract-local-agent
+  ./cmd/app` and runs that binary's `start` command (legacy oracle).
 - `CONTRACT_BINARY=/path/to/binary`: overrides the binary path for either
   backend. The runner uses this directly without building.
 

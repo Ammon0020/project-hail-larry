@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 #
-# Builds the Local Agent Interface project (Frontend + Go + Rust backends).
+# Builds the Local Agent Interface (frontend + Rust daemon).
 #
-# This script builds the React frontend, copies the compiled assets into the
-# Go server's embed directory, builds the Go executable, and then builds the
-# Rust port (which embeds web/dist via rust-embed at compile time).
-# It is the Unix counterpart to build.ps1.
+# Primary binary: bin/local_agent (also installed via cargo when available).
+# Optional Go binary: set BUILD_GO=1 to also build bin/app (legacy oracle).
 
 set -euo pipefail
 
@@ -16,18 +14,13 @@ cd "$ROOT_DIR"
 
 # Colored status output (falls back to plain text when stdout is not a TTY).
 if [[ -t 1 ]]; then
-    CYAN=$'\033[36m'; GREEN=$'\033[32m'; RESET=$'\033[0m'
+    CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
 else
-    CYAN=""; GREEN=""; RESET=""
-fi
-
-# Go is commonly installed under /usr/local/go/bin but not always on PATH.
-if ! command -v go >/dev/null 2>&1 && [[ -x /usr/local/go/bin/go ]]; then
-    export PATH="$PATH:/usr/local/go/bin"
+    CYAN=""; GREEN=""; YELLOW=""; RESET=""
 fi
 
 # Fail loudly if required tooling is missing.
-for tool in npm go cargo; do
+for tool in npm cargo; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "ERROR: '$tool' is not installed or not on PATH." >&2
         exit 1
@@ -37,25 +30,39 @@ done
 echo "${CYAN}1. Building frontend...${RESET}"
 (cd web && npm run build)
 
-echo "${CYAN}2. Copying frontend assets to Go embed directory...${RESET}"
-DIST_DIR="internal/server/dist"
-mkdir -p "$DIST_DIR"
-rm -rf "${DIST_DIR:?}"/*
-cp -R web/dist/. "$DIST_DIR/"
-
-echo "${CYAN}3. Building Go backend...${RESET}"
-# Build into the bin folder.
-go build -o bin/app ./cmd/app
-# Also install it to GOBIN/GOPATH so 'app start' works globally.
-go install ./cmd/app
-
-echo "${CYAN}4. Building Rust backend...${RESET}"
-# rust-embed bakes web/dist into the binary at compile time, so the frontend
-# build above is picked up automatically — no copy step needed. The Rust port
-# outputs a separate binary (bin/local_agent) alongside the Go binary (bin/app).
+echo "${CYAN}2. Building Rust daemon (local_agent)...${RESET}"
+# rust-embed bakes web/dist into the binary at compile time.
 cargo build --release
+mkdir -p bin
 cp -f target/release/local_agent bin/local_agent
 
-echo "${GREEN}Build complete!${RESET}"
-echo "  Go binary:   bin/app          (installed globally as 'app')"
-echo "  Rust binary: bin/local_agent   (run with 'bin/local_agent start')"
+# Install onto the user cargo bin when present so `local_agent` is on PATH.
+CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+if [[ -d "$CARGO_BIN" ]]; then
+    cp -f bin/local_agent "$CARGO_BIN/local_agent"
+    echo "  Installed: $CARGO_BIN/local_agent"
+fi
+
+if [[ "${BUILD_GO:-0}" == "1" ]]; then
+    if ! command -v go >/dev/null 2>&1 && [[ -x /usr/local/go/bin/go ]]; then
+        export PATH="$PATH:/usr/local/go/bin"
+    fi
+    if ! command -v go >/dev/null 2>&1; then
+        echo "ERROR: BUILD_GO=1 but 'go' is not installed or not on PATH." >&2
+        exit 1
+    fi
+    echo "${YELLOW}3. Building legacy Go daemon (BUILD_GO=1)...${RESET}"
+    DIST_DIR="internal/server/dist"
+    mkdir -p "$DIST_DIR"
+    rm -rf "${DIST_DIR:?}"/*
+    cp -R web/dist/. "$DIST_DIR/"
+    go build -o bin/app ./cmd/app
+    go install ./cmd/app
+    echo "${GREEN}Build complete!${RESET}"
+    echo "  Rust (default): bin/local_agent"
+    echo "  Go (legacy):    bin/app"
+else
+    echo "${GREEN}Build complete!${RESET}"
+    echo "  Rust daemon: bin/local_agent   (run: local_agent start)"
+    echo "  Tip: BUILD_GO=1 also builds the legacy Go bin/app"
+fi

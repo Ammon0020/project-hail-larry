@@ -36,8 +36,11 @@ docs/           plans, specs, references, reviews, status, known issues
 
 ## Development
 
-- Use `./build.sh` on Linux/macOS or `./build.ps1` on Windows.
-- Before completion, run relevant checks quietly: `go test ./...`, `go vet ./...`, frontend build/lint, and `golangci-lint run --quiet` where applicable.
+- Use `./build.sh` on Linux/macOS or `.\build.ps1` on Windows (Rust
+  `local_agent` by default; `BUILD_GO=1` for the legacy Go binary).
+- Before completion, run relevant checks quietly: `cargo test -q --all-targets`,
+  `cargo clippy -q --all-targets -- -D warnings`, frontend build/lint, and
+  `make test-contract` (Rust-primary) when touching the HTTP/WS surface.
 - For Rust changes, run `cargo test -q --all-targets`, `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt --check -q`.
 - Record unrelated test failures in `docs/known-issues.md`; do not expand scope.
 - Keep `docs/STATUS.md` honest and current. Keep it under 150 lines and 90 characters per line.

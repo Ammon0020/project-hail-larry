@@ -14,13 +14,14 @@ use std::sync::{Arc, Mutex, RwLock};
 use agent_client_protocol::schema::v1::{
     CancelNotification, ClientCapabilities, ContentBlock, CreateTerminalRequest,
     CreateTerminalResponse, EmbeddedResource, EmbeddedResourceResource, FileSystemCapabilities,
-    Implementation, InitializeRequest, KillTerminalRequest, KillTerminalResponse, McpCapabilities,
-    McpServer, NewSessionRequest, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    Implementation, InitializeRequest, InitializeResponse, KillTerminalRequest,
+    KillTerminalResponse, ListSessionsRequest, LoadSessionRequest, McpCapabilities, McpServer,
+    NewSessionRequest, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
     ReleaseTerminalRequest, ReleaseTerminalResponse, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome, SessionId,
-    SessionNotification, TerminalExitStatus, TerminalOutputRequest, TerminalOutputResponse,
-    TextContent, TextResourceContents, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
-    WriteTextFileRequest, WriteTextFileResponse,
+    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
+    SessionConfigOption, SessionId, SessionNotification, TerminalExitStatus, TerminalOutputRequest,
+    TerminalOutputResponse, TextContent, TextResourceContents, WaitForTerminalExitRequest,
+    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{
@@ -41,7 +42,7 @@ use super::providers::{
 use super::{
     context::{PreparedPrompt, PromptPipeline},
     conversation::{export_conversation, ConversationTransfer},
-    store::ConversationStore,
+    store::{ConversationStore, StoredSession},
     AgentRegistry,
 };
 use crate::config::AgentInfo;
@@ -122,6 +123,11 @@ struct SessionEntry {
     /// Config option id for the model selector when the agent advertises one.
     /// Empty/`None` means live `switch_model` is unsupported (no rebind here).
     model_config_id: Option<String>,
+    /// Agent-side ACP session id for durable `session/load` resume.
+    ///
+    /// Persisted in `conversations.json` as `acpSessionId`; never exposed on
+    /// REST [`SessionInfo`].
+    acp_session_id: String,
 }
 
 impl SessionEntry {
@@ -141,8 +147,8 @@ pub struct Client {
     /// Durable sessions from `conversations.json` with no live actor yet.
     ///
     /// Loaded at daemon start; actors are spawned lazily on prompt / cancel /
-    /// provider / rebind (not at boot).
-    dormant: Arc<RwLock<HashMap<String, SessionInfo>>>,
+    /// provider / rebind (not at boot). Includes durable `acpSessionId`.
+    dormant: Arc<RwLock<HashMap<String, StoredSession>>>,
     /// Serializes dormant→live restores so concurrent ops cannot double-spawn.
     restore_lock: AsyncMutex<()>,
     pipeline: Arc<PromptPipeline>,
@@ -173,16 +179,24 @@ impl Client {
     /// Load persisted conversation metadata without treating it as live transport state.
     ///
     /// Prefer [`Self::load_conversations`] at daemon start so list/get see
-    /// durable sessions. This raw store read remains for diagnostics.
+    /// durable sessions. This raw store read remains for diagnostics and
+    /// returns the public [`SessionInfo`] projection only.
     pub fn load_conversation_metadata(&self) -> Result<Vec<SessionInfo>, AppError> {
-        self.deps.conversation_store.load()
+        Ok(self
+            .deps
+            .conversation_store
+            .load()?
+            .into_iter()
+            .map(|stored| stored.to_info())
+            .collect())
     }
 
     /// Restore durable conversation metadata into the dormant map (no actors).
     ///
     /// Mirrors Go `LoadConversations`: status becomes `idle`, live transports
-    /// are not started. Corrupt or unreadable stores return an error so the
-    /// daemon fails loudly rather than silently dropping the session list.
+    /// are not started. `acpSessionId` is preserved for later `session/load`.
+    /// Corrupt or unreadable stores return an error so the daemon fails loudly
+    /// rather than silently dropping the session list.
     ///
     /// # Errors
     ///
@@ -198,14 +212,14 @@ impl Client {
             .write()
             .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?;
         dormant.clear();
-        for mut info in records {
-            if live.contains_key(&info.id) {
+        for mut stored in records {
+            if live.contains_key(&stored.info.id) {
                 continue;
             }
             // Persisted running/failed bits are stale after restart; idle until
             // the next prompt lazily starts an actor.
-            info.status = SessionState::Idle.as_str().to_string();
-            dormant.insert(info.id.clone(), info);
+            stored.info.status = SessionState::Idle.as_str().to_string();
+            dormant.insert(stored.info.id.clone(), stored);
         }
         tracing::info!(
             count = dormant.len(),
@@ -225,13 +239,16 @@ impl Client {
             .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?;
         // Live metadata wins for shared ids; dormant fills the rest so a
         // create/rename cannot wipe conversations that have not been restored.
-        let mut by_id: HashMap<String, SessionInfo> =
+        let mut by_id: HashMap<String, StoredSession> =
             HashMap::with_capacity(live.len() + dormant.len());
-        for info in dormant.values() {
-            by_id.insert(info.id.clone(), info.clone());
+        for stored in dormant.values() {
+            by_id.insert(stored.info.id.clone(), stored.clone());
         }
         for entry in live.values() {
-            by_id.insert(entry.info.id.clone(), entry.info.clone());
+            by_id.insert(
+                entry.info.id.clone(),
+                StoredSession::from_parts(entry.info.clone(), entry.acp_session_id.clone()),
+            );
         }
         let sessions = by_id.into_values().collect::<Vec<_>>();
         self.deps.conversation_store.persist(&sessions)
@@ -260,7 +277,7 @@ impl Client {
         if self.has_live_session(session_id)? {
             return Ok(());
         }
-        let info = {
+        let stored = {
             let dormant = self
                 .dormant
                 .read()
@@ -272,13 +289,15 @@ impl Client {
         };
         tracing::info!(
             session_id,
-            agent_id = %info.agent_id,
-            model_id = %info.model_id,
+            agent_id = %stored.info.agent_id,
+            model_id = %stored.info.model_id,
+            has_acp_session_id = !stored.acp_session_id.is_empty(),
             "lazily restoring ACP session actor from durable metadata"
         );
         // Keep the dormant entry until registration succeeds so list/get never
         // briefly lose the conversation if handshake fails.
-        self.register_live_session(info).await?;
+        self.register_live_session(stored.info.clone(), stored.acp_session_id)
+            .await?;
         self.dormant
             .write()
             .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?
@@ -292,7 +311,14 @@ impl Client {
     ///
     /// Shared by [`ACPClient::create_session`] and lazy restore. The caller owns
     /// durable persistence and dormant-map bookkeeping.
-    async fn register_live_session(&self, info: SessionInfo) -> Result<SessionInfo, AppError> {
+    ///
+    /// `persisted_acp_session_id` is the durable agent-side id for
+    /// `session/load` (empty on create; cleared on rebind).
+    async fn register_live_session(
+        &self,
+        info: SessionInfo,
+        persisted_acp_session_id: String,
+    ) -> Result<SessionInfo, AppError> {
         let agent = self
             .deps
             .registry
@@ -325,6 +351,7 @@ impl Client {
             event_bus: Arc::clone(&self.deps.event_bus),
             prompt_cancel: Arc::clone(&prompt_cancel),
             mcp_config_path: self.deps.mcp_config_path.clone(),
+            persisted_acp_session_id,
         };
         tokio::spawn(run_actor(actor, receiver, ready_tx, registered_rx));
 
@@ -340,6 +367,7 @@ impl Client {
             prompt_cancel,
             caps: startup.caps,
             model_config_id: startup.model_config_id,
+            acp_session_id: startup.acp_session_id,
         };
         entry.apply_state(SessionState::Idle);
         let published = entry.info.clone();
@@ -517,7 +545,7 @@ impl ACPClient for Client {
             created_at: now,
             updated_at: now,
         };
-        let published = self.register_live_session(info).await?;
+        let published = self.register_live_session(info, String::new()).await?;
         if let Err(error) = self.persist_sessions() {
             // A failed create must not leave a live, invisible session behind.
             // Teardown is best-effort here; callers receive the original durable
@@ -543,7 +571,7 @@ impl ACPClient for Client {
             .read()
             .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))?
             .get(session_id)
-            .cloned()
+            .map(StoredSession::to_info)
             .ok_or_else(|| AppError::not_found_id("session", session_id))
     }
 
@@ -558,8 +586,8 @@ impl ACPClient for Client {
         };
         let mut by_id: HashMap<String, SessionInfo> =
             HashMap::with_capacity(live.len() + dormant.len());
-        for info in dormant.values() {
-            by_id.insert(info.id.clone(), info.clone());
+        for stored in dormant.values() {
+            by_id.insert(stored.info.id.clone(), stored.to_info());
         }
         // Live status/timestamps win when both maps contain the same id.
         for entry in live.values() {
@@ -670,8 +698,8 @@ impl ACPClient for Client {
             let entry = dormant
                 .get_mut(session_id)
                 .ok_or_else(|| AppError::not_found_id("session", session_id))?;
-            entry.name = name.to_string();
-            entry.updated_at = Utc::now();
+            entry.info.name = name.to_string();
+            entry.info.updated_at = Utc::now();
         }
         self.persist_sessions()?;
         Ok(())
@@ -760,6 +788,9 @@ impl ACPClient for Client {
                 event_bus: Arc::clone(&self.deps.event_bus),
                 prompt_cancel: Arc::clone(&prompt_cancel),
                 mcp_config_path: self.deps.mcp_config_path.clone(),
+                // Rebind switches agents; clear the prior ACP id so we never
+                // attempt session/load against the wrong agent (Go parity).
+                persisted_acp_session_id: String::new(),
             },
             receiver,
             ready_tx,
@@ -791,6 +822,7 @@ impl ACPClient for Client {
             entry.prompt_cancel = prompt_cancel;
             entry.caps = startup.caps;
             entry.model_config_id = startup.model_config_id;
+            entry.acp_session_id = startup.acp_session_id;
             entry.info.agent_id = agent_id.to_string();
             entry.info.model_id = model_id.to_string();
             entry.apply_state(SessionState::Idle);
@@ -1064,6 +1096,8 @@ enum ActorCommand {
 struct ActorStartup {
     caps: SessionCaps,
     model_config_id: Option<String>,
+    /// Resolved agent-side ACP session id (from load or new).
+    acp_session_id: String,
 }
 
 struct ActorConfig {
@@ -1077,8 +1111,11 @@ struct ActorConfig {
     stderr_tail: Arc<Mutex<StderrTail>>,
     sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
     prompt_cancel: Arc<AtomicBool>,
-    /// Optional `mcp.json` path passed through to session/new.
+    /// Optional `mcp.json` path passed through to session/new and session/load.
     mcp_config_path: Option<PathBuf>,
+    /// Durable agent ACP session id to attempt `session/load` with (empty =
+    /// always `session/new`). Cleared on rebind.
+    persisted_acp_session_id: String,
 }
 
 async fn run_actor(
@@ -1373,15 +1410,17 @@ async fn run_actor_inner(
                 config.mcp_config_path.as_deref(),
                 &init.agent_capabilities.mcp_capabilities,
             );
-            let session = cx
-                .send_request(
-                    NewSessionRequest::new(config.workspace_path.clone()).mcp_servers(mcp_servers),
-                )
-                .block_task()
-                .await
-                .map_err(|_| agent_client_protocol::Error::internal_error())?;
+            let (agent_session_id, config_options) = resolve_acp_session(
+                &cx,
+                &init,
+                &config.workspace_path,
+                mcp_servers,
+                &config.persisted_acp_session_id,
+            )
+            .await
+            .map_err(|_| agent_client_protocol::Error::internal_error())?;
             let model_config_id = find_model_config_id(
-                session.config_options.as_deref().unwrap_or(&[]),
+                config_options.as_deref().unwrap_or(&[]),
                 &config.agent.models,
             );
             if model_config_id.is_none() {
@@ -1389,10 +1428,12 @@ async fn run_actor_inner(
                     "agent did not advertise a model config option; switch_model will be unsupported"
                 );
             }
+            let acp_session_id = agent_session_id.to_string();
             if let Some(ready) = ready.take() {
                 let _ = ready.send(Ok(ActorStartup {
                     caps,
                     model_config_id,
+                    acp_session_id,
                 }));
             }
             if let Some(registered) = registered.take() {
@@ -1402,7 +1443,7 @@ async fn run_actor_inner(
             }
             actor_loop(
                 cx,
-                session.session_id,
+                agent_session_id,
                 commands,
                 event_bus,
                 local_session_id,
@@ -1416,6 +1457,107 @@ async fn run_actor_inner(
     let _ = child.kill();
     let _ = child.status().await;
     connected.map_err(|error| AppError::internal(format!("ACP connection: {error}")))
+}
+
+/// Reports whether `persisted_id` appears in an agent `session/list` response.
+///
+/// Pure helper extracted for unit tests (mirrors Go `sessionExists`).
+fn session_exists(
+    sessions: &[agent_client_protocol::schema::v1::SessionInfo],
+    persisted_id: &str,
+) -> bool {
+    sessions
+        .iter()
+        .any(|session| session.session_id.to_string() == persisted_id)
+}
+
+/// Whether resolve should attempt `session/load` given persisted id + caps.
+///
+/// Pure gate matching Go `resolveACPSession` before any RPC (list is a
+/// separate capability checked by the caller).
+fn should_attempt_load(persisted_id: &str, load_session: bool) -> bool {
+    !persisted_id.is_empty() && load_session
+}
+
+/// Decides load vs new after Initialize, matching Go `resolveACPSession`.
+///
+/// Flow:
+/// 1. If persisted id + load + list: ListSessions by cwd; missing → NewSession;
+///    list error → fall through.
+/// 2. If persisted id + load: LoadSession; success returns the persisted id.
+/// 3. Else / on load failure: NewSession.
+async fn resolve_acp_session(
+    cx: &ConnectionTo<Agent>,
+    init: &InitializeResponse,
+    workspace_path: &Path,
+    mcp_servers: Vec<McpServer>,
+    persisted_id: &str,
+) -> Result<(SessionId, Option<Vec<SessionConfigOption>>), agent_client_protocol::Error> {
+    let can_load = init.agent_capabilities.load_session;
+    let can_list = init.agent_capabilities.session_capabilities.list.is_some();
+
+    // When the agent supports session/list, reconcile first: only attempt
+    // LoadSession if the agent confirms the session still exists.
+    if should_attempt_load(persisted_id, can_load) && can_list {
+        match cx
+            .send_request(ListSessionsRequest::new().cwd(workspace_path.to_path_buf()))
+            .block_task()
+            .await
+        {
+            Ok(listed) => {
+                if !session_exists(&listed.sessions, persisted_id) {
+                    tracing::info!(
+                        local_hint = "acp_session_absent_from_list",
+                        "ACP session/list did not include persisted id; creating new session"
+                    );
+                    return new_acp_session(cx, workspace_path, mcp_servers).await;
+                }
+                // Session confirmed present — attempt LoadSession below.
+            }
+            Err(error) => {
+                // ListSessions error: fall through to try-load-then-new so we
+                // do not regress on agents with flaky list support.
+                tracing::info!(
+                    error = %error,
+                    "ACP session/list failed; falling through to session/load"
+                );
+            }
+        }
+    }
+
+    if should_attempt_load(persisted_id, can_load) {
+        let load_req = LoadSessionRequest::new(SessionId::new(persisted_id), workspace_path)
+            .mcp_servers(mcp_servers.clone());
+        match cx.send_request(load_req).block_task().await {
+            Ok(loaded) => {
+                tracing::info!("ACP session/load succeeded; resuming persisted agent session");
+                return Ok((SessionId::new(persisted_id), loaded.config_options));
+            }
+            Err(error) => {
+                tracing::info!(
+                    error = %error,
+                    "ACP session/load failed; falling back to session/new"
+                );
+                // Fall through to NewSession on any load error.
+            }
+        }
+    }
+
+    new_acp_session(cx, workspace_path, mcp_servers).await
+}
+
+/// Creates a fresh ACP session via `session/new`.
+async fn new_acp_session(
+    cx: &ConnectionTo<Agent>,
+    workspace_path: &Path,
+    mcp_servers: Vec<McpServer>,
+) -> Result<(SessionId, Option<Vec<SessionConfigOption>>), agent_client_protocol::Error> {
+    let session = cx
+        .send_request(NewSessionRequest::new(workspace_path).mcp_servers(mcp_servers))
+        .block_task()
+        .await?;
+    tracing::info!("ACP session/new created a new agent session");
+    Ok((session.session_id, session.config_options))
 }
 
 /// Outcome returned by the connection-owning actor loop.
@@ -2388,7 +2530,10 @@ mod tests {
     use async_trait::async_trait;
     use tempfile::TempDir;
 
-    use super::{AgentRegistry, Client, ClientDeps, ConversationStore, RetainedOutput};
+    use super::{
+        session_exists, should_attempt_load, AgentRegistry, Client, ClientDeps, ConversationStore,
+        RetainedOutput, StoredSession,
+    };
     use crate::config::{AgentInfo, AgentModel};
     use crate::events::{EventBus, Store};
     use crate::interfaces::{
@@ -2668,17 +2813,20 @@ mod tests {
         client
             .deps
             .conversation_store
-            .persist(&[SessionInfo {
-                id: "sess-persisted".to_string(),
-                name: "Survived restart".to_string(),
-                // Stale running bit from the previous daemon process.
-                status: "running".to_string(),
-                agent_id: "mock".to_string(),
-                model_id: "mock-model".to_string(),
-                workspace: workspace_id,
-                created_at: now,
-                updated_at: now,
-            }])
+            .persist(&[StoredSession::from_parts(
+                SessionInfo {
+                    id: "sess-persisted".to_string(),
+                    name: "Survived restart".to_string(),
+                    // Stale running bit from the previous daemon process.
+                    status: "running".to_string(),
+                    agent_id: "mock".to_string(),
+                    model_id: "mock-model".to_string(),
+                    workspace: workspace_id,
+                    created_at: now,
+                    updated_at: now,
+                },
+                "acp-prior-1",
+            )])
             .expect("seed conversations.json");
 
         assert!(
@@ -2717,16 +2865,19 @@ mod tests {
         client
             .deps
             .conversation_store
-            .persist(&[SessionInfo {
-                id: session_id.to_string(),
-                name: "Prior chat".to_string(),
-                status: "idle".to_string(),
-                agent_id: "mock".to_string(),
-                model_id: "mock-model".to_string(),
-                workspace: workspace_id,
-                created_at: now,
-                updated_at: now,
-            }])
+            .persist(&[StoredSession::from_parts(
+                SessionInfo {
+                    id: session_id.to_string(),
+                    name: "Prior chat".to_string(),
+                    status: "idle".to_string(),
+                    agent_id: "mock".to_string(),
+                    model_id: "mock-model".to_string(),
+                    workspace: workspace_id,
+                    created_at: now,
+                    updated_at: now,
+                },
+                "",
+            )])
             .expect("seed conversations.json");
         client
             .load_conversations()
@@ -2784,6 +2935,82 @@ mod tests {
             .close_session(session_id)
             .await
             .expect("close restored session");
+    }
+
+    #[test]
+    fn should_attempt_load_requires_persisted_id_and_capability() {
+        assert!(should_attempt_load("acp-1", true));
+        assert!(!should_attempt_load("", true));
+        assert!(!should_attempt_load("acp-1", false));
+        assert!(!should_attempt_load("", false));
+    }
+
+    #[test]
+    fn session_exists_matches_agent_listed_ids() {
+        use agent_client_protocol::schema::v1::{SessionId, SessionInfo as AcpListedSession};
+
+        let sessions = vec![
+            AcpListedSession::new(SessionId::new("acp-a"), "/ws"),
+            AcpListedSession::new(SessionId::new("acp-b"), "/ws"),
+        ];
+        assert!(session_exists(&sessions, "acp-a"));
+        assert!(session_exists(&sessions, "acp-b"));
+        assert!(!session_exists(&sessions, "acp-missing"));
+        assert!(!session_exists(&[], "acp-a"));
+    }
+
+    /// Durable `acpSessionId` survives load→rename→persist without leaking into REST info.
+    #[tokio::test]
+    async fn persisted_acp_session_id_survives_rename_round_trip() {
+        let store_dir = TempDir::new().expect("store dir");
+        let store_path = store_dir.path().join("conversations.json");
+        let (client, _permissions, _workspace, workspace_id) =
+            mock_client_empty(ConversationStore::new(Some(store_path.clone()))).await;
+        let now = Utc::now();
+        client
+            .deps
+            .conversation_store
+            .persist(&[StoredSession::from_parts(
+                SessionInfo {
+                    id: "sess-acp-id".to_string(),
+                    name: "With ACP id".to_string(),
+                    status: "idle".to_string(),
+                    agent_id: "mock".to_string(),
+                    model_id: "mock-model".to_string(),
+                    workspace: workspace_id,
+                    created_at: now,
+                    updated_at: now,
+                },
+                "acp-durable-9",
+            )])
+            .expect("seed");
+        client
+            .load_conversations()
+            .expect("load durable conversations");
+
+        let info = client
+            .get_session_info("sess-acp-id")
+            .expect("get session info");
+        let info_json = serde_json::to_value(&info).expect("serialize REST info");
+        assert!(
+            info_json.get("acpSessionId").is_none(),
+            "get_session_info must not expose acpSessionId"
+        );
+
+        client
+            .rename_session("sess-acp-id", "Renamed")
+            .expect("rename dormant");
+        let reloaded = client
+            .deps
+            .conversation_store
+            .load()
+            .expect("reload store after rename");
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].info.name, "Renamed");
+        assert_eq!(
+            reloaded[0].acp_session_id, "acp-durable-9",
+            "rename must preserve durable acpSessionId"
+        );
     }
 
     #[test]

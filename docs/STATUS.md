@@ -33,9 +33,18 @@
   HTTPS-only); product choice: HTTPS when TLS on, both URLs, or device picker.
 - [ ] **Multi-user vs multi-device** — multi-device/single-user decided; multi-user remains future.
 - [ ] **ACP futures** — sub-workers, session fork/resume/close, elicitation, NES, audio, ACP-inspector.
+- [ ] **Agent-owned session history** — epic drafted (needs stories): browse/
+  resume chats via agent `session/list`+`load` by `cwd`; thin multi-UI index.
+  `docs/plans/acp-agent-session-history/epic.md`.
+- [ ] **Workspace static preview** — epic drafted: render a multi-file static
+  site from the workspace in a preview tab (new `/preview/{id}/*` route +
+  iframe). Story `pending-browse-preview-tab-low-small`.
+  `docs/plans/workspace-preview/epic.md`.
 - [ ] **Phase 2 (Multi-Agent)** — multiple simultaneous workers, capability negotiation, enhanced diagnostics.
-- [ ] **Rust backend port** — Live WS stream fan-out fixed (EventBus → Hub).
-  Next: `session/load` + `acpSessionId`; 50 MiB write body; story AC check-off.
+- [ ] **Rust backend port** — Near cutover: `session/load` + `acpSessionId`,
+  live WS fan-out, 50 MiB file-write body, Rust-default `build.sh` /
+  `CONTRACT_BACKEND`. Go remains behind `BUILD_GO=1` / `CONTRACT_BACKEND=go`
+  until delete. Next: story AC check-off; delete Go tree after smoke.
   Daemon on :7337 for UI.
 
 ## Blocked
@@ -44,6 +53,16 @@
 
 ## Recent Changes (2026-07)
 
+- **07-18** — Rust **cutover batch**: ACP `session/load` + durable
+  `acpSessionId` (`StoredSession`); 50 MiB file-write body; `build.sh`/
+  `build.ps1`/`Makefile` Rust-primary (`BUILD_GO=1` for legacy); contract
+  harness defaults to `CONTRACT_BACKEND=rust`.
+- **07-18** — Rust **ACP `session/load` + durable `acpSessionId`**:
+  `StoredSession` in conversations.json; resolve load/list/new like Go;
+  clear id on rebind; REST `SessionInfo` stays free of `acpSessionId`.
+- **07-18** — Epic draft: **agent-owned ACP session history** (list/load by
+  `cwd`, cross-editor resume, thin sync). Needs flesh-out — no stories yet.
+  `docs/plans/acp-agent-session-history/epic.md`.
 - **07-18** — Rust **live chat streaming**: EventBus `LiveFanout` → Hub
   broadcast (Go Append→Broadcast). UI `/ws` omits `?after=`; without this
   bridge stream updates stayed in SQLite until refresh/prompt end.
@@ -97,13 +116,12 @@
 
 ## Known Gaps (summary — see `docs/known-issues.md`)
 
-- Rust: no ACP `session/load` yet (restart always `session/new`; need
-  durable `acpSessionId`).
+- Go tree still in-repo (optional `BUILD_GO=1`); delete after smoke + contract
+  confidence. Re-run `local_agent install-service` if units still point at `app`.
 - Rust MCP-over-ACP broker unused (`unstable_mcp_over_acp`); inline MCP via
   session/new is the path today. Go SDK still missing `mcp/message`.
 - Pair QR scheme product choice (currently HTTP); mobile editor touch.
 - Contract: MCP JSON parse-error text ignored; autodetect golden ignored.
-- Global 10 MiB body cap vs Go 50 MiB file-write exception.
 - Story AC checkboxes largely stale (implementation ahead of docs).
 - S-BUILD native Win/macOS release+SPA smoke CI deferred.
 - Hyper HTTP/2 header deadline unavailable; body timing starts at handler.

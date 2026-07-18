@@ -459,7 +459,8 @@ impl HttpBody for DeadlineBody {
 /// adapters below cover HTTP/1 and HTTP/2. They differ from Go in two ways:
 /// HTTP body transfers are timed from handler entry rather than accept, and a
 /// response-body timeout closes the stream instead of changing a started
-/// response. Router-level body caps remain 10 MiB in `crate::api`.
+/// response. Router-level body caps remain 10 MiB in `crate::api` (50 MiB on
+/// file-write POST only).
 fn with_timeouts(router: Router) -> Router {
     router
         .layer(middleware::from_fn(response_write_timeout))

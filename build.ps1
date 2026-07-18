@@ -1,17 +1,15 @@
 <#
 .SYNOPSIS
-Builds the Local Agent Interface project (Frontend + Go + Rust backends).
+Builds the Local Agent Interface (frontend + Rust daemon).
 
 .DESCRIPTION
-This script builds the React frontend, copies the compiled assets into the
-Go server's embed directory, builds the Go executable, and then builds the
-Rust port (which embeds web/dist via rust-embed at compile time).
+Primary binary: bin\local_agent.exe. Set $env:BUILD_GO=1 to also build the
+legacy Go bin\app.exe.
 #>
 
 $ErrorActionPreference = "Stop"
 
-# Fail loudly if required tooling is missing.
-foreach ($tool in @("npm", "go", "cargo")) {
+foreach ($tool in @("npm", "cargo")) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
         Write-Host "ERROR: '$tool' is not installed or not on PATH." -ForegroundColor Red
         exit 1
@@ -23,28 +21,37 @@ Set-Location "web"
 npm run build
 Set-Location ".."
 
-Write-Host "2. Copying frontend assets to Go embed directory..." -ForegroundColor Cyan
-$distDir = "internal\server\dist"
-if (Test-Path $distDir) {
-    Remove-Item -Recurse -Force "$distDir\*"
-} else {
-    New-Item -ItemType Directory -Force -Path $distDir | Out-Null
-}
-Copy-Item -Recurse -Force "web\dist\*" "$distDir\"
-
-Write-Host "3. Building Go backend..." -ForegroundColor Cyan
-# Build into the bin folder
-go build -o bin\app.exe .\cmd\app
-# Also install it to GOPATH so 'app start' works globally
-go install .\cmd\app
-
-Write-Host "4. Building Rust backend..." -ForegroundColor Cyan
-# rust-embed bakes web/dist into the binary at compile time, so the frontend
-# build above is picked up automatically -- no copy step needed. The Rust port
-# outputs a separate binary (bin\local_agent.exe) alongside the Go binary.
+Write-Host "2. Building Rust daemon (local_agent)..." -ForegroundColor Cyan
 cargo build --release
+New-Item -ItemType Directory -Force -Path "bin" | Out-Null
 Copy-Item -Force "target\release\local_agent.exe" "bin\local_agent.exe"
 
-Write-Host "Build complete!" -ForegroundColor Green
-Write-Host "  Go binary:   bin\app.exe           (installed globally as 'app')" -ForegroundColor Green
-Write-Host "  Rust binary: bin\local_agent.exe    (run with 'bin\local_agent.exe start')" -ForegroundColor Green
+$cargoBin = if ($env:CARGO_HOME) { Join-Path $env:CARGO_HOME "bin" } else { Join-Path $HOME ".cargo\bin" }
+if (Test-Path $cargoBin) {
+    Copy-Item -Force "bin\local_agent.exe" (Join-Path $cargoBin "local_agent.exe")
+    Write-Host "  Installed: $cargoBin\local_agent.exe"
+}
+
+if ($env:BUILD_GO -eq "1") {
+    if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
+        Write-Host "ERROR: BUILD_GO=1 but 'go' is not installed or not on PATH." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "3. Building legacy Go daemon (BUILD_GO=1)..." -ForegroundColor Yellow
+    $distDir = "internal\server\dist"
+    if (Test-Path $distDir) {
+        Remove-Item -Recurse -Force "$distDir\*"
+    } else {
+        New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+    }
+    Copy-Item -Recurse -Force "web\dist\*" "$distDir\"
+    go build -o bin\app.exe .\cmd\app
+    go install .\cmd\app
+    Write-Host "Build complete!" -ForegroundColor Green
+    Write-Host "  Rust (default): bin\local_agent.exe"
+    Write-Host "  Go (legacy):    bin\app.exe"
+} else {
+    Write-Host "Build complete!" -ForegroundColor Green
+    Write-Host "  Rust daemon: bin\local_agent.exe   (run: local_agent start)"
+    Write-Host "  Tip: `$env:BUILD_GO=1 also builds the legacy Go bin\app.exe"
+}

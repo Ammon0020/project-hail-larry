@@ -61,7 +61,7 @@ impl BackendHarness {
     /// write the seed config, start the backend, and wait for /health.
     pub async fn start() -> Self {
         let repo_root = find_repo_root();
-        let backend = std::env::var("CONTRACT_BACKEND").unwrap_or_else(|_| "go".to_string());
+        let backend = std::env::var("CONTRACT_BACKEND").unwrap_or_else(|_| "rust".to_string());
 
         eprintln!("[contract] backend = {backend}");
         eprintln!("[contract] repo root = {}", repo_root.display());
