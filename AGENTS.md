@@ -42,9 +42,24 @@ docs/           plans, specs, references, reviews, status, known issues
 - Record unrelated test failures in `docs/known-issues.md`; do not expand scope.
 - Keep `docs/STATUS.md` honest and current. Keep it under 150 lines and 90 characters per line.
 - For planning work, follow `.agents/skills/plan-management/SKILL.md`.
-- Discover work by listing `docs/plans/`, then the chosen epic folder (or its `stories/` folder). Use status-prefixed epic folders and story files; rename them when status changes. Keep plans concise and executable in one branch.
+- Discover work by listing `docs/plans/`, then the chosen epic folder. Use status-prefixed filenames; rename them when status changes. Keep plans concise and executable in one branch.
 - Suggest a commit message and tests when handing work off.
 - Add brief comments for non-obvious intent, constraints, and security-sensitive behavior. Do not comment code that is already self-explanatory.
+
+## Plans
+List relevant folder to see task status. Delete tasks after review. 
+
+**Folder hierarchy**
+```
+docs/plans/
+├── status-epic-difficulty.md
+├── epic/
+│   └── status-story-difficulty.md
+└── other_tasks/ # bugs, chores, etc.
+    └── status-task-difficulty-urgency.md
+```
+
+
 
 ## Security
 
