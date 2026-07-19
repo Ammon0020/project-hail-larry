@@ -44,8 +44,15 @@ const rowStyles = cva(
         active: 'bg-primary/10 text-primary border-l-2 border-primary',
         default: 'hover:bg-accent text-muted-foreground',
       },
+      // Orthogonal to `kind`: a blue outline marks the row whose context menu
+      // is currently open (the right-clicked item). Uses `ring-primary` so it
+      // adapts to the active theme via the `--ring`/`--primary` token.
+      menuOpen: {
+        true: 'ring-1 ring-primary outline-none',
+        false: '',
+      },
     },
-    defaultVariants: { kind: 'default' },
+    defaultVariants: { kind: 'default', menuOpen: false },
   },
 )
 
@@ -261,7 +268,7 @@ function TreeNode({
 
     const folderRow = (
       <div
-        className={rowStyles({ kind: 'folder' })}
+        className={rowStyles({ kind: 'folder', menuOpen })}
         onClick={() => {
           if (!isRenaming) onToggleExpand(nodePath)
         }}
@@ -359,7 +366,7 @@ function TreeNode({
 
   const fileRow = (
     <div
-      className={rowStyles({ kind })}
+      className={rowStyles({ kind, menuOpen })}
       onClick={() => {
         if (!isRenaming) actions.onFileSelect(nodePath)
       }}
