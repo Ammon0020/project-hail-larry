@@ -68,7 +68,10 @@ impl SessionCaps {
     /// capability booleans are false — callers must not treat that as
     /// "agent lacks list/load"; cold-start policy is still Decision Needed (Q8).
     #[must_use]
-    pub fn to_history_capabilities(self, available: bool) -> crate::interfaces::SessionHistoryCapabilities {
+    pub fn to_history_capabilities(
+        self,
+        available: bool,
+    ) -> crate::interfaces::SessionHistoryCapabilities {
         if !available {
             return crate::interfaces::SessionHistoryCapabilities::unavailable();
         }

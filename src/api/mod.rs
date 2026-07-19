@@ -1183,7 +1183,9 @@ async fn require_auth(
     ) {
         Ok(()) => next.run(request).await,
         Err(error) if request.method() == Method::GET || request.method() == Method::HEAD => {
-            let Some(preview_auth) = preview_authorization(&state, request.uri(), request.headers()) else {
+            let Some(preview_auth) =
+                preview_authorization(&state, request.uri(), request.headers())
+            else {
                 return error.into_response();
             };
             let secure = request.extensions().get::<TlsConnection>().is_some();
@@ -2177,13 +2179,19 @@ mod tests {
             .expect("preview cookie");
         assert!(cookie.contains("HttpOnly"));
         assert!(cookie.contains(&format!("Path=/preview/{}/", ws.id)));
-        assert_ne!(cookie.split(';').next(), Some(format!("preview_token={token}").as_str()));
+        assert_ne!(
+            cookie.split(';').next(),
+            Some(format!("preview_token={token}").as_str())
+        );
 
         let asset = oneshot_peer(
             state.clone(),
             Request::builder()
                 .uri(format!("/preview/{}/styles.css", ws.id))
-                .header(header::COOKIE, cookie.split(';').next().expect("cookie pair"))
+                .header(
+                    header::COOKIE,
+                    cookie.split(';').next().expect("cookie pair"),
+                )
                 .body(Body::empty())
                 .expect("request"),
             "10.0.0.1:9",
@@ -2194,7 +2202,10 @@ mod tests {
         let replay = oneshot_peer(
             state,
             Request::builder()
-                .uri(format!("/preview/{}/index.html?previewToken={token}", ws.id))
+                .uri(format!(
+                    "/preview/{}/index.html?previewToken={token}",
+                    ws.id
+                ))
                 .body(Body::empty())
                 .expect("request"),
             "10.0.0.1:9",
@@ -2223,7 +2234,10 @@ mod tests {
             .expect("preview token")
             .to_owned();
         let mut request = Request::builder()
-            .uri(format!("/preview/{}/index.html?previewToken={token}", ws.id))
+            .uri(format!(
+                "/preview/{}/index.html?previewToken={token}",
+                ws.id
+            ))
             .body(Body::empty())
             .expect("request");
         request.extensions_mut().insert(TlsConnection);

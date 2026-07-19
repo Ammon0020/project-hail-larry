@@ -90,6 +90,16 @@ yet (denying them as `warn` would be escalated to errors by CI's blanket
 
 Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic`
 
+## Daemon port-orphan recovery — non-Linux PID-from-port deferred
+
+Fixed 2026-07-18 on Linux. `start` now probes the configured HTTP port before
+binding and fails fast with the holding PID when an orphan holds it; `stop`
+falls back to finding a process listening on the port when no live PID file
+exists. macOS/Windows `find_pid_listening_on` return `Ok(None)` (no cheap
+kernel introspection path is wired yet); on those platforms an orphaned daemon
+without a PID file still requires a manual `kill`/`taskkill`. See
+`docs/plans/other_tasks/active-daemon-port-orphan-recovery-small-high.md`.
+
 ## Security audit — deferred findings (from 2026-07-07 audit)
 
 - **sec-auth-credentials-in-query-params (Low):** Device credentials are passed

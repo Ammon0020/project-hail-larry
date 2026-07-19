@@ -45,6 +45,9 @@
 
 ## Recent Changes (2026-07)
 
+- **Port-orphan recovery** — `start` probes the HTTP port before binding and
+  names the holding PID; `stop` falls back to a port-listening lookup when no
+  live PID file exists, so an orphaned daemon is recoverable via the CLI.
 - **S-HIST-PROBE** — harness matrix and live capability projection; no cold-start.
 - **Preview LAN auth** — one-time, workspace-bound entry ticket exchanges for an
   HttpOnly path cookie; native TLS marks it `Secure`; relative assets now load.

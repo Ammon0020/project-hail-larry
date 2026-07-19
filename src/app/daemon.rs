@@ -191,6 +191,22 @@ impl Daemon {
             https = ?addresses.https,
             "local-agent daemon started"
         );
+        // Surface the bound addresses on stdout so a foreground `start` shows
+        // where to open the IDE. In background mode stdout is Stdio::null() so
+        // this is discarded; the user reads `status` instead.
+        {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = writeln!(out, "Local Agent listening on http://{}", addresses.http);
+            if let Some(https) = addresses.https {
+                let _ = writeln!(
+                    out,
+                    "Local Agent listening on https://{} (self-signed)",
+                    https
+                );
+            }
+            let _ = out.flush();
+        }
 
         let router = api::router(self.state.clone());
         let root_cancel = CancellationToken::new();
@@ -269,13 +285,37 @@ pub fn status(config: &Config) -> Result<DaemonStatus> {
 }
 
 /// Signal the PID recorded in the configured data directory.
+///
+/// When no live PID file exists, fall back to finding a process listening on
+/// the configured HTTP port. This recovers from an orphaned daemon whose PID
+/// file was lost (different binary, interrupted cleanup, or a stale file that
+/// named a dead process). On platforms without port-to-PID introspection the
+/// fallback is a no-op and the caller sees the original "not running" error.
 pub fn stop(config: &Config) -> Result<()> {
-    let Some(pid) = read_live_pid(&config.data_dir)? else {
-        return Err(anyhow!("daemon is not running"));
-    };
-    process::stop(pid)?;
-    remove_pid(&config.data_dir);
-    Ok(())
+    if let Some(pid) = read_live_pid(&config.data_dir)? {
+        process::stop(pid)?;
+        remove_pid(&config.data_dir);
+        return Ok(());
+    }
+    let port = u16::try_from(config.port).context("validate HTTP port for stop fallback")?;
+    match super::port::find_pid_listening_on(port) {
+        Ok(Some(pid)) => {
+            warn!(
+                pid,
+                port, "no live PID file; stopping unmanaged daemon holding the HTTP port"
+            );
+            process::stop(pid)?;
+            remove_pid(&config.data_dir);
+            Ok(())
+        }
+        Ok(None) => Err(anyhow!("daemon is not running")),
+        Err(error) => {
+            // Introspection failure must not mask the common "not running" case;
+            // surface it as context so a real bug is visible.
+            Err(error)
+                .with_context(|| format!("daemon is not running; failed to inspect port {port}"))
+        }
+    }
 }
 
 /// Resolve the configured HTTPS port, defaulting to HTTP + 1.

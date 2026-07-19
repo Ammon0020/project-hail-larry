@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::app::{daemon, logging};
+use crate::app::{daemon, logging, port};
 use crate::config::Config;
 use crate::interfaces::WorkspaceManager;
 use crate::workspace::Manager as WorkspaceManagerImpl;
@@ -118,6 +118,29 @@ async fn start(background: bool) -> Result<()> {
     let config = Config::load().context("load local-agent configuration")?;
     if daemon::status(&config)?.running {
         bail!("daemon is already running; stop it with `local_agent stop` first");
+    }
+    // The PID file may be missing while a process still holds the configured
+    // port (orphaned daemon, different binary, interrupted cleanup). Probe
+    // before constructing the daemon so we fail fast with an actionable
+    // message instead of a confusing `Address already in use` at bind time.
+    // Skip for port 0 (OS-assigned, used in tests).
+    if config.port != 0 {
+        let port = u16::try_from(config.port).context("validate HTTP port")?;
+        let host = config.host.clone();
+        let listening = tokio::task::spawn_blocking(move || port::is_port_listening(&host, port))
+            .await
+            .context("join port probe")?;
+        if listening {
+            let holder = port::find_pid_listening_on(port)
+                .ok()
+                .flatten()
+                .map(|pid| format!(" (PID {pid})"))
+                .unwrap_or_default();
+            bail!(
+                "port {port} is already in use{holder}; stop the other process or run \
+                 `local_agent stop` first"
+            );
+        }
     }
     if background {
         let executable = std::env::current_exe().context("resolve current executable")?;
