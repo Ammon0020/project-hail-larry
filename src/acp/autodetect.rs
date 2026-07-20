@@ -30,11 +30,20 @@ struct AgentSpec {
     model_source: ModelSource,
 }
 
+/// Where model lists come from for a known agent.
+///
+/// These are workarounds: ACP does not yet expose a standard pre-auth model
+/// listing method. `providers/list` is unstable and returns `Method not found`
+/// on Devin and Cursor (verified 2026-07-18); `session/new` includes a model
+/// selector in `sessionConfig.options` but requires authentication first.
+/// When ACP standardizes model listing, all of these variants (and the
+/// fallback lists in `KNOWN_AGENTS`) should be replaced by a single ACP probe.
+/// See `docs/plans/other_tasks/deferred-acp-model-discovery-small-low.md`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ModelSource {
     None,
     CodexCache,
-    CursorCli,
+    CursorConfig,
     VibeConfig,
 }
 
@@ -68,17 +77,17 @@ const KNOWN_AGENTS: &[AgentSpec] = &[
         commands: &["agent", "cursor-agent"],
         args: &["acp"],
         search_paths: &["%LOCALAPPDATA%\\cursor-agent", "~/.local/bin"],
+        // Fallback models match `agent --help`'s `--model` examples. The
+        // primary source is `~/.cursor/cli-config.json` (CursorConfig), which
+        // has the account's current model; `--list-models` is tried first when
+        // the account is authed. Both are workarounds; see the `ModelSource`
+        // doc comment and `docs/plans/other_tasks/deferred-acp-model-discovery-small-low.md`.
         fallback_models: &[
-            ("auto", "Auto"),
-            ("composer-2.5-fast", "Composer 2.5 Fast (default)"),
-            ("composer-2.5", "Composer 2.5"),
-            ("gpt-5.2", "GPT-5.2"),
-            ("claude-opus-4-8-high", "Opus 4.8 1M"),
-            ("claude-4.6-sonnet-medium", "Sonnet 4.6 1M"),
-            ("gemini-3.1-pro", "Gemini 3.1 Pro"),
-            ("grok-4.3", "Grok 4.3 1M"),
+            ("gpt-5", "GPT-5"),
+            ("sonnet-4", "Sonnet 4"),
+            ("sonnet-4-thinking", "Sonnet 4 Thinking"),
         ],
-        model_source: ModelSource::CursorCli,
+        model_source: ModelSource::CursorConfig,
     },
     AgentSpec {
         id: "devin",
@@ -207,9 +216,11 @@ pub fn merge_autodetected_agents(
                 slot.args = detected_agent.args;
                 changed = true;
             }
-            if slot.models.is_empty() {
-                slot.models = detected_agent.models;
-                changed = true;
+            for detected_model in detected_agent.models {
+                if !slot.models.iter().any(|m| m.id == detected_model.id) {
+                    slot.models.push(detected_model);
+                    changed = true;
+                }
             }
             if slot.warning.is_empty() && !detected_agent.warning.is_empty() {
                 slot.warning = detected_agent.warning;
@@ -293,7 +304,16 @@ async fn detect_models(
     let file_models = match spec.model_source {
         ModelSource::CodexCache => codex_models_from_file(),
         ModelSource::VibeConfig => vibe_models_from_file(),
-        ModelSource::CursorCli => cursor_models_from_cli(command, options.probe_timeout).await,
+        // Cursor: try `--list-models` first (works when authed), then fall
+        // back to reading the CLI config file for the account's current model.
+        ModelSource::CursorConfig => {
+            let cli = cursor_models_from_cli(command, options.probe_timeout).await;
+            if !cli.is_empty() {
+                cli
+            } else {
+                cursor_models_from_config()
+            }
+        }
         ModelSource::None => Vec::new(),
     };
     if !file_models.is_empty() {
@@ -478,6 +498,208 @@ async fn cursor_models_from_cli(command: &Path, duration: Duration) -> Vec<Agent
         return Vec::new();
     };
     parse_cursor_models(&stdout)
+}
+
+/// Read the Cursor CLI config (`~/.cursor/cli-config.json`) to extract the
+/// account's current model. The config stores a single `model` object with
+/// `modelId`, `displayName`, and `aliases` — we expose the `modelId` as the
+/// model ID and `displayName` as the human-readable name. Returns an empty vec
+/// if the file is missing, unreadable, or has no model entry.
+///
+/// This is a workaround pending ACP model-listing standardization; see the
+/// `ModelSource` doc comment and
+/// `docs/plans/other_tasks/deferred-acp-model-discovery-small-low.md`.
+fn cursor_models_from_config() -> Vec<AgentModel> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let Ok(contents) = std::fs::read_to_string(home.join(".cursor/cli-config.json")) else {
+        return Vec::new();
+    };
+    parse_cursor_config(&contents)
+}
+
+fn clean_id(s: &str) -> &str {
+    if let Some(pos) = s.rfind('/') {
+        &s[pos + 1..]
+    } else {
+        s
+    }
+}
+
+fn format_display_name(id: &str) -> String {
+    let clean_id = clean_id(id);
+    if clean_id == "cheetah" {
+        return "Cheetah".to_string();
+    }
+    if clean_id == "auto-fast" {
+        return "Auto Fast".to_string();
+    }
+    if clean_id == "auto-fast-thinking" {
+        return "Auto Fast (Thinking)".to_string();
+    }
+
+    let parts: Vec<&str> = clean_id.split('-').collect();
+    let mut formatted = Vec::new();
+    for part in parts {
+        if part == "thinking" {
+            formatted.push("(Thinking)".to_string());
+        } else if part == "gpt" {
+            formatted.push("GPT".to_string());
+        } else if part == "haiku" {
+            formatted.push("Haiku".to_string());
+        } else if part == "sonnet" {
+            formatted.push("Sonnet".to_string());
+        } else if part == "opus" {
+            formatted.push("Opus".to_string());
+        } else if part == "grok" {
+            formatted.push("Grok".to_string());
+        } else if part == "composer" {
+            formatted.push("Composer".to_string());
+        } else if part == "cursor" {
+            formatted.push("Cursor".to_string());
+        } else if part.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+            let mut c = part.chars();
+            let capitalized = match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            };
+            formatted.push(capitalized);
+        } else {
+            formatted.push(part.to_string());
+        }
+    }
+
+    let mut name = String::new();
+    for (i, p) in formatted.iter().enumerate() {
+        if p == "(Thinking)" {
+            if !name.is_empty() {
+                name.push(' ');
+            }
+            name.push_str(p);
+        } else {
+            if i > 0 && !name.is_empty() && !name.ends_with(' ') {
+                name.push(' ');
+            }
+            name.push_str(p);
+        }
+    }
+    name
+}
+
+fn scan_value_for_models(value: &Value, candidates: &mut std::collections::HashSet<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, val) in map {
+                if key == "models" || key == "modelNames" {
+                    match val {
+                        Value::Array(arr) => {
+                            for item in arr {
+                                if let Value::String(s) = item {
+                                    candidates.insert(clean_id(s).to_string());
+                                }
+                            }
+                        }
+                        Value::Object(obj) => {
+                            for (model_key, _) in obj {
+                                candidates.insert(clean_id(model_key).to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                scan_value_for_models(val, candidates);
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                scan_value_for_models(item, candidates);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Parse the Cursor CLI config JSON and extract all available models.
+/// Separated from `cursor_models_from_config` so tests can exercise the
+/// parsing logic without touching the real home directory.
+fn parse_cursor_config(contents: &str) -> Vec<AgentModel> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CliConfig {
+        #[serde(default)]
+        model: Option<CursorModel>,
+        #[serde(default)]
+        statsig_bootstrap: Option<StatsigBootstrap>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CursorModel {
+        #[serde(default)]
+        model_id: String,
+        #[serde(default)]
+        display_name: String,
+    }
+    #[derive(Deserialize)]
+    struct StatsigBootstrap {
+        data: Option<String>,
+    }
+
+    let Ok(config) = serde_json::from_str::<CliConfig>(contents) else {
+        return Vec::new();
+    };
+
+    let mut model_map = std::collections::HashMap::new();
+    let mut top_model_id = None;
+    if let Some(model) = config.model {
+        if !model.model_id.is_empty() {
+            let id = clean_id(&model.model_id).to_string();
+            let name = if model.display_name.is_empty() {
+                format_display_name(&id)
+            } else {
+                model.display_name.clone()
+            };
+            top_model_id = Some(id.clone());
+            model_map.insert(id, name);
+        }
+    }
+
+    let mut candidates = std::collections::HashSet::new();
+    if let Some(statsig) = config.statsig_bootstrap {
+        if let Some(data_str) = statsig.data {
+            if let Ok(value) = serde_json::from_str::<Value>(&data_str) {
+                scan_value_for_models(&value, &mut candidates);
+            }
+        }
+    }
+
+    let mut models = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // 1. Add top-level active model first if present
+    if let Some(ref top_id) = top_model_id {
+        if let Some(top_name) = model_map.get(top_id) {
+            models.push(AgentModel {
+                id: top_id.clone(),
+                name: top_name.clone(),
+            });
+            seen.insert(top_id.clone());
+        }
+    }
+
+    // 2. Sort other candidates for deterministic output order
+    let mut sorted_candidates: Vec<String> = candidates.into_iter().collect();
+    sorted_candidates.sort();
+
+    // 3. Add other candidates
+    for id in sorted_candidates {
+        if seen.insert(id.clone()) {
+            let name = format_display_name(&id);
+            models.push(AgentModel { id, name });
+        }
+    }
+
+    models
 }
 
 fn parse_cursor_models(output: &[u8]) -> Vec<AgentModel> {
@@ -734,8 +956,9 @@ fn truncate(value: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        command_matches_spec, expand_windows_env, merge_autodetected_agents, parse_cursor_models,
-        prune_stale_known_agents, strip_ansi, valid_commands_for_agent, ProviderProbe,
+        command_matches_spec, expand_windows_env, merge_autodetected_agents, parse_cursor_config,
+        parse_cursor_models, prune_stale_known_agents, strip_ansi, valid_commands_for_agent,
+        ProviderProbe,
     };
     use crate::config::{AgentInfo, AgentModel};
 
@@ -836,6 +1059,82 @@ mod tests {
         assert_eq!(models[0].id, "auto");
         assert_eq!(models[1].name, "Composer");
         assert_eq!(strip_ansi("\x1b[2Kauto"), "auto");
+    }
+
+    #[test]
+    fn cursor_config_parser_extracts_current_model() {
+        // The real ~/.cursor/cli-config.json stores a single `model` object.
+        // We parse the modelId and displayName; missing fields default to
+        // empty and are handled gracefully.
+        let models = parse_cursor_config(
+            r#"{"model":{"modelId":"claude-4.5-opus-high-thinking","displayName":"Claude 4.5 Opus (Thinking)","aliases":["opus-4.5-thinking"]}}"#,
+        );
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "claude-4.5-opus-high-thinking");
+        assert_eq!(models[0].name, "Claude 4.5 Opus (Thinking)");
+    }
+
+    #[test]
+    fn cursor_config_parser_handles_missing_model() {
+        let models = parse_cursor_config(r#"{"version":1,"editor":{"vimMode":false}}"#);
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn cursor_config_parser_extracts_statsig_models() {
+        let json_data = r#"{
+            "model": {
+                "modelId": "claude-4.5-opus-high-thinking",
+                "displayName": "Claude 4.5 Opus (Thinking)"
+            },
+            "statsigBootstrap": {
+                "data": "{\"dynamic_configs\":{\"1604139462\":{\"value\":{\"models\":[\"gpt-5.2-codex-high\",\"claude-4.5-opus-high-thinking\",\"composer-2.5-fast\",\"grok-4.5\"]}},\"3033292226\":{\"value\":{\"modelNames\":[\"auto-fast\",\"cheetah\"]}}}}"
+            }
+        }"#;
+        let models = parse_cursor_config(json_data);
+        assert_eq!(models.len(), 6);
+        assert_eq!(models[0].id, "claude-4.5-opus-high-thinking");
+        assert_eq!(models[0].name, "Claude 4.5 Opus (Thinking)"); // Preserves top-level display name
+
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"auto-fast"));
+        assert!(ids.contains(&"cheetah"));
+        assert!(ids.contains(&"gpt-5.2-codex-high"));
+        assert!(ids.contains(&"composer-2.5-fast"));
+        assert!(ids.contains(&"grok-4.5"));
+
+        // Let's verify display name formatting
+        let cheetah_model = models.iter().find(|m| m.id == "cheetah").unwrap();
+        assert_eq!(cheetah_model.name, "Cheetah");
+        let codex_model = models
+            .iter()
+            .find(|m| m.id == "gpt-5.2-codex-high")
+            .unwrap();
+        assert_eq!(codex_model.name, "GPT 5.2 Codex High");
+        let composer_model = models.iter().find(|m| m.id == "composer-2.5-fast").unwrap();
+        assert_eq!(composer_model.name, "Composer 2.5 Fast");
+        let grok_model = models.iter().find(|m| m.id == "grok-4.5").unwrap();
+        assert_eq!(grok_model.name, "Grok 4.5");
+    }
+
+    #[test]
+    fn cursor_config_parser_handles_empty_model_id() {
+        let models = parse_cursor_config(r#"{"model":{"modelId":"","displayName":"Empty"}}"#);
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn cursor_config_parser_falls_back_to_id_for_name() {
+        let models = parse_cursor_config(r#"{"model":{"modelId":"gpt-5"}}"#);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gpt-5");
+        assert_eq!(models[0].name, "GPT 5");
+    }
+
+    #[test]
+    fn cursor_config_parser_handles_invalid_json() {
+        let models = parse_cursor_config("not json");
+        assert!(models.is_empty());
     }
 
     #[test]

@@ -1419,7 +1419,17 @@ async fn run_actor_inner(
                 &config.persisted_acp_session_id,
             )
             .await
-            .map_err(|_| agent_client_protocol::Error::internal_error())?;
+            .map_err(|error| {
+                if error.to_string().to_ascii_lowercase().contains("authentication") {
+                    tracing::error!(
+                        "AGENT AUTHENTICATION REQUIRED: The agent CLI rejected the session request. \
+                        Please run `{} login` on the host machine running this daemon \
+                        to authenticate your environment.",
+                        config.agent.command
+                    );
+                }
+                error
+            })?;
             let model_config_id = find_model_config_id(
                 config_options.as_deref().unwrap_or(&[]),
                 &config.agent.models,
