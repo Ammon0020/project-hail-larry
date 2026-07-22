@@ -1385,7 +1385,10 @@ fn loopback_origin_allowed(origin: Option<&HeaderValue>) -> bool {
     let Ok(url) = reqwest::Url::parse(origin) else {
         return false;
     };
-    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1" | "0.0.0.0"))
+    matches!(
+        url.host_str(),
+        Some("localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
+    )
 }
 
 fn extract_credential(headers: &HeaderMap, query: Option<&str>) -> (String, String) {

@@ -317,7 +317,11 @@ export function ChatMessageItem({
                 <button
                   key={o.id}
                   disabled={!pending}
-                  onClick={() => onPermissionResponse?.(requestId, o.id)}
+                  onClick={() => {
+                    let decision = o.kind;
+                    if (decision === 'reject_once') decision = 'deny';
+                    onPermissionResponse?.(requestId, decision);
+                  }}
                   className={`text-primary-foreground text-xs font-medium py-1.5 rounded transition disabled:opacity-50 disabled:cursor-not-allowed ${optionStyle(o.kind)}`}
                 >
                   {o.name}

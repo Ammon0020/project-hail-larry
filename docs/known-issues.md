@@ -70,6 +70,14 @@ handshake when valid, or (c) a daemon-side approach that keeps auth alive
 across restarts (not possible while tokens are opaque). Track upstream SDK
 releases for (a).
 
+## Clippy 1.92.0 — `manual_inspect` lint in `src/acp/core.rs` (Low)
+
+Investigated 2026-07-21. A toolchain bump to rust-1.92.0 introduced the
+`clippy::manual_inspect` lint, which fires at `src/acp/core.rs:1422` (a
+`map_err` closure that only logs and rethrows). Pre-existing on `main`;
+unrelated to model-autodetection work. Fix: replace `map_err` with
+`inspect_err` per the clippy suggestion. Out of scope for the current task.
+
 ## Clippy pedantic — 4 findings to ratchet to deny (Low)
 
 Investigated 2026-07-15. The `[lints.clippy]` table in `Cargo.toml` denies

@@ -1,40 +1,27 @@
-# Task: Replace config-file/CLI-probe model detection with ACP session probe
+# Task: Replace CLI/file model detection with a single ACP probe
 
 > **Status:** deferred | **Urgency:** low | **Difficulty:** small
-> **Scope:** `src/acp/autodetect.rs`
+> **Scope:** `src/acp/autodetect/`
 
 ## Context
 
-Model autodetection for Cursor and Devin currently uses workarounds because
-ACP does not yet expose a standard, pre-auth model-listing method:
+Per-harness model probes live under `src/acp/autodetect/{cursor,devin,...}.rs`.
+They still use non-standard paths because ACP has no stable pre-auth model list:
 
-- **Cursor**: `ModelSource::CursorConfig` reads `~/.cursor/cli-config.json`
-  for the account's current model, after trying `agent --list-models` (which
-  only works when the account is authed).
-- **Devin**: `ModelSource::None` with a hardcoded fallback list matching
-  `devin --help`'s `--model` examples.
+- **Cursor**: `agent --list-models` (CLI must be authed).
+- **Devin**: ACP `authenticate` (local `_meta.api_key` or timed browser PKCE)
+  then `session/new` → `configOptions` model selector.
+- **Codex / Vibe**: local cache/config files.
 
-Both agents return `Method not found` for the unstable `providers/list` ACP
-method, and `session/new` (whose response includes `sessionConfig.options`
-with a `model` selector) requires authentication first.
+`providers/list` still returns `-32601` on Devin/Cursor (verified 2026-07-18).
 
 ## The proper path (when ACP catches up)
 
-1. ACP standardizes a pre-auth model listing method (e.g. `providers/list`
-   becomes stable, or a new `models/list` is added), OR
-2. The daemon authenticates during autodetect and calls `session/new` to read
-   `sessionConfig.options` model selector options.
-
-When either happens, `CursorConfig`, `CursorCli`, `CodexCache`, `VibeConfig`,
-and the fallback model lists can all be replaced by a single ACP probe path.
+A single ACP `models/list` (or stable `providers/list`) replaces all harness-
+specific `detect_models` bodies. Keep the modular harness files; only their
+probe implementation changes.
 
 ## Trigger to unblock
 
-- ACP spec publishes a stable model-listing method, OR
-- Devin and Cursor both implement `providers/list` (currently both return
-  `-32601 Method not found`).
-
-## Out of scope
-
-- Adding auth to autodetect today (too much complexity for a startup probe).
-- Per-agent integrations (violates the ACP-only architecture rule).
+- ACP publishes a stable model-listing method, OR
+- Agents implement `providers/list` without auth.
