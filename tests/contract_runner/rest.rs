@@ -268,6 +268,19 @@ const REST_CASES: &[RestCase] = &[
         path: "/api/sessions/nonexistent/cancel",
         body: "",
     },
+    // Session profile switch (S-PROF-ACP): POST /api/sessions/{id}/profile.
+    RestCase {
+        name: "sessions_profile_not_found",
+        method: "POST",
+        path: "/api/sessions/nonexistent/profile",
+        body: r#"{"profile":"code"}"#,
+    },
+    RestCase {
+        name: "sessions_profile_bad_body",
+        method: "POST",
+        path: "/api/sessions/nonexistent/profile",
+        body: r#"{not json"#,
+    },
     RestCase {
         name: "sessions_close_not_found",
         method: "DELETE",

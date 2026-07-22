@@ -1,0 +1,7 @@
+{
+  "method": "POST",
+  "path": "/api/sessions/nonexistent/profile",
+  "status": 400,
+  "contentType": "application/json",
+  "body": "{\"error\":\"invalid request body\"}\n"
+}

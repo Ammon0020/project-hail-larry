@@ -1,0 +1,7 @@
+{
+  "method": "POST",
+  "path": "/api/sessions/nonexistent/profile",
+  "status": 404,
+  "contentType": "application/json",
+  "body": "{\"error\":\"session not found: nonexistent\"}\n"
+}

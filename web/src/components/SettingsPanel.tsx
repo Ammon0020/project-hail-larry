@@ -31,6 +31,7 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { getStoredTheme, setTheme, type Theme } from '@/lib/theme'
+import { ProfilesSettings } from './ProfilesSettings'
 
 const STDIO_EXAMPLE = `{
   "mcpServers": {
@@ -74,13 +75,13 @@ export function SettingsPanel({
    * Controlled settings section (Agents / MCP / General). Owned by App so
    * deep-links (e.g. MCP popout Settings icon) can focus a section.
    */
-  activeSection?: 'agents' | 'mcp' | 'general'
+  activeSection?: 'agents' | 'mcp' | 'general' | 'profiles'
   /** Called when the user picks a different settings section. */
-  onSectionChange?: (section: 'agents' | 'mcp' | 'general') => void
+  onSectionChange?: (section: 'agents' | 'mcp' | 'general' | 'profiles') => void
 }) {
   // Prefer controlled section from App when provided; otherwise local state
   // (keeps the panel usable in isolation / Storybook).
-  const [localTab, setLocalTab] = useState<'agents' | 'mcp' | 'general'>('agents')
+  const [localTab, setLocalTab] = useState<'agents' | 'mcp' | 'general' | 'profiles'>('agents')
   const activeTab = activeSection ?? localTab
   const setActiveTab = onSectionChange ?? setLocalTab
   const [isDetecting, setIsDetecting] = useState(false)
@@ -328,7 +329,7 @@ export function SettingsPanel({
             <Menu className="w-5 h-5 text-foreground" />
           </button>
           <span className="font-semibold text-sm">
-            {activeTab === 'agents' ? 'Agents & Models' : activeTab === 'mcp' ? 'MCP Servers' : 'General Settings'}
+            {activeTab === 'agents' ? 'Agents & Models' : activeTab === 'mcp' ? 'MCP Servers' : activeTab === 'profiles' ? 'Profiles' : 'General Settings'}
           </span>
         </div>
       </div>
@@ -358,6 +359,12 @@ export function SettingsPanel({
         >
           General
         </button>
+        <button
+          onClick={() => { setActiveTab('profiles'); setShowMobileNav(false) }}
+          className={tabButtonClass(activeTab === 'profiles')}
+        >
+          Profiles
+        </button>
       </div>
 
       {/* Sidebar - Desktop Only */}
@@ -379,6 +386,12 @@ export function SettingsPanel({
           className={tabButtonClass(activeTab === 'general')}
         >
           General
+        </button>
+        <button
+          onClick={() => setActiveTab('profiles')}
+          className={tabButtonClass(activeTab === 'profiles')}
+        >
+          Profiles
         </button>
       </div>
 
@@ -747,6 +760,8 @@ export function SettingsPanel({
             </div>
           </div>
         )}
+
+        {activeTab === 'profiles' && <ProfilesSettings />}
       </div>
     </div>
   )

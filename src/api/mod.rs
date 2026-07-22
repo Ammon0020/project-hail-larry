@@ -188,6 +188,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/sessions/{id}/prompt", post(send_prompt))
         .route("/api/sessions/{id}/cancel", post(cancel_session))
+        .route("/api/sessions/{id}/profile", post(set_session_profile))
         .route(
             "/api/sessions/{id}/export",
             get(session_extra::export_session),
@@ -1050,8 +1051,6 @@ struct PromptAttachment {
 struct PromptRequest {
     content: String,
     #[serde(default)]
-    profile: Option<String>,
-    #[serde(default)]
     attachments: Vec<PromptAttachment>,
 }
 
@@ -1065,13 +1064,9 @@ async fn send_prompt(
         return Err(ApiResponseError::bad_request("prompt content is required"));
     }
 
-    if let Some(profile) = request
-        .profile
-        .as_deref()
-        .filter(|profile| !profile.is_empty())
-    {
-        state.acp.set_session_profile(&id, profile);
-    }
+    // Profile selection moved to POST /api/sessions/{id}/profile (S-PROF-ACP).
+    // The `profile` field is intentionally no longer read here; sending one is
+    // silently ignored by serde (the field is absent from PromptRequest).
 
     let mut attachments = Vec::with_capacity(request.attachments.len());
     if !request.attachments.is_empty() {
@@ -1111,6 +1106,36 @@ async fn cancel_session(
 ) -> Result<Json<Value>, ApiResponseError> {
     state.acp.cancel_session(&id).await.map_err(app_error)?;
     Ok(Json(json!({"status": "cancelled"})))
+}
+
+/// Request body for `POST /api/sessions/{id}/profile`.
+#[derive(Deserialize)]
+struct SetProfileRequest {
+    /// Profile id (validated against the loaded config; unknown → 400).
+    profile: String,
+}
+
+/// `POST /api/sessions/{id}/profile` — set the active profile for a session.
+///
+/// Replaces the deprecated `profile` field on `/prompt`. Validates the profile
+/// id, stores the selection in the profile middleware, and pushes it to the
+/// agent over ACP (`session/set_config_option`, mode category) when the agent
+/// advertised the capability. Auth-gated by the protected router.
+async fn set_session_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<SetProfileRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    if request.profile.trim().is_empty() {
+        return Err(ApiResponseError::bad_request("profile is required"));
+    }
+    state
+        .acp
+        .set_session_profile(&id, &request.profile)
+        .await
+        .map_err(app_error)?;
+    Ok(Json(json!({"status": "updated"})))
 }
 
 async fn close_session(
@@ -2461,5 +2486,101 @@ mod tests {
         )
         .await;
         assert_eq!(traversal.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// `POST /api/sessions/{id}/profile` returns 400 for a malformed JSON body.
+    #[tokio::test]
+    async fn session_profile_endpoint_rejects_bad_body() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/sessions/sess-fake/profile")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{not json"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// `POST /api/sessions/{id}/profile` returns 400 for an empty profile id.
+    #[tokio::test]
+    async fn session_profile_endpoint_rejects_empty_profile() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/sessions/sess-fake/profile")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"profile":""}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// `POST /api/sessions/{id}/profile` returns 404 for a missing session.
+    #[tokio::test]
+    async fn session_profile_endpoint_missing_session_is_not_found() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/sessions/sess-does-not-exist/profile")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"profile":"code"}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// `POST /api/sessions/{id}/profile` returns 400 for an unknown profile id.
+    #[tokio::test]
+    async fn session_profile_endpoint_rejects_unknown_profile() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/sessions/sess-fake/profile")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"profile":"no-such-profile"}"#))
+                .expect("request"),
+        )
+        .await;
+        // Unknown profile is rejected before the session lookup, so 400 wins
+        // over 404 (validation order: profile id, then session existence).
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// `/api/sessions/{id}/prompt` no longer reads a `profile` body field.
+    ///
+    /// Sending one is silently ignored by serde (the field is absent from
+    /// `PromptRequest`); the prompt still fails on the missing session with
+    /// 404, proving the request was parsed without the profile field affecting
+    /// behavior. This locks in the S-PROF-ACP wire change.
+    #[tokio::test]
+    async fn prompt_endpoint_ignores_profile_body_field() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/sessions/sess-does-not-exist/prompt")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"content":"hi","profile":"ask","attachments":[]}"#,
+                ))
+                .expect("request"),
+        )
+        .await;
+        // 404 (missing session), not 400 — proves the body parsed fine and the
+        // profile field was silently dropped by serde.
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

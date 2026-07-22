@@ -514,10 +514,9 @@ export function useBackend() {
       sessionId: string,
       content: string,
       attachments?: Attachment[],
-      profile?: string,
     ) => {
       try {
-        await api.sendPrompt(sessionId, content, attachments, profile)
+        await api.sendPrompt(sessionId, content, attachments)
       } catch (err) {
         // A stale activeSessionId (e.g. after a daemon restart that wiped
         // conversations.json, or a deleted session) makes the backend return

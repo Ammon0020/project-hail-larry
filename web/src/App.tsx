@@ -203,7 +203,7 @@ export default function App() {
 
   // Settings panel section (Agents / MCP / General) — owned here so deep-links
   // (MCP popout Settings icon) can focus a section without an event bus.
-  const [settingsSection, setSettingsSection] = useState<'agents' | 'mcp' | 'general'>('agents')
+  const [settingsSection, setSettingsSection] = useState<'agents' | 'mcp' | 'general' | 'profiles'>('agents')
 
   useEffect(() => {
     if (activeTabId && activeTabId !== 'settings') {
@@ -394,7 +394,7 @@ export default function App() {
    *  activates it; otherwise creates and activates it. Optional `section`
    *  focuses Agents / MCP / General. Settings tabs are not persisted to
    *  localStorage (filtered out in the persistence effect). */
-  const openSettingsTab = useCallback((section?: 'agents' | 'mcp' | 'general') => {
+  const openSettingsTab = useCallback((section?: 'agents' | 'mcp' | 'general' | 'profiles') => {
     if (section) setSettingsSection(section)
     setOpenTabs((prev) => {
       if (prev.some((t) => t.id === 'settings')) return prev

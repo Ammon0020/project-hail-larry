@@ -1,6 +1,6 @@
 # Project Status — Local Agent Interface
 
-> Updated: 2026-07-18. Task detail lives in `docs/plans/`; deferred gaps in
+> Updated: 2026-07-21. Task detail lives in `docs/plans/`; deferred gaps in
 > `docs/known-issues.md`; architecture is `docs/plans/Blueprint.md`.
 
 ## What Works
@@ -37,9 +37,10 @@
   LAN relative-asset auth complete; dev-server proxy, mobile UX, and auto-index
   remain. See `docs/plans/complete-workspace-preview-small.md`.
 - [ ] **Phase 2** — concurrent workers, capability negotiation, diagnostics.
-- [ ] **Profiles over ACP** — pending epic: user-editable profiles.json (label,
-  instructions, per-tool whitelist), ACP `set_config_option` send path, REST
-  CRUD, Settings tab. See `docs/plans/pending-profiles-over-acp-hard.md`.
+- [~] **Profiles over ACP** — config schema/loader, mockagent mode-cap, REST
+  CRUD, and the ACP `set_config_option` send path + `POST /sessions/:id/profile`
+  endpoint are done (S-PROF-ACP). Frontend wiring (S-PROF-CHAT, S-PROF-UI) is in
+  parallel. See `docs/plans/profiles-over-acp/done-acp-set-config-option-send-hard.md`.
 - [ ] **rmcp migration** — replace hand-rolled MCP JSON-RPC in `src/mcp/tools.rs`
   with `agent-client-protocol-rmcp`; bump ACP SDK 1.2.0 → 1.3.0. See
   `docs/plans/other_tasks/pending-rmcp-migration-med-low.md`.
@@ -51,6 +52,11 @@
 
 ## Recent Changes (2026-07)
 
+- **S-PROF-ACP** — profile delivered to the agent over ACP via
+  `session/set_config_option` (mode category) on session setup and on
+  `POST /api/sessions/:id/profile`; the deprecated `profile` field on
+  `/prompt` is removed (breaking wire change). Capability gate falls back to
+  prompt injection when the agent lacks the mode option.
 - **Port-orphan recovery** — `start` probes the HTTP port before binding and
   names the holding PID; `stop` falls back to a port-listening lookup when no
   live PID file exists, so an orphaned daemon is recoverable via the CLI.

@@ -237,24 +237,7 @@ pub async fn rpc_set_model_config(
     config_id: &str,
     model_id: &str,
 ) -> Result<(), AppError> {
-    let request = SetSessionConfigOptionRequest::new(
-        agent_session_id.clone(),
-        config_id.to_string(),
-        model_id, // &str → SessionConfigOptionValue via From<&str>
-    );
-    cx.send_request(request)
-        .block_task()
-        .await
-        .map_err(|error| {
-            tracing::error!(
-                error = %error,
-                config_id,
-                model_id,
-                "session/set_config_option (model) failed"
-            );
-            AppError::internal(format!("set model config option: {error}"))
-        })?;
-    Ok(())
+    rpc_set_config_option(cx, agent_session_id, config_id, model_id, "model").await
 }
 
 /// Locate the model selector config option id (Go `findModelConfigID`).
@@ -316,6 +299,74 @@ pub fn find_model_config_id(
         }
     }
     None
+}
+
+/// Locate the profile (mode-category) config option id.
+///
+/// Priority: category `mode` → id `profile`. Returns `None` when the agent
+/// did not advertise a mode-category config option (prompt-injection fallback).
+#[must_use]
+pub fn find_profile_config_id(opts: &[SessionConfigOption]) -> Option<String> {
+    // Pass 1: explicit category == mode (spec-preferred).
+    for opt in opts {
+        if matches!(opt.category, Some(SessionConfigOptionCategory::Mode))
+            && matches!(opt.kind, SessionConfigKind::Select(_))
+        {
+            return Some(opt.id.to_string());
+        }
+    }
+    // Pass 2: conventional id "profile".
+    for opt in opts {
+        if opt.id.0.as_ref() == "profile" && matches!(opt.kind, SessionConfigKind::Select(_)) {
+            return Some(opt.id.to_string());
+        }
+    }
+    None
+}
+
+/// Live profile switch via `session/set_config_option` (mode category).
+///
+/// Mirrors [`rpc_set_model_config`]; sends the profile id as the config value.
+/// Called only when [`find_profile_config_id`] returned `Some`.
+pub async fn rpc_set_profile_config(
+    cx: &ConnectionTo<Agent>,
+    agent_session_id: &agent_client_protocol::schema::v1::SessionId,
+    config_id: &str,
+    profile_id: &str,
+) -> Result<(), AppError> {
+    rpc_set_config_option(cx, agent_session_id, config_id, profile_id, "profile").await
+}
+
+/// Shared `session/set_config_option` sender for model and profile switches.
+///
+/// `kind` labels the log/error message so failures are traceable to their
+/// caller without per-variant boilerplate.
+async fn rpc_set_config_option(
+    cx: &ConnectionTo<Agent>,
+    agent_session_id: &agent_client_protocol::schema::v1::SessionId,
+    config_id: &str,
+    value: &str,
+    kind: &str,
+) -> Result<(), AppError> {
+    let request = SetSessionConfigOptionRequest::new(
+        agent_session_id.clone(),
+        config_id.to_string(),
+        value, // &str → SessionConfigOptionValue via From<&str>
+    );
+    cx.send_request(request)
+        .block_task()
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                error = %error,
+                config_id,
+                value,
+                kind,
+                "session/set_config_option failed"
+            );
+            AppError::internal(format!("set {kind} config option: {error}"))
+        })?;
+    Ok(())
 }
 
 #[cfg(test)]

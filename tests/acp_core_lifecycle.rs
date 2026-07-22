@@ -2,7 +2,7 @@
 //!
 //! These tests use the same Go mockagent fixture as `spike_acp`. They verify
 //! the Rust client's registry and actor boundaries rather than SDK wire types.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use std::time::Duration;
 use local_agent::acp::{AgentRegistry, Client, ClientDeps};
 use local_agent::config::{AgentInfo, AgentModel};
 use local_agent::events::{EventBus, Store};
-use local_agent::interfaces::{ACPClient, WorkspaceManager};
+use local_agent::interfaces::{ACPClient, EventStore, EventType, WorkspaceManager};
 use local_agent::permissions::{null_sink, Manager as PermissionManager};
 use local_agent::workspace::Manager as WorkspaceManagerImpl;
 use tempfile::TempDir;
@@ -20,7 +20,10 @@ const MOCKAGENT_BIN: &str = "/tmp/mockagent";
 const ACTOR_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Build the production client with a registered scratch workspace.
-async fn client_with_workspace() -> (Arc<Client>, TempDir, String) {
+///
+/// Returns `(client, temp_dir, workspace_id, event_bus)` so tests can query the
+/// event store for streamed reply text assertions.
+async fn client_with_workspace() -> (Arc<Client>, TempDir, String, Arc<EventBus>) {
     assert!(
         std::path::Path::new(MOCKAGENT_BIN).exists(),
         "mockagent binary missing at {MOCKAGENT_BIN}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/`"
@@ -48,19 +51,19 @@ async fn client_with_workspace() -> (Arc<Client>, TempDir, String) {
         registry,
         workspaces,
         permissions,
-        event_bus,
+        event_bus: event_bus.clone(),
         conversation_store: local_agent::acp::ConversationStore::new(None),
         mcp_config_path: None,
         tool_catalog: None,
     }));
 
-    (client, directory, workspace.id)
+    (client, directory, workspace.id, event_bus)
 }
 
 /// A cancelled prompt remains interrupted until the session is explicitly closed.
 #[tokio::test]
 async fn mockagent_session_prompt_cancel_close_lifecycle() {
-    let (client, _directory, workspace_id) = client_with_workspace().await;
+    let (client, _directory, workspace_id, _event_bus) = client_with_workspace().await;
     let session = tokio::time::timeout(
         ACTOR_TIMEOUT,
         client.create_session("mockagent", "mock-model", &workspace_id),
@@ -107,7 +110,7 @@ async fn mockagent_session_prompt_cancel_close_lifecycle() {
 /// Concurrent creation publishes independent sessions and independent closes remove them.
 #[tokio::test]
 async fn concurrent_sessions_do_not_overwrite_registry_entries() {
-    let (client, _directory, workspace_id) = client_with_workspace().await;
+    let (client, _directory, workspace_id, _event_bus) = client_with_workspace().await;
     let (first, second) = tokio::join!(
         client.create_session("mockagent", "mock-model", &workspace_id),
         client.create_session("mockagent", "mock-model", &workspace_id),
@@ -130,4 +133,163 @@ async fn concurrent_sessions_do_not_overwrite_registry_entries() {
     first_close.expect("close first mockagent session");
     second_close.expect("close second mockagent session");
     assert!(client.list_sessions().is_empty());
+}
+
+/// Concatenate all `StreamUpdate` text chunks for a session from the event
+/// store, in id order. Used to assert on the agent's streamed reply content.
+///
+/// Only agent message chunks are included; thought chunks (`thought == true`)
+/// are excluded so the profile marker prefix is at the start of the result.
+async fn stream_text(event_bus: &EventBus, session_id: &str) -> String {
+    let events = event_bus
+        .store()
+        .query(session_id, 0, 10_000)
+        .await
+        .expect("query session events");
+    let mut out = String::new();
+    for event in events {
+        if event.event_type == EventType::StreamUpdate && !event.thought {
+            out.push_str(&event.content);
+        }
+    }
+    out
+}
+
+/// Wait for a session prompt to finish by polling the session status until it
+/// returns to `idle`. Bounded by `ACTOR_TIMEOUT` so a hung agent fails loudly.
+async fn await_idle(client: &Client, session_id: &str) {
+    let deadline = std::time::Instant::now() + ACTOR_TIMEOUT;
+    loop {
+        match client.get_session_info(session_id) {
+            Ok(info) if info.status == "idle" => return,
+            Ok(_) => {}
+            Err(error) => panic!("session disappeared while awaiting idle: {error}"),
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("session did not return to idle within {ACTOR_TIMEOUT:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// When the mock agent advertises the mode/profile config option (default),
+/// the client sends `session/set_config_option { profile, <id> }` on session
+/// setup. Verified via the mock's `[profile: <value>]` reply prefix: send a
+/// prompt after setup and assert the reply starts with `[profile: code]`
+/// (the built-in default profile id).
+#[tokio::test]
+async fn mockagent_initial_profile_sent_over_acp_when_capability_advertised() {
+    let (client, _directory, workspace_id, event_bus) = client_with_workspace().await;
+    let session = tokio::time::timeout(
+        ACTOR_TIMEOUT,
+        client.create_session("mockagent", "mock-model", &workspace_id),
+    )
+    .await
+    .expect("session creation timed out")
+    .expect("create mockagent session");
+    assert_eq!(session.status, "idle");
+
+    // Send a prompt; the mock prefixes its first streamed chunk with the
+    // active profile marker (`[profile: <id>]`) only when it received a
+    // `session/set_config_option` for the `profile` config id.
+    client
+        .send_prompt(&session.id, "hello", &[])
+        .await
+        .expect("prompt");
+    await_idle(&client, &session.id).await;
+
+    let text = stream_text(&event_bus, &session.id).await;
+    assert!(
+        text.starts_with("[profile: code]"),
+        "expected reply to start with `[profile: code]`, got: {text}"
+    );
+
+    client
+        .close_session(&session.id)
+        .await
+        .expect("close mockagent session");
+}
+
+/// `set_session_profile` switches the active profile over ACP when the agent
+/// advertised the capability. Verified via the mock's `[profile: ask]` marker
+/// on the next prompt reply.
+#[tokio::test]
+async fn mockagent_set_session_profile_switches_over_acp() {
+    let (client, _directory, workspace_id, event_bus) = client_with_workspace().await;
+    let session = tokio::time::timeout(
+        ACTOR_TIMEOUT,
+        client.create_session("mockagent", "mock-model", &workspace_id),
+    )
+    .await
+    .expect("session creation timed out")
+    .expect("create mockagent session");
+
+    // Switch to the `ask` profile over ACP, then prompt and assert the marker.
+    client
+        .set_session_profile(&session.id, "ask")
+        .await
+        .expect("set profile to ask");
+    client
+        .send_prompt(&session.id, "hello", &[])
+        .await
+        .expect("prompt");
+    await_idle(&client, &session.id).await;
+
+    let text = stream_text(&event_bus, &session.id).await;
+    assert!(
+        text.starts_with("[profile: ask]"),
+        "expected reply to start with `[profile: ask]`, got: {text}"
+    );
+
+    client
+        .close_session(&session.id)
+        .await
+        .expect("close mockagent session");
+}
+
+/// `set_session_profile` rejects unknown profile ids with a validation error
+/// (HTTP 400 at the API layer) rather than silently normalizing to the default.
+#[tokio::test]
+async fn set_session_profile_rejects_unknown_profile_id() {
+    let (client, _directory, workspace_id, _event_bus) = client_with_workspace().await;
+    let session = tokio::time::timeout(
+        ACTOR_TIMEOUT,
+        client.create_session("mockagent", "mock-model", &workspace_id),
+    )
+    .await
+    .expect("session creation timed out")
+    .expect("create mockagent session");
+
+    let result = client
+        .set_session_profile(&session.id, "no-such-profile")
+        .await;
+    assert!(
+        result.is_err(),
+        "unknown profile id must be rejected, got: {result:?}"
+    );
+    let err = result.expect_err("error");
+    assert!(
+        err.to_string().contains("unknown profile id"),
+        "expected validation message, got: {err}"
+    );
+
+    client
+        .close_session(&session.id)
+        .await
+        .expect("close mockagent session");
+}
+
+/// `set_session_profile` returns not-found for a missing session id.
+#[tokio::test]
+async fn set_session_profile_missing_session_is_not_found() {
+    let (client, _directory, _workspace_id, _event_bus) = client_with_workspace().await;
+    let result = client
+        .set_session_profile("sess-does-not-exist", "code")
+        .await;
+    assert!(result.is_err(), "missing session must error");
+    let err = result.expect_err("error");
+    assert!(
+        err.to_string().contains("not found"),
+        "expected not-found message, got: {err}"
+    );
 }

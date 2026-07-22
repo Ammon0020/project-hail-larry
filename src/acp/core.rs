@@ -36,8 +36,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::providers::{
-    find_model_config_id, require_providers_supported, rpc_disable_provider, rpc_list_providers,
-    rpc_set_model_config, rpc_set_provider, SessionCaps, MODEL_SWITCH_UNSUPPORTED_MSG,
+    find_model_config_id, find_profile_config_id, require_providers_supported,
+    rpc_disable_provider, rpc_list_providers, rpc_set_model_config, rpc_set_profile_config,
+    rpc_set_provider, SessionCaps, MODEL_SWITCH_UNSUPPORTED_MSG,
 };
 use super::{
     context::{PreparedPrompt, PromptPipeline},
@@ -128,6 +129,10 @@ struct SessionEntry {
     /// Config option id for the model selector when the agent advertises one.
     /// Empty/`None` means live `switch_model` is unsupported (no rebind here).
     model_config_id: Option<String>,
+    /// Config option id for the mode/profile selector when the agent advertises
+    /// one. `None` means the agent lacks the capability; profile instructions
+    /// are injected into the prompt context as the fallback (context.rs).
+    profile_config_id: Option<String>,
     /// Agent-side ACP session id for durable `session/load` resume.
     ///
     /// Persisted in `conversations.json` as `acpSessionId`; never exposed on
@@ -424,6 +429,7 @@ impl Client {
             prompt_cancel,
             caps: startup.caps,
             model_config_id: startup.model_config_id,
+            profile_config_id: startup.profile_config_id,
             acp_session_id: startup.acp_session_id,
         };
         entry.apply_state(SessionState::Idle);
@@ -461,6 +467,20 @@ impl Client {
     ) -> Result<(mpsc::Sender<ActorCommand>, Option<String>), AppError> {
         self.map_live_session(session_id, |entry| {
             Ok((entry.commands.clone(), entry.model_config_id.clone()))
+        })
+    }
+
+    /// Look up command sender + profile config id for a live profile switch.
+    ///
+    /// Returns `Option<String>` so the caller can decide whether to send the
+    /// `SetProfile` actor command (capability gate) or rely on the
+    /// prompt-injection fallback in `context.rs`.
+    fn session_for_profile_switch(
+        &self,
+        session_id: &str,
+    ) -> Result<(mpsc::Sender<ActorCommand>, Option<String>), AppError> {
+        self.map_live_session(session_id, |entry| {
+            Ok((entry.commands.clone(), entry.profile_config_id.clone()))
         })
     }
 
@@ -1003,10 +1023,79 @@ impl ACPClient for Client {
         persist_result
     }
 
-    fn set_session_profile(&self, session_id: &str, profile: &str) {
-        if let Err(error) = self.pipeline.profiles.set_profile(session_id, profile) {
-            tracing::error!(session_id, error = %error, "failed to set ACP session profile");
+    /// Set the session's active profile and push it to the agent when supported.
+    ///
+    /// Capability gate: when the agent advertised a mode-category config option
+    /// (cached as `SessionEntry::profile_config_id`), the new profile id is sent
+    /// over ACP via `session/set_config_option`. Agents without the capability
+    /// keep using the prompt-injection fallback in `context.rs` — the stored
+    /// selection still drives instruction injection on the next prompt.
+    ///
+    /// Profile id is validated against the loaded config; unknown ids return
+    /// `AppError::validation` (HTTP 400). A missing session returns
+    /// `AppError::not_found` (HTTP 404).
+    async fn set_session_profile(&self, session_id: &str, profile: &str) -> Result<(), AppError> {
+        // Validate the profile id against the loaded config BEFORE storing or
+        // sending. `normalize_profile_id` maps unknown ids to the default, so
+        // validate the original (case-insensitive) input directly against the
+        // config's known keys; unknown ids must surface as 400 rather than
+        // silently normalizing to the default.
+        let config = self.pipeline.profiles.config()?;
+        let trimmed = profile.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::validation("profile id is required"));
         }
+        let known = config
+            .profiles
+            .keys()
+            .any(|id| id.eq_ignore_ascii_case(trimmed));
+        if !known {
+            return Err(AppError::validation(format!(
+                "unknown profile id: {profile}"
+            )));
+        }
+        let normalized = config.normalize_profile_id(profile);
+
+        // Reject missing sessions before mutating middleware state so a stale
+        // id does not leave an orphaned entry in the profile map. Live and
+        // dormant sessions are both accepted; dormant sessions pick up the
+        // profile on actor startup (initial set_config_option send).
+        if !self.has_live_session(session_id)? && !self.dormant_read()?.contains_key(session_id) {
+            return Err(AppError::not_found_id("session", session_id));
+        }
+
+        // Store the selection so the prompt-injection fallback (and the
+        // tool whitelist) see it on the next prompt.
+        self.pipeline.profiles.set_profile(session_id, profile)?;
+
+        // Best-effort live push: only live sessions with an advertised
+        // mode-category config option receive `session/set_config_option`.
+        // Dormant sessions or capability-less agents rely on prompt injection.
+        let push_result = self.session_for_profile_switch(session_id);
+        if let Ok((sender, Some(config_id))) = push_result {
+            let (result_tx, result_rx) = oneshot::channel();
+            sender
+                .send(ActorCommand::SetProfile {
+                    config_id,
+                    profile_id: normalized.clone(),
+                    result: result_tx,
+                })
+                .await
+                .map_err(|_| AppError::internal("ACP session actor is unavailable"))?;
+            result_rx
+                .await
+                .map_err(|_| AppError::internal("ACP set_profile actor exited"))??;
+        } else if let Err(error) = push_result {
+            // Session not live: profile is stored for the next prompt; the
+            // initial set_config_option on actor startup will pick it up.
+            tracing::debug!(
+                session_id,
+                profile = %normalized,
+                error = %error,
+                "set_session_profile: session not live; profile stored for next prompt"
+            );
+        }
+        Ok(())
     }
 
     async fn list_providers(&self, session_id: &str) -> Result<Vec<ProviderInfo>, AppError> {
@@ -1095,6 +1184,13 @@ enum ActorCommand {
         model_id: String,
         result: oneshot::Sender<Result<(), AppError>>,
     },
+    /// Live profile switch via `session/set_config_option` (mode category).
+    /// Sent only when `SessionEntry::profile_config_id` is `Some`.
+    SetProfile {
+        config_id: String,
+        profile_id: String,
+        result: oneshot::Sender<Result<(), AppError>>,
+    },
     Cancel,
     Close(oneshot::Sender<()>),
 }
@@ -1103,6 +1199,9 @@ enum ActorCommand {
 struct ActorStartup {
     caps: SessionCaps,
     model_config_id: Option<String>,
+    /// Mode/profile config option id (`None` when the agent lacks the
+    /// capability — prompt-injection fallback applies in `context.rs`).
+    profile_config_id: Option<String>,
     /// Resolved agent-side ACP session id (from load or new).
     acp_session_id: String,
 }
@@ -1473,11 +1572,22 @@ async fn run_actor_inner(
                     "agent did not advertise a model config option; switch_model will be unsupported"
                 );
             }
+            // Profile (mode-category) config option id. `None` means the agent
+            // lacks the capability; profile instructions are injected into the
+            // prompt context as the fallback (context.rs).
+            let profile_config_id =
+                find_profile_config_id(config_options.as_deref().unwrap_or(&[]));
+            if profile_config_id.is_none() {
+                tracing::info!(
+                    "agent did not advertise a mode/profile config option; profile will use prompt-injection fallback"
+                );
+            }
             let acp_session_id = agent_session_id.to_string();
             if let Some(ready) = ready.take() {
                 let _ = ready.send(Ok(ActorStartup {
                     caps,
                     model_config_id,
+                    profile_config_id: profile_config_id.clone(),
                     acp_session_id,
                 }));
             }
@@ -1485,6 +1595,42 @@ async fn run_actor_inner(
                 registered
                     .await
                     .map_err(|_| agent_client_protocol::Error::internal_error())?;
+            }
+            // Send the initial profile over ACP when the agent advertised the
+            // mode-category config option. Best-effort: a failure here is logged
+            // but does not fail session setup — profile is a hint, not critical,
+            // and the prompt-injection fallback still applies on the next turn.
+            if let Some(config_id) = profile_config_id.as_deref() {
+                let active_profile = config
+                    .profiles
+                    .profile(&config.local_session_id)
+                    .unwrap_or_else(|_| {
+                        tracing::warn!(
+                            "profile middleware lookup failed at startup; sending default profile id"
+                        );
+                        "code".to_string()
+                    });
+                if let Err(error) = rpc_set_profile_config(
+                    &cx,
+                    &agent_session_id,
+                    config_id,
+                    &active_profile,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        session_id = %config.local_session_id,
+                        profile = %active_profile,
+                        error = %error,
+                        "initial session/set_config_option (profile) failed; prompt-injection fallback will apply"
+                    );
+                } else {
+                    tracing::info!(
+                        session_id = %config.local_session_id,
+                        profile = %active_profile,
+                        "sent initial session/set_config_option (profile) on session setup"
+                    );
+                }
             }
             actor_loop(
                 cx,
@@ -1697,6 +1843,15 @@ async fn handle_non_prompt_command(
         } => {
             let _ = result
                 .send(rpc_set_model_config(cx, agent_session_id, &config_id, &model_id).await);
+            None
+        }
+        ActorCommand::SetProfile {
+            config_id,
+            profile_id,
+            result,
+        } => {
+            let _ = result
+                .send(rpc_set_profile_config(cx, agent_session_id, &config_id, &profile_id).await);
             None
         }
         ActorCommand::Cancel => {

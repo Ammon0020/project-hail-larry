@@ -1,7 +1,14 @@
 import { useEffect, useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
 import { WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { api, type SessionHistoryCapabilities, type UploadResult } from '@/lib/api'
+import {
+  api,
+  getProfiles,
+  setSessionProfile,
+  type SessionHistoryCapabilities,
+  type UploadResult,
+  type ProfileConfig,
+} from '@/lib/api'
 import { isSessionNotFound } from '@/lib/errors'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatComposer } from './ChatComposer'
@@ -19,7 +26,7 @@ import type { AppEvent, Agent, Attachment, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 
 export interface ChatPanelActions {
-  onSendMessage: (sessionId: string, content: string, attachments?: Attachment[], profile?: string) => Promise<void>
+  onSendMessage: (sessionId: string, content: string, attachments?: Attachment[]) => Promise<void>
   onCreateSession: (agentId: string, modelId: string) => Promise<string>
   onPermissionResponse: (requestId: string, decision: string) => void
   onSelectSession: (sessionId: string) => void
@@ -166,9 +173,103 @@ export function ChatPanel({
     handleToggleMcpServer,
   } = useMcpServers()
 
-  // Profile mode state — owned here so it can be passed to both the composer
-  // (for the dropdown) and to onSendMessage (for backend injection).
-  const [profile, setProfile] = useState<'Code' | 'Ask' | 'Plan'>('Code')
+  // Profile config + per-session selection. Profiles are fetched once on
+  // mount from GET /api/profiles; the selected profile id is derived during
+  // render from (a) a session-scoped user override, (b) the value persisted
+  // in localStorage for the active session, or (c) the configured
+  // defaultProfileId. Deriving during render avoids setState-in-effect
+  // cascading renders while still restoring the per-session profile on
+  // session switch. The selection is pushed to the backend via
+  // POST /sessions/:id/profile on change so the next prompt uses it.
+  const [profileConfig, setProfileConfig] = useState<ProfileConfig | null>(null)
+  const profiles = useMemo(
+    () =>
+      profileConfig
+        ? Object.entries(profileConfig.profiles).map(([id, entry]) => ({
+            id,
+            label: entry.label,
+          }))
+        : [],
+    [profileConfig],
+  )
+
+  // Session-scoped user override — set by handleProfileChange so the dropdown
+  // updates immediately on click, before/after the backend round-trip. Scoped
+  // by sessionId so switching sessions ignores the prior session's override
+  // and falls back to the persisted/default value for the new session.
+  const [profileOverride, setProfileOverride] = useState<{
+    sessionId: string
+    profileId: string
+  } | null>(null)
+
+  const selectedProfileId = useMemo(() => {
+    if (profileOverride && profileOverride.sessionId === activeSessionId) {
+      return profileOverride.profileId
+    }
+    if (!profileConfig) return ''
+    if (!activeSessionId) return profileConfig.defaultProfileId
+    try {
+      const persisted = localStorage.getItem(`local-agent:profile:${activeSessionId}`)
+      return persisted || profileConfig.defaultProfileId
+    } catch {
+      // localStorage unavailable (private mode / disabled) — fall back to default.
+      return profileConfig.defaultProfileId
+    }
+  }, [profileOverride, activeSessionId, profileConfig])
+
+  // Fetch profile config once on mount. Errors are non-fatal — the selector
+  // just stays empty until a successful reload (e.g. after reconnect).
+  useEffect(() => {
+    let cancelled = false
+    void getProfiles()
+      .then((cfg) => {
+        if (cancelled) return
+        setProfileConfig(cfg)
+      })
+      .catch((err) => {
+        // Log but don't surface — the composer degrades to an empty dropdown.
+        console.error('Failed to load chat profiles:', err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** Switches the active session's profile: pushes the new id to the backend
+   *  (POST /sessions/:id/profile), then persists it in localStorage. The
+   *  dropdown updates immediately via `profileOverride` (session-scoped so
+   *  switching sessions restores the other session's profile). On error,
+   *  reverts the override and surfaces an inline message via `error`. */
+  const handleProfileChange = async (profileId: string) => {
+    if (profileId === selectedProfileId) return
+    if (!activeSessionId) {
+      // No live session yet — remember the selection for the new-chat state;
+      // it gets pushed to the backend when the session is created on first send.
+      setProfileOverride({ sessionId: '', profileId })
+      return
+    }
+    const previous = selectedProfileId
+    setProfileOverride({ sessionId: activeSessionId, profileId })
+    try {
+      await setSessionProfile(activeSessionId, profileId)
+      try {
+        localStorage.setItem(`local-agent:profile:${activeSessionId}`, profileId)
+      } catch {
+        // Ignore write failures (quota / disabled storage) — selection still applies for this session.
+      }
+    } catch (err) {
+      // Revert the dropdown and surface the error so the user knows the
+      // backend switch failed (e.g. unknown profile id, session gone).
+      setProfileOverride({ sessionId: activeSessionId, profileId: previous })
+      const message = err instanceof Error ? err.message : 'Failed to switch profile'
+      if (isSessionNotFound(message)) {
+        setError('This conversation is no longer available. Start a new chat.')
+        onSelectSession('')
+      } else {
+        setError(message)
+      }
+    }
+  }
 
   /** Restart for MCP: ACP doesn't support live add/remove in v1, so the
    *  simplest correct action is to drop the active session and let the user
@@ -344,7 +445,6 @@ export function ChatPanel({
         sessionId,
         content,
         attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
-        profile,
       )
       // Successful send counts as use for the Recent dropdown section.
       if (effectiveAgentId && effectiveModelId) {
@@ -597,8 +697,9 @@ export function ChatPanel({
         uploading={uploading}
         uploadError={uploadError}
         disabled={sending || agents.length === 0}
-        profile={profile}
-        onProfileChange={setProfile}
+        profiles={profiles}
+        selectedProfileId={selectedProfileId}
+        onProfileChange={handleProfileChange}
       />
 
       <WorkspaceBar

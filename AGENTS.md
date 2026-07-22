@@ -49,7 +49,7 @@ docs/           plans, specs, references, reviews, status, known issues
 - Add brief comments for non-obvious intent, constraints, and security-sensitive behavior. Do not comment code that is already self-explanatory.
 
 ## Plans
-List relevant folder to see task status. Review after milestones. Delete task files after review. Add action items from review as stories unless they are immediately fixable. 
+List relevant folder to see task status. Review after milestones. Task reviewer deletes tasks after review, or updates status if work is not complete. Add action items from review as stories unless they are immediately fixable. 
 
 **Folder hierarchy**
 ```
@@ -73,6 +73,7 @@ This daemon exposes a browser UI and may execute commands or write files.
 - Rate-limit unauthenticated endpoints and cap request/response sizes.
 - For endpoints or file/command surfaces, identify the caller and worst-case impact before implementation.
 - Run a focused auth, input, path, command, secrets, TLS, SQLi, and DoS audit after major feature batches or before releases; save findings in `docs/reviews/<date>/`.
+- NEVER commit without user review.
 
 ## Frontend
 

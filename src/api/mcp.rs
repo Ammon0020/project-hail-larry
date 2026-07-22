@@ -2,6 +2,8 @@
 //!
 //! GET/PUT preserve raw on-disk JSON formatting. PATCH toggles a single
 //! server's `enabled` flag. Status runs on-demand health checks.
+//!
+//! TODO: Use https://github.com/agentclientprotocol/rust-sdk/tree/main/src/agent-client-protocol-rmcp
 
 use std::path::Path;
 use std::time::Duration;

@@ -193,7 +193,13 @@ pub trait ACPClient: Send + Sync {
     async fn close_session(&self, session_id: &str) -> Result<(), AppError>;
 
     /// Set the user's selected profile (Code/Ask/Plan) for a session.
-    fn set_session_profile(&self, session_id: &str, profile: &str);
+    ///
+    /// Validates the profile id against the loaded config (unknown id → 400),
+    /// stores the selection in the profile middleware, and — when the agent
+    /// advertised a mode-category config option — pushes the new profile to the
+    /// agent over ACP via `session/set_config_option`. Agents without the
+    /// capability keep using the prompt-injection fallback (`context.rs`).
+    async fn set_session_profile(&self, session_id: &str, profile: &str) -> Result<(), AppError>;
 
     /// Agent's configurable LLM providers for the session.
     async fn list_providers(&self, session_id: &str) -> Result<Vec<ProviderInfo>, AppError>;

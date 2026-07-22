@@ -51,10 +51,13 @@ interface ChatComposerProps {
    * McpPopout's Settings header button.
    */
   onOpenMcpSettings?: () => void
-  /** Active profile mode (Code / Ask / Plan). */
-  profile: 'Code' | 'Ask' | 'Plan'
+  /** Profiles available to the composer, sourced from GET /api/profiles.
+   *  Only id + label are needed here — instructions/tools stay backend-side. */
+  profiles: { id: string; label: string }[]
+  /** Currently-selected profile id (string — custom profiles can have any id). */
+  selectedProfileId: string
   /** Callback when the user changes the profile mode. */
-  onProfileChange: (profile: 'Code' | 'Ask' | 'Plan') => void
+  onProfileChange: (profileId: string) => void
 }
 
 /**
@@ -91,7 +94,8 @@ export function ChatComposer({
   mcpTogglingServer,
   onMcpPopoutOpen,
   onOpenMcpSettings,
-  profile,
+  profiles,
+  selectedProfileId,
   onProfileChange,
 }: ChatComposerProps) {
   // Tools popout visibility — toggled by the Wrench button, closed by
@@ -258,23 +262,28 @@ export function ChatComposer({
               )}
             </div>
 
-            {/* Profile selector hitbox — local UI placeholder (v1). Native
-                <select> overlaid transparently on a styled label. The label
-                text is hidden on narrow screens (icon-only). */}
+            {/* Profile selector hitbox — options sourced from GET /api/profiles.
+                Native <select> overlaid transparently on a styled label. The
+                label text is hidden on narrow screens (icon-only). */}
             <div
               className="relative flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer text-muted-foreground hover:bg-white/[0.04] hover:text-foreground transition-colors"
               title="Profile context"
             >
               <Code className="w-3.5 h-3.5" strokeWidth={2} />
-              <span className="text-[13px] pointer-events-none max-[500px]:hidden">{profile}</span>
+              <span className="text-[13px] pointer-events-none max-[500px]:hidden">
+                {profiles.find((p) => p.id === selectedProfileId)?.label ?? selectedProfileId}
+              </span>
               <select
-                value={profile}
-                onChange={(e) => onProfileChange(e.target.value as 'Code' | 'Ask' | 'Plan')}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent"
+                value={selectedProfileId}
+                onChange={(e) => onProfileChange(e.target.value)}
+                disabled={profiles.length === 0}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent disabled:cursor-not-allowed"
               >
-                <option value="Code">Code</option>
-                <option value="Ask">Ask</option>
-                <option value="Plan">Plan</option>
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
               </select>
             </div>
 

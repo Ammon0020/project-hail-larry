@@ -411,6 +411,22 @@ async fn rest_sessions_providers_not_found() {
 }
 
 #[tokio::test]
+async fn rest_sessions_profile_not_found() {
+    banner("REST: sessions_profile_not_found");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "sessions_profile_not_found").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_sessions_profile_bad_body() {
+    banner("REST: sessions_profile_bad_body");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "sessions_profile_bad_body").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
 async fn rest_permissions_pending_ok() {
     banner("REST: permissions_pending_ok");
     let h = BackendHarness::start().await;
