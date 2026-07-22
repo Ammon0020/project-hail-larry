@@ -57,13 +57,13 @@ independently shippable stories.
 
 | ID | Story | Difficulty | Depends on | Status |
 |----|-------|-----------|------------|--------|
-| S-PROF-CONFIG | [Profile config schema + loader](profiles-over-acp/pending-profile-config-schema-med.md) | med | — | ⬜ pending |
-| S-PROF-MOCK | [Mock agent honors set_config_option mode](profiles-over-acp/pending-mockagent-set-config-option-easy.md) | easy | — | ⬜ pending |
-| S-PROF-TOOLS | [MCP tool enumeration + per-profile filtering](profiles-over-acp/pending-mcp-tool-enumeration-filtering-hard.md) | hard | S-PROF-CONFIG | ⬜ pending |
-| S-PROF-REST | [REST GET/PUT /api/profiles CRUD](profiles-over-acp/pending-profiles-rest-crud-med.md) | med | S-PROF-CONFIG | ⬜ pending |
-| S-PROF-ACP | [ACP set_config_option send + endpoint + drop REST field](profiles-over-acp/pending-acp-set-config-option-send-hard.md) | hard | S-PROF-CONFIG, S-PROF-MOCK | ⬜ pending |
-| S-PROF-UI | [Settings Profiles tab](profiles-over-acp/pending-settings-profiles-tab-med.md) | med | S-PROF-REST, S-PROF-TOOLS | ⬜ pending |
-| S-PROF-CHAT | [ChatComposer/ChatPanel dynamic list + per-session persistence](profiles-over-acp/pending-chat-profile-selection-easy.md) | easy | S-PROF-REST, S-PROF-ACP | ⬜ pending |
+| S-PROF-CONFIG | [Profile config schema + loader](profiles-over-acp/done-profile-config-schema-med.md) | med | — | ✅ done |
+| S-PROF-MOCK | [Mock agent honors set_config_option mode](profiles-over-acp/done-mockagent-set-config-option-easy.md) | easy | — | ✅ done |
+| S-PROF-TOOLS | [MCP tool enumeration + per-profile filtering](profiles-over-acp/done-mcp-tool-enumeration-filtering-hard.md) | hard | S-PROF-CONFIG | ✅ done |
+| S-PROF-REST | [REST GET/PUT /api/profiles CRUD](profiles-over-acp/done-profiles-rest-crud-med.md) | med | S-PROF-CONFIG | ✅ done |
+| S-PROF-ACP | [ACP set_config_option send + endpoint + drop REST field](profiles-over-acp/done-acp-set-config-option-send-hard.md) | hard | S-PROF-CONFIG, S-PROF-MOCK | ✅ done |
+| S-PROF-UI | [Settings Profiles tab](profiles-over-acp/done-settings-profiles-tab-med.md) | med | S-PROF-REST, S-PROF-TOOLS | ✅ done |
+| S-PROF-CHAT | [ChatComposer/ChatPanel dynamic list + per-session persistence](profiles-over-acp/done-chat-profile-selection-easy.md) | easy | S-PROF-REST, S-PROF-ACP | ✅ done |
 
 **Suggested sequence:** CONFIG → (MOCK ∥ TOOLS ∥ REST) → ACP → (UI ∥ CHAT).
 

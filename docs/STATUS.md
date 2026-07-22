@@ -37,10 +37,11 @@
   LAN relative-asset auth complete; dev-server proxy, mobile UX, and auto-index
   remain. See `docs/plans/complete-workspace-preview-small.md`.
 - [ ] **Phase 2** — concurrent workers, capability negotiation, diagnostics.
-- [~] **Profiles over ACP** — config schema/loader, mockagent mode-cap, REST
-  CRUD, and the ACP `set_config_option` send path + `POST /sessions/:id/profile`
-  endpoint are done (S-PROF-ACP). Frontend wiring (S-PROF-CHAT, S-PROF-UI) is in
-  parallel. See `docs/plans/profiles-over-acp/done-acp-set-config-option-send-hard.md`.
+- [x] **Profiles over ACP** — all 7 stories done: config schema/loader,
+  mockagent mode-cap, MCP tool enumeration + per-profile filtering, REST CRUD,
+  ACP `set_config_option` send path + `POST /sessions/:id/profile` endpoint,
+  Settings Profiles tab, and dynamic chat selector with per-session persistence.
+  See `docs/plans/complete-profiles-over-acp-hard.md`.
 - [ ] **rmcp migration** — replace hand-rolled MCP JSON-RPC in `src/mcp/tools.rs`
   with `agent-client-protocol-rmcp`; bump ACP SDK 1.2.0 → 1.3.0. See
   `docs/plans/other_tasks/pending-rmcp-migration-med-low.md`.
