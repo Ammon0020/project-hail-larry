@@ -42,6 +42,10 @@ pub async fn put_mcp(
 ) -> Result<Response, ApiResponseError> {
     let path = require_mcp_path(&state)?;
     McpFile::save_raw(path, &body).map_err(mcp_write_error)?;
+    // Config change invalidates the lazy tools/list cache (S-PROF-TOOLS).
+    if let Some(catalog) = state.tool_catalog.as_ref() {
+        catalog.invalidate();
+    }
     Ok(json_bytes_response(StatusCode::OK, body.to_vec()))
 }
 
@@ -74,6 +78,10 @@ pub async fn patch_mcp_server(
         error!(%error, "save mcp config failed");
         ApiResponseError::internal(format!("save mcp config: {error}"))
     })?;
+    // Toggle changes the enabled set; drop cached tools/list snapshot.
+    if let Some(catalog) = state.tool_catalog.as_ref() {
+        catalog.invalidate();
+    }
 
     Ok(Json(json!({
         "name": name,
@@ -123,49 +131,12 @@ fn json_bytes_response(status: StatusCode, body: Vec<u8>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ConfigStore;
-    use crate::events::EventBus;
-    use crate::pairing::Manager as PairingManager;
-    use crate::permissions::Manager as PermissionsManager;
-    use crate::sync::Hub;
-    use crate::workspace::Manager as WorkspaceManagerImpl;
     use axum::body::Body;
     use axum::http::Request;
-    use std::sync::Arc;
     use tower::ServiceExt;
 
     fn state_with_mcp(dir: &tempfile::TempDir) -> AppState {
-        let config = ConfigStore::new(crate::config::Config {
-            data_dir: dir.path().display().to_string(),
-            db_path: dir.path().join("events.db").display().to_string(),
-            ..crate::config::Config::default()
-        });
-        let pairing = PairingManager::new(dir.path(), None).expect("pairing");
-        let workspaces = Arc::new(WorkspaceManagerImpl::new());
-        let events = Arc::new(EventBus::open(dir.path().join("events.db")).expect("events"));
-        let hub = Hub::with_event_bus(Arc::clone(&events));
-        let permissions = PermissionsManager::new(None);
-        let registry = Arc::new(crate::acp::AgentRegistry::default());
-        let acp = Arc::new(crate::acp::Client::new(crate::acp::ClientDeps {
-            registry,
-            workspaces: workspaces.clone(),
-            permissions: permissions.clone(),
-            event_bus: events.clone(),
-            conversation_store: crate::acp::ConversationStore::new(None),
-            mcp_config_path: None,
-        }));
-        AppState::new(
-            config,
-            pairing,
-            workspaces,
-            events,
-            hub,
-            acp,
-            permissions,
-            Some(dir.path().join("mcp.json")),
-            None,
-            None,
-        )
+        crate::api::test_support::test_state_with_mcp(dir.path(), dir.path().join("mcp.json"))
     }
 
     #[tokio::test]
@@ -244,37 +215,7 @@ mod tests {
     #[tokio::test]
     async fn mcp_routes_return_503_when_unconfigured() {
         let dir = tempfile::tempdir().expect("temp");
-        let config = ConfigStore::new(crate::config::Config {
-            data_dir: dir.path().display().to_string(),
-            db_path: dir.path().join("events.db").display().to_string(),
-            ..crate::config::Config::default()
-        });
-        let pairing = PairingManager::new(dir.path(), None).expect("pairing");
-        let workspaces = Arc::new(WorkspaceManagerImpl::new());
-        let events = Arc::new(EventBus::open(dir.path().join("events.db")).expect("events"));
-        let hub = Hub::with_event_bus(Arc::clone(&events));
-        let permissions = PermissionsManager::new(None);
-        let registry = Arc::new(crate::acp::AgentRegistry::default());
-        let acp = Arc::new(crate::acp::Client::new(crate::acp::ClientDeps {
-            registry,
-            workspaces: workspaces.clone(),
-            permissions: permissions.clone(),
-            event_bus: events.clone(),
-            conversation_store: crate::acp::ConversationStore::new(None),
-            mcp_config_path: None,
-        }));
-        let state = AppState::new(
-            config,
-            pairing,
-            workspaces,
-            events,
-            hub,
-            acp,
-            permissions,
-            None,
-            None,
-            None,
-        );
+        let state = crate::api::test_support::test_state(dir.path());
         let response = crate::api::router(state)
             .oneshot(
                 Request::builder()

@@ -3,6 +3,12 @@
 //! Config lives in `<state_dir>/mcp.json`. Typed saves produce readable JSON;
 //! callers that edit raw JSON can validate and preserve their exact bytes with
 //! [`File::save_raw`].
+//!
+//! Tool enumeration (`tools/list`, cached) lives in [`tools`].
+
+mod tools;
+
+pub use tools::{filter_servers_for_profile, ServerTools, ToolCatalog, ToolLister};
 
 use std::collections::BTreeMap;
 use std::fs;

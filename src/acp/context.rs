@@ -122,7 +122,8 @@ impl OpenFilesTracker {
 pub struct PromptPipeline {
     counts: Mutex<HashMap<String, usize>>,
     pub tracker: OpenFilesTracker,
-    pub profiles: ProfileMiddleware,
+    /// Shared so ACP session setup can read the tool whitelist (S-PROF-TOOLS).
+    pub profiles: std::sync::Arc<ProfileMiddleware>,
     pub transfers: TransferQueue,
 }
 
@@ -131,7 +132,7 @@ impl Default for PromptPipeline {
         Self {
             counts: Mutex::new(HashMap::new()),
             tracker: OpenFilesTracker::default(),
-            profiles: ProfileMiddleware::default(),
+            profiles: std::sync::Arc::new(ProfileMiddleware::default()),
             transfers: TransferQueue::default(),
         }
     }

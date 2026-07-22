@@ -286,52 +286,12 @@ fn short_session_id(id: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ConfigStore;
-    use crate::events::EventBus;
-    use crate::pairing::Manager as PairingManager;
-    use crate::permissions::Manager as PermissionsManager;
-    use crate::sync::Hub;
-    use crate::workspace::Manager as WorkspaceManagerImpl;
     use axum::body::Body;
     use axum::http::Request;
-    use std::sync::{Arc, Mutex};
     use tower::ServiceExt;
 
     fn state_with_uploads(dir: &tempfile::TempDir) -> AppState {
-        let config = ConfigStore::new(crate::config::Config {
-            data_dir: dir.path().display().to_string(),
-            db_path: dir.path().join("events.db").display().to_string(),
-            ..crate::config::Config::default()
-        });
-        let pairing = PairingManager::new(dir.path(), None).expect("pairing");
-        let workspaces = Arc::new(WorkspaceManagerImpl::new());
-        let events = Arc::new(EventBus::open(dir.path().join("events.db")).expect("events"));
-        let hub = Hub::with_event_bus(Arc::clone(&events));
-        let permissions = PermissionsManager::new(None);
-        let registry = Arc::new(crate::acp::AgentRegistry::default());
-        let acp = Arc::new(crate::acp::Client::new(crate::acp::ClientDeps {
-            registry,
-            workspaces: workspaces.clone(),
-            permissions: permissions.clone(),
-            event_bus: events.clone(),
-            conversation_store: crate::acp::ConversationStore::new(None),
-            mcp_config_path: None,
-        }));
-        let uploads = Arc::new(Mutex::new(
-            uploads::Manager::new(dir.path().join("uploads")).expect("uploads"),
-        ));
-        AppState::new(
-            config,
-            pairing,
-            workspaces,
-            events,
-            hub,
-            acp,
-            permissions,
-            None,
-            Some(uploads),
-            None,
-        )
+        crate::api::test_support::test_state_with_uploads(dir.path())
     }
 
     #[test]

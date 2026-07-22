@@ -31,6 +31,17 @@ pub use store::ConfigStore;
 /// real config. Mirrors Go `stateDirEnvVar`.
 pub const STATE_DIR_ENV_VAR: &str = "LOCAL_AGENT_STATE_DIR";
 
+/// Process-wide lock for tests that mutate [`STATE_DIR_ENV_VAR`].
+///
+/// `std::env::set_var` is process-global; every crate test module that pins
+/// the state dir must share this lock or async tests race and write into the
+/// wrong directory (e.g. profiles PUT landing outside the temp dir).
+#[cfg(test)]
+pub fn lock_state_dir_env() -> std::sync::MutexGuard<'static, ()> {
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// On-disk config file name (TOML in the Rust port).
 const CONFIG_FILE_NAME: &str = "config.toml";
 

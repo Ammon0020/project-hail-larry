@@ -10,6 +10,7 @@ mod context;
 mod conversation;
 mod core;
 mod profile;
+mod profile_config;
 mod providers;
 mod store;
 mod stream;
@@ -22,5 +23,6 @@ pub use autodetect::{
 pub use context::{EditorSelection, OpenFilesTracker};
 pub use conversation::export_conversation;
 pub use core::{Client, ClientDeps, SessionState, STDERR_TAIL_BYTES};
+pub use profile_config::{Profile, ProfileConfig, ProfileConfigError, MAX_FILE_BYTES};
 pub use providers::SessionCaps;
 pub use store::{ConversationStore, StoredSession};

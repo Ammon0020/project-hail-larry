@@ -8,24 +8,20 @@
 
 use std::fs;
 use std::path::Path;
-use std::sync::Mutex;
 
-use super::{AgentInfo, AgentModel, Config, ConfigError, ConfigStore, STATE_DIR_ENV_VAR};
-
-/// Serializes tests that mutate `LOCAL_AGENT_STATE_DIR`.
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+use super::{
+    lock_state_dir_env, AgentInfo, AgentModel, Config, ConfigError, ConfigStore, STATE_DIR_ENV_VAR,
+};
 
 /// Golden DTO fixture captured from the Go daemon (S-CONTRACT). The default
 /// config projected to JSON must reproduce this shape (paths redacted).
 const GOLDEN_CONFIG_DTO: &str = include_str!("../../tests/contract/golden/dto/config_default.json");
 
 /// Helper: run `body` with `LOCAL_AGENT_STATE_DIR` set to `dir`, restoring the
-/// prior value (or unsetting it) afterwards. Holds `ENV_LOCK` for the duration
+/// prior value (or unsetting it) afterwards. Holds the shared state-dir lock
 /// so concurrent env-touching tests cannot race.
 fn with_state_dir<R>(dir: &Path, body: impl FnOnce() -> R) -> R {
-    // Recover from a poisoned lock (a prior test panicked while holding it)
-    // so one failure does not cascade to every env-touching test.
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock_state_dir_env();
     let prior = std::env::var_os(STATE_DIR_ENV_VAR);
     std::env::set_var(STATE_DIR_ENV_VAR, dir);
     let res = body();

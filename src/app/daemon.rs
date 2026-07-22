@@ -127,6 +127,8 @@ impl Daemon {
         let permission_sweeper = permissions.start_sweeper();
         let registry = Arc::new(AgentRegistry::from_agents(config.agents.clone()));
         let mcp_config_path = Path::new(&config.data_dir).join("mcp.json");
+        // Shared lazy MCP tools/list cache (invalidated on mcp.json writes).
+        let tool_catalog = crate::mcp::ToolCatalog::shared();
         let acp = Arc::new(Client::new(ClientDeps {
             registry,
             workspaces: workspaces.clone(),
@@ -136,6 +138,7 @@ impl Daemon {
                 Path::new(&config.data_dir).join("conversations.json"),
             )),
             mcp_config_path: Some(mcp_config_path.clone()),
+            tool_catalog: Some(Arc::clone(&tool_catalog)),
         }));
         // Metadata only — actors start lazily on prompt/cancel/providers/rebind.
         acp.load_conversations()
@@ -163,6 +166,7 @@ impl Daemon {
             Some(mcp_config_path.clone()),
             Some(uploads.clone()),
             fs_watcher.clone(),
+            Some(tool_catalog),
         );
         let cancel = CancellationToken::new();
 
@@ -515,12 +519,7 @@ fn remove_pid(data_dir: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::STATE_DIR_ENV_VAR;
-    use std::sync::Mutex;
-
-    /// Serializes tests that mutate `LOCAL_AGENT_STATE_DIR` (same pattern as
-    /// `config::tests`). Without this, parallel tests race on the env var.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use crate::config::{lock_state_dir_env, STATE_DIR_ENV_VAR};
 
     /// Run a sync `body` with `LOCAL_AGENT_STATE_DIR` pointing at `dir`.
     ///
@@ -529,7 +528,7 @@ mod tests {
     /// must isolate the state dir or they overwrite `~/.local-agent/config.toml`
     /// with ephemeral `/tmp/.tmp…` paths (2026-07-18 incident).
     fn with_state_dir<R>(dir: &Path, body: impl FnOnce() -> R) -> R {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = lock_state_dir_env();
         let prior = std::env::var_os(STATE_DIR_ENV_VAR);
         std::env::set_var(STATE_DIR_ENV_VAR, dir);
         let res = body();

@@ -7,9 +7,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
-use crate::config::{Config, STATE_DIR_ENV_VAR};
+use crate::config::{lock_state_dir_env, Config, STATE_DIR_ENV_VAR};
 use crate::interfaces::EventStore;
 
 use super::{
@@ -17,9 +16,6 @@ use super::{
     run_migrations, validate_event_db_async, validate_state_tree, ConfigMigrationOutcome,
     StateFormat, GO_CONFIG_FILE, RUST_CONFIG_FILE,
 };
-
-/// Serializes env mutation for `LOCAL_AGENT_STATE_DIR` (same pattern as config tests).
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Path to the checked-in anonymized Go state fixture.
 fn fixture_go_state() -> PathBuf {
@@ -50,7 +46,7 @@ fn materialize_go_fixture() -> (tempfile::TempDir, PathBuf) {
 }
 
 fn with_state_dir<R>(dir: &Path, body: impl FnOnce() -> R) -> R {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock_state_dir_env();
     let prior = std::env::var_os(STATE_DIR_ENV_VAR);
     std::env::set_var(STATE_DIR_ENV_VAR, dir);
     let res = body();

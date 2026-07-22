@@ -1,0 +1,648 @@
+//! User-editable profile configuration loaded from `~/.local-agent/profiles.json`.
+//!
+//! Missing file → built-in Code/Ask/Plan defaults (common case, not an error).
+//! Parse/validation failures fail loudly; callers decide whether to fall back.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::config::Config;
+
+/// On-disk config file name under the resolved state directory.
+const CONFIG_FILE_NAME: &str = "profiles.json";
+
+/// Reject configs larger than this before JSON parsing (DoS guard).
+///
+/// Also used as the REST `PUT /api/profiles` body-size cap so on-disk and
+/// over-the-wire limits stay aligned.
+pub const MAX_FILE_BYTES: u64 = 256 * 1024;
+
+/// Owner read/write only — config has no secrets but stays consistent with
+/// other state files under `~/.local-agent`.
+const CONFIG_FILE_PERM: u32 = 0o600;
+
+/// Maximum number of profiles in one config file.
+const MAX_PROFILES: usize = 50;
+
+/// Maximum characters in a single profile's instruction text.
+const MAX_INSTRUCTION_CHARS: usize = 16 * 1024;
+
+/// Maximum characters in a profile label shown in UI / prompt headers.
+const MAX_LABEL_CHARS: usize = 100;
+
+/// Maximum characters in a single tool name entry.
+const MAX_TOOL_NAME_CHARS: usize = 200;
+
+/// Characters that must not appear in tool names (path / shell injection surface).
+const UNSAFE_TOOL_NAME_CHARS: &[char] = &['/', '\\', ';', '|', '&', '`', '$', '(', ')', '<', '>'];
+
+/// One named agent profile: prompt instructions plus optional tool whitelist.
+///
+/// # Tools semantics
+///
+/// `tools` is always present (not `Option`). An **empty** `Vec` means the
+/// profile imposes **no tool restriction** ("allow all tools"). A non-empty
+/// list is a whitelist of tool names the profile may use. Live MCP-tool
+/// membership is validated elsewhere (S-PROF-TOOLS); this module only checks
+/// name shape and size.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Profile {
+    /// Human-readable name used in prompt headers and UI (e.g. `"Code"`).
+    pub label: String,
+    /// Instruction text injected into the prompt for this profile.
+    pub instructions: String,
+    /// Tool whitelist; empty = allow all tools (see struct docs).
+    #[serde(default)]
+    pub tools: Vec<String>,
+}
+
+/// Root envelope for `profiles.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProfileConfig {
+    /// Profile id → definition. Ids are map keys (`[a-zA-Z0-9_-]+`).
+    pub profiles: BTreeMap<String, Profile>,
+    /// Id used when the client omits or sends an unknown profile.
+    pub default_profile_id: String,
+}
+
+impl Default for ProfileConfig {
+    fn default() -> Self {
+        Self::builtin_defaults()
+    }
+}
+
+impl ProfileConfig {
+    /// Built-in Code / Ask / Plan profiles matching today's hardcoded strings.
+    ///
+    /// Labels are title-case so `## Active Profile: {label}` stays byte-identical
+    /// to the previous `ProfileMiddleware` output. Ids are lowercase
+    /// (`code` / `ask` / `plan`); `default_profile_id` is `"code"`.
+    /// `tools` is empty on all built-ins → allow all tools.
+    #[must_use]
+    pub fn builtin_defaults() -> Self {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "code".to_string(),
+            Profile {
+                label: "Code".to_string(),
+                instructions: BUILTIN_CODE_INSTRUCTIONS.to_string(),
+                tools: Vec::new(),
+            },
+        );
+        profiles.insert(
+            "ask".to_string(),
+            Profile {
+                label: "Ask".to_string(),
+                instructions: BUILTIN_ASK_INSTRUCTIONS.to_string(),
+                tools: Vec::new(),
+            },
+        );
+        profiles.insert(
+            "plan".to_string(),
+            Profile {
+                label: "Plan".to_string(),
+                instructions: BUILTIN_PLAN_INSTRUCTIONS.to_string(),
+                tools: Vec::new(),
+            },
+        );
+        Self {
+            profiles,
+            default_profile_id: "code".to_string(),
+        }
+    }
+
+    /// Returns `<state_dir>/profiles.json`.
+    pub fn path() -> Result<PathBuf, ProfileConfigError> {
+        Ok(Config::resolved_state_dir()?.join(CONFIG_FILE_NAME))
+    }
+
+    /// Loads from the default state-dir path.
+    ///
+    /// Missing file → [`Self::builtin_defaults`] (no error).
+    pub fn load_default() -> Result<Self, ProfileConfigError> {
+        Self::load(&Self::path()?)
+    }
+
+    /// Loads a config from `path`.
+    ///
+    /// Missing file → built-in defaults. I/O (other than not-found), parse, and
+    /// validation errors are returned and must not be swallowed by callers that
+    /// need to surface bad config.
+    pub fn load(path: &Path) -> Result<Self, ProfileConfigError> {
+        match fs::metadata(path) {
+            Ok(meta) => {
+                let len = meta.len();
+                if len > MAX_FILE_BYTES {
+                    return Err(ProfileConfigError::FileTooLarge {
+                        size: len,
+                        max: MAX_FILE_BYTES,
+                    });
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // Common case for existing installs: no custom profiles yet.
+                return Ok(Self::builtin_defaults());
+            }
+            Err(error) => return Err(error.into()),
+        }
+
+        let raw = fs::read(path)?;
+        // Defense in depth if the file grew between stat and read.
+        if raw.len() as u64 > MAX_FILE_BYTES {
+            return Err(ProfileConfigError::FileTooLarge {
+                size: raw.len() as u64,
+                max: MAX_FILE_BYTES,
+            });
+        }
+        Self::parse(&raw)
+    }
+
+    /// Parses and validates a raw JSON document.
+    pub fn parse(raw: &[u8]) -> Result<Self, ProfileConfigError> {
+        let config: Self = serde_json::from_slice(raw).map_err(ProfileConfigError::Json)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validates, serializes, and atomically writes to the default state-dir path.
+    ///
+    /// Used by `PUT /api/profiles`. Does not update in-memory middleware; callers
+    /// must [`super::profile::ProfileMiddleware::replace_config`] (or `reload`)
+    /// after a successful save.
+    pub fn save(&self) -> Result<(), ProfileConfigError> {
+        self.save_to(&Self::path()?)
+    }
+
+    /// Validates, serializes, and atomically writes `path` (temp + rename, mode 0600).
+    ///
+    /// Fails before touching the destination when validation fails or the
+    /// serialized payload exceeds [`MAX_FILE_BYTES`].
+    pub fn save_to(&self, path: &Path) -> Result<(), ProfileConfigError> {
+        self.validate()?;
+        let data = serde_json::to_vec_pretty(self).map_err(ProfileConfigError::Json)?;
+        if data.len() as u64 > MAX_FILE_BYTES {
+            return Err(ProfileConfigError::FileTooLarge {
+                size: data.len() as u64,
+                max: MAX_FILE_BYTES,
+            });
+        }
+        crate::fsutil::atomic_write(path, &data, Some(CONFIG_FILE_PERM))?;
+        Ok(())
+    }
+
+    /// Validates structural and security constraints after deserialization.
+    pub fn validate(&self) -> Result<(), ProfileConfigError> {
+        if self.profiles.is_empty() {
+            return Err(ProfileConfigError::Validation(
+                "profiles map must not be empty".to_string(),
+            ));
+        }
+        if self.profiles.len() > MAX_PROFILES {
+            return Err(ProfileConfigError::TooManyProfiles {
+                count: self.profiles.len(),
+                max: MAX_PROFILES,
+            });
+        }
+        if self.default_profile_id.is_empty() {
+            return Err(ProfileConfigError::Validation(
+                "defaultProfileId must not be empty".to_string(),
+            ));
+        }
+        if !self.profiles.contains_key(&self.default_profile_id) {
+            return Err(ProfileConfigError::DefaultProfileMissing(
+                self.default_profile_id.clone(),
+            ));
+        }
+
+        for (id, profile) in &self.profiles {
+            validate_profile_id(id)?;
+            validate_label(&profile.label, id)?;
+            validate_instructions(&profile.instructions, id)?;
+            for tool in &profile.tools {
+                validate_tool_name(tool, id)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolves a client-supplied profile string to a known profile id.
+    ///
+    /// Match is case-insensitive against map keys so UI values like `"Code"`
+    /// resolve to the built-in `"code"` id. Unknown or blank input →
+    /// `default_profile_id`.
+    #[must_use]
+    pub fn normalize_profile_id(&self, profile: &str) -> String {
+        let trimmed = profile.trim();
+        if trimmed.is_empty() {
+            return self.default_profile_id.clone();
+        }
+        if let Some(id) = self
+            .profiles
+            .keys()
+            .find(|id| id.eq_ignore_ascii_case(trimmed))
+        {
+            return id.clone();
+        }
+        self.default_profile_id.clone()
+    }
+
+    /// Looks up a profile by id (exact key). Falls back to built-in defaults
+    /// when the id is missing from this config (defensive for racey reload).
+    #[must_use]
+    pub fn profile(&self, id: &str) -> Profile {
+        if let Some(profile) = self.profiles.get(id) {
+            return profile.clone();
+        }
+        let builtins = Self::builtin_defaults();
+        if let Some(profile) = builtins.profiles.get(id) {
+            return profile.clone();
+        }
+        // Built-ins are constructed with default_profile_id present; fall back to
+        // CODE instructions if that invariant is ever broken in tests.
+        builtins
+            .profiles
+            .get(&builtins.default_profile_id)
+            .cloned()
+            .unwrap_or(Profile {
+                label: "Code".to_string(),
+                instructions: BUILTIN_CODE_INSTRUCTIONS.to_string(),
+                tools: Vec::new(),
+            })
+    }
+}
+
+/// Instruction text must stay byte-identical to the previous hardcoded
+/// `instructions_for` output in `profile.rs`.
+const BUILTIN_CODE_INSTRUCTIONS: &str = "You are in CODE mode. Implement requested changes, edit files, and run relevant commands as needed.";
+const BUILTIN_ASK_INSTRUCTIONS: &str = "You are in ASK mode. Answer questions and analyze the codebase. Do not modify files or run commands that write to disk.";
+const BUILTIN_PLAN_INSTRUCTIONS: &str = "You are in PLAN mode. Produce a detailed implementation plan and ask for explicit confirmation before writing code or running commands.";
+
+fn validate_profile_id(id: &str) -> Result<(), ProfileConfigError> {
+    if id.is_empty() {
+        return Err(ProfileConfigError::InvalidProfileId(id.to_string()));
+    }
+    let valid = id
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    if !valid {
+        return Err(ProfileConfigError::InvalidProfileId(id.to_string()));
+    }
+    Ok(())
+}
+
+fn validate_label(label: &str, profile_id: &str) -> Result<(), ProfileConfigError> {
+    if label.is_empty() {
+        return Err(ProfileConfigError::Validation(format!(
+            "profile `{profile_id}`: label must not be empty"
+        )));
+    }
+    if label.chars().count() > MAX_LABEL_CHARS {
+        return Err(ProfileConfigError::LabelTooLong {
+            profile_id: profile_id.to_string(),
+            len: label.chars().count(),
+            max: MAX_LABEL_CHARS,
+        });
+    }
+    Ok(())
+}
+
+fn validate_instructions(instructions: &str, profile_id: &str) -> Result<(), ProfileConfigError> {
+    if instructions.chars().count() > MAX_INSTRUCTION_CHARS {
+        return Err(ProfileConfigError::InstructionsTooLong {
+            profile_id: profile_id.to_string(),
+            len: instructions.chars().count(),
+            max: MAX_INSTRUCTION_CHARS,
+        });
+    }
+    Ok(())
+}
+
+fn validate_tool_name(name: &str, profile_id: &str) -> Result<(), ProfileConfigError> {
+    if name.is_empty() || name.chars().all(char::is_whitespace) {
+        return Err(ProfileConfigError::UnsafeToolName {
+            profile_id: profile_id.to_string(),
+            tool: name.to_string(),
+            reason: "tool name must not be empty or whitespace-only".to_string(),
+        });
+    }
+    if name.chars().count() > MAX_TOOL_NAME_CHARS {
+        return Err(ProfileConfigError::UnsafeToolName {
+            profile_id: profile_id.to_string(),
+            tool: name.to_string(),
+            reason: format!("tool name exceeds {MAX_TOOL_NAME_CHARS} characters"),
+        });
+    }
+    if let Some(ch) = name.chars().find(|c| UNSAFE_TOOL_NAME_CHARS.contains(c)) {
+        return Err(ProfileConfigError::UnsafeToolName {
+            profile_id: profile_id.to_string(),
+            tool: name.to_string(),
+            reason: format!("tool name contains forbidden character `{ch}`"),
+        });
+    }
+    // Reject embedded whitespace so names cannot smuggle multiple tokens.
+    if name.chars().any(char::is_whitespace) {
+        return Err(ProfileConfigError::UnsafeToolName {
+            profile_id: profile_id.to_string(),
+            tool: name.to_string(),
+            reason: "tool name must not contain whitespace".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Errors from profile config path resolution, I/O, JSON, and validation.
+#[derive(Debug, Error)]
+pub enum ProfileConfigError {
+    #[error("profile config I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("invalid profile config JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("profile config file too large: {size} bytes (max {max})")]
+    FileTooLarge { size: u64, max: u64 },
+    #[error("too many profiles: {count} (max {max})")]
+    TooManyProfiles { count: usize, max: usize },
+    #[error("defaultProfileId `{0}` is not present in profiles")]
+    DefaultProfileMissing(String),
+    #[error(
+        "invalid profile id `{0}`: must match [a-zA-Z0-9_-]+ (no spaces or special characters)"
+    )]
+    InvalidProfileId(String),
+    #[error("profile `{profile_id}`: label too long ({len} chars, max {max})")]
+    LabelTooLong {
+        profile_id: String,
+        len: usize,
+        max: usize,
+    },
+    #[error("profile `{profile_id}`: instructions too long ({len} chars, max {max})")]
+    InstructionsTooLong {
+        profile_id: String,
+        len: usize,
+        max: usize,
+    },
+    #[error("profile `{profile_id}`: unsafe tool name `{tool}`: {reason}")]
+    UnsafeToolName {
+        profile_id: String,
+        tool: String,
+        reason: String,
+    },
+    #[error("invalid profile config: {0}")]
+    Validation(String),
+    #[error(transparent)]
+    Config(#[from] crate::config::ConfigError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_temp_config(raw: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(CONFIG_FILE_NAME);
+        let mut file = fs::File::create(&path).expect("create config");
+        file.write_all(raw.as_bytes()).expect("write config");
+        (dir, path)
+    }
+
+    #[test]
+    fn missing_file_returns_builtin_defaults() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("profiles.json");
+        let config = ProfileConfig::load(&path).expect("missing file is defaults");
+        assert_eq!(config, ProfileConfig::builtin_defaults());
+        assert_eq!(config.default_profile_id, "code");
+        assert_eq!(
+            config.profile("code").instructions,
+            BUILTIN_CODE_INSTRUCTIONS
+        );
+        assert_eq!(config.profile("ask").instructions, BUILTIN_ASK_INSTRUCTIONS);
+        assert_eq!(
+            config.profile("plan").instructions,
+            BUILTIN_PLAN_INSTRUCTIONS
+        );
+        // Labels preserve prior prompt header casing.
+        assert_eq!(config.profile("code").label, "Code");
+        assert!(config.profile("code").tools.is_empty());
+    }
+
+    #[test]
+    fn builtin_instruction_strings_match_legacy_hardcoded_text() {
+        // Guard against accidental drift from the pre-config profile.rs strings.
+        assert_eq!(
+            BUILTIN_CODE_INSTRUCTIONS,
+            "You are in CODE mode. Implement requested changes, edit files, and run relevant commands as needed."
+        );
+        assert_eq!(
+            BUILTIN_ASK_INSTRUCTIONS,
+            "You are in ASK mode. Answer questions and analyze the codebase. Do not modify files or run commands that write to disk."
+        );
+        assert_eq!(
+            BUILTIN_PLAN_INSTRUCTIONS,
+            "You are in PLAN mode. Produce a detailed implementation plan and ask for explicit confirmation before writing code or running commands."
+        );
+    }
+
+    #[test]
+    fn valid_custom_profile_loads() {
+        let raw = r#"{
+          "profiles": {
+            "code": {
+              "label": "Code",
+              "instructions": "code-instructions",
+              "tools": []
+            },
+            "review": {
+              "label": "Review",
+              "instructions": "custom-review-instructions",
+              "tools": ["read_file", "grep"]
+            }
+          },
+          "defaultProfileId": "code"
+        }"#;
+        let (_dir, path) = write_temp_config(raw);
+        let config = ProfileConfig::load(&path).expect("valid config");
+        assert_eq!(
+            config.profile("review").instructions,
+            "custom-review-instructions"
+        );
+        assert_eq!(
+            config.profile("review").tools,
+            vec!["read_file".to_string(), "grep".to_string()]
+        );
+    }
+
+    #[test]
+    fn save_to_writes_atomically_and_round_trips() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(CONFIG_FILE_NAME);
+        let config = ProfileConfig::builtin_defaults();
+        config.save_to(&path).expect("save");
+        let loaded = ProfileConfig::load(&path).expect("reload");
+        assert_eq!(loaded, config);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).expect("meta").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "profiles.json must be owner-only");
+        }
+        // Invalid config must not replace an existing good file.
+        let bad = ProfileConfig {
+            profiles: BTreeMap::new(),
+            default_profile_id: "missing".to_string(),
+        };
+        assert!(bad.save_to(&path).is_err());
+        let still = ProfileConfig::load(&path).expect("still good");
+        assert_eq!(still, config);
+    }
+
+    #[test]
+    fn malformed_json_errors() {
+        let err = ProfileConfig::parse(br#"{ not json"#).expect_err("malformed");
+        assert!(matches!(err, ProfileConfigError::Json(_)));
+    }
+
+    #[test]
+    fn unknown_field_is_rejected() {
+        let raw = r#"{
+          "profiles": {
+            "code": { "label": "Code", "instructions": "x", "tools": [], "extra": 1 }
+          },
+          "defaultProfileId": "code"
+        }"#;
+        let err = ProfileConfig::parse(raw.as_bytes()).expect_err("unknown field");
+        assert!(matches!(err, ProfileConfigError::Json(_)));
+    }
+
+    #[test]
+    fn unknown_root_field_is_rejected() {
+        let raw = r#"{
+          "profiles": {
+            "code": { "label": "Code", "instructions": "x", "tools": [] }
+          },
+          "defaultProfileId": "code",
+          "surprise": true
+        }"#;
+        let err = ProfileConfig::parse(raw.as_bytes()).expect_err("unknown root field");
+        assert!(matches!(err, ProfileConfigError::Json(_)));
+    }
+
+    #[test]
+    fn oversized_file_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(CONFIG_FILE_NAME);
+        let big = vec![b'a'; (MAX_FILE_BYTES as usize) + 1];
+        fs::write(&path, big).expect("write oversized");
+        let err = ProfileConfig::load(&path).expect_err("oversize");
+        assert!(matches!(err, ProfileConfigError::FileTooLarge { .. }));
+    }
+
+    #[test]
+    fn too_many_profiles_errors() {
+        let mut profiles = String::from("{");
+        for i in 0..=MAX_PROFILES {
+            if i > 0 {
+                profiles.push(',');
+            }
+            profiles.push_str(&format!(
+                r#""p{i}":{{"label":"L{i}","instructions":"i","tools":[]}}"#
+            ));
+        }
+        profiles.push('}');
+        let raw = format!(r#"{{"profiles":{profiles},"defaultProfileId":"p0"}}"#);
+        let err = ProfileConfig::parse(raw.as_bytes()).expect_err("too many");
+        assert!(matches!(err, ProfileConfigError::TooManyProfiles { .. }));
+    }
+
+    #[test]
+    fn instruction_too_long_errors() {
+        let long = "x".repeat(MAX_INSTRUCTION_CHARS + 1);
+        let raw = format!(
+            r#"{{
+              "profiles": {{
+                "code": {{ "label": "Code", "instructions": "{long}", "tools": [] }}
+              }},
+              "defaultProfileId": "code"
+            }}"#
+        );
+        let err = ProfileConfig::parse(raw.as_bytes()).expect_err("instructions too long");
+        assert!(matches!(
+            err,
+            ProfileConfigError::InstructionsTooLong { .. }
+        ));
+    }
+
+    #[test]
+    fn unsafe_tool_names_error() {
+        for tool in [
+            "../etc", "a;b", "a|b", "a&b", "a`b", "a$b", "a(b)", "a<b", " ", "a b",
+        ] {
+            let raw = format!(
+                r#"{{
+                  "profiles": {{
+                    "code": {{ "label": "Code", "instructions": "x", "tools": ["{tool}"] }}
+                  }},
+                  "defaultProfileId": "code"
+                }}"#
+            );
+            let err = ProfileConfig::parse(raw.as_bytes())
+                .expect_err(&format!("expected unsafe tool error for {tool:?}"));
+            assert!(
+                matches!(err, ProfileConfigError::UnsafeToolName { .. }),
+                "tool {tool:?} => {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_profile_id_errors() {
+        let raw = r#"{
+          "profiles": {
+            "bad id": { "label": "Bad", "instructions": "x", "tools": [] }
+          },
+          "defaultProfileId": "bad id"
+        }"#;
+        let err = ProfileConfig::parse(raw.as_bytes()).expect_err("invalid id");
+        assert!(matches!(err, ProfileConfigError::InvalidProfileId(_)));
+    }
+
+    #[test]
+    fn default_profile_id_must_exist() {
+        let raw = r#"{
+          "profiles": {
+            "code": { "label": "Code", "instructions": "x", "tools": [] }
+          },
+          "defaultProfileId": "missing"
+        }"#;
+        let err = ProfileConfig::parse(raw.as_bytes()).expect_err("missing default");
+        assert!(matches!(err, ProfileConfigError::DefaultProfileMissing(_)));
+    }
+
+    #[test]
+    fn normalize_unknown_uses_default() {
+        let config = ProfileConfig::builtin_defaults();
+        assert_eq!(config.normalize_profile_id("unexpected"), "code");
+        assert_eq!(config.normalize_profile_id(""), "code");
+        assert_eq!(config.normalize_profile_id("  "), "code");
+        assert_eq!(config.normalize_profile_id("Ask"), "ask");
+        assert_eq!(config.normalize_profile_id("CODE"), "code");
+        assert_eq!(config.normalize_profile_id("plan"), "plan");
+    }
+
+    #[test]
+    fn omitted_tools_defaults_to_empty_allow_all() {
+        let raw = r#"{
+          "profiles": {
+            "code": { "label": "Code", "instructions": "x" }
+          },
+          "defaultProfileId": "code"
+        }"#;
+        let config = ProfileConfig::parse(raw.as_bytes()).expect("tools optional via default");
+        assert!(config.profile("code").tools.is_empty());
+    }
+}

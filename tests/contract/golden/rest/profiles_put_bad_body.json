@@ -1,0 +1,7 @@
+{
+  "method": "PUT",
+  "path": "/api/profiles",
+  "status": 400,
+  "contentType": "application/json",
+  "body": "{\"error\":\"defaultProfileId `missing` is not present in profiles\"}\n"
+}

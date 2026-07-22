@@ -7,6 +7,7 @@
 
 mod embed;
 mod mcp;
+mod profiles;
 mod providers;
 mod session_extra;
 
@@ -80,6 +81,8 @@ pub struct AppState {
     pub uploads: Option<Arc<Mutex<uploads::Manager>>>,
     /// External filesystem watcher. `None` when notify init failed.
     pub fs_watcher: Option<Arc<crate::fswatch::Watcher>>,
+    /// Shared MCP tool catalog (lazy `tools/list` cache). S-PROF-UI will read it.
+    pub tool_catalog: Option<Arc<crate::mcp::ToolCatalog>>,
     pair_rate: Arc<Mutex<HashMap<String, PairRateBucket>>>,
     /// In-memory, workspace-scoped preview tickets with short expiry.
     preview_tokens: Arc<Mutex<HashMap<String, PreviewToken>>>,
@@ -115,6 +118,7 @@ impl AppState {
         mcp_config_path: Option<PathBuf>,
         uploads: Option<Arc<Mutex<uploads::Manager>>>,
         fs_watcher: Option<Arc<crate::fswatch::Watcher>>,
+        tool_catalog: Option<Arc<crate::mcp::ToolCatalog>>,
     ) -> Self {
         Self {
             config,
@@ -127,6 +131,7 @@ impl AppState {
             mcp_config_path,
             uploads,
             fs_watcher,
+            tool_catalog,
             pair_rate: Arc::new(Mutex::new(HashMap::new())),
             preview_tokens: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -214,6 +219,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/mcp", get(mcp::get_mcp).put(mcp::put_mcp))
         .route("/api/mcp/servers/{name}", patch(mcp::patch_mcp_server))
         .route("/api/mcp/status", get(mcp::get_mcp_status))
+        .route(
+            "/api/profiles",
+            get(profiles::get_profiles).put(profiles::put_profiles),
+        )
         .route("/api/permissions/pending", get(pending_permissions))
         .route("/api/permissions/{id}/respond", post(respond_permission))
         .route_layer(middleware::from_fn_with_state(
@@ -1536,7 +1545,7 @@ impl ApiResponseError {
         }
     }
 
-    fn bad_request(message: impl Into<String>) -> Self {
+    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, message)
     }
 
@@ -1560,6 +1569,11 @@ impl ApiResponseError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, message)
     }
 
+    /// 413 — request body exceeded an endpoint-specific size cap.
+    pub(crate) fn payload_too_large(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::PAYLOAD_TOO_LARGE, message)
+    }
+
     fn internal(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }
@@ -1568,6 +1582,120 @@ impl ApiResponseError {
 impl IntoResponse for ApiResponseError {
     fn into_response(self) -> Response {
         (self.status, Json(json!({"error": self.message}))).into_response()
+    }
+}
+
+/// Shared test-state construction for API handler tests.
+///
+/// Every handler test module needs the same 7 core deps (config, pairing,
+/// workspaces, events, hub, permissions, acp). Extracting them here prevents
+/// the construction block from being copied per-module — a new `AppState`
+/// field only needs to be wired in one place.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    /// The 7 core service deps every handler test needs, built from a temp dir.
+    struct CoreDeps {
+        config: ConfigStore,
+        pairing: PairingManager,
+        workspaces: Arc<WorkspaceManagerImpl>,
+        events: SharedEventBus,
+        hub: Arc<Hub>,
+        acp: Arc<Client>,
+        permissions: Arc<PermissionsManager>,
+    }
+
+    /// Build the 7 core service deps from a temp state dir.
+    fn core_deps(dir: &Path) -> CoreDeps {
+        let config = ConfigStore::new(crate::config::Config {
+            data_dir: dir.display().to_string(),
+            db_path: dir.join("events.db").display().to_string(),
+            ..crate::config::Config::default()
+        });
+        let pairing = PairingManager::new(dir, None).expect("pairing");
+        let workspaces = Arc::new(WorkspaceManagerImpl::new());
+        let events =
+            Arc::new(crate::events::EventBus::open(dir.join("events.db")).expect("event bus"));
+        let hub = Hub::with_event_bus(Arc::clone(&events));
+        let permissions = PermissionsManager::new(None);
+        let registry = Arc::new(crate::acp::AgentRegistry::default());
+        let acp = Arc::new(Client::new(crate::acp::ClientDeps {
+            registry,
+            workspaces: workspaces.clone(),
+            permissions: permissions.clone(),
+            event_bus: events.clone(),
+            conversation_store: crate::acp::ConversationStore::new(None),
+            mcp_config_path: None,
+            tool_catalog: None,
+        }));
+        CoreDeps {
+            config,
+            pairing,
+            workspaces,
+            events,
+            hub,
+            acp,
+            permissions,
+        }
+    }
+
+    /// AppState with all optional fields set to `None`.
+    pub(crate) fn test_state(dir: &Path) -> AppState {
+        let d = core_deps(dir);
+        AppState::new(
+            d.config,
+            d.pairing,
+            d.workspaces,
+            d.events,
+            d.hub,
+            d.acp,
+            d.permissions,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// AppState with `mcp_config_path` set (for MCP handler tests).
+    pub(crate) fn test_state_with_mcp(dir: &Path, mcp_path: PathBuf) -> AppState {
+        let d = core_deps(dir);
+        AppState::new(
+            d.config,
+            d.pairing,
+            d.workspaces,
+            d.events,
+            d.hub,
+            d.acp,
+            d.permissions,
+            Some(mcp_path),
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// AppState with an `uploads` manager (for session upload tests).
+    pub(crate) fn test_state_with_uploads(dir: &Path) -> AppState {
+        let d = core_deps(dir);
+        let uploads = Arc::new(Mutex::new(
+            uploads::Manager::new(dir.join("uploads")).expect("uploads"),
+        ));
+        AppState::new(
+            d.config,
+            d.pairing,
+            d.workspaces,
+            d.events,
+            d.hub,
+            d.acp,
+            d.permissions,
+            None,
+            Some(uploads),
+            None,
+            None,
+        )
     }
 }
 
@@ -1581,42 +1709,8 @@ mod tests {
 
     fn state() -> (tempfile::TempDir, AppState) {
         let dir = tempfile::tempdir().expect("temporary state directory");
-        let config = ConfigStore::new(crate::config::Config {
-            data_dir: dir.path().display().to_string(),
-            db_path: dir.path().join("events.db").display().to_string(),
-            ..crate::config::Config::default()
-        });
-        let pairing = PairingManager::new(dir.path(), None).expect("pairing manager");
-        let workspaces = Arc::new(WorkspaceManagerImpl::new());
-        let events = Arc::new(
-            crate::events::EventBus::open(dir.path().join("events.db")).expect("event bus"),
-        );
-        let hub = Hub::with_event_bus(Arc::clone(&events));
-        let permissions = PermissionsManager::new(None);
-        let registry = Arc::new(crate::acp::AgentRegistry::default());
-        let acp = Arc::new(Client::new(crate::acp::ClientDeps {
-            registry,
-            workspaces: workspaces.clone(),
-            permissions: permissions.clone(),
-            event_bus: events.clone(),
-            conversation_store: crate::acp::ConversationStore::new(None),
-            mcp_config_path: None,
-        }));
-        (
-            dir,
-            AppState::new(
-                config,
-                pairing,
-                workspaces,
-                events,
-                hub,
-                acp,
-                permissions,
-                None,
-                None,
-                None,
-            ),
-        )
+        let state = test_support::test_state(dir.path());
+        (dir, state)
     }
 
     /// Pair a device and optionally set grace / remote-registration flags.

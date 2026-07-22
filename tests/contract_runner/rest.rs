@@ -324,6 +324,20 @@ const REST_CASES: &[RestCase] = &[
         path: "/api/mcp/status",
         body: "",
     },
+    // Profiles
+    RestCase {
+        name: "profiles_get_ok",
+        method: "GET",
+        path: "/api/profiles",
+        body: "",
+    },
+    RestCase {
+        name: "profiles_put_bad_body",
+        method: "PUT",
+        path: "/api/profiles",
+        // Valid JSON shape with a dangling default — stable 400 message (not serde text).
+        body: r#"{"profiles":{"code":{"label":"Code","instructions":"i","tools":[]}},"defaultProfileId":"missing"}"#,
+    },
 ];
 
 /// Find a REST case by name from the static list.

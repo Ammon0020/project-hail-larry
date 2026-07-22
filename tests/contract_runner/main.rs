@@ -464,6 +464,22 @@ async fn rest_mcp_status_ok() {
     h.shutdown().await;
 }
 
+#[tokio::test]
+async fn rest_profiles_get_ok() {
+    banner("REST: profiles_get_ok");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "profiles_get_ok").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_profiles_put_bad_body() {
+    banner("REST: profiles_put_bad_body");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "profiles_put_bad_body").await;
+    h.shutdown().await;
+}
+
 // ---------------------------------------------------------------------------
 // WebSocket tests
 // ---------------------------------------------------------------------------

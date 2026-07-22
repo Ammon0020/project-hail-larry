@@ -37,6 +37,9 @@
   LAN relative-asset auth complete; dev-server proxy, mobile UX, and auto-index
   remain. See `docs/plans/complete-workspace-preview-small.md`.
 - [ ] **Phase 2** — concurrent workers, capability negotiation, diagnostics.
+- [ ] **Profiles over ACP** — pending epic: user-editable profiles.json (label,
+  instructions, per-tool whitelist), ACP `set_config_option` send path, REST
+  CRUD, Settings tab. See `docs/plans/pending-profiles-over-acp-hard.md`.
 
 ## Blocked
 
