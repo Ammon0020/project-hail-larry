@@ -167,10 +167,7 @@ fn save_and_load_roundtrips_without_data_loss() {
             name: "Claude Code".into(),
             command: "claude".into(),
             args: vec!["--acp".into()],
-            models: vec![AgentModel {
-                id: "sonnet".into(),
-                name: "Sonnet".into(),
-            }],
+            models: vec![AgentModel::new("sonnet".into(), "Sonnet".into())],
             warning: "Executable not found in PATH".into(),
         })
         .expect("save");
@@ -267,10 +264,10 @@ fn default_config_matches_golden_dto() {
             command: "fixture-agent-binary".into(),
             // The config_default.json fixture agent omits args/warning.
             args: Vec::new(),
-            models: vec![AgentModel {
-                id: "fixture-model".into(),
-                name: "Fixture Model".into(),
-            }],
+            models: vec![AgentModel::new(
+                "fixture-model".into(),
+                "Fixture Model".into(),
+            )],
             warning: String::new(),
         }],
         tls_enabled: true,

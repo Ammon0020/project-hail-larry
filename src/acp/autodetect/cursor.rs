@@ -69,10 +69,7 @@ fn parse_list_models(output: &[u8]) -> Vec<AgentModel> {
                 return None;
             }
             let name = strip_status_suffix(name.trim());
-            Some(AgentModel {
-                id: id.into(),
-                name: name.into(),
-            })
+            Some(AgentModel::new(id.into(), name.into()))
         })
         .collect()
 }

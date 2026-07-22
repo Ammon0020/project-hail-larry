@@ -416,10 +416,10 @@ fn golden_agent_info() {
         name: "Fixture Agent".into(),
         command: "fixture-agent-binary".into(),
         args: vec!["--acp".into()],
-        models: vec![AgentModel {
-            id: "fixture-model".into(),
-            name: "Fixture Model".into(),
-        }],
+        models: vec![AgentModel::new(
+            "fixture-model".into(),
+            "Fixture Model".into(),
+        )],
         warning: "Executable not found in PATH".into(),
     };
     assert_matches_golden("agent_info", to_value(&agent));

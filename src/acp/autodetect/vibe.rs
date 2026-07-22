@@ -61,13 +61,13 @@ fn models_from_config() -> Vec<AgentModel> {
                 .models
                 .into_iter()
                 .filter(|model| !model.name.is_empty())
-                .map(|model| AgentModel {
-                    id: if model.alias.is_empty() {
+                .map(|model| {
+                    let id = if model.alias.is_empty() {
                         model.name.clone()
                     } else {
                         model.alias
-                    },
-                    name: model.name,
+                    };
+                    AgentModel::new(id, model.name)
                 })
                 .collect()
         })

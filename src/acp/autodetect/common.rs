@@ -348,16 +348,17 @@ pub(super) async fn probe_providers(
             .into_iter()
             .flatten()
             .filter_map(|provider| provider.get("id").and_then(Value::as_str))
-            .map(|id| AgentModel {
-                id: id.into(),
-                name: id.into(),
-            })
+            .map(|id| AgentModel::new(id.into(), id.into()))
             .collect())
     })
     .await
 }
 
 /// Extract model select options from an ACP `session/new` result value.
+///
+/// Marks the agent's `currentValue` as `preferred` and surfaces supported
+/// optional meta (`supportsImages`, `description`). Cost/pricing is not
+/// present on Devin's ACP model options (verified 2026-07-21).
 pub(super) fn models_from_session_config(result: &Value) -> Vec<AgentModel> {
     let Some(options) = result
         .get("configOptions")
@@ -376,6 +377,10 @@ pub(super) fn models_from_session_config(result: &Value) -> Vec<AgentModel> {
         let Some(choices) = option.get("options").and_then(Value::as_array) else {
             continue;
         };
+        let preferred_id = option
+            .get("currentValue")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let mut models = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for choice in choices {
@@ -390,14 +395,36 @@ pub(super) fn models_from_session_config(result: &Value) -> Vec<AgentModel> {
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
                 .unwrap_or(value);
+            let description = choice
+                .get("description")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let supports_images = choice
+                .get("_meta")
+                .and_then(|meta| {
+                    meta.get("cognition.ai/supportsImages")
+                        .or_else(|| meta.get("supportsImages"))
+                })
+                .and_then(Value::as_bool);
             models.push(AgentModel {
                 id: value.into(),
                 name: name.into(),
+                preferred: !preferred_id.is_empty() && value == preferred_id,
+                supports_images,
+                description,
             });
         }
-        if !models.is_empty() {
-            return models;
+        if models.is_empty() {
+            continue;
         }
+        // Preferred model first so UIs without explicit preferred handling
+        // still land on the agent's current default.
+        if let Some(idx) = models.iter().position(|m| m.preferred) {
+            let preferred = models.remove(idx);
+            models.insert(0, preferred);
+        }
+        return models;
     }
     Vec::new()
 }
@@ -429,9 +456,14 @@ mod tests {
                 {
                     "id": "model",
                     "category": "model",
+                    "currentValue": "m2",
                     "options": [
-                        {"value": "m1", "name": "Model One"},
-                        {"value": "m2", "name": "Model Two"},
+                        {
+                            "value": "m1",
+                            "name": "Model One",
+                            "_meta": {"cognition.ai/supportsImages": true}
+                        },
+                        {"value": "m2", "name": "Model Two", "description": "Default"},
                         {"value": "m1", "name": "dup"}
                     ]
                 }
@@ -439,9 +471,12 @@ mod tests {
         });
         let models = models_from_session_config(&result);
         assert!(models.len() >= 2);
-        assert_eq!(models[0].id, "m1");
-        assert_eq!(models[0].name, "Model One");
-        assert_eq!(models[1].id, "m2");
+        // Preferred (currentValue) is sorted first.
+        assert_eq!(models[0].id, "m2");
+        assert!(models[0].preferred);
+        assert_eq!(models[0].description.as_deref(), Some("Default"));
+        assert_eq!(models[1].id, "m1");
+        assert_eq!(models[1].supports_images, Some(true));
         let ids: std::collections::HashSet<_> = models.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids.len(), models.len());
     }

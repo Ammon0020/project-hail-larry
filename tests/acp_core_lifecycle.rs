@@ -37,10 +37,7 @@ async fn client_with_workspace() -> (Arc<Client>, TempDir, String) {
         name: "Mock agent".into(),
         command: MOCKAGENT_BIN.into(),
         args: Vec::new(),
-        models: vec![AgentModel {
-            id: "mock-model".into(),
-            name: "Mock model".into(),
-        }],
+        models: vec![AgentModel::new("mock-model".into(), "Mock model".into())],
         warning: String::new(),
     }]));
     let permissions = PermissionManager::new(Some(null_sink()));

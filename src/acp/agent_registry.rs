@@ -148,10 +148,7 @@ mod tests {
             // Real binary so verify_agent_executable does not overwrite Warning.
             command: "/bin/sh".into(),
             args: vec!["--flag".into()],
-            models: vec![AgentModel {
-                id: "model-a".into(),
-                name: "Model A".into(),
-            }],
+            models: vec![AgentModel::new("model-a".into(), "Model A".into())],
             warning: "warning".into(),
         }
     }

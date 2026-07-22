@@ -279,10 +279,7 @@ mod tests {
                 name: "Codex CLI".into(),
                 command: "/usr/bin/codex-acp".into(),
                 args: Vec::new(),
-                models: vec![AgentModel {
-                    id: "gpt".into(),
-                    name: "GPT".into(),
-                }],
+                models: vec![AgentModel::new("gpt".into(), "GPT".into())],
                 warning: String::new(),
             },
             AgentInfo {
@@ -311,14 +308,8 @@ mod tests {
             command: "/usr/bin/agent".into(),
             args: vec!["acp".into()],
             models: vec![
-                AgentModel {
-                    id: "stale-fallback".into(),
-                    name: "Stale".into(),
-                },
-                AgentModel {
-                    id: "auto".into(),
-                    name: "Auto  (current, default)".into(),
-                },
+                AgentModel::new("stale-fallback".into(), "Stale".into()),
+                AgentModel::new("auto".into(), "Auto  (current, default)".into()),
             ],
             warning: "Using fallback model list".into(),
         }];
@@ -328,14 +319,8 @@ mod tests {
             command: "/usr/bin/agent".into(),
             args: vec!["acp".into()],
             models: vec![
-                AgentModel {
-                    id: "auto".into(),
-                    name: "Auto".into(),
-                },
-                AgentModel {
-                    id: "m2".into(),
-                    name: "Model Two".into(),
-                },
+                AgentModel::new("auto".into(), "Auto".into()),
+                AgentModel::new("m2".into(), "Model Two".into()),
             ],
             warning: String::new(),
         }];
@@ -353,10 +338,10 @@ mod tests {
             name: "Devin".into(),
             command: "devin".into(),
             args: vec!["acp".into()],
-            models: vec![AgentModel {
-                id: "previously-loaded".into(),
-                name: "Previously Loaded".into(),
-            }],
+            models: vec![AgentModel::new(
+                "previously-loaded".into(),
+                "Previously Loaded".into(),
+            )],
             warning: String::new(),
         }];
         let detected = vec![AgentInfo {
@@ -379,10 +364,7 @@ mod tests {
             name: "Devin".into(),
             command: "devin".into(),
             args: vec!["acp".into()],
-            models: vec![AgentModel {
-                id: "stale".into(),
-                name: "Stale".into(),
-            }],
+            models: vec![AgentModel::new("stale".into(), "Stale".into())],
             warning: "Using fallback model list".into(),
         }];
         let detected = vec![AgentInfo {
@@ -457,14 +439,8 @@ mod tests {
     #[test]
     fn generic_multi_model_shape_helper() {
         assert_multi_model_shape(&[
-            AgentModel {
-                id: "a".into(),
-                name: "A".into(),
-            },
-            AgentModel {
-                id: "b".into(),
-                name: "B".into(),
-            },
+            AgentModel::new("a".into(), "A".into()),
+            AgentModel::new("b".into(), "B".into()),
         ]);
     }
 }

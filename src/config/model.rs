@@ -22,12 +22,35 @@ use super::{DEFAULT_CREDENTIAL_INACTIVITY_TTL_SECONDS, DEFAULT_REVOCATION_GRACE_
 
 /// `AgentModel` describes a single model offered by a registered agent.
 ///
-/// Mirrors Go `interfaces.AgentModel` (`json:"id"`, `json:"name"`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Mirrors Go `interfaces.AgentModel` (`json:"id"`, `json:"name"`). Optional
+/// fields are filled by harness autodetection when the agent advertises them
+/// (e.g. Devin `configOptions.currentValue` → `preferred`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentModel {
     pub id: String,
     pub name: String,
+    /// True when this is the agent's current/default model at detect time.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub preferred: bool,
+    /// Agent-advertised image support (e.g. Devin `_meta.supportsImages`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_images: Option<bool>,
+    /// Optional short description from the agent (cost is not exposed by Devin).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl AgentModel {
+    /// Construct a model with only id/name (optional metadata left unset).
+    #[must_use]
+    pub fn new(id: String, name: String) -> Self {
+        Self {
+            id,
+            name,
+            ..Self::default()
+        }
+    }
 }
 
 /// `AgentInfo` describes a registered agent harness persisted in the config.

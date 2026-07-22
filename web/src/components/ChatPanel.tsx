@@ -14,6 +14,7 @@ import { useAutoscroll } from '@/hooks/useAutoscroll'
 import { useChatTabs } from '@/hooks/useChatTabs'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useMcpServers } from '@/hooks/useMcpServers'
+import { pickDefaultModelId, pushRecentModel } from '@/lib/modelPrefs'
 import type { AppEvent, Agent, Attachment, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 
@@ -120,9 +121,8 @@ export function ChatPanel({
     ? storedAgent
     : (agents[0]?.id ?? '')
   const agentForModel = agents.find((a) => a.id === selectedAgent)
-  const selectedModel = agentForModel?.models.some((m) => m.id === storedModel)
-    ? storedModel
-    : (agentForModel?.models[0]?.id ?? '')
+  // Prefer stored selection; fall back to agent-preferred (e.g. Devin currentValue), then first.
+  const selectedModel = pickDefaultModelId(agentForModel?.models ?? [], storedModel)
 
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false)
   const [historyCapabilityState, setHistoryCapabilityState] = useState<{
@@ -270,7 +270,7 @@ export function ChatPanel({
     if (!hasConversation) {
       setStoredAgent(agentId)
       const agent = agents.find((a) => a.id === agentId)
-      const modelId = agent?.models[0]?.id ?? ''
+      const modelId = pickDefaultModelId(agent?.models ?? [], '')
       if (agent) setStoredModel(modelId)
       if (activeSessionId && modelId) onRebindSession(activeSessionId, agentId, modelId)
       return
@@ -288,7 +288,7 @@ export function ChatPanel({
     const agentId = pendingAgentId
     setStoredAgent(agentId)
     const agent = agents.find((a) => a.id === agentId)
-    const modelId = agent?.models[0]?.id ?? ''
+    const modelId = pickDefaultModelId(agent?.models ?? [], '')
     if (agent) setStoredModel(modelId)
     const maxBytes = truncateLength > 0 ? truncateLength : undefined
     onRebindSession(activeSessionId, agentId, modelId, maxBytes)
@@ -303,9 +303,11 @@ export function ChatPanel({
   /** Updates the locally-selected model only. The backend switch is deferred
    *  to send time (see handleSend) so the user can change their mind in the
    *  dropdown without round-tripping to the server on every selection — only
-   *  the model that's actually in effect when a prompt is sent gets applied. */
+   *  the model that's actually in effect when a prompt is sent gets applied.
+   *  Also records the pick in per-agent recent history for the dropdown. */
   const handleModelChange = (modelId: string) => {
     setStoredModel(modelId)
+    if (effectiveAgentId) pushRecentModel(effectiveAgentId, modelId)
   }
 
   const handleSend = async () => {
@@ -344,6 +346,10 @@ export function ChatPanel({
         attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
         profile,
       )
+      // Successful send counts as use for the Recent dropdown section.
+      if (effectiveAgentId && effectiveModelId) {
+        pushRecentModel(effectiveAgentId, effectiveModelId)
+      }
       setPendingAttachments([])
       setPendingPreviews([])
     } catch (err) {
@@ -569,6 +575,7 @@ export function ChatPanel({
 
       <ChatComposer
         models={currentAgent?.models ?? []}
+        agentId={effectiveAgentId}
         mcpServers={mcpServers}
         mcpStatusByName={mcpHealth}
         mcpStatusLoading={mcpStatusLoading}

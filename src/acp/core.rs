@@ -2645,10 +2645,10 @@ mod tests {
             name: "Mock agent".to_string(),
             command: MOCKAGENT_BIN.to_string(),
             args: Vec::new(),
-            models: vec![AgentModel {
-                id: "mock-model".to_string(),
-                name: "Mock model".to_string(),
-            }],
+            models: vec![AgentModel::new(
+                "mock-model".to_string(),
+                "Mock model".to_string(),
+            )],
             warning: String::new(),
         }]));
         let client = Arc::new(Client::new(ClientDeps {

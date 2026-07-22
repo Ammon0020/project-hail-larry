@@ -533,10 +533,10 @@ mod tests {
 
     #[test]
     fn find_model_config_id_known_value_fallback() {
-        let known = [AgentModel {
-            id: "mistral-medium-3.5".into(),
-            name: "Mistral Medium".into(),
-        }];
+        let known = [AgentModel::new(
+            "mistral-medium-3.5".into(),
+            "Mistral Medium".into(),
+        )];
         let opts = vec![SessionConfigOption::select(
             "selector",
             "Chooser",

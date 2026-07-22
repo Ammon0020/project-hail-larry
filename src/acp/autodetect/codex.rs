@@ -63,13 +63,13 @@ fn models_from_cache() -> Vec<AgentModel> {
                 .models
                 .into_iter()
                 .filter(|model| !model.slug.is_empty())
-                .map(|model| AgentModel {
-                    name: if model.display_name.is_empty() {
+                .map(|model| {
+                    let name = if model.display_name.is_empty() {
                         model.slug.clone()
                     } else {
                         model.display_name
-                    },
-                    id: model.slug,
+                    };
+                    AgentModel::new(model.slug, name)
                 })
                 .collect()
         })

@@ -85,6 +85,12 @@ export interface Agent {
 export interface AgentModel {
   id: string
   name: string
+  /** Agent's current/default model at detection time (e.g. Devin currentValue). */
+  preferred?: boolean
+  /** Agent-advertised image support when present. */
+  supportsImages?: boolean
+  /** Optional short description from the agent. Cost is not exposed by Devin. */
+  description?: string
 }
 
 export interface McpServerConfig {
