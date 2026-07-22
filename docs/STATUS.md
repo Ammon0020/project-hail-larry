@@ -40,6 +40,9 @@
 - [ ] **Profiles over ACP** — pending epic: user-editable profiles.json (label,
   instructions, per-tool whitelist), ACP `set_config_option` send path, REST
   CRUD, Settings tab. See `docs/plans/pending-profiles-over-acp-hard.md`.
+- [ ] **rmcp migration** — replace hand-rolled MCP JSON-RPC in `src/mcp/tools.rs`
+  with `agent-client-protocol-rmcp`; bump ACP SDK 1.2.0 → 1.3.0. See
+  `docs/plans/other_tasks/pending-rmcp-migration-med-low.md`.
 
 ## Blocked
 
