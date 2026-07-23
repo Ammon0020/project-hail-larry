@@ -110,10 +110,14 @@ export function ChatComposer({
   }, [])
 
   // Favorites are client-only; re-read when agent changes or user toggles star.
+  // Syncing state to the agentId prop during render (React's "adjusting state
+  // when a prop changes" pattern) avoids a cascading setState-in-effect render.
   const [prefs, setPrefs] = useState<ModelPrefs>(() => getModelPrefs(agentId))
-  useEffect(() => {
+  const [prevAgentId, setPrevAgentId] = useState(agentId)
+  if (agentId !== prevAgentId) {
+    setPrevAgentId(agentId)
     setPrefs(getModelPrefs(agentId))
-  }, [agentId])
+  }
 
   const modelGroups = useMemo(
     () => groupModelsForSelect(models, prefs),

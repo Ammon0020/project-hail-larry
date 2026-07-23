@@ -32,10 +32,19 @@ export function BrowsePreview({
   const [sessionError, setSessionError] = useState<string>()
   const src = previewToken ? previewFileUrl(workspaceId, entryPath, previewToken) : ''
 
-  useEffect(() => {
-    let cancelled = false
+  // Reset stale token/error when the workspace or session version changes,
+  // during render (React's "adjust state on prop change" pattern) so the
+  // iframe doesn't briefly show the old workspace's content.
+  const [prevResetKey, setPrevResetKey] = useState(`${workspaceId}:${previewSessionVersion}`)
+  const resetKey = `${workspaceId}:${previewSessionVersion}`
+  if (prevResetKey !== resetKey) {
+    setPrevResetKey(resetKey)
     setPreviewToken(undefined)
     setSessionError(undefined)
+  }
+
+  useEffect(() => {
+    let cancelled = false
     if (!workspaceId) return
     void api.createPreviewSession(workspaceId)
       .then(({ token }) => {

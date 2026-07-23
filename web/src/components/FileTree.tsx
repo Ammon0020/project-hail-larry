@@ -1,4 +1,4 @@
-import { useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import {
   ChevronRight,
@@ -89,23 +89,33 @@ interface TreeActions {
   onNewFolder?: (parentPath: string) => void | Promise<void>
 }
 
-/** Long-press (500ms) → open context menu; move/end/cancel clears the timer. */
-function longPressHandlers(
-  timer: MutableRefObject<ReturnType<typeof setTimeout> | null>,
-  clear: () => void,
-  onOpen: () => void,
-  enabled = true,
-) {
-  return {
-    onTouchStart: () => {
-      if (!enabled) return
-      clear()
-      timer.current = setTimeout(onOpen, 500)
-    },
-    onTouchEnd: clear,
-    onTouchMove: clear,
-    onTouchCancel: clear,
-  }
+/**
+ * Long-press (500ms) → open context menu; move/end/cancel clears the timer.
+ * Owns the timer ref inside the hook so refs are never passed to a function
+ * during render (react-hooks/refs).
+ */
+function useLongPressHandlers(onOpen: () => void, enabled = true) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clear = useCallback(() => {
+    if (timer.current) {
+      clearTimeout(timer.current)
+      timer.current = null
+    }
+  }, [])
+  const handlers = useMemo(
+    () => ({
+      onTouchStart: () => {
+        if (!enabled) return
+        clear()
+        timer.current = setTimeout(onOpen, 500)
+      },
+      onTouchEnd: clear,
+      onTouchMove: clear,
+      onTouchCancel: clear,
+    }),
+    [onOpen, enabled, clear],
+  )
+  return { handlers, timer, clear }
 }
 
 /** Shared Copy / Rename / Delete items for file and folder context menus. */
@@ -204,8 +214,6 @@ function TreeNode({
   setMenuPath,
   renamingPath,
   setRenamingPath,
-  longPressTimer,
-  clearLongPress,
   ...actions
 }: {
   node: FileTreeNode
@@ -215,8 +223,6 @@ function TreeNode({
   setMenuPath: (path: string | null) => void
   renamingPath: string | null
   setRenamingPath: (path: string | null) => void
-  longPressTimer: MutableRefObject<ReturnType<typeof setTimeout> | null>
-  clearLongPress: () => void
 } & TreeActions) {
   const nodePath = node.path || node.name
   const isFolder = node.type === 'folder'
@@ -224,9 +230,10 @@ function TreeNode({
   const menuOpen = menuPath === nodePath
   const [renameValue, setRenameValue] = useState(node.name)
 
-  const openMenu = () => setMenuPath(nodePath)
+  const openMenu = useCallback(() => setMenuPath(nodePath), [nodePath, setMenuPath])
   const closeMenu = () => setMenuPath(null)
-  const touchHandlers = longPressHandlers(longPressTimer, clearLongPress, openMenu)
+  // Each row owns its long-press timer; no ref is passed during render.
+  const { handlers: touchHandlers } = useLongPressHandlers(openMenu)
   const startRename = () => {
     setRenameValue(node.name)
     setRenamingPath(nodePath)
@@ -346,8 +353,6 @@ function TreeNode({
                 setMenuPath={setMenuPath}
                 renamingPath={renamingPath}
                 setRenamingPath={setRenamingPath}
-                longPressTimer={longPressTimer}
-                clearLongPress={clearLongPress}
                 {...actions}
               />
             ))}
@@ -497,14 +502,6 @@ export function FileTree({
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => loadExpandedPaths(workspaceId))
   const [menuPath, setMenuPath] = useState<string | null>(null)
   const [renamingPath, setRenamingPath] = useState<string | null>(null)
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const clearLongPress = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current)
-      longPressTimer.current = null
-    }
-  }
 
   // Recompute the expanded set when the workspace changes (e.g. workspace switch
   // changes workspaceId). Without this, paths from the previous workspace linger
@@ -571,15 +568,10 @@ export function FileTree({
     onNewFolder: wrapNewFolder,
   }
 
-  const openRootMenu = () => setMenuPath(ROOT_MENU_KEY)
+  const openRootMenu = useCallback(() => setMenuPath(ROOT_MENU_KEY), [])
   const rootMenuOpen = menuPath === ROOT_MENU_KEY
   const showRootCreate = !!(onNewFile || onNewFolder)
-  const rootTouchHandlers = longPressHandlers(
-    longPressTimer,
-    clearLongPress,
-    openRootMenu,
-    showRootCreate,
-  )
+  const { handlers: rootTouchHandlers } = useLongPressHandlers(openRootMenu, showRootCreate)
 
   /** Empty-area fill: right-click / long-press → New File / New Folder at root. */
   const backgroundFill = showRootCreate ? (
@@ -642,8 +634,6 @@ export function FileTree({
           setMenuPath={setMenuPath}
           renamingPath={renamingPath}
           setRenamingPath={setRenamingPath}
-          longPressTimer={longPressTimer}
-          clearLongPress={clearLongPress}
           {...actions}
         />
       ))}

@@ -446,7 +446,9 @@ export function useBackend() {
       // Workspace may have been removed; leave the tree as-is.
     }
   }, [])
-  refreshFileTreeRef.current = refreshFileTree
+  useEffect(() => {
+    refreshFileTreeRef.current = refreshFileTree
+  }, [refreshFileTree])
 
   const readFile = useCallback(async (path: string, workspaceId?: string) => {
     const wsId = workspaceId || activeWorkspaceRef.current?.id || ''
