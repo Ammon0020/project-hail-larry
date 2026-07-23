@@ -68,7 +68,7 @@ docs/plans/
 
 This daemon exposes a browser UI and may execute commands or write files.
 
-- Default to TLS; only bind `0.0.0.0` with TLS enabled.
+- Default to TLS.
 - Reject workspace symlinks; contain and validate paths.
 - Rate-limit unauthenticated endpoints and cap request/response sizes.
 - For endpoints or file/command surfaces, identify the caller and worst-case impact before implementation.
