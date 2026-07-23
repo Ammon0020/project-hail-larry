@@ -28,6 +28,7 @@ export function BrowsePreview({
 }) {
   // A fresh session remounts the sandboxed iframe for manual and live reloads.
   const [previewSessionVersion, setPreviewSessionVersion] = useState(0)
+  const reloadPreview = () => setPreviewSessionVersion((version) => version + 1)
   const [previewToken, setPreviewToken] = useState<string>()
   const [sessionError, setSessionError] = useState<string>()
   const src = previewToken ? previewFileUrl(workspaceId, entryPath, previewToken) : ''
@@ -93,7 +94,7 @@ export function BrowsePreview({
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
       debounceRef.current = undefined
-      setPreviewSessionVersion((version) => version + 1)
+      reloadPreview()
     }, LIVE_RELOAD_DEBOUNCE_MS)
   }, [events, workspaceId])
 
@@ -112,7 +113,7 @@ export function BrowsePreview({
         </span>
         <button
           type="button"
-          onClick={() => setPreviewSessionVersion((version) => version + 1)}
+          onClick={reloadPreview}
           className="flex items-center gap-1.5 font-medium text-foreground hover:text-primary transition px-2 py-0.5 rounded"
           title="Reload preview"
         >
@@ -132,7 +133,7 @@ export function BrowsePreview({
           <p>Preview authorization failed: {sessionError}</p>
           <button
             type="button"
-            onClick={() => setPreviewSessionVersion((version) => version + 1)}
+            onClick={reloadPreview}
             className="rounded px-2 py-1 font-medium text-foreground hover:text-primary"
           >
             Retry preview

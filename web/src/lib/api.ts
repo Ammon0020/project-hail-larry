@@ -86,11 +86,8 @@ export function previewFileUrl(workspaceId: string, entryPath: string, previewTo
     .filter(Boolean)
     .map(encodeURIComponent)
     .join('/')
-  const params = previewToken
-    ? new URLSearchParams({ previewToken })
-    : new URLSearchParams()
-  const qs = params.toString()
-  return `/preview/${encodeURIComponent(workspaceId)}/${segments}${qs ? `?${qs}` : ''}`
+  const qs = previewToken ? `?previewToken=${encodeURIComponent(previewToken)}` : ''
+  return `/preview/${encodeURIComponent(workspaceId)}/${segments}${qs}`
 }
 
 /**

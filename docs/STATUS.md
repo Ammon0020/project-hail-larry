@@ -39,14 +39,15 @@
   local history remains for agents without list/load. Q7/Q8 still block browse.
 - [~] **Workspace preview** — serving, browse tab, live reload, sandbox, and
   LAN relative-asset auth complete; dev-server proxy, mobile UX, and auto-index
-  remain. See `docs/plans/complete-workspace-preview-small.md`.
+  remain. (Plan files reviewed and pruned 2026-07-22; see
+  `docs/reviews/2026-07-22/workspace-preview-lan-auth-compact.md`.)
 - [ ] **Phase 2** — concurrent workers, capability negotiation, diagnostics.
 - [x] **Profiles over ACP** — config schema/loader, mockagent mode-cap, REST
   CRUD, ACP `set_config_option` send path + `POST /sessions/:id/profile`,
   Settings Profiles tab, and a dynamic chat selector with per-session
   persistence. Profiles now select complete MCP servers; per-tool enumeration
   was superseded because ACP attaches servers, not subsets of server tools.
-  See `docs/plans/complete-profiles-over-acp-hard.md`.
+  (Plan files reviewed and pruned 2026-07-22.)
 - [~] **Profile MCP transitions** — active: keep profile switching available,
   while offering ACP-safe new-session, fresh-chat, or instructions-only choices
   when MCP access differs. See

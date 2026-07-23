@@ -389,69 +389,40 @@ fn validate_instructions(instructions: &str, profile_id: &str) -> Result<(), Pro
     Ok(())
 }
 
-fn validate_tool_name(name: &str, profile_id: &str) -> Result<(), ProfileConfigError> {
+/// Shared empty/oversized/forbidden-character/whitespace check for tool and
+/// MCP-server names. Returns the failure reason so each caller can wrap it in
+/// its own error variant (`UnsafeToolName` / `UnsafeMcpServerName`).
+fn validate_name_chars(name: &str) -> Result<(), String> {
     if name.is_empty() || name.chars().all(char::is_whitespace) {
-        return Err(ProfileConfigError::UnsafeToolName {
-            profile_id: profile_id.to_string(),
-            tool: name.to_string(),
-            reason: "tool name must not be empty or whitespace-only".to_string(),
-        });
+        return Err("name must not be empty or whitespace-only".to_string());
     }
     if name.chars().count() > MAX_TOOL_NAME_CHARS {
-        return Err(ProfileConfigError::UnsafeToolName {
-            profile_id: profile_id.to_string(),
-            tool: name.to_string(),
-            reason: format!("tool name exceeds {MAX_TOOL_NAME_CHARS} characters"),
-        });
+        return Err(format!("name exceeds {MAX_TOOL_NAME_CHARS} characters"));
     }
     if let Some(ch) = name.chars().find(|c| UNSAFE_TOOL_NAME_CHARS.contains(c)) {
-        return Err(ProfileConfigError::UnsafeToolName {
-            profile_id: profile_id.to_string(),
-            tool: name.to_string(),
-            reason: format!("tool name contains forbidden character `{ch}`"),
-        });
+        return Err(format!("name contains forbidden character `{ch}`"));
     }
     // Reject embedded whitespace so names cannot smuggle multiple tokens.
     if name.chars().any(char::is_whitespace) {
-        return Err(ProfileConfigError::UnsafeToolName {
-            profile_id: profile_id.to_string(),
-            tool: name.to_string(),
-            reason: "tool name must not contain whitespace".to_string(),
-        });
+        return Err("name must not contain whitespace".to_string());
     }
     Ok(())
 }
 
+fn validate_tool_name(name: &str, profile_id: &str) -> Result<(), ProfileConfigError> {
+    validate_name_chars(name).map_err(|reason| ProfileConfigError::UnsafeToolName {
+        profile_id: profile_id.to_string(),
+        tool: name.to_string(),
+        reason,
+    })
+}
+
 fn validate_mcp_server_name(name: &str, profile_id: &str) -> Result<(), ProfileConfigError> {
-    if name.is_empty() || name.chars().all(char::is_whitespace) {
-        return Err(ProfileConfigError::UnsafeMcpServerName {
-            profile_id: profile_id.to_string(),
-            server: name.to_string(),
-            reason: "server name must not be empty or whitespace-only".to_string(),
-        });
-    }
-    if name.chars().count() > MAX_TOOL_NAME_CHARS {
-        return Err(ProfileConfigError::UnsafeMcpServerName {
-            profile_id: profile_id.to_string(),
-            server: name.to_string(),
-            reason: format!("server name exceeds {MAX_TOOL_NAME_CHARS} characters"),
-        });
-    }
-    if let Some(ch) = name.chars().find(|c| UNSAFE_TOOL_NAME_CHARS.contains(c)) {
-        return Err(ProfileConfigError::UnsafeMcpServerName {
-            profile_id: profile_id.to_string(),
-            server: name.to_string(),
-            reason: format!("server name contains forbidden character `{ch}`"),
-        });
-    }
-    if name.chars().any(char::is_whitespace) {
-        return Err(ProfileConfigError::UnsafeMcpServerName {
-            profile_id: profile_id.to_string(),
-            server: name.to_string(),
-            reason: "server name must not contain whitespace".to_string(),
-        });
-    }
-    Ok(())
+    validate_name_chars(name).map_err(|reason| ProfileConfigError::UnsafeMcpServerName {
+        profile_id: profile_id.to_string(),
+        server: name.to_string(),
+        reason,
+    })
 }
 
 /// Errors from profile config path resolution, I/O, JSON, and validation.

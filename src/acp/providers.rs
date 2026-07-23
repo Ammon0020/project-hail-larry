@@ -96,6 +96,13 @@ pub fn require_providers_supported(caps: SessionCaps) -> Result<(), AppError> {
     }
 }
 
+/// Map a hand-rolled provider RPC transport error to an internal `AppError`,
+/// logging with the `providers/<method>` name. Shared by the three RPCs below.
+fn map_providers_rpc_error(error: impl std::fmt::Display, method: &'static str) -> AppError {
+    tracing::error!(error = %error, "{method} failed");
+    AppError::internal(format!("{method}: {error}"))
+}
+
 /// Project ACP provider list entries into the interface-layer DTO.
 ///
 /// Returns an empty `Vec` (never `null`/`None`) so REST serializes `[]`.
@@ -176,10 +183,7 @@ pub async fn rpc_list_providers(cx: &ConnectionTo<Agent>) -> Result<Vec<Provider
         .send_request(ListProvidersWireRequest {})
         .block_task()
         .await
-        .map_err(|error| {
-            tracing::error!(error = %error, "providers/list failed");
-            AppError::internal(format!("providers/list: {error}"))
-        })?;
+        .map_err(|error| map_providers_rpc_error(error, "providers/list"))?;
     Ok(to_interface_providers(response.providers))
 }
 
@@ -208,10 +212,7 @@ pub async fn rpc_set_provider(
     })
     .block_task()
     .await
-    .map_err(|error| {
-        tracing::error!(error = %error, "providers/set failed");
-        AppError::internal(format!("providers/set: {error}"))
-    })?;
+    .map_err(|error| map_providers_rpc_error(error, "providers/set"))?;
     Ok(())
 }
 
@@ -223,10 +224,7 @@ pub async fn rpc_disable_provider(cx: &ConnectionTo<Agent>, id: String) -> Resul
     cx.send_request(DisableProviderWireRequest { id })
         .block_task()
         .await
-        .map_err(|error| {
-            tracing::error!(error = %error, "providers/disable failed");
-            AppError::internal(format!("providers/disable: {error}"))
-        })?;
+        .map_err(|error| map_providers_rpc_error(error, "providers/disable"))?;
     Ok(())
 }
 
@@ -392,13 +390,10 @@ mod tests {
     #[test]
     fn history_caps_projection_with_list_and_load() {
         let caps = SessionCaps {
-            providers_supported: false,
             embedded_context: true,
             can_list_sessions: true,
             can_load_session: true,
-            can_resume_session: false,
-            can_close_session: false,
-            can_delete_session: false,
+            ..SessionCaps::default()
         };
         let projected = caps.to_history_capabilities(true);
         assert!(projected.available);
