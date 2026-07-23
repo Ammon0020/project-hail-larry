@@ -330,9 +330,12 @@ export default function App() {
   useEffect(() => {
     try {
       // Settings and browse-preview tabs are synthetic / session-only — not
-      // persisted. Transient isPreview file tabs are also excluded.
+      // persisted. Transient isPreview file tabs ARE persisted (with their
+      // isPreview flag intact) so a reload restores the editor's tab state
+      // including the single preview slot; "Keep Open" is about promoting a
+      // preview tab to persistent, not about reload survival.
       const persistable = openTabs.filter(
-        (t) => t.kind !== 'settings' && t.kind !== 'preview' && !t.isPreview,
+        (t) => t.kind !== 'settings' && t.kind !== 'preview',
       )
       localStorage.setItem('lai:openTabs', JSON.stringify(persistable))
     } catch {

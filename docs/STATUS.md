@@ -1,6 +1,6 @@
 # Project Status — Local Agent Interface
 
-> Updated: 2026-07-21. Task detail lives in `docs/plans/`; deferred gaps in
+> Updated: 2026-07-22. Task detail lives in `docs/plans/`; deferred gaps in
 > `docs/known-issues.md`; architecture is `docs/plans/Blueprint.md`.
 
 ## What Works
@@ -31,6 +31,10 @@
 - [ ] **Multi-user** — multi-device/single-user is decided; multi-user is future.
 - [ ] **ACP futures** — workers, session lifecycle, elicitation, NES, audio,
   and ACP inspector.
+- [ ] **ACP core modularization** — split the large session transport into
+  actor, turn, registry, callback, MCP, and diagnostics modules while
+  preserving its single-owner connection and security invariants. See
+  `docs/plans/pending-acp-core-modularization-hard.md`.
 - [~] **Agent-owned history** — PROBE + fallback complete; migration deferred;
   local history remains for agents without list/load. Q7/Q8 still block browse.
 - [~] **Workspace preview** — serving, browse tab, live reload, sandbox, and
