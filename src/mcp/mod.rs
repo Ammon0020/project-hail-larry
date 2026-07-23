@@ -8,7 +8,7 @@
 
 mod tools;
 
-pub use tools::{filter_servers_for_profile, ServerTools, ToolCatalog, ToolLister};
+pub use tools::{ServerTools, ToolCatalog, ToolLister};
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -25,6 +25,46 @@ use thiserror::Error;
 
 use crate::config::Config;
 use crate::fsutil;
+
+/// Filters ACP server definitions by complete configured server name.
+///
+/// An omitted allowlist leaves all capability-eligible servers available;
+/// an explicit empty allowlist attaches no servers. This mirrors ACP's
+/// `mcpServers` session field, which has no per-tool subset representation.
+#[must_use]
+pub fn filter_servers_by_name(
+    servers: Vec<McpServer>,
+    allowlist: Option<&[String]>,
+) -> Vec<McpServer> {
+    let Some(allowlist) = allowlist else {
+        return servers;
+    };
+    let allowed: std::collections::BTreeSet<&str> =
+        allowlist.iter().map(String::as_str).collect();
+    servers
+        .into_iter()
+        .filter(|server| {
+            let name = mcp_server_name(server);
+            let keep = allowed.contains(name);
+            if !keep {
+                tracing::debug!(server = %name, "dropping MCP server not selected by profile");
+            }
+            keep
+        })
+        .collect()
+}
+
+/// Human-readable name from an ACP MCP server definition.
+#[must_use]
+pub fn mcp_server_name(server: &McpServer) -> &str {
+    match server {
+        McpServer::Stdio(server) => server.name.as_str(),
+        McpServer::Http(server) => server.name.as_str(),
+        McpServer::Sse(server) => server.name.as_str(),
+        McpServer::Acp(server) => server.name.as_str(),
+        _ => "",
+    }
+}
 
 /// Current on-disk MCP configuration format version.
 pub const CURRENT_VERSION: u32 = 1;
@@ -505,6 +545,22 @@ mod tests {
             servers.as_slice(),
             [McpServer::Http(_), McpServer::Stdio(_)]
         ));
+    }
+
+    #[test]
+    fn profile_server_filter_distinguishes_all_from_none() {
+        let servers = vec![
+            McpServer::Stdio(McpServerStdio::new("context7", "echo")),
+            McpServer::Stdio(McpServerStdio::new("workspace-read", "echo")),
+        ];
+        assert_eq!(filter_servers_by_name(servers.clone(), None).len(), 2);
+        assert!(filter_servers_by_name(servers.clone(), Some(&[])).is_empty());
+        let filtered = filter_servers_by_name(
+            servers,
+            Some(&["workspace-read".to_string()]),
+        );
+        let names: Vec<_> = filtered.iter().map(mcp_server_name).collect();
+        assert_eq!(names, vec!["workspace-read"]);
     }
 
     #[test]

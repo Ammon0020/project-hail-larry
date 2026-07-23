@@ -815,8 +815,8 @@ export default function App() {
   }
 
   // ---- Session operations ----
-  const handleCreateSession = async (agentId: string, modelId: string): Promise<string> => {
-    const session = await backend.createSession(agentId, modelId)
+  const handleCreateSession = async (agentId: string, modelId: string, profileId?: string): Promise<string> => {
+    const session = await backend.createSession(agentId, modelId, profileId)
     // Mark the new session as already-loaded so the restore effect does NOT
     // fetch its (empty) history and race the in-flight first prompt POST.
     loadedSessionRef.current = session.id

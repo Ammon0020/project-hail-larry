@@ -86,9 +86,6 @@ pub struct ClientDeps {
     pub conversation_store: ConversationStore,
     /// Path to `mcp.json`. `None` skips MCP attachment on session/new (tests).
     pub mcp_config_path: Option<PathBuf>,
-    /// Shared MCP tool catalog (lazy `tools/list` cache). Optional so unit
-    /// tests can omit enumeration without constructing a catalog.
-    pub tool_catalog: Option<std::sync::Arc<crate::mcp::ToolCatalog>>,
 }
 
 /// Session status stored in the in-memory registry during the core port.
@@ -199,10 +196,89 @@ impl Client {
         self.pipeline.profiles.replace_config(config)
     }
 
-    /// Shared MCP tool catalog when wired by the daemon (S-PROF-UI enumeration).
-    #[must_use]
-    pub fn tool_catalog(&self) -> Option<&Arc<crate::mcp::ToolCatalog>> {
-        self.deps.tool_catalog.as_ref()
+    /// Creates a session with an optional profile bound before actor startup.
+    ///
+    /// ACP receives inline MCP servers only during `session/new`/`session/load`,
+    /// so applying a profile after the actor starts would attach the wrong
+    /// server set. Unknown supplied profile ids are rejected rather than
+    /// normalized to the default.
+    pub async fn create_session_with_profile(
+        &self,
+        agent_id: &str,
+        model_id: &str,
+        workspace_id: &str,
+        profile_id: Option<&str>,
+    ) -> Result<SessionInfo, AppError> {
+        let config = self.pipeline.profiles.config()?;
+        let selected_profile = match profile_id {
+            Some(profile) => {
+                let trimmed = profile.trim();
+                if trimmed.is_empty() {
+                    return Err(AppError::validation("profile id must not be empty"));
+                }
+                if !config
+                    .profiles
+                    .keys()
+                    .any(|id| id.eq_ignore_ascii_case(trimmed))
+                {
+                    return Err(AppError::validation(format!("unknown profile id: {profile}")));
+                }
+                config.normalize_profile_id(trimmed)
+            }
+            None => config.default_profile_id.clone(),
+        };
+        if let Some(path) = self.deps.mcp_config_path.as_deref() {
+            match crate::mcp::File::load(path) {
+                Ok(file) => config
+                    .validate_profile_mcp_servers_against(
+                        &selected_profile,
+                        file.mcp_servers.keys().map(String::as_str),
+                    )
+                    .map_err(|error| AppError::validation(error.to_string()))?,
+                // MCP configuration is additive. A malformed or inaccessible
+                // file is handled by session setup as an empty server list.
+                Err(error) => tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "skipping profile MCP server-name validation because mcp config is unavailable"
+                ),
+            }
+        }
+
+        // Validate early so a bad agent/workspace/profile fails before allocating an id.
+        let _agent = self
+            .deps
+            .registry
+            .resolve(agent_id, model_id)
+            .map_err(AppError::validation)?;
+        let _workspace = self.resolve_workspace(workspace_id).await?;
+        let id = format!("sess-{}", Uuid::new_v4().simple());
+        self.pipeline.profiles.set_profile(&id, &selected_profile)?;
+        let now = Utc::now();
+        let info = SessionInfo {
+            id: id.clone(),
+            name: "New chat".to_string(),
+            status: SessionState::Created.as_str().to_string(),
+            agent_id: agent_id.to_string(),
+            model_id: model_id.to_string(),
+            workspace: workspace_id.to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+        let published = match self.register_live_session(info, String::new()).await {
+            Ok(session) => session,
+            Err(error) => {
+                self.pipeline.profiles.clear(&id);
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.persist_sessions() {
+            // A failed create must not leave a live, invisible session behind.
+            tracing::error!(session_id = %published.id, error = %error, "failed to persist new ACP session");
+            let _ = self.close_session(&published.id).await;
+            return Err(error);
+        }
+        Ok(published)
     }
 
     /// Shared poison mapping for the live session registry read lock.
@@ -411,7 +487,6 @@ impl Client {
             event_bus: Arc::clone(&self.deps.event_bus),
             prompt_cancel: Arc::clone(&prompt_cancel),
             mcp_config_path: self.deps.mcp_config_path.clone(),
-            tool_catalog: self.deps.tool_catalog.clone(),
             profiles: Arc::clone(&self.pipeline.profiles),
             persisted_acp_session_id,
         };
@@ -569,35 +644,8 @@ impl ACPClient for Client {
         model_id: &str,
         workspace_id: &str,
     ) -> Result<SessionInfo, AppError> {
-        // Validate early so a bad agent/workspace fails before allocating an id.
-        let _agent = self
-            .deps
-            .registry
-            .resolve(agent_id, model_id)
-            .map_err(AppError::validation)?;
-        let _workspace = self.resolve_workspace(workspace_id).await?;
-        let id = format!("sess-{}", Uuid::new_v4().simple());
-        let now = Utc::now();
-        let info = SessionInfo {
-            id: id.clone(),
-            name: "New chat".to_string(),
-            status: SessionState::Created.as_str().to_string(),
-            agent_id: agent_id.to_string(),
-            model_id: model_id.to_string(),
-            workspace: workspace_id.to_string(),
-            created_at: now,
-            updated_at: now,
-        };
-        let published = self.register_live_session(info, String::new()).await?;
-        if let Err(error) = self.persist_sessions() {
-            // A failed create must not leave a live, invisible session behind.
-            // Teardown is best-effort here; callers receive the original durable
-            // persistence failure, which is the actionable error.
-            tracing::error!(session_id = %published.id, error = %error, "failed to persist new ACP session");
-            let _ = self.close_session(&published.id).await;
-            return Err(error);
-        }
-        Ok(published)
+        self.create_session_with_profile(agent_id, model_id, workspace_id, None)
+            .await
     }
 
     fn get_session_info(&self, session_id: &str) -> Result<SessionInfo, AppError> {
@@ -829,7 +877,6 @@ impl ACPClient for Client {
                 event_bus: Arc::clone(&self.deps.event_bus),
                 prompt_cancel: Arc::clone(&prompt_cancel),
                 mcp_config_path: self.deps.mcp_config_path.clone(),
-                tool_catalog: self.deps.tool_catalog.clone(),
                 profiles: Arc::clone(&self.pipeline.profiles),
                 // Rebind switches agents; clear the prior ACP id so we never
                 // attempt session/load against the wrong agent (Go parity).
@@ -1222,9 +1269,7 @@ struct ActorConfig {
     prompt_cancel: Arc<AtomicBool>,
     /// Optional `mcp.json` path passed through to session/new and session/load.
     mcp_config_path: Option<PathBuf>,
-    /// Shared MCP tool catalog for profile whitelist filtering (may be `None`).
-    tool_catalog: Option<Arc<crate::mcp::ToolCatalog>>,
-    /// Profile middleware used to resolve the tool whitelist at session setup.
+    /// Profile middleware used to resolve the MCP server policy at session setup.
     profiles: Arc<super::profile::ProfileMiddleware>,
     /// Durable agent ACP session id to attempt `session/load` with (empty =
     /// always `session/new`). Cleared on rebind.
@@ -1539,11 +1584,10 @@ async fn run_actor_inner(
                 "ACP initialize capabilities cached"
             );
             // MCP is additive: malformed/missing config must not block session create.
-            // Profile tool whitelist (empty = allow all) is applied after capability filter.
+            // Profile MCP-server policy is applied after capability filtering.
             let mcp_servers = load_session_mcp_servers(
                 config.mcp_config_path.as_deref(),
                 &init.agent_capabilities.mcp_capabilities,
-                config.tool_catalog.as_deref(),
                 config.profiles.as_ref(),
                 &config.local_session_id,
             )
@@ -2485,21 +2529,18 @@ fn terminal_cwd(root: &Path, cwd: Option<&Path>) -> Result<Option<String>, AppEr
 }
 
 /// Load enabled MCP servers for session/new, filtered by agent capabilities
-/// and the active profile's tool whitelist (S-PROF-TOOLS).
+/// and the active profile's complete-server allowlist.
 ///
 /// Missing path / missing file / parse errors yield an empty list (Go parity:
 /// MCP is additive and must not block session creation).
 ///
 /// # Profile filtering
 ///
-/// Empty profile `tools` = allow all capability-filtered servers. Non-empty =
-/// attach only servers that expose at least one whitelisted tool name. ACP
-/// `McpServer` is per-server (no per-tool field), so multi-tool servers are
-/// attached whole when any tool matches — see `docs/plans/OpenItems.md`.
+/// Omitted `mcpServers` = all capability-filtered servers; an explicit list
+/// attaches only named servers (including an explicit empty list for none).
 async fn load_session_mcp_servers(
     path: Option<&Path>,
     caps: &McpCapabilities,
-    catalog: Option<&crate::mcp::ToolCatalog>,
     profiles: &super::profile::ProfileMiddleware,
     session_id: &str,
 ) -> Vec<McpServer> {
@@ -2532,32 +2573,14 @@ async fn load_session_mcp_servers(
         return servers;
     }
 
-    // Prefer the session's bound profile; fall back to default when unset.
-    let whitelist = profiles
-        .tools_for_session(session_id)
-        .or_else(|_| profiles.tools_for_default())
-        .unwrap_or_default();
-
-    let servers = if whitelist.is_empty() {
-        servers
-    } else if let Some(catalog) = catalog {
-        // Lazy enumerate + cache; failures are isolated inside the catalog.
-        let enumerated = catalog.enumerate(&file).await;
-        crate::mcp::filter_servers_for_profile(servers, &enumerated, &whitelist)
-    } else {
-        // No catalog wired (tests): keep capability filter only and log once.
-        tracing::debug!(
-            session_id,
-            "profile tools whitelist set but MCP tool catalog is unavailable; skipping tool filter"
-        );
-        servers
-    };
+    let allowlist = profiles.mcp_servers_for_session(session_id).unwrap_or(None);
+    let servers = crate::mcp::filter_servers_by_name(servers, allowlist.as_deref());
 
     if !servers.is_empty() {
         tracing::debug!(
             path = %path.display(),
             count = servers.len(),
-            whitelist_len = whitelist.len(),
+            allowlist_len = allowlist.as_ref().map_or(0, Vec::len),
             "attaching MCP servers to session/new"
         );
     }
@@ -2916,7 +2939,6 @@ mod tests {
             event_bus,
             conversation_store,
             mcp_config_path: None,
-            tool_catalog: None,
         }));
         (client, permissions, tempdir, workspace.id)
     }
@@ -3533,11 +3555,10 @@ mod tests {
             crate::acp::ProfileConfig::builtin_defaults(),
         );
         // Default caps: stdio always ok; http/sse off unless advertised.
-        // Empty profile tools = allow all (no catalog needed).
+        // Omitted mcpServers = allow all capability-eligible servers.
         let stdio_only = super::load_session_mcp_servers(
             Some(&path),
             &McpCapabilities::new(),
-            None,
             &profiles,
             "sess-test",
         )
@@ -3548,7 +3569,6 @@ mod tests {
         let with_http = super::load_session_mcp_servers(
             Some(&path),
             &McpCapabilities::new().http(true),
-            None,
             &profiles,
             "sess-test",
         )
@@ -3560,7 +3580,6 @@ mod tests {
         assert!(super::load_session_mcp_servers(
             Some(&path),
             &McpCapabilities::new(),
-            None,
             &profiles,
             "sess-test",
         )
@@ -3569,7 +3588,6 @@ mod tests {
         assert!(super::load_session_mcp_servers(
             None,
             &McpCapabilities::new(),
-            None,
             &profiles,
             "sess-test",
         )
@@ -3578,31 +3596,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_session_mcp_servers_respects_profile_tool_whitelist() {
+    async fn load_session_mcp_servers_respects_profile_server_allowlist() {
         use agent_client_protocol::schema::v1::{McpCapabilities, McpServer};
-        use async_trait::async_trait;
         use std::collections::BTreeMap;
         use std::fs;
 
         use crate::acp::profile_config::{Profile, ProfileConfig};
-        use crate::mcp::{ServerConfig, ToolCatalog, ToolLister};
-
-        struct FixedLister;
-
-        #[async_trait]
-        impl ToolLister for FixedLister {
-            async fn list_tools(
-                &self,
-                name: &str,
-                _config: &ServerConfig,
-            ) -> Result<Vec<String>, String> {
-                match name {
-                    "alpha" => Ok(vec!["read_file".into(), "write_file".into()]),
-                    "beta" => Ok(vec!["search".into()]),
-                    other => Err(format!("unexpected {other}")),
-                }
-            }
-        }
 
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("mcp.json");
@@ -3624,7 +3623,8 @@ mod tests {
             Profile {
                 label: "Code".into(),
                 instructions: "x".into(),
-                tools: vec!["read_file".into(), "stale_tool".into()],
+                mcp_servers: Some(vec!["beta".into()]),
+                legacy_tools: None,
             },
         );
         let profile_cfg = ProfileConfig {
@@ -3632,46 +3632,50 @@ mod tests {
             default_profile_id: "code".into(),
         };
         let profiles = super::super::profile::ProfileMiddleware::from_config(profile_cfg);
-        let catalog = ToolCatalog::new();
-        // Prime the cache through the mock lister so session load does not
-        // spawn real MCP processes.
-        let file = crate::mcp::File::load(&path).expect("load");
-        let _ = catalog.enumerate_with(&file, &FixedLister).await;
 
         let filtered = super::load_session_mcp_servers(
             Some(&path),
             &McpCapabilities::new(),
-            Some(&catalog),
             &profiles,
-            "sess-whitelist",
+            "sess-allowlist",
         )
         .await;
         assert_eq!(filtered.len(), 1);
-        assert!(matches!(&filtered[0], McpServer::Stdio(s) if s.name == "alpha"));
+        assert!(matches!(&filtered[0], McpServer::Stdio(s) if s.name == "beta"));
 
-        // Empty tools on default path when profile allows all.
+        // Missing mcpServers allows all capability-eligible configured servers.
         let open = super::super::profile::ProfileMiddleware::from_config(
             crate::acp::ProfileConfig::builtin_defaults(),
         );
         let all = super::load_session_mcp_servers(
             Some(&path),
             &McpCapabilities::new(),
-            Some(&catalog),
             &open,
             "sess-all",
         )
         .await;
         assert_eq!(all.len(), 2);
 
-        // Cache hit: second enumerate does not add list calls.
-        let before = catalog.list_call_count();
-        let _ = catalog.enumerate_with(&file, &FixedLister).await;
-        assert_eq!(catalog.list_call_count(), before);
-
-        // Invalidation forces re-list on next enumerate.
-        catalog.invalidate();
-        let _ = catalog.enumerate_with(&file, &FixedLister).await;
-        assert!(catalog.list_call_count() > before);
+        let none = super::super::profile::ProfileMiddleware::from_config(ProfileConfig {
+            profiles: BTreeMap::from([(
+                "code".to_string(),
+                Profile {
+                    label: "Code".into(),
+                    instructions: "x".into(),
+                    mcp_servers: Some(Vec::new()),
+                    legacy_tools: None,
+                },
+            )]),
+            default_profile_id: "code".into(),
+        });
+        assert!(super::load_session_mcp_servers(
+            Some(&path),
+            &McpCapabilities::new(),
+            &none,
+            "sess-none",
+        )
+        .await
+        .is_empty());
     }
 
     #[test]

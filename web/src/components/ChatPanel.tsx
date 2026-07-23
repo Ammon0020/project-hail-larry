@@ -27,7 +27,7 @@ import type { PendingPermission } from '@/lib/api'
 
 export interface ChatPanelActions {
   onSendMessage: (sessionId: string, content: string, attachments?: Attachment[]) => Promise<void>
-  onCreateSession: (agentId: string, modelId: string) => Promise<string>
+  onCreateSession: (agentId: string, modelId: string, profileId?: string) => Promise<string>
   onPermissionResponse: (requestId: string, decision: string) => void
   onSelectSession: (sessionId: string) => void
   onCancel: (sessionId: string) => void
@@ -275,7 +275,7 @@ export function ChatPanel({
     if (profileId === selectedProfileId) return
     if (!activeSessionId) {
       // No live session yet — remember the pick; handleSend applies it after
-      // onCreateSession via setSessionProfile + localStorage.
+      // onCreateSession with profileId before ACP actor startup.
       setProfileOverride({ sessionId: '', profileId })
       return
     }
@@ -454,24 +454,18 @@ export function ChatPanel({
       let sessionId = activeSessionId
       const wasNewSession = !sessionId
       if (!sessionId) {
-        sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
+        sessionId = await onCreateSession(effectiveAgentId, effectiveModelId, selectedProfileId)
         // A real session now exists — drop the transient "New chat" placeholder.
         setShowNewChatTab(false)
-        // Apply a profile chosen on the empty new-chat tab before first send.
-        // Profile is a hint: failures are surfaced but must not block the prompt.
+        // The selected profile was supplied to session creation before actor
+        // startup, including its MCP server allowlist.
         if (profileOverride?.sessionId === '') {
           const pendingProfileId = profileOverride.profileId
           setProfileOverride({ sessionId, profileId: pendingProfileId })
           try {
-            await setSessionProfile(sessionId, pendingProfileId)
-            try {
-              localStorage.setItem(`local-agent:profile:${sessionId}`, pendingProfileId)
-            } catch {
-              // Ignore write failures (quota / disabled storage).
-            }
-          } catch (err) {
-            const message = err instanceof Error ? err.message : 'Failed to apply profile'
-            setError(message)
+            localStorage.setItem(`local-agent:profile:${sessionId}`, pendingProfileId)
+          } catch {
+            // Ignore write failures (quota / disabled storage).
           }
         }
       }
@@ -483,7 +477,8 @@ export function ChatPanel({
       // Deferred model switch: handleModelChange only updates local state, so
       // if the user picked a model that differs from an existing session's
       // current model, apply the switch on the backend now so this prompt uses
-      // it. Skipped for newly-created sessions — onCreateSession already used
+      // it. Skipped for newly-created sessions — profileId was supplied before
+      // the ACP actor started, so its MCP server list is already correct.
       // the selected model, so switching again would be redundant.
       if (!wasNewSession && userSelectedModel && activeSession?.modelId !== userSelectedModel) {
         await onSwitchModel(sessionId, userSelectedModel)
@@ -539,7 +534,7 @@ export function ChatPanel({
     try {
       let sessionId = activeSessionId
       if (!sessionId) {
-        sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
+        sessionId = await onCreateSession(effectiveAgentId, effectiveModelId, selectedProfileId)
         // A real session now exists — drop the transient "New chat" placeholder.
         setShowNewChatTab(false)
       }

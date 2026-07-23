@@ -299,10 +299,15 @@ export const api = {
       method: 'POST',
     }),
   listSessions: () => apiFetch<Session[]>('/sessions'),
-  createSession: (agentId: string, modelId: string, workspaceId: string) =>
+  createSession: (
+    agentId: string,
+    modelId: string,
+    workspaceId: string,
+    profileId?: string,
+  ) =>
     apiFetch<Session>('/sessions', {
       method: 'POST',
-      body: JSON.stringify({ agentId, modelId, workspaceId }),
+      body: JSON.stringify({ agentId, modelId, workspaceId, profileId }),
     }),
   patchSession: (
     sessionId: string,
@@ -581,12 +586,15 @@ export async function disableProvider(sessionId: string, providerId: string): Pr
  *
  * - `label`        — human-readable name (backend cap: 100 chars).
  * - `instructions` — system-prompt preamble (backend cap: 16 KiB).
- * - `tools`        — whitelist of MCP tool names; empty means "allow all".
+ * - `mcpServers`   — optional complete-server allowlist. Omitted means all
+ *                    enabled servers; `[]` means no MCP servers.
+ * - `legacyTools`  — read-only migration data from the old tool whitelist.
  */
 export interface ProfileEntry {
   label: string
   instructions: string
-  tools: string[]
+  mcpServers?: string[]
+  legacyTools?: string[]
 }
 
 /**
@@ -623,8 +631,8 @@ export async function putProfiles(config: ProfileConfig): Promise<void> {
 
 /**
  * POST /sessions/:id/profile — switches the active profile for a live session.
- * The backend applies the profile's instructions + tool allowlist to the next
- * prompt. Returns 200 on success, 404 when the session does not exist, and 400
+ * The backend applies the profile's instructions to the next prompt. MCP
+ * server access is fixed when the ACP session starts. Returns 200 on success, 404 when the session does not exist, and 400
  * when `profileId` is not a known profile id (both surface as thrown `Error`s).
  */
 export async function setSessionProfile(sessionId: string, profileId: string): Promise<void> {

@@ -40,15 +40,19 @@ const MAX_TOOL_NAME_CHARS: usize = 200;
 /// Characters that must not appear in tool names (path / shell injection surface).
 const UNSAFE_TOOL_NAME_CHARS: &[char] = &['/', '\\', ';', '|', '&', '`', '$', '(', ')', '<', '>'];
 
-/// One named agent profile: prompt instructions plus optional tool whitelist.
+/// One named agent profile: prompt instructions plus optional MCP server policy.
 ///
-/// # Tools semantics
+/// # MCP server semantics
 ///
-/// `tools` is always present (not `Option`). An **empty** `Vec` means the
-/// profile imposes **no tool restriction** ("allow all tools"). A non-empty
-/// list is a whitelist of tool names the profile may use. Live MCP-tool
-/// membership is validated elsewhere (S-PROF-TOOLS); this module only checks
-/// name shape and size.
+/// An omitted `mcpServers` field means all enabled configured MCP servers are
+/// available. An explicit empty list means no MCP servers are available. The
+/// ACP session setup carries servers, not per-tool subsets, so a profile always
+/// selects complete MCP servers.
+///
+/// `legacyTools` retains the old `tools` data only so Settings can explain the
+/// migration. It is never interpreted as MCP server names. Profiles with a
+/// non-empty legacy list fail closed (no MCP servers) until the user selects
+/// explicit `mcpServers`; see `ProfileMiddleware::mcp_servers_for_session`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Profile {
@@ -56,9 +60,15 @@ pub struct Profile {
     pub label: String,
     /// Instruction text injected into the prompt for this profile.
     pub instructions: String,
-    /// Tool whitelist; empty = allow all tools (see struct docs).
-    #[serde(default)]
-    pub tools: Vec<String>,
+    /// Optional complete-MCP-server allowlist. `None` = all enabled servers;
+    /// `Some(vec![])` = no MCP servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<Vec<String>>,
+    /// Read-only migration information from the former `tools` field. The
+    /// serialized name makes migration visible to Settings while accepting old
+    /// on-disk configs without silently treating tool names as server names.
+    #[serde(rename = "legacyTools", alias = "tools", default, skip_serializing_if = "Option::is_none")]
+    pub legacy_tools: Option<Vec<String>>,
 }
 
 /// Root envelope for `profiles.json`.
@@ -83,7 +93,7 @@ impl ProfileConfig {
     /// Labels are title-case so `## Active Profile: {label}` stays byte-identical
     /// to the previous `ProfileMiddleware` output. Ids are lowercase
     /// (`code` / `ask` / `plan`); `default_profile_id` is `"code"`.
-    /// `tools` is empty on all built-ins → allow all tools.
+    /// `mcpServers` is omitted on all built-ins → all enabled MCP servers.
     #[must_use]
     pub fn builtin_defaults() -> Self {
         let mut profiles = BTreeMap::new();
@@ -92,7 +102,8 @@ impl ProfileConfig {
             Profile {
                 label: "Code".to_string(),
                 instructions: BUILTIN_CODE_INSTRUCTIONS.to_string(),
-                tools: Vec::new(),
+                mcp_servers: None,
+                legacy_tools: None,
             },
         );
         profiles.insert(
@@ -100,7 +111,8 @@ impl ProfileConfig {
             Profile {
                 label: "Ask".to_string(),
                 instructions: BUILTIN_ASK_INSTRUCTIONS.to_string(),
-                tools: Vec::new(),
+                mcp_servers: None,
+                legacy_tools: None,
             },
         );
         profiles.insert(
@@ -108,7 +120,8 @@ impl ProfileConfig {
             Profile {
                 label: "Plan".to_string(),
                 instructions: BUILTIN_PLAN_INSTRUCTIONS.to_string(),
-                tools: Vec::new(),
+                mcp_servers: None,
+                legacy_tools: None,
             },
         );
         Self {
@@ -224,8 +237,13 @@ impl ProfileConfig {
             validate_profile_id(id)?;
             validate_label(&profile.label, id)?;
             validate_instructions(&profile.instructions, id)?;
-            for tool in &profile.tools {
+            for tool in profile.legacy_tools.as_deref().unwrap_or_default() {
                 validate_tool_name(tool, id)?;
+            }
+            if let Some(servers) = &profile.mcp_servers {
+                for server in servers {
+                    validate_mcp_server_name(server, id)?;
+                }
             }
         }
         Ok(())
@@ -272,8 +290,51 @@ impl ProfileConfig {
             .unwrap_or(Profile {
                 label: "Code".to_string(),
                 instructions: BUILTIN_CODE_INSTRUCTIONS.to_string(),
-                tools: Vec::new(),
+                mcp_servers: None,
+                legacy_tools: None,
             })
+    }
+
+    /// Rejects explicit server selections that do not exist in `mcp.json`.
+    /// Omitted `mcpServers` and disabled configured servers are valid: the
+    /// former means all enabled servers, and the latter may be enabled later.
+    pub fn validate_mcp_servers_against<'a>(
+        &self,
+        configured_server_names: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), ProfileConfigError> {
+        let configured: std::collections::BTreeSet<&str> =
+            configured_server_names.into_iter().collect();
+        for (profile_id, profile) in &self.profiles {
+            for server in profile.mcp_servers.as_deref().unwrap_or_default() {
+                if !configured.contains(server.as_str()) {
+                    return Err(ProfileConfigError::UnknownMcpServer {
+                        profile_id: profile_id.clone(),
+                        server: server.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates the explicit server selection for one resolved profile.
+    pub fn validate_profile_mcp_servers_against<'a>(
+        &self,
+        profile_id: &str,
+        configured_server_names: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), ProfileConfigError> {
+        let configured: std::collections::BTreeSet<&str> =
+            configured_server_names.into_iter().collect();
+        let profile = self.profile(profile_id);
+        for server in profile.mcp_servers.as_deref().unwrap_or_default() {
+            if !configured.contains(server.as_str()) {
+                return Err(ProfileConfigError::UnknownMcpServer {
+                    profile_id: profile_id.to_string(),
+                    server: server.clone(),
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -356,6 +417,38 @@ fn validate_tool_name(name: &str, profile_id: &str) -> Result<(), ProfileConfigE
     Ok(())
 }
 
+fn validate_mcp_server_name(name: &str, profile_id: &str) -> Result<(), ProfileConfigError> {
+    if name.is_empty() || name.chars().all(char::is_whitespace) {
+        return Err(ProfileConfigError::UnsafeMcpServerName {
+            profile_id: profile_id.to_string(),
+            server: name.to_string(),
+            reason: "server name must not be empty or whitespace-only".to_string(),
+        });
+    }
+    if name.chars().count() > MAX_TOOL_NAME_CHARS {
+        return Err(ProfileConfigError::UnsafeMcpServerName {
+            profile_id: profile_id.to_string(),
+            server: name.to_string(),
+            reason: format!("server name exceeds {MAX_TOOL_NAME_CHARS} characters"),
+        });
+    }
+    if let Some(ch) = name.chars().find(|c| UNSAFE_TOOL_NAME_CHARS.contains(c)) {
+        return Err(ProfileConfigError::UnsafeMcpServerName {
+            profile_id: profile_id.to_string(),
+            server: name.to_string(),
+            reason: format!("server name contains forbidden character `{ch}`"),
+        });
+    }
+    if name.chars().any(char::is_whitespace) {
+        return Err(ProfileConfigError::UnsafeMcpServerName {
+            profile_id: profile_id.to_string(),
+            server: name.to_string(),
+            reason: "server name must not contain whitespace".to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Errors from profile config path resolution, I/O, JSON, and validation.
 #[derive(Debug, Error)]
 pub enum ProfileConfigError {
@@ -391,6 +484,14 @@ pub enum ProfileConfigError {
         tool: String,
         reason: String,
     },
+    #[error("profile `{profile_id}`: unsafe MCP server name `{server}`: {reason}")]
+    UnsafeMcpServerName {
+        profile_id: String,
+        server: String,
+        reason: String,
+    },
+    #[error("profile `{profile_id}` selects MCP server `{server}`, which is not configured")]
+    UnknownMcpServer { profile_id: String, server: String },
     #[error("invalid profile config: {0}")]
     Validation(String),
     #[error(transparent)]
@@ -428,7 +529,7 @@ mod tests {
         );
         // Labels preserve prior prompt header casing.
         assert_eq!(config.profile("code").label, "Code");
-        assert!(config.profile("code").tools.is_empty());
+        assert_eq!(config.profile("code").mcp_servers, None);
     }
 
     #[test]
@@ -472,8 +573,8 @@ mod tests {
             "custom-review-instructions"
         );
         assert_eq!(
-            config.profile("review").tools,
-            vec!["read_file".to_string(), "grep".to_string()]
+            config.profile("review").legacy_tools,
+            Some(vec!["read_file".to_string(), "grep".to_string()])
         );
     }
 
@@ -635,14 +736,61 @@ mod tests {
     }
 
     #[test]
-    fn omitted_tools_defaults_to_empty_allow_all() {
+    fn omitted_mcp_servers_allows_all_enabled_servers() {
         let raw = r#"{
           "profiles": {
             "code": { "label": "Code", "instructions": "x" }
           },
           "defaultProfileId": "code"
         }"#;
-        let config = ProfileConfig::parse(raw.as_bytes()).expect("tools optional via default");
-        assert!(config.profile("code").tools.is_empty());
+        let config = ProfileConfig::parse(raw.as_bytes()).expect("mcpServers optional");
+        assert_eq!(config.profile("code").mcp_servers, None);
+    }
+
+    #[test]
+    fn explicit_empty_mcp_servers_means_no_mcp_servers() {
+        let raw = r#"{
+          "profiles": {
+            "code": { "label": "Code", "instructions": "x", "mcpServers": [] }
+          },
+          "defaultProfileId": "code"
+        }"#;
+        let config = ProfileConfig::parse(raw.as_bytes()).expect("valid config");
+        assert_eq!(config.profile("code").mcp_servers, Some(Vec::new()));
+    }
+
+    #[test]
+    fn legacy_tools_are_preserved_without_becoming_server_names() {
+        let raw = r#"{
+          "profiles": {
+            "code": { "label": "Code", "instructions": "x", "tools": ["read_file"] }
+          },
+          "defaultProfileId": "code"
+        }"#;
+        let config = ProfileConfig::parse(raw.as_bytes()).expect("legacy config");
+        let profile = config.profile("code");
+        assert_eq!(profile.mcp_servers, None);
+        assert_eq!(profile.legacy_tools, Some(vec!["read_file".to_string()]));
+        let json = serde_json::to_value(config).expect("serialize");
+        assert_eq!(json["profiles"]["code"]["legacyTools"][0], "read_file");
+        assert!(json["profiles"]["code"].get("tools").is_none());
+    }
+
+    #[test]
+    fn explicit_servers_must_exist_when_validated_against_mcp_config() {
+        let raw = r#"{
+          "profiles": {
+            "code": { "label": "Code", "instructions": "x", "mcpServers": ["context7"] }
+          },
+          "defaultProfileId": "code"
+        }"#;
+        let config = ProfileConfig::parse(raw.as_bytes()).expect("valid config");
+        assert!(config
+            .validate_mcp_servers_against(["context7", "workspace-read"])
+            .is_ok());
+        assert!(matches!(
+            config.validate_mcp_servers_against(["workspace-read"]),
+            Err(ProfileConfigError::UnknownMcpServer { .. })
+        ));
     }
 }

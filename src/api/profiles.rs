@@ -16,6 +16,7 @@ use axum::Json;
 use tracing::{error, info};
 
 use crate::acp::{ProfileConfig, ProfileConfigError, MAX_FILE_BYTES};
+use crate::mcp::File as McpFile;
 
 use super::{ApiResponseError, AppState};
 
@@ -47,6 +48,7 @@ pub async fn put_profiles(
     }
 
     let config = ProfileConfig::parse(&body).map_err(profile_config_error)?;
+    validate_profile_mcp_servers(&config, state.mcp_config_path.as_deref())?;
 
     // Persist first; only swap memory after a durable write succeeds.
     config.save().map_err(profile_config_error)?;
@@ -85,6 +87,8 @@ fn profile_config_error(error: ProfileConfigError) -> ApiResponseError {
         | ProfileConfigError::LabelTooLong { .. }
         | ProfileConfigError::InstructionsTooLong { .. }
         | ProfileConfigError::UnsafeToolName { .. }
+        | ProfileConfigError::UnsafeMcpServerName { .. }
+        | ProfileConfigError::UnknownMcpServer { .. }
         | ProfileConfigError::Validation(_) => ApiResponseError::bad_request(error.to_string()),
         ProfileConfigError::Io(inner) => {
             error!(%inner, "write profiles.json failed");
@@ -95,6 +99,25 @@ fn profile_config_error(error: ProfileConfigError) -> ApiResponseError {
             ApiResponseError::internal(format!("resolve profiles.json path: {inner}"))
         }
     }
+}
+
+/// Validate explicit server selections against the configured `mcp.json`.
+/// Disabled servers remain valid profile choices because they may be enabled
+/// later; unavailable names are rejected before replacing the live config.
+fn validate_profile_mcp_servers(
+    config: &ProfileConfig,
+    path: Option<&std::path::Path>,
+) -> Result<(), ApiResponseError> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    let file = McpFile::load(path).map_err(|error| {
+        error!(%error, "load mcp config while validating profiles failed");
+        ApiResponseError::internal(format!("load mcp config: {error}"))
+    })?;
+    config
+        .validate_mcp_servers_against(file.mcp_servers.keys().map(String::as_str))
+        .map_err(profile_config_error)
 }
 
 #[cfg(test)]
@@ -166,12 +189,12 @@ mod tests {
                 "code": {
                     "label": "Code",
                     "instructions": "code-instr",
-                    "tools": []
+                    "mcpServers": ["context7"]
                 },
                 "review": {
                     "label": "Review",
                     "instructions": "review-only",
-                    "tools": ["read_file"]
+                    "mcpServers": []
                 }
             },
             "defaultProfileId": "review"
@@ -241,7 +264,7 @@ mod tests {
         assert_eq!(get.status(), StatusCode::OK);
         let get_body = body_json(get).await;
         assert_eq!(get_body["defaultProfileId"], "review");
-        assert_eq!(get_body["profiles"]["review"]["tools"][0], "read_file");
+        assert_eq!(get_body["profiles"]["review"]["mcpServers"], json!([]));
     }
 
     #[tokio::test]

@@ -157,12 +157,6 @@ without a PID file still requires a manual `kill`/`taskkill`. See
   in the entry URL/server logs; `Referrer-Policy: no-referrer` limits onward
   Referer leakage. Workspace JS can still exfiltrate via third-party requests.
 
-## Rust port — Go daemon deleted (cutover)
-
-**Done 2026-07-18.** `cmd/app` and `internal/` removed. Remaining Go:
-`cmd/mockagent` only (`go.mod` depends on `acp-go-sdk`). Re-run
-`local_agent install-service` if systemd/launchd/HKCU still point at `app`.
-
 ## Rust port — story checkbox drift
 
 Many `docs/plans/rust-port/*.md` ACs remain unchecked while modules and

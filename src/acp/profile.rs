@@ -99,30 +99,30 @@ impl ProfileMiddleware {
             .map_err(|_| AppError::internal("profile config lock poisoned"))
     }
 
-    /// Tool whitelist for a session's active profile.
+    /// MCP server policy for a session's active profile.
     ///
-    /// Empty `Vec` means the profile imposes no restriction (allow all tools).
-    /// Used by S-PROF-TOOLS when attaching MCP servers to `session/new`.
-    pub fn tools_for_session(&self, session_id: &str) -> Result<Vec<String>, AppError> {
+    /// `None` means all enabled configured servers; an empty `Vec` means none.
+    /// A profile that still has a non-empty former tool whitelist has no safe
+    /// server-level equivalent, so it fails closed until Settings migrates it.
+    pub fn mcp_servers_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Vec<String>>, AppError> {
         let profile_id = self.profile(session_id)?;
         let config = self
             .config
             .read()
             .map_err(|_| AppError::internal("profile config lock poisoned"))?;
-        Ok(config.profile(&profile_id).tools)
-    }
-
-    /// Tool whitelist for the configured default profile (no session binding yet).
-    ///
-    /// Session create attaches MCP before `set_profile`; the default profile's
-    /// tools are the correct gate until the user picks another profile.
-    pub fn tools_for_default(&self) -> Result<Vec<String>, AppError> {
-        let config = self
-            .config
-            .read()
-            .map_err(|_| AppError::internal("profile config lock poisoned"))?;
-        let id = config.default_profile_id.clone();
-        Ok(config.profile(&id).tools)
+        let profile = config.profile(&profile_id);
+        if profile.mcp_servers.is_none()
+            && profile
+                .legacy_tools
+                .as_ref()
+                .is_some_and(|tools| !tools.is_empty())
+        {
+            return Ok(Some(Vec::new()));
+        }
+        Ok(profile.mcp_servers)
     }
 
     fn normalize_profile(&self, profile: &str) -> Result<String, AppError> {
@@ -233,7 +233,8 @@ mod tests {
             Profile {
                 label: "Code".to_string(),
                 instructions: "code-fallback".to_string(),
-                tools: Vec::new(),
+                mcp_servers: None,
+                legacy_tools: None,
             },
         );
         profiles_map.insert(
@@ -241,7 +242,8 @@ mod tests {
             Profile {
                 label: "Review".to_string(),
                 instructions: "custom-review-body".to_string(),
-                tools: vec!["read_file".to_string()],
+                mcp_servers: Some(vec!["workspace-read".to_string()]),
+                legacy_tools: None,
             },
         );
         let config = ProfileConfig {
@@ -257,7 +259,10 @@ mod tests {
             "## Active Profile: Review\n\ncustom-review-body"
         );
         let snapshot = middleware.config().expect("snapshot");
-        assert_eq!(snapshot.profiles["review"].tools, vec!["read_file"]);
+        assert_eq!(
+            snapshot.profiles["review"].mcp_servers,
+            Some(vec!["workspace-read".to_string()])
+        );
     }
 
     #[test]
@@ -269,7 +274,8 @@ mod tests {
             Profile {
                 label: "Focus".to_string(),
                 instructions: "focus-only".to_string(),
-                tools: Vec::new(),
+                mcp_servers: None,
+                legacy_tools: None,
             },
         );
         middleware
@@ -284,5 +290,23 @@ mod tests {
             .instructions("s")
             .expect("text")
             .contains("focus-only"));
+    }
+
+    #[test]
+    fn legacy_tool_policy_fails_closed_until_servers_are_selected() {
+        let config = ProfileConfig::parse(
+            br#"{
+              "profiles": {
+                "code": { "label": "Code", "instructions": "x", "tools": ["read_file"] }
+              },
+              "defaultProfileId": "code"
+            }"#,
+        )
+        .expect("legacy profile config");
+        let middleware = ProfileMiddleware::from_config(config);
+        assert_eq!(
+            middleware.mcp_servers_for_session("session").expect("policy"),
+            Some(Vec::new())
+        );
     }
 }

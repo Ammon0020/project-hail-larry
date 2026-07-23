@@ -25,7 +25,7 @@ const ID_PATTERN = /^[a-zA-Z0-9_-]+$/
 
 /** Empty profile entry used when adding a new profile. */
 function emptyEntry(): ProfileEntry {
-  return { label: '', instructions: '', tools: [] }
+  return { label: '', instructions: '' }
 }
 
 /**
@@ -44,39 +44,43 @@ function configEqual(a: ProfileConfig, b: ProfileConfig): boolean {
     if (!bp) return false
     if (ap.label !== bp.label) return false
     if (ap.instructions !== bp.instructions) return false
-    if (ap.tools.length !== bp.tools.length) return false
-    for (let i = 0; i < ap.tools.length; i++) {
-      if (ap.tools[i] !== bp.tools[i]) return false
+    if (ap.mcpServers === undefined || bp.mcpServers === undefined) {
+      if (ap.mcpServers !== bp.mcpServers) return false
+    } else if (ap.mcpServers.length !== bp.mcpServers.length) {
+      return false
+    } else {
+      for (let i = 0; i < ap.mcpServers.length; i++) {
+        if (ap.mcpServers[i] !== bp.mcpServers[i]) return false
+      }
     }
   }
   return true
 }
 
-/** Parses the comma-separated tools text input into a normalized string[]. */
-function parseTools(text: string): string[] {
+/** Parses the comma-separated MCP server text input into a normalized string[]. */
+function parseServers(text: string): string[] {
   return text
     .split(',')
     .map(t => t.trim())
     .filter(Boolean)
 }
 
-/** Joins a tool whitelist back into the comma-separated editor string. */
-function joinTools(tools: string[]): string {
-  return tools.join(', ')
+/** Joins an MCP server allowlist back into the comma-separated editor string. */
+function joinServers(servers: string[] | undefined): string {
+  return servers?.join(', ') ?? ''
 }
 
 /**
  * Settings → Profiles tab. Lists profiles from `GET /api/profiles`, lets the
- * user add / rename / edit instructions / set a tool whitelist / delete, pick
+ * user add / rename / edit instructions / set an MCP-server allowlist / delete, pick
  * the default profile, and persists the whole config via `PUT /api/profiles`.
  *
  * Backend validation errors (400) are surfaced inline next to Save — the
  * panel never claims success on failure and never silently reverts local
  * edits, so the user can fix and retry without losing their work.
  *
- * The tool whitelist is currently a comma-separated text input because the
- * MCP tool enumeration REST endpoint (S-PROF-TOOLS follow-up) is not yet
- * exposed. When it lands, swap the text input for per-server checkbox groups.
+ * The server allowlist is a comma-separated input so it can preserve unknown
+ * configured names while `mcp.json` is edited in another Settings tab.
  */
 export function ProfilesSettings() {
   const [saved, setSaved] = useState<ProfileConfig | null>(null)
@@ -298,8 +302,8 @@ export function ProfilesSettings() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Profiles bundle a label, system-prompt instructions, and a tool
-        whitelist. The default profile is used when a chat doesn't pick one.
+        Profiles bundle a label, system-prompt instructions, and complete MCP
+        server access. MCP servers are selected when an ACP session starts.
       </p>
 
       <div className="flex flex-col md:flex-row gap-4">
@@ -455,21 +459,23 @@ function ProfileEditor({
   onDelete: () => void
   canDelete: boolean
 }) {
-  // Local text buffer for the tools input. We keep the raw text the user is
-  // typing (including trailing commas/spaces) and only normalize via parseTools
-  // on blur — otherwise the round-trip through joinTools/parseTools on every
-  // keystroke strips the trailing comma and makes multi-tool entry impossible.
-  const [toolsText, setToolsText] = useState(joinTools(entry.tools))
+  // Local text buffer preserves trailing commas/spaces until blur, so users can
+  // enter multiple server names without normalization fighting their typing.
+  const [serversText, setServersText] = useState(joinServers(entry.mcpServers))
   // Sync the local text buffer when the selected profile changes or the
-  // parent normalizes the tools array (e.g. after a save round-trip). Same
+  // parent normalizes the server array (e.g. after a save round-trip). Same
   // set-state-in-effect pattern used by load() above.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setToolsText(joinTools(entry.tools))
-  }, [entry.tools, id])
+    setServersText(joinServers(entry.mcpServers))
+  }, [entry.mcpServers, id])
 
   const labelLen = entry.label.length
   const instrLen = entry.instructions.length
+  // Choosing an explicit server policy completes the legacy tool-list
+  // migration. `undefined` is intentional: JSON omits `legacyTools` on save.
+  const updateServers = (mcpServers: string[] | undefined) =>
+    onChange({ mcpServers, legacyTools: undefined })
 
   return (
     <div className="p-4 bg-panel border border-border rounded-lg space-y-4">
@@ -584,31 +590,43 @@ function ProfileEditor({
         )}
       </div>
 
-      {/* Tools whitelist — text input for now; checkbox UI deferred to the
-          S-PROF-TOOLS follow-up that exposes a GET /api/mcp/tools endpoint. */}
+      {/* ACP attaches complete MCP servers at session startup; it cannot select
+          individual tools from one server. */}
       <div>
+        <label className="flex items-center gap-2 text-xs text-foreground mb-2">
+          <input
+            type="checkbox"
+            checked={entry.mcpServers === undefined}
+            onChange={e => updateServers(e.target.checked ? undefined : [])}
+          />
+          All enabled MCP servers
+        </label>
         <label
-          htmlFor={`profile-tools-${id}`}
+          htmlFor={`profile-mcp-servers-${id}`}
           className="block text-xs text-muted-foreground mb-1"
         >
-          Tools whitelist
+          Selected MCP servers
         </label>
         <input
-          id={`profile-tools-${id}`}
+          id={`profile-mcp-servers-${id}`}
           type="text"
-          value={toolsText}
-          onChange={e => setToolsText(e.target.value)}
-          onBlur={() => onChange({ tools: parseTools(toolsText) })}
-          placeholder="e.g. read_file, write_file, run_shell"
-          className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm font-mono"
+          value={serversText}
+          disabled={entry.mcpServers === undefined}
+          onChange={e => setServersText(e.target.value)}
+          onBlur={() => updateServers(parseServers(serversText))}
+          placeholder="e.g. context7, workspace-read"
+          className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm font-mono disabled:opacity-50"
         />
-        {/* TODO(S-PROF-TOOLS follow-up): replace this text input with
-            per-server checkbox groups once GET /api/mcp/tools is exposed.
-            Stale/unknown tools saved in a whitelist should still render
-            (with a "stale" marker) so they aren't silently dropped. */}
         <p className="text-[11px] text-muted-foreground mt-1">
-          Comma-separated tool names. Empty = allow all tools.
+          Leave “All enabled MCP servers” selected to omit this policy. Turn it
+          off and leave this field empty to allow no MCP servers.
         </p>
+        {entry.legacyTools && entry.legacyTools.length > 0 && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2">
+            Legacy tool names ({entry.legacyTools.join(', ')}) were not converted
+            to server names. Choose MCP servers above before saving this profile.
+          </p>
+        )}
       </div>
     </div>
   )

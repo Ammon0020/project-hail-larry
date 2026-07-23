@@ -1,4 +1,4 @@
-//! MCP tool enumeration and profile whitelist filtering (S-PROF-TOOLS).
+//! MCP tool enumeration for diagnostics and future Settings UI.
 //!
 //! # Caching strategy (locked)
 //!
@@ -6,20 +6,12 @@
 //! only explicit invalidation after `mcp.json` writes (PUT/PATCH) clears the
 //! cache. Recorded in `docs/plans/OpenItems.md`.
 //!
-//! # ACP granularity limit
-//!
-//! ACP `McpServer` is per-server (stdio/http/sse/acp) with no per-tool subset
-//! field. Session attachment therefore drops whole servers that contribute no
-//! whitelisted tools. True per-tool enforcement inside a multi-tool server
-//! requires MCP-over-ACP brokering or permission-boundary filtering (future).
-
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::McpServer;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -34,7 +26,7 @@ const ENUMERATE_TIMEOUT: Duration = Duration::from_secs(8);
 /// Deterministic map of MCP server name → tool names that server exposes.
 pub type ServerTools = BTreeMap<String, Vec<String>>;
 
-/// Cached MCP tool catalog shared by ACP session setup and future REST/UI.
+/// Cached MCP tool catalog for future REST/UI diagnostics.
 ///
 /// Holds an optional snapshot so callers can read synchronously (empty when
 /// never populated) and refresh asynchronously via [`Self::enumerate`].
@@ -182,106 +174,6 @@ impl ToolLister for LiveToolLister {
 }
 
 /// Filters a capability-selected server list with the active profile whitelist.
-///
-/// # Semantics (S-PROF-CONFIG)
-///
-/// - Empty `whitelist` → no profile restriction; returns `servers` unchanged.
-/// - Non-empty → keep a server only when at least one of its enumerated tools
-///   appears in the whitelist (case-sensitive name match).
-/// - Whitelist entries not present in the enumerated map are ignored with a
-///   `tracing::warn!` (stale / offline tools are not errors).
-///
-/// # ACP limitation
-///
-/// Filtering is per **server** because `McpServer` has no per-tool field. A
-/// multi-tool server is attached whole if any listed tool is allowed.
-#[must_use]
-pub fn filter_servers_for_profile(
-    servers: Vec<McpServer>,
-    enumerated: &ServerTools,
-    whitelist: &[String],
-) -> Vec<McpServer> {
-    if whitelist.is_empty() {
-        return servers;
-    }
-
-    let allowed: BTreeSet<&str> = whitelist.iter().map(String::as_str).collect();
-    warn_stale_whitelist_entries(&allowed, enumerated);
-
-    let mut kept = Vec::with_capacity(servers.len());
-    for server in servers {
-        let name = mcp_server_name(&server);
-        let tools = enumerated.get(name).map(Vec::as_slice).unwrap_or(&[]);
-        let intersects = tools.iter().any(|tool| allowed.contains(tool.as_str()));
-        if intersects {
-            kept.push(server);
-        } else {
-            tracing::debug!(
-                server = %name,
-                "dropping MCP server: no tools in profile whitelist"
-            );
-        }
-    }
-    kept
-}
-
-/// Intersects an enumerated `{server → tools}` map with a profile whitelist.
-///
-/// Empty whitelist → clone of `enumerated` (allow all). Non-empty → per-server
-/// tool lists retaining only whitelisted names; servers with an empty residual
-/// list are omitted. Stale whitelist entries are warned once.
-#[cfg(test)]
-#[must_use]
-pub fn apply_tool_whitelist(enumerated: &ServerTools, whitelist: &[String]) -> ServerTools {
-    if whitelist.is_empty() {
-        return enumerated.clone();
-    }
-    let allowed: BTreeSet<&str> = whitelist.iter().map(String::as_str).collect();
-    warn_stale_whitelist_entries(&allowed, enumerated);
-
-    let mut filtered = ServerTools::new();
-    for (server, tools) in enumerated {
-        let kept: Vec<String> = tools
-            .iter()
-            .filter(|tool| allowed.contains(tool.as_str()))
-            .cloned()
-            .collect();
-        if !kept.is_empty() {
-            filtered.insert(server.clone(), kept);
-        }
-    }
-    filtered
-}
-
-fn warn_stale_whitelist_entries(allowed: &BTreeSet<&str>, enumerated: &ServerTools) {
-    let present: BTreeSet<&str> = enumerated
-        .values()
-        .flat_map(|tools| tools.iter().map(String::as_str))
-        .collect();
-    for name in allowed {
-        if !present.contains(name) {
-            tracing::warn!(
-                tool = %name,
-                "profile tools whitelist entry not present in enumerated MCP tools; ignoring"
-            );
-        }
-    }
-}
-
-/// Human-readable server name from an ACP MCP server config.
-#[must_use]
-pub fn mcp_server_name(server: &McpServer) -> &str {
-    match server {
-        McpServer::Stdio(s) => s.name.as_str(),
-        McpServer::Http(s) => s.name.as_str(),
-        McpServer::Sse(s) => s.name.as_str(),
-        // ACP-brokered transport (unstable_mcp_over_acp on the schema crate).
-        McpServer::Acp(s) => s.name.as_str(),
-        // Non-exhaustive: unknown future variants keep servers without a name.
-        _ => "",
-    }
-}
-
 async fn list_tools_stdio(name: &str, config: &ServerConfig) -> Result<Vec<String>, String> {
     let command = expand_env(&config.command);
     if command.is_empty() {
@@ -552,7 +444,6 @@ async fn read_mcp_message<R: AsyncReadExt + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol::schema::v1::{McpServer, McpServerHttp, McpServerStdio};
     use std::sync::Mutex;
 
     struct MockLister {
@@ -661,57 +552,6 @@ mod tests {
         let _ = catalog.enumerate_with(&file, &lister).await;
         assert_eq!(lister.calls.lock().expect("lock").len(), 2);
         assert_eq!(catalog.list_call_count(), 2);
-    }
-
-    #[test]
-    fn empty_whitelist_allows_all_tools_and_servers() {
-        let enumerated = BTreeMap::from([
-            ("a".to_owned(), vec!["t1".into(), "t2".into()]),
-            ("b".to_owned(), vec!["t3".into()]),
-        ]);
-        assert_eq!(apply_tool_whitelist(&enumerated, &[]), enumerated);
-
-        let servers = vec![
-            McpServer::Stdio(McpServerStdio::new("a", "echo")),
-            McpServer::Http(McpServerHttp::new("b", "https://example.com")),
-        ];
-        let filtered = filter_servers_for_profile(servers.clone(), &enumerated, &[]);
-        assert_eq!(filtered.len(), 2);
-    }
-
-    #[test]
-    fn whitelist_filters_tools_and_drops_servers_without_match() {
-        let enumerated = BTreeMap::from([
-            (
-                "alpha".to_owned(),
-                vec!["read_file".into(), "write_file".into()],
-            ),
-            ("beta".to_owned(), vec!["search".into(), "fetch".into()]),
-            ("gamma".to_owned(), vec!["other".into()]),
-        ]);
-        let whitelist = vec!["read_file".into(), "search".into(), "missing_tool".into()];
-
-        let tools = apply_tool_whitelist(&enumerated, &whitelist);
-        assert_eq!(tools["alpha"], vec!["read_file".to_string()]);
-        assert_eq!(tools["beta"], vec!["search".to_string()]);
-        assert!(!tools.contains_key("gamma"));
-
-        let servers = vec![
-            McpServer::Stdio(McpServerStdio::new("alpha", "echo")),
-            McpServer::Stdio(McpServerStdio::new("beta", "echo")),
-            McpServer::Stdio(McpServerStdio::new("gamma", "echo")),
-        ];
-        let filtered = filter_servers_for_profile(servers, &enumerated, &whitelist);
-        let names: Vec<_> = filtered.iter().map(mcp_server_name).collect();
-        assert_eq!(names, vec!["alpha", "beta"]);
-    }
-
-    #[test]
-    fn stale_whitelist_entry_does_not_error() {
-        let enumerated = BTreeMap::from([("s".to_owned(), vec!["real".into()])]);
-        // Must not panic; warn-only path.
-        let tools = apply_tool_whitelist(&enumerated, &["real".into(), "stale".into()]);
-        assert_eq!(tools["s"], vec!["real".to_string()]);
     }
 
     #[test]

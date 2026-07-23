@@ -502,9 +502,9 @@ export function useBackend() {
   )
 
   // ---- Session actions ----
-  const createSession = useCallback(async (agentId: string, modelId: string) => {
+  const createSession = useCallback(async (agentId: string, modelId: string, profileId?: string) => {
     const wsId = activeWorkspaceRef.current?.id || ''
-    const session = await api.createSession(agentId, modelId, wsId)
+    const session = await api.createSession(agentId, modelId, wsId, profileId)
     setSessions((prev) => [...prev, session])
     return session
   }, [])

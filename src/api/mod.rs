@@ -978,6 +978,7 @@ struct CreateSessionRequest {
     agent_id: String,
     model_id: String,
     workspace_id: String,
+    profile_id: Option<String>,
 }
 
 async fn create_session(
@@ -987,7 +988,12 @@ async fn create_session(
     let Json(request) = decode_json_body(body)?;
     state
         .acp
-        .create_session(&request.agent_id, &request.model_id, &request.workspace_id)
+        .create_session_with_profile(
+            &request.agent_id,
+            &request.model_id,
+            &request.workspace_id,
+            request.profile_id.as_deref(),
+        )
         .await
         .map(|session| (StatusCode::CREATED, Json(session)))
         .map_err(app_error)
@@ -1653,7 +1659,6 @@ pub(crate) mod test_support {
             event_bus: events.clone(),
             conversation_store: crate::acp::ConversationStore::new(None),
             mcp_config_path: None,
-            tool_catalog: None,
         }));
         CoreDeps {
             config,

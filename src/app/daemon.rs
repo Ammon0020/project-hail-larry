@@ -127,7 +127,8 @@ impl Daemon {
         let permission_sweeper = permissions.start_sweeper();
         let registry = Arc::new(AgentRegistry::from_agents(config.agents.clone()));
         let mcp_config_path = Path::new(&config.data_dir).join("mcp.json");
-        // Shared lazy MCP tools/list cache (invalidated on mcp.json writes).
+        // Retained for MCP Settings/diagnostics; session startup uses profile
+        // server allowlists directly and does not enumerate tools.
         let tool_catalog = crate::mcp::ToolCatalog::shared();
         let acp = Arc::new(Client::new(ClientDeps {
             registry,
@@ -138,7 +139,6 @@ impl Daemon {
                 Path::new(&config.data_dir).join("conversations.json"),
             )),
             mcp_config_path: Some(mcp_config_path.clone()),
-            tool_catalog: Some(Arc::clone(&tool_catalog)),
         }));
         // Metadata only — actors start lazily on prompt/cancel/providers/rebind.
         acp.load_conversations()
