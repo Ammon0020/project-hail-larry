@@ -18,42 +18,40 @@ coordinating agent.
 
 **15 findings total** — 4 high, 5 medium, 6 low. 0 critical.
 
-The epic is functionally shipped and all verification (cargo test, clippy, fmt,
-contract, npm build) is green, but **4 high-urgency issues should be addressed
-before this work is considered production-ready**. Two are real functional bugs
-(new-chat profile drop, tools-input comma stripping), one is an architectural
-gap (live profile switch doesn't rebind the tool whitelist), and one is a docs
-hygiene miss (S-PROF-TOOLS story file not renamed).
+**14 of 15 resolved** in a follow-up commit (6 parallel agents). The remaining
+finding (`profile-switch-does-not-apply-tool-whitelist`, hard) is deferred to
+an external developer — see
+[HANDOFF-tool-whitelist-on-profile-switch.md](HANDOFF-tool-whitelist-on-profile-switch.md).
 
 ## High urgency (4)
 
-| Finding | Difficulty | File |
-|---------|-----------|------|
-| [Live profile switches do not apply the tool whitelist](profile-switch-does-not-apply-tool-whitelist,hard,high.md) | hard | `src/acp/core.rs` |
-| [New-chat profile selection is silently dropped on first send](newchat-profile-selection-silently-dropped,medium,high.md) | medium | `web/src/components/ChatPanel.tsx` |
-| [Tools whitelist input strips commas on every keystroke](tools-whitelist-input-strips-commas,medium,high.md) | medium | `web/src/components/ProfilesSettings.tsx` |
-| [S-PROF-TOOLS story file not renamed to done-](s-prof-tools-not-renamed-to-done,trivial,high.md) | trivial | `docs/plans/profiles-over-acp/` |
+| Finding | Difficulty | File | Status |
+|---------|-----------|------|--------|
+| [Live profile switches do not apply the tool whitelist](profile-switch-does-not-apply-tool-whitelist,hard,high.md) | hard | `src/acp/core.rs` | **DEFERRED** — external developer |
+| [New-chat profile selection is silently dropped on first send](newchat-profile-selection-silently-dropped,medium,high.md) | medium | `web/src/components/ChatPanel.tsx` | ✅ fixed |
+| [Tools whitelist input strips commas on every keystroke](tools-whitelist-input-strips-commas,medium,high.md) | medium | `web/src/components/ProfilesSettings.tsx` | ✅ fixed |
+| [S-PROF-TOOLS story file not renamed to done-](s-prof-tools-not-renamed-to-done,trivial,high.md) | trivial | `docs/plans/profiles-over-acp/` | ✅ fixed |
 
 ## Medium urgency (5)
 
-| Finding | Difficulty | File |
-|---------|-----------|------|
-| [Rebind profile capability cache on set_config_option](rebind-profile-capability-cache,easy,medium.md) | easy | `src/acp/core.rs` |
-| [Profile switch state is non-atomic](profile-switch-state-is-non-atomic,medium,medium.md) | medium | `src/acp/core.rs` |
-| [ChatPanel profile config stale after Settings edit](chatpanel-profile-config-stale-after-settings-edit,easy,medium.md) | easy | `web/src/components/ChatPanel.tsx` |
-| [Broken epic cross-references in story files](broken-epic-cross-references,easy,medium.md) | easy | `docs/plans/profiles-over-acp/done-*.md` |
-| [Missing fallback test for no-mode-capability agents](missing-fallback-test-no-mode-cap,medium,medium.md) | medium | `tests/acp_core_lifecycle.rs` |
+| Finding | Difficulty | File | Status |
+|---------|-----------|------|--------|
+| [Rebind profile capability cache on set_config_option](rebind-profile-capability-cache,easy,medium.md) | easy | `src/acp/core.rs` | ✅ fixed |
+| [Profile switch state is non-atomic](profile-switch-state-is-non-atomic,medium,medium.md) | medium | `src/acp/core.rs` | ✅ fixed |
+| [ChatPanel profile config stale after Settings edit](chatpanel-profile-config-stale-after-settings-edit,easy,medium.md) | easy | `web/src/components/ChatPanel.tsx` | ✅ fixed |
+| [Broken epic cross-references in story files](broken-epic-cross-references,easy,medium.md) | easy | `docs/plans/profiles-over-acp/done-*.md` | ✅ fixed |
+| [Missing fallback test for no-mode-capability agents](missing-fallback-test-no-mode-cap,medium,medium.md) | medium | `tests/acp_core_lifecycle.rs` | ✅ recorded in known-issues |
 
 ## Low urgency (6)
 
-| Finding | Difficulty | File |
-|---------|-----------|------|
-| [await_idle helper is dead code](await-idle-dead-code,easy,low.md) | easy | `tests/acp_core_lifecycle.rs` |
-| [Duplicate session-creation boilerplate in 4 new tests](duplicate-session-creation-boilerplate,trivial,low.md) | trivial | `tests/acp_core_lifecycle.rs` |
-| [ChatComposer profile selector missing aria-label](chatcomposer-profile-selector-missing-aria-label,trivial,low.md) | trivial | `web/src/components/ChatComposer.tsx` |
-| [ChatComposer hardcoded Code icon](chatcomposer-hardcoded-code-icon,easy,low.md) | easy | `web/src/components/ChatComposer.tsx` |
-| [Profiles list buttons missing aria-current](profiles-list-buttons-missing-aria-current,trivial,low.md) | trivial | `web/src/components/ProfilesSettings.tsx` |
-| [Profiles saved-flash timer not cleared on unmount](profiles-savedflash-timer-not-cleared,trivial,low.md) | trivial | `web/src/components/ProfilesSettings.tsx` |
+| Finding | Difficulty | File | Status |
+|---------|-----------|------|--------|
+| [await_idle helper is dead code](await-idle-dead-code,easy,low.md) | easy | `tests/acp_core_lifecycle.rs` | ✅ fixed |
+| [Duplicate session-creation boilerplate in 4 new tests](duplicate-session-creation-boilerplate,trivial,low.md) | trivial | `tests/acp_core_lifecycle.rs` | ✅ fixed |
+| [ChatComposer profile selector missing aria-label](chatcomposer-profile-selector-missing-aria-label,trivial,low.md) | trivial | `web/src/components/ChatComposer.tsx` | ✅ fixed |
+| [ChatComposer hardcoded Code icon](chatcomposer-hardcoded-code-icon,easy,low.md) | easy | `web/src/components/ChatComposer.tsx` | ✅ fixed |
+| [Profiles list buttons missing aria-current](profiles-list-buttons-missing-aria-current,trivial,low.md) | trivial | `web/src/components/ProfilesSettings.tsx` | ✅ fixed |
+| [Profiles saved-flash timer not cleared on unmount](profiles-savedflash-timer-not-cleared,trivial,low.md) | trivial | `web/src/components/ProfilesSettings.tsx` | ✅ fixed |
 
 ## Notes
 
