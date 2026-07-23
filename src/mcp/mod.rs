@@ -4,12 +4,6 @@
 //! callers that edit raw JSON can validate and preserve their exact bytes with
 //! [`File::save_raw`].
 //!
-//! Tool enumeration (`tools/list`, cached) lives in [`tools`].
-
-mod tools;
-
-pub use tools::{ServerTools, ToolCatalog, ToolLister};
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -39,8 +33,7 @@ pub fn filter_servers_by_name(
     let Some(allowlist) = allowlist else {
         return servers;
     };
-    let allowed: std::collections::BTreeSet<&str> =
-        allowlist.iter().map(String::as_str).collect();
+    let allowed: std::collections::BTreeSet<&str> = allowlist.iter().map(String::as_str).collect();
     servers
         .into_iter()
         .filter(|server| {
@@ -555,10 +548,7 @@ mod tests {
         ];
         assert_eq!(filter_servers_by_name(servers.clone(), None).len(), 2);
         assert!(filter_servers_by_name(servers.clone(), Some(&[])).is_empty());
-        let filtered = filter_servers_by_name(
-            servers,
-            Some(&["workspace-read".to_string()]),
-        );
+        let filtered = filter_servers_by_name(servers, Some(&["workspace-read".to_string()]));
         let names: Vec<_> = filtered.iter().map(mcp_server_name).collect();
         assert_eq!(names, vec!["workspace-read"]);
     }

@@ -221,7 +221,9 @@ impl Client {
                     .keys()
                     .any(|id| id.eq_ignore_ascii_case(trimmed))
                 {
-                    return Err(AppError::validation(format!("unknown profile id: {profile}")));
+                    return Err(AppError::validation(format!(
+                        "unknown profile id: {profile}"
+                    )));
                 }
                 config.normalize_profile_id(trimmed)
             }

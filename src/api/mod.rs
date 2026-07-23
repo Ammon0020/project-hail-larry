@@ -81,8 +81,6 @@ pub struct AppState {
     pub uploads: Option<Arc<Mutex<uploads::Manager>>>,
     /// External filesystem watcher. `None` when notify init failed.
     pub fs_watcher: Option<Arc<crate::fswatch::Watcher>>,
-    /// Shared MCP tool catalog (lazy `tools/list` cache). S-PROF-UI will read it.
-    pub tool_catalog: Option<Arc<crate::mcp::ToolCatalog>>,
     pair_rate: Arc<Mutex<HashMap<String, PairRateBucket>>>,
     /// In-memory, workspace-scoped preview tickets with short expiry.
     preview_tokens: Arc<Mutex<HashMap<String, PreviewToken>>>,
@@ -118,7 +116,6 @@ impl AppState {
         mcp_config_path: Option<PathBuf>,
         uploads: Option<Arc<Mutex<uploads::Manager>>>,
         fs_watcher: Option<Arc<crate::fswatch::Watcher>>,
-        tool_catalog: Option<Arc<crate::mcp::ToolCatalog>>,
     ) -> Self {
         Self {
             config,
@@ -131,7 +128,6 @@ impl AppState {
             mcp_config_path,
             uploads,
             fs_watcher,
-            tool_catalog,
             pair_rate: Arc::new(Mutex::new(HashMap::new())),
             preview_tokens: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -1685,7 +1681,6 @@ pub(crate) mod test_support {
             None,
             None,
             None,
-            None,
         )
     }
 
@@ -1701,7 +1696,6 @@ pub(crate) mod test_support {
             d.acp,
             d.permissions,
             Some(mcp_path),
-            None,
             None,
             None,
         )
@@ -1723,7 +1717,6 @@ pub(crate) mod test_support {
             d.permissions,
             None,
             Some(uploads),
-            None,
             None,
         )
     }

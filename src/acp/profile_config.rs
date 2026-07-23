@@ -67,7 +67,12 @@ pub struct Profile {
     /// Read-only migration information from the former `tools` field. The
     /// serialized name makes migration visible to Settings while accepting old
     /// on-disk configs without silently treating tool names as server names.
-    #[serde(rename = "legacyTools", alias = "tools", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "legacyTools",
+        alias = "tools",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub legacy_tools: Option<Vec<String>>,
 }
 

@@ -3,8 +3,6 @@
 //! GET/PUT preserve raw on-disk JSON formatting. PATCH toggles a single
 //! server's `enabled` flag. Status runs on-demand health checks.
 //!
-//! TODO: Use https://github.com/agentclientprotocol/rust-sdk/tree/main/src/agent-client-protocol-rmcp
-
 use std::path::Path;
 use std::time::Duration;
 
@@ -44,10 +42,6 @@ pub async fn put_mcp(
 ) -> Result<Response, ApiResponseError> {
     let path = require_mcp_path(&state)?;
     McpFile::save_raw(path, &body).map_err(mcp_write_error)?;
-    // Config change invalidates the lazy tools/list cache (S-PROF-TOOLS).
-    if let Some(catalog) = state.tool_catalog.as_ref() {
-        catalog.invalidate();
-    }
     Ok(json_bytes_response(StatusCode::OK, body.to_vec()))
 }
 
@@ -80,10 +74,6 @@ pub async fn patch_mcp_server(
         error!(%error, "save mcp config failed");
         ApiResponseError::internal(format!("save mcp config: {error}"))
     })?;
-    // Toggle changes the enabled set; drop cached tools/list snapshot.
-    if let Some(catalog) = state.tool_catalog.as_ref() {
-        catalog.invalidate();
-    }
 
     Ok(Json(json!({
         "name": name,

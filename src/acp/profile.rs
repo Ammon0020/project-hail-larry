@@ -305,7 +305,9 @@ mod tests {
         .expect("legacy profile config");
         let middleware = ProfileMiddleware::from_config(config);
         assert_eq!(
-            middleware.mcp_servers_for_session("session").expect("policy"),
+            middleware
+                .mcp_servers_for_session("session")
+                .expect("policy"),
             Some(Vec::new())
         );
     }

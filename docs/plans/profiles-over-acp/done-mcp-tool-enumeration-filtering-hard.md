@@ -4,6 +4,11 @@
 > **Epic:** [profiles-over-acp](../complete-profiles-over-acp-hard.md).
 > **Depends on:** S-PROF-CONFIG | **Blocks:** S-PROF-UI (tool checkboxes).
 
+> **Superseded 2026-07-22:** Stable ACP attaches whole MCP servers at session
+> creation. The tool catalog and per-tool policy were removed in favor of the
+> profile-level `mcpServers` allowlist; see
+> `docs/plans/other_tasks/active-profile-mcp-transition-hard-high.md`.
+
 ## Goal
 
 Enumerate the individual tools each enabled MCP server exposes (via `tools/list`,

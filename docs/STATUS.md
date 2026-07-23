@@ -37,18 +37,16 @@
   LAN relative-asset auth complete; dev-server proxy, mobile UX, and auto-index
   remain. See `docs/plans/complete-workspace-preview-small.md`.
 - [ ] **Phase 2** — concurrent workers, capability negotiation, diagnostics.
-- [x] **Profiles over ACP** — all 7 stories done: config schema/loader,
-  mockagent mode-cap, MCP tool enumeration + per-profile filtering, REST CRUD,
-  ACP `set_config_option` send path + `POST /sessions/:id/profile` endpoint,
-  Settings Profiles tab, and dynamic chat selector with per-session persistence.
+- [x] **Profiles over ACP** — config schema/loader, mockagent mode-cap, REST
+  CRUD, ACP `set_config_option` send path + `POST /sessions/:id/profile`,
+  Settings Profiles tab, and a dynamic chat selector with per-session
+  persistence. Profiles now select complete MCP servers; per-tool enumeration
+  was superseded because ACP attaches servers, not subsets of server tools.
   See `docs/plans/complete-profiles-over-acp-hard.md`.
 - [~] **Profile MCP transitions** — active: keep profile switching available,
   while offering ACP-safe new-session, fresh-chat, or instructions-only choices
   when MCP access differs. See
   `docs/plans/other_tasks/active-profile-mcp-transition-hard-high.md`.
-- [ ] **rmcp migration** — replace hand-rolled MCP JSON-RPC in `src/mcp/tools.rs`
-  with `agent-client-protocol-rmcp`; bump ACP SDK 1.2.0 → 1.3.0. See
-  `docs/plans/other_tasks/pending-rmcp-migration-med-low.md`.
 
 ## Blocked
 
