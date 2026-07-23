@@ -9,6 +9,7 @@ import {
   Users,
 } from 'lucide-react'
 import {
+  getMcpConfig,
   getProfiles,
   putProfiles,
   type ProfileConfig,
@@ -58,16 +59,18 @@ function configEqual(a: ProfileConfig, b: ProfileConfig): boolean {
 }
 
 /** Parses the comma-separated MCP server text input into a normalized string[]. */
-function parseServers(text: string): string[] {
-  return text
-    .split(',')
-    .map(t => t.trim())
-    .filter(Boolean)
+interface McpServerOption {
+  name: string
+  enabled: boolean
 }
 
-/** Joins an MCP server allowlist back into the comma-separated editor string. */
-function joinServers(servers: string[] | undefined): string {
-  return servers?.join(', ') ?? ''
+function parseMcpServerOptions(raw: string): McpServerOption[] {
+  const parsed = JSON.parse(raw) as {
+    mcpServers?: Record<string, { enabled?: boolean }>
+  }
+  return Object.entries(parsed.mcpServers ?? {})
+    .map(([name, config]) => ({ name, enabled: config.enabled !== false }))
+    .sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /**
@@ -79,8 +82,8 @@ function joinServers(servers: string[] | undefined): string {
  * panel never claims success on failure and never silently reverts local
  * edits, so the user can fix and retry without losing their work.
  *
- * The server allowlist is a comma-separated input so it can preserve unknown
- * configured names while `mcp.json` is edited in another Settings tab.
+ * Available servers are loaded from MCP Settings. Existing selections that are
+ * disabled or no longer configured stay visible so users can remove them.
  */
 export function ProfilesSettings() {
   const [saved, setSaved] = useState<ProfileConfig | null>(null)
@@ -89,6 +92,8 @@ export function ProfilesSettings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [mcpServers, setMcpServers] = useState<McpServerOption[]>([])
+  const [mcpServersError, setMcpServersError] = useState<string | null>(null)
   const [savedFlash, setSavedFlash] = useState(false)
   const savedFlashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
@@ -118,6 +123,26 @@ export function ProfilesSettings() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load()
   }, [load])
+
+  useEffect(() => {
+    let cancelled = false
+    void getMcpConfig()
+      .then(raw => {
+        if (!cancelled) {
+          setMcpServers(parseMcpServerOptions(raw))
+          setMcpServersError(null)
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setMcpServers([])
+          setMcpServersError(err instanceof Error ? err.message : String(err))
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Clear the "Saved" flash timer if the component unmounts (e.g. the user
   // switches settings tabs) before the 2s timeout fires.
@@ -358,6 +383,8 @@ export function ProfilesSettings() {
               isDefault={draft.defaultProfileId === selectedId}
               labelTooLong={selected.label.length > LABEL_MAX}
               instructionsTooLong={selected.instructions.length > INSTRUCTIONS_MAX}
+              mcpServers={mcpServers}
+              mcpServersError={mcpServersError}
               onChange={updateSelected}
               onSetDefault={() => handleSetDefault(selectedId)}
               onDelete={() => handleDelete(selectedId)}
@@ -444,6 +471,8 @@ function ProfileEditor({
   isDefault,
   labelTooLong,
   instructionsTooLong,
+  mcpServers,
+  mcpServersError,
   onChange,
   onSetDefault,
   onDelete,
@@ -454,28 +483,37 @@ function ProfileEditor({
   isDefault: boolean
   labelTooLong: boolean
   instructionsTooLong: boolean
+  mcpServers: McpServerOption[]
+  mcpServersError: string | null
   onChange: (patch: Partial<ProfileEntry>) => void
   onSetDefault: () => void
   onDelete: () => void
   canDelete: boolean
 }) {
-  // Local text buffer preserves trailing commas/spaces until blur, so users can
-  // enter multiple server names without normalization fighting their typing.
-  const [serversText, setServersText] = useState(joinServers(entry.mcpServers))
-  // Sync the local text buffer when the selected profile changes or the
-  // parent normalizes the server array (e.g. after a save round-trip). Same
-  // set-state-in-effect pattern used by load() above.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setServersText(joinServers(entry.mcpServers))
-  }, [entry.mcpServers, id])
-
   const labelLen = entry.label.length
   const instrLen = entry.instructions.length
   // Choosing an explicit server policy completes the legacy tool-list
   // migration. `undefined` is intentional: JSON omits `legacyTools` on save.
   const updateServers = (mcpServers: string[] | undefined) =>
     onChange({ mcpServers, legacyTools: undefined })
+  const selectedServers = new Set(entry.mcpServers ?? [])
+  const knownServerNames = new Set(mcpServers.map(server => server.name))
+  const disabledSelectedServers = mcpServers.filter(
+    server => !server.enabled && selectedServers.has(server.name),
+  )
+  const staleServers = [...selectedServers].filter(name => !knownServerNames.has(name))
+  const selectableServers = [
+    ...mcpServers.filter(server => server.enabled),
+    ...disabledSelectedServers,
+    ...staleServers.map(name => ({ name, enabled: false })),
+  ]
+
+  const toggleServer = (name: string, checked: boolean) => {
+    const next = new Set(entry.mcpServers ?? [])
+    if (checked) next.add(name)
+    else next.delete(name)
+    updateServers([...next].sort())
+  }
 
   return (
     <div className="p-4 bg-panel border border-border rounded-lg space-y-4">
@@ -601,25 +639,40 @@ function ProfileEditor({
           />
           All enabled MCP servers
         </label>
-        <label
-          htmlFor={`profile-mcp-servers-${id}`}
-          className="block text-xs text-muted-foreground mb-1"
-        >
-          Selected MCP servers
-        </label>
-        <input
-          id={`profile-mcp-servers-${id}`}
-          type="text"
-          value={serversText}
-          disabled={entry.mcpServers === undefined}
-          onChange={e => setServersText(e.target.value)}
-          onBlur={() => updateServers(parseServers(serversText))}
-          placeholder="e.g. context7, workspace-read"
-          className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm font-mono disabled:opacity-50"
-        />
+        <fieldset disabled={entry.mcpServers === undefined} className="space-y-1.5">
+          <legend className="text-xs text-muted-foreground mb-1">
+            Selected MCP servers
+          </legend>
+          {mcpServersError ? (
+            <p className="text-[11px] text-destructive">
+              Could not load MCP servers: {mcpServersError}
+            </p>
+          ) : selectableServers.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              No enabled MCP servers are configured.
+            </p>
+          ) : (
+            <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-input bg-background p-2">
+              {selectableServers.map(server => (
+                <label key={server.name} className="flex items-center gap-2 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={selectedServers.has(server.name)}
+                    disabled={!server.enabled && !selectedServers.has(server.name)}
+                    onChange={event => toggleServer(server.name, event.target.checked)}
+                  />
+                  <span className="font-mono">{server.name}</span>
+                  {!server.enabled && (
+                    <span className="text-[10px] text-muted-foreground">unavailable</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          )}
+        </fieldset>
         <p className="text-[11px] text-muted-foreground mt-1">
           Leave “All enabled MCP servers” selected to omit this policy. Turn it
-          off and leave this field empty to allow no MCP servers.
+          off and select none to allow no MCP servers.
         </p>
         {entry.legacyTools && entry.legacyTools.length > 0 && (
           <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2">
