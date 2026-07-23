@@ -1,7 +1,7 @@
 # Story S-PROF-ACP: ACP set_config_option Send + Profile Endpoint + Drop REST Field
 
 > **Status:** done | **Difficulty:** hard
-> **Epic:** [profiles-over-acp](../pending-profiles-over-acp-hard.md).
+> **Epic:** [profiles-over-acp](../complete-profiles-over-acp-hard.md).
 > **Depends on:** S-PROF-CONFIG, S-PROF-MOCK.
 > **Blocks:** S-PROF-CHAT (endpoint + body change).
 
@@ -46,10 +46,13 @@ switch endpoint; and REMOVE the non-standard `profile` field from the
 - [x] Agent advertising `mode` config option receives
       `session/set_config_option { option: "profile", value }` on session setup
       and on profile change (verified against mockagent, S-PROF-MOCK).
-- [x] Agent WITHOUT the capability falls back to prompt injection; instructions
+- [~] Agent WITHOUT the capability falls back to prompt injection; instructions
       still applied (fallback branch is the `profile_config_id == None` path;
       `MOCKAGENT_NO_MODE_CAP=1` fallback test deferred — env wiring per-test is
-      not in the existing harness, noted in `docs/known-issues.md` if needed).
+      not in the existing harness; the capability-present branch is covered by
+      `mockagent_initial_profile_sent_over_acp_when_capability_advertised`, but
+      the no-capability fallback branch is NOT tested. See
+      `docs/known-issues.md` "Profile-over-ACP fallback branch untested").
 - [x] `POST /sessions/:id/profile` sets the session profile; unknown id → 400;
       missing session → 404; requires auth (protected router).
 - [x] `/sessions/:id/prompt` no longer reads a `profile` body field; sending one

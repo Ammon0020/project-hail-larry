@@ -1,5 +1,5 @@
 import { type KeyboardEvent, useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Plus, ArrowUp, Square, X, Loader2, Wrench, Code, Star } from 'lucide-react'
+import { Plus, ArrowUp, Square, X, Loader2, Wrench, Users, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   getModelPrefs,
@@ -269,7 +269,7 @@ export function ChatComposer({
               className="relative flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer text-muted-foreground hover:bg-white/[0.04] hover:text-foreground transition-colors"
               title="Profile context"
             >
-              <Code className="w-3.5 h-3.5" strokeWidth={2} />
+              <Users className="w-3.5 h-3.5" strokeWidth={2} />
               <span className="text-[13px] pointer-events-none max-[500px]:hidden">
                 {profiles.find((p) => p.id === selectedProfileId)?.label ?? selectedProfileId}
               </span>
@@ -277,6 +277,8 @@ export function ChatComposer({
                 value={selectedProfileId}
                 onChange={(e) => onProfileChange(e.target.value)}
                 disabled={profiles.length === 0}
+                aria-label="Profile"
+                aria-haspopup="listbox"
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent disabled:cursor-not-allowed"
               >
                 {profiles.map((p) => (

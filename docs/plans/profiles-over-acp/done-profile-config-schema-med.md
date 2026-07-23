@@ -1,7 +1,7 @@
 # Story S-PROF-CONFIG: Profile Config Schema + Loader
 
 > **Status:** done | **Difficulty:** med
-> **Epic:** [profiles-over-acp](../pending-profiles-over-acp-hard.md).
+> **Epic:** [profiles-over-acp](../complete-profiles-over-acp-hard.md).
 > **Depends on:** — | **Blocks:** S-PROF-TOOLS, S-PROF-REST, S-PROF-ACP.
 
 ## Goal

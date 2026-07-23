@@ -1,7 +1,7 @@
 # Story S-PROF-UI: Settings Profiles Tab
 
 > **Status:** pending | **Difficulty:** med
-> **Epic:** [profiles-over-acp](../pending-profiles-over-acp-hard.md).
+> **Epic:** [profiles-over-acp](../complete-profiles-over-acp-hard.md).
 > **Depends on:** S-PROF-REST, S-PROF-TOOLS.
 
 ## Goal

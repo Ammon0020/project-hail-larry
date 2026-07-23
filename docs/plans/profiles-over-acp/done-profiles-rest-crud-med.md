@@ -1,7 +1,7 @@
 # Story S-PROF-REST: REST GET/PUT /api/profiles CRUD
 
 > **Status:** pending | **Difficulty:** med
-> **Epic:** [profiles-over-acp](../pending-profiles-over-acp-hard.md).
+> **Epic:** [profiles-over-acp](../complete-profiles-over-acp-hard.md).
 > **Depends on:** S-PROF-CONFIG | **Blocks:** S-PROF-UI, S-PROF-CHAT.
 
 ## Goal

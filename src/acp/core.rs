@@ -862,6 +862,8 @@ impl ACPClient for Client {
             entry.prompt_cancel = prompt_cancel;
             entry.caps = startup.caps;
             entry.model_config_id = startup.model_config_id;
+            // Replacement agent may advertise a different mode option (or none).
+            entry.profile_config_id = startup.profile_config_id;
             entry.acp_session_id = startup.acp_session_id;
             entry.info.agent_id = agent_id.to_string();
             entry.info.model_id = model_id.to_string();
@@ -1027,13 +1029,15 @@ impl ACPClient for Client {
     ///
     /// Capability gate: when the agent advertised a mode-category config option
     /// (cached as `SessionEntry::profile_config_id`), the new profile id is sent
-    /// over ACP via `session/set_config_option`. Agents without the capability
-    /// keep using the prompt-injection fallback in `context.rs` — the stored
-    /// selection still drives instruction injection on the next prompt.
+    /// over ACP via `session/set_config_option` *before* local middleware is
+    /// updated. Agents without the capability keep using the prompt-injection
+    /// fallback in `context.rs` — local state is committed immediately so the
+    /// next prompt still injects the selected instructions.
     ///
     /// Profile id is validated against the loaded config; unknown ids return
     /// `AppError::validation` (HTTP 400). A missing session returns
-    /// `AppError::not_found` (HTTP 404).
+    /// `AppError::not_found` (HTTP 404). On a live capability RPC failure the
+    /// local profile is left unchanged so client and agent stay consistent.
     async fn set_session_profile(&self, session_id: &str, profile: &str) -> Result<(), AppError> {
         // Validate the profile id against the loaded config BEFORE storing or
         // sending. `normalize_profile_id` maps unknown ids to the default, so
@@ -1056,21 +1060,16 @@ impl ACPClient for Client {
         }
         let normalized = config.normalize_profile_id(profile);
 
-        // Reject missing sessions before mutating middleware state so a stale
-        // id does not leave an orphaned entry in the profile map. Live and
-        // dormant sessions are both accepted; dormant sessions pick up the
-        // profile on actor startup (initial set_config_option send).
+        // Reject missing sessions before any mutation so a stale id does not
+        // leave an orphaned entry in the profile map. Live and dormant sessions
+        // are both accepted; dormant sessions pick up the profile on actor
+        // startup (initial set_config_option send).
         if !self.has_live_session(session_id)? && !self.dormant_read()?.contains_key(session_id) {
             return Err(AppError::not_found_id("session", session_id));
         }
 
-        // Store the selection so the prompt-injection fallback (and the
-        // tool whitelist) see it on the next prompt.
-        self.pipeline.profiles.set_profile(session_id, profile)?;
-
-        // Best-effort live push: only live sessions with an advertised
-        // mode-category config option receive `session/set_config_option`.
-        // Dormant sessions or capability-less agents rely on prompt injection.
+        // Live agents with a mode-category option must confirm first. Commit
+        // local state only after the RPC succeeds (or when no RPC is needed).
         let push_result = self.session_for_profile_switch(session_id);
         if let Ok((sender, Some(config_id))) = push_result {
             let (result_tx, result_rx) = oneshot::channel();
@@ -1086,8 +1085,8 @@ impl ACPClient for Client {
                 .await
                 .map_err(|_| AppError::internal("ACP set_profile actor exited"))??;
         } else if let Err(error) = push_result {
-            // Session not live: profile is stored for the next prompt; the
-            // initial set_config_option on actor startup will pick it up.
+            // Session not live: local commit below still applies for the next
+            // prompt; initial set_config_option on actor startup picks it up.
             tracing::debug!(
                 session_id,
                 profile = %normalized,
@@ -1095,6 +1094,10 @@ impl ACPClient for Client {
                 "set_session_profile: session not live; profile stored for next prompt"
             );
         }
+
+        // Commit after a successful RPC, or immediately when there is no live
+        // capability path (no option / dormant) so prompt injection sees it.
+        self.pipeline.profiles.set_profile(session_id, profile)?;
         Ok(())
     }
 
@@ -2862,6 +2865,10 @@ mod tests {
 
     /// Create an isolated ACP client with a configurable conversation store and
     /// no live sessions (used to simulate post-restart dormant metadata).
+    ///
+    /// Registers both a default mock agent (mode/profile capability on) and a
+    /// `mock-nocap` agent that suppresses the mode option via
+    /// `MOCKAGENT_NO_MODE_CAP=1` for rebind/fallback coverage.
     async fn mock_client_empty(
         conversation_store: ConversationStore,
     ) -> (Arc<Client>, Arc<RecordingPermissions>, TempDir, String) {
@@ -2879,17 +2886,29 @@ mod tests {
         let event_bus = Arc::new(EventBus::new(
             Store::open(tempdir.path().join("events.db")).expect("open test event store"),
         ));
-        let registry = Arc::new(AgentRegistry::from_agents([AgentInfo {
-            id: "mock".to_string(),
-            name: "Mock agent".to_string(),
-            command: MOCKAGENT_BIN.to_string(),
-            args: Vec::new(),
-            models: vec![AgentModel::new(
-                "mock-model".to_string(),
-                "Mock model".to_string(),
-            )],
-            warning: String::new(),
-        }]));
+        let mock_model = AgentModel::new("mock-model".to_string(), "Mock model".to_string());
+        let registry = Arc::new(AgentRegistry::from_agents([
+            AgentInfo {
+                id: "mock".to_string(),
+                name: "Mock agent".to_string(),
+                command: MOCKAGENT_BIN.to_string(),
+                args: Vec::new(),
+                models: vec![mock_model.clone()],
+                warning: String::new(),
+            },
+            // `env` injects MOCKAGENT_NO_MODE_CAP without process-global set_var.
+            AgentInfo {
+                id: "mock-nocap".to_string(),
+                name: "Mock agent without mode cap".to_string(),
+                command: "env".to_string(),
+                args: vec![
+                    "MOCKAGENT_NO_MODE_CAP=1".to_string(),
+                    MOCKAGENT_BIN.to_string(),
+                ],
+                models: vec![mock_model],
+                warning: String::new(),
+            },
+        ]));
         let client = Arc::new(Client::new(ClientDeps {
             registry,
             workspaces,
@@ -3177,6 +3196,96 @@ mod tests {
             .close_session(&session.id)
             .await
             .expect("close rebound session");
+    }
+
+    /// Rebind must refresh `profile_config_id` from the replacement actor so
+    /// `session_for_profile_switch` reflects the new agent's mode capability.
+    #[tokio::test]
+    async fn rebind_refreshes_profile_config_id_from_replacement_agent() {
+        let (client, _permissions, _workspace, workspace_id) =
+            mock_client_empty(ConversationStore::new(None)).await;
+        let session = client
+            .create_session("mock-nocap", "mock-model", &workspace_id)
+            .await
+            .expect("create session without mode capability");
+
+        let (_, before_cfg) = client
+            .session_for_profile_switch(&session.id)
+            .expect("live session lookup");
+        assert_eq!(
+            before_cfg, None,
+            "mock-nocap must not advertise a mode/profile config option"
+        );
+
+        client
+            .rebind_session(&session.id, "mock", "mock-model", 8 * 1024)
+            .await
+            .expect("rebind to agent with mode capability");
+
+        let (_, after_cfg) = client
+            .session_for_profile_switch(&session.id)
+            .expect("live session lookup after rebind");
+        assert_eq!(
+            after_cfg.as_deref(),
+            Some("profile"),
+            "rebind must cache the replacement agent's profile config id"
+        );
+
+        client
+            .close_session(&session.id)
+            .await
+            .expect("close rebound session");
+    }
+
+    /// When a live profile RPC cannot be delivered, local middleware must not
+    /// advance — client and agent stay consistent (commit-after-RPC order).
+    #[tokio::test]
+    async fn set_session_profile_leaves_local_state_on_rpc_failure() {
+        let (client, _permissions, _workspace) = mock_client().await;
+        let session = client.list_sessions().pop().expect("one mock session");
+
+        // Ensure a known local selection before the failed switch.
+        client
+            .pipeline
+            .profiles
+            .set_profile(&session.id, "code")
+            .expect("seed local profile");
+        assert_eq!(
+            client
+                .pipeline
+                .profiles
+                .profile(&session.id)
+                .expect("read seeded profile"),
+            "code"
+        );
+
+        // Force the capability path, then break the actor command channel so
+        // SetProfile cannot complete. Local state must stay at "code".
+        {
+            let mut sessions = client.sessions.write().expect("sessions lock");
+            let entry = sessions
+                .get_mut(&session.id)
+                .expect("session remains registered");
+            entry.profile_config_id = Some("profile".to_string());
+            let (dead_tx, dead_rx) = tokio::sync::mpsc::channel(1);
+            drop(dead_rx);
+            entry.commands = dead_tx;
+        }
+
+        let result = client.set_session_profile(&session.id, "ask").await;
+        assert!(
+            result.is_err(),
+            "broken actor channel must surface as set_session_profile error"
+        );
+        assert_eq!(
+            client
+                .pipeline
+                .profiles
+                .profile(&session.id)
+                .expect("read profile after failed switch"),
+            "code",
+            "local profile must not commit when the ACP update fails"
+        );
     }
 
     /// After restart, `list_sessions` must surface durable metadata with no actors.

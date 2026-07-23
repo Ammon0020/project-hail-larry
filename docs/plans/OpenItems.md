@@ -26,7 +26,7 @@ Tracked gaps and decisions to address in the Local Agent Interface blueprint and
 
 ---
 
-## Profiles over ACP (pending epic — see `pending-profiles-over-acp-hard.md`)
+## Profiles over ACP (complete epic — see `complete-profiles-over-acp-hard.md`)
 
 - [ ] **Tool enumeration caching strategy** — When to call `tools/list` per MCP
   server (session-setup vs config-time vs lazy), TTL, and invalidation on MCP

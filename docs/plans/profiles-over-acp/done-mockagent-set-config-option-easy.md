@@ -1,7 +1,7 @@
 # Story S-PROF-MOCK: Mock Agent Honors set_config_option Mode
 
 > **Status:** pending | **Difficulty:** easy
-> **Epic:** [profiles-over-acp](../pending-profiles-over-acp-hard.md).
+> **Epic:** [profiles-over-acp](../complete-profiles-over-acp-hard.md).
 > **Depends on:** — | **Blocks:** S-PROF-ACP (contract coverage).
 
 ## Goal

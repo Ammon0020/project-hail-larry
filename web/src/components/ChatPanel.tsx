@@ -173,13 +173,13 @@ export function ChatPanel({
     handleToggleMcpServer,
   } = useMcpServers()
 
-  // Profile config + per-session selection. Profiles are fetched once on
-  // mount from GET /api/profiles; the selected profile id is derived during
-  // render from (a) a session-scoped user override, (b) the value persisted
-  // in localStorage for the active session, or (c) the configured
-  // defaultProfileId. Deriving during render avoids setState-in-effect
-  // cascading renders while still restoring the per-session profile on
-  // session switch. The selection is pushed to the backend via
+  // Profile config + per-session selection. Profiles are fetched on mount
+  // and refreshed when Settings dispatches `profiles-changed`. The selected
+  // profile id is derived during render from (a) a session-scoped user
+  // override, (b) the value persisted in localStorage for the active session,
+  // or (c) the configured defaultProfileId. Deriving during render avoids
+  // setState-in-effect cascading renders while still restoring the per-session
+  // profile on session switch. The selection is pushed to the backend via
   // POST /sessions/:id/profile on change so the next prompt uses it.
   const [profileConfig, setProfileConfig] = useState<ProfileConfig | null>(null)
   const profiles = useMemo(
@@ -203,35 +203,66 @@ export function ChatPanel({
   } | null>(null)
 
   const selectedProfileId = useMemo(() => {
-    if (profileOverride && profileOverride.sessionId === activeSessionId) {
-      return profileOverride.profileId
+    // '' override is the pre-session (new chat) pick; activeSessionId is null then.
+    const overrideApplies =
+      !!profileOverride &&
+      (profileOverride.sessionId === activeSessionId ||
+        (profileOverride.sessionId === '' && !activeSessionId))
+
+    let resolved: string
+    if (overrideApplies && profileOverride) {
+      resolved = profileOverride.profileId
+    } else if (!profileConfig) {
+      return ''
+    } else if (!activeSessionId) {
+      resolved = profileConfig.defaultProfileId
+    } else {
+      try {
+        const persisted = localStorage.getItem(`local-agent:profile:${activeSessionId}`)
+        resolved = persisted || profileConfig.defaultProfileId
+      } catch {
+        // localStorage unavailable (private mode / disabled) — fall back to default.
+        resolved = profileConfig.defaultProfileId
+      }
     }
-    if (!profileConfig) return ''
-    if (!activeSessionId) return profileConfig.defaultProfileId
-    try {
-      const persisted = localStorage.getItem(`local-agent:profile:${activeSessionId}`)
-      return persisted || profileConfig.defaultProfileId
-    } catch {
-      // localStorage unavailable (private mode / disabled) — fall back to default.
+
+    // Drop deleted/unknown ids so the composer never renders a raw orphan id.
+    if (profileConfig && resolved && !profileConfig.profiles[resolved]) {
+      if (activeSessionId) {
+        try {
+          localStorage.removeItem(`local-agent:profile:${activeSessionId}`)
+        } catch {
+          // Ignore storage failures — fallback below still keeps the UI valid.
+        }
+      }
       return profileConfig.defaultProfileId
     }
+    return resolved
   }, [profileOverride, activeSessionId, profileConfig])
 
-  // Fetch profile config once on mount. Errors are non-fatal — the selector
-  // just stays empty until a successful reload (e.g. after reconnect).
+  // Fetch profile config on mount and whenever Settings saves profiles.
+  // Errors are non-fatal — the selector stays empty until a successful reload.
   useEffect(() => {
     let cancelled = false
-    void getProfiles()
-      .then((cfg) => {
-        if (cancelled) return
-        setProfileConfig(cfg)
-      })
-      .catch((err) => {
-        // Log but don't surface — the composer degrades to an empty dropdown.
-        console.error('Failed to load chat profiles:', err)
-      })
+    const loadProfiles = () => {
+      void getProfiles()
+        .then((cfg) => {
+          if (cancelled) return
+          setProfileConfig(cfg)
+        })
+        .catch((err) => {
+          // Log but don't surface — the composer degrades to an empty dropdown.
+          console.error('Failed to load chat profiles:', err)
+        })
+    }
+    loadProfiles()
+    const onProfilesChanged = () => {
+      loadProfiles()
+    }
+    window.addEventListener('profiles-changed', onProfilesChanged)
     return () => {
       cancelled = true
+      window.removeEventListener('profiles-changed', onProfilesChanged)
     }
   }, [])
 
@@ -243,8 +274,8 @@ export function ChatPanel({
   const handleProfileChange = async (profileId: string) => {
     if (profileId === selectedProfileId) return
     if (!activeSessionId) {
-      // No live session yet — remember the selection for the new-chat state;
-      // it gets pushed to the backend when the session is created on first send.
+      // No live session yet — remember the pick; handleSend applies it after
+      // onCreateSession via setSessionProfile + localStorage.
       setProfileOverride({ sessionId: '', profileId })
       return
     }
@@ -426,6 +457,23 @@ export function ChatPanel({
         sessionId = await onCreateSession(effectiveAgentId, effectiveModelId)
         // A real session now exists — drop the transient "New chat" placeholder.
         setShowNewChatTab(false)
+        // Apply a profile chosen on the empty new-chat tab before first send.
+        // Profile is a hint: failures are surfaced but must not block the prompt.
+        if (profileOverride?.sessionId === '') {
+          const pendingProfileId = profileOverride.profileId
+          setProfileOverride({ sessionId, profileId: pendingProfileId })
+          try {
+            await setSessionProfile(sessionId, pendingProfileId)
+            try {
+              localStorage.setItem(`local-agent:profile:${sessionId}`, pendingProfileId)
+            } catch {
+              // Ignore write failures (quota / disabled storage).
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to apply profile'
+            setError(message)
+          }
+        }
       }
       // Always ensure the active session is opened as a tab — covers both the
       // newly-created case above and an existing activeSessionId that hasn't

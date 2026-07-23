@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
   Plus,
   Trash2,
@@ -86,6 +86,7 @@ export function ProfilesSettings() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [savedFlash, setSavedFlash] = useState(false)
+  const savedFlashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -113,6 +114,15 @@ export function ProfilesSettings() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load()
   }, [load])
+
+  // Clear the "Saved" flash timer if the component unmounts (e.g. the user
+  // switches settings tabs) before the 2s timeout fires.
+  useEffect(
+    () => () => {
+      if (savedFlashTimer.current) clearTimeout(savedFlashTimer.current)
+    },
+    [],
+  )
 
   const dirty = useMemo(
     () => (saved && draft ? !configEqual(saved, draft) : false),
@@ -210,7 +220,9 @@ export function ProfilesSettings() {
       await putProfiles(draft)
       setSaved(draft)
       setSavedFlash(true)
-      setTimeout(() => setSavedFlash(false), 2000)
+      savedFlashTimer.current = setTimeout(() => setSavedFlash(false), 2000)
+      // Notify ChatPanel (and any other listeners) to re-fetch profile labels.
+      window.dispatchEvent(new CustomEvent('profiles-changed'))
     } catch (e) {
       // Backend 400 carries an `error` body — surface it inline, do NOT
       // revert local edits so the user can fix and retry.
@@ -307,6 +319,7 @@ export function ProfilesSettings() {
                 <li key={id}>
                   <button
                     onClick={() => setSelectedId(id)}
+                    aria-current={active ? 'true' : undefined}
                     className={cn(
                       'w-full text-left px-3 py-2 text-sm transition flex items-center justify-between gap-2',
                       active
@@ -442,7 +455,19 @@ function ProfileEditor({
   onDelete: () => void
   canDelete: boolean
 }) {
-  const toolsText = joinTools(entry.tools)
+  // Local text buffer for the tools input. We keep the raw text the user is
+  // typing (including trailing commas/spaces) and only normalize via parseTools
+  // on blur — otherwise the round-trip through joinTools/parseTools on every
+  // keystroke strips the trailing comma and makes multi-tool entry impossible.
+  const [toolsText, setToolsText] = useState(joinTools(entry.tools))
+  // Sync the local text buffer when the selected profile changes or the
+  // parent normalizes the tools array (e.g. after a save round-trip). Same
+  // set-state-in-effect pattern used by load() above.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setToolsText(joinTools(entry.tools))
+  }, [entry.tools, id])
+
   const labelLen = entry.label.length
   const instrLen = entry.instructions.length
 
@@ -572,7 +597,8 @@ function ProfileEditor({
           id={`profile-tools-${id}`}
           type="text"
           value={toolsText}
-          onChange={e => onChange({ tools: parseTools(e.target.value) })}
+          onChange={e => setToolsText(e.target.value)}
+          onBlur={() => onChange({ tools: parseTools(toolsText) })}
           placeholder="e.g. read_file, write_file, run_shell"
           className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm font-mono"
         />

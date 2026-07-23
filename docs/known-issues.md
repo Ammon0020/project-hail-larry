@@ -70,6 +70,34 @@ handshake when valid, or (c) a daemon-side approach that keeps auth alive
 across restarts (not possible while tokens are opaque). Track upstream SDK
 releases for (a).
 
+## Profile-over-ACP fallback branch untested (Medium)
+
+Investigated 2026-07-21. The prompt-injection fallback in
+`src/acp/providers.rs` (`find_profile_config_id == None` path, triggered when
+an agent does NOT advertise the `mode`-category `profile` config option) has no
+test. The mockagent supports `MOCKAGENT_NO_MODE_CAP=1`
+(`cmd/mockagent/main.go:37,129-131`) to suppress the advertisement, but the
+test harness in `tests/acp_core_lifecycle.rs` spawns the mockagent via
+`AgentInfo { command, args, ... }` with no per-test env-var field, and
+`std::process::Command::new(&config.agent.command)` in `src/acp/core.rs` does
+not thread env vars from the registry. Setting the env var process-wide would
+race with the parallel capability-present tests (`cargo test` runs them
+concurrently). Adding per-test env wiring requires an `AgentInfo` schema change
+in `src/`, out of scope for the review pass.
+
+The capability-present branch IS covered by
+`mockagent_initial_profile_sent_over_acp_when_capability_advertised`. Story
+S-PROF-ACP acceptance criterion #2 is marked `[~]` (partial) in
+`docs/plans/profiles-over-acp/done-acp-set-config-option-send-hard.md`.
+
+**Fix path:** Add an `env: Vec<(String, String)>` (or `HashMap`) field to
+`AgentInfo` (`src/config/...`), thread it through `AgentRegistry` → actor spawn
+in `src/acp/core.rs` (`std::process::Command::new(...).envs(...)`), then add a
+test that registers a mockagent entry with `MOCKAGENT_NO_MODE_CAP=1`, creates a
+session, sends a prompt, and asserts the reply does NOT start with
+`[profile: code]` (proving `set_config_option` was skipped) while profile
+instructions are still injected.
+
 ## Clippy 1.92.0 — `manual_inspect` lint in `src/acp/core.rs` (Low)
 
 Investigated 2026-07-21. A toolchain bump to rust-1.92.0 introduced the

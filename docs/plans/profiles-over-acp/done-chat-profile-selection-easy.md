@@ -1,7 +1,7 @@
 # Story S-PROF-CHAT: Chat Profile Selector — Dynamic List + Per-Session Persistence
 
 > **Status:** done | **Difficulty:** easy
-> **Epic:** [profiles-over-acp](../pending-profiles-over-acp-hard.md).
+> **Epic:** [profiles-over-acp](../complete-profiles-over-acp-hard.md).
 > **Depends on:** S-PROF-REST, S-PROF-ACP.
 
 ## Goal

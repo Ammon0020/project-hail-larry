@@ -1,7 +1,7 @@
 # Story S-PROF-TOOLS: MCP Tool Enumeration + Per-Profile Filtering
 
-> **Status:** pending | **Difficulty:** hard
-> **Epic:** [profiles-over-acp](../pending-profiles-over-acp-hard.md).
+> **Status:** done | **Difficulty:** hard
+> **Epic:** [profiles-over-acp](../complete-profiles-over-acp-hard.md).
 > **Depends on:** S-PROF-CONFIG | **Blocks:** S-PROF-UI (tool checkboxes).
 
 ## Goal
