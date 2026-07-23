@@ -3,5 +3,5 @@
   "path": "/api/profiles",
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"profiles\":{\"ask\":{\"label\":\"Ask\",\"instructions\":\"You are in ASK mode. Answer questions and analyze the codebase. Do not modify files or run commands that write to disk.\",\"tools\":[]},\"code\":{\"label\":\"Code\",\"instructions\":\"You are in CODE mode. Implement requested changes, edit files, and run relevant commands as needed.\",\"tools\":[]},\"plan\":{\"label\":\"Plan\",\"instructions\":\"You are in PLAN mode. Produce a detailed implementation plan and ask for explicit confirmation before writing code or running commands.\",\"tools\":[]}},\"defaultProfileId\":\"code\"}\n"
+  "body": "{\"profiles\":{\"ask\":{\"label\":\"Ask\",\"instructions\":\"You are in ASK mode. Answer questions and analyze the codebase. Do not modify files or run commands that write to disk.\"},\"code\":{\"label\":\"Code\",\"instructions\":\"You are in CODE mode. Implement requested changes, edit files, and run relevant commands as needed.\"},\"plan\":{\"label\":\"Plan\",\"instructions\":\"You are in PLAN mode. Produce a detailed implementation plan and ask for explicit confirmation before writing code or running commands.\"}},\"defaultProfileId\":\"code\"}\n"
 }
