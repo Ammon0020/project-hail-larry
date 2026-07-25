@@ -1,6 +1,6 @@
 # Project Status — Local Agent Interface
 
-> Updated: 2026-07-22. Task detail lives in `docs/plans/`; deferred gaps in
+> Updated: 2026-07-24. Task detail lives in `docs/plans/`; deferred gaps in
 > `docs/known-issues.md`; architecture is `docs/plans/Blueprint.md`.
 
 ## What Works
@@ -31,10 +31,9 @@
 - [ ] **Multi-user** — multi-device/single-user is decided; multi-user is future.
 - [ ] **ACP futures** — workers, session lifecycle, elicitation, NES, audio,
   and ACP inspector.
-- [ ] **ACP core modularization** — split the large session transport into
-  actor, turn, registry, callback, MCP, and diagnostics modules while
-  preserving its single-owner connection and security invariants. See
-  `docs/plans/pending-acp-core-modularization-hard.md`.
+- [~] **ACP core modularization** — callback/events/MCP/diagnostics modules
+  extracted (`S-ACP-MOD-CALLBACKS`); actor, turn, registry, and facade splits
+  remain. See `docs/plans/pending-acp-core-modularization-hard.md`.
 - [~] **Agent-owned history** — PROBE + fallback complete; migration deferred;
   local history remains for agents without list/load. Q7/Q8 still block browse.
 - [~] **Workspace preview** — serving, browse tab, live reload, sandbox, and
@@ -60,6 +59,9 @@
 
 ## Recent Changes (2026-07)
 
+- **S-ACP-MOD-CALLBACKS** — inbound callbacks, terminals, MCP attachment,
+  ordered event append, and stderr diagnostics moved out of `core.rs` into
+  private `src/acp/core/{events,diagnostics,mcp,handlers}` modules.
 - **S-PROF-ACP** — profile delivered to the agent over ACP via
   `session/set_config_option` (mode category) on session setup and on
   `POST /api/sessions/:id/profile`; the deprecated `profile` field on

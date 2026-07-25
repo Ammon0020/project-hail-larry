@@ -5,6 +5,20 @@
 //! so callers communicate with that task through a bounded command channel
 //! rather than attempting to store an SDK connection in the session registry.
 
+mod diagnostics;
+mod events;
+mod handlers;
+mod mcp;
+
+use diagnostics::{spawn_stderr_drain, StderrTail};
+use events::{append_payload, handle_session_notification};
+use handlers::{
+    cancel_terminals, create_terminal, kill_terminal, read_text_file, release_terminal,
+    request_permission, spawn_respond_callback, spawn_result_callback, terminal_output,
+    wait_for_terminal_exit, write_text_file, HandlerDeps,
+};
+use mcp::load_session_mcp_servers;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -12,26 +26,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ClientCapabilities, ContentBlock, CreateTerminalRequest,
-    CreateTerminalResponse, EmbeddedResource, EmbeddedResourceResource, FileSystemCapabilities,
-    Implementation, InitializeRequest, InitializeResponse, KillTerminalRequest,
-    KillTerminalResponse, ListSessionsRequest, LoadSessionRequest, McpCapabilities, McpServer,
-    NewSessionRequest, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
-    ReleaseTerminalRequest, ReleaseTerminalResponse, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
-    SessionConfigOption, SessionId, SessionNotification, TerminalExitStatus, TerminalOutputRequest,
-    TerminalOutputResponse, TextContent, TextResourceContents, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
+    CancelNotification, ClientCapabilities, ContentBlock, CreateTerminalRequest, EmbeddedResource,
+    EmbeddedResourceResource, FileSystemCapabilities, Implementation, InitializeRequest,
+    InitializeResponse, KillTerminalRequest, ListSessionsRequest, LoadSessionRequest, McpServer,
+    NewSessionRequest, PromptRequest, ReadTextFileRequest, ReleaseTerminalRequest,
+    RequestPermissionRequest, SessionConfigOption, SessionId, SessionNotification,
+    TerminalOutputRequest, TextContent, TextResourceContents, WaitForTerminalExitRequest,
+    WriteTextFileRequest,
 };
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::{
-    Agent, ByteStreams, Client as SdkClient, ConnectionTo, JsonRpcResponse, Responder,
-};
+use agent_client_protocol::{Agent, ByteStreams, Client as SdkClient, ConnectionTo};
 use async_process::Command;
 use async_trait::async_trait;
 use chrono::Utc;
-use futures_util::io::AsyncReadExt;
-use tokio::sync::{mpsc, oneshot, watch, Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -49,14 +57,10 @@ use super::{
 use crate::config::AgentInfo;
 use crate::events::SharedEventBus;
 use crate::interfaces::{
-    wire::typed_event_to_wire, ACPClient, AppError, Attachment, EventMeta, EventPayload,
-    PermissionManager, ProviderInfo, Session, SessionInfo, TypedEvent, WorkspaceInfo,
-    WorkspaceManager,
+    ACPClient, AppError, Attachment, EventPayload, PermissionManager, ProviderInfo, Session,
+    SessionInfo, WorkspaceInfo, WorkspaceManager,
 };
 use crate::procutil::{configure_process_group, ProcessGroupCleanup};
-use crate::shell::{
-    filter_agent_env, filter_daemon_env, merge_env, Executor, DEFAULT_MAX_OUTPUT_BYTES,
-};
 
 /// Maximum retained agent stderr diagnostic tail. Agent stderr is untrusted and
 /// must never be allowed to grow the daemon's memory without bound.
@@ -64,14 +68,10 @@ pub const STDERR_TAIL_BYTES: usize = 8 * 1024;
 const ACTOR_COMMAND_CAPACITY: usize = 32;
 /// Maximum callback requests an agent can make concurrently per session.
 const MAX_CALLBACK_TASKS: usize = 16;
-/// Maximum terminal records retained per ACP session.
-const MAX_TERMINALS_PER_SESSION: usize = 16;
 
 /// Maximum concurrent live ACP sessions. Each session pins an agent child
 /// process, so a cap prevents unbounded process-exhaustion DoS.
 const MAX_SESSIONS: usize = 32;
-/// Maximum output retained for an ACP terminal when the agent gives no lower limit.
-const MAX_TERMINAL_OUTPUT_BYTES: usize = DEFAULT_MAX_OUTPUT_BYTES;
 /// Safe default for a model-switch rebind transfer (256 KiB).
 const MODEL_SWITCH_TRANSFER_BYTES: i64 = 256 * 1024;
 
@@ -1624,9 +1624,7 @@ async fn run_actor_inner(
             },
             agent_client_protocol::on_receive_request!(),
         )
-        .connect_with(transport, {
-            let handler_cancel = handler_cancel.clone();
-            move |cx: ConnectionTo<Agent>| async move {
+        .connect_with(transport, move |cx: ConnectionTo<Agent>| async move {
             // clientInfo is required by agents that forward name/version into
             // upstream provider metadata (Mistral rejects empty strings).
             let initialize = InitializeRequest::new(ProtocolVersion::V1)
@@ -1769,10 +1767,8 @@ async fn run_actor_inner(
                 event_bus,
                 local_session_id,
                 prompt_cancel,
-                handler_cancel.clone(),
             )
             .await
-        }
         })
         .await;
     handler_cancel.cancel();
@@ -1903,7 +1899,6 @@ async fn actor_loop(
     event_bus: SharedEventBus,
     local_session_id: String,
     prompt_cancel: Arc<AtomicBool>,
-    handler_cancel: CancellationToken,
 ) -> Result<ActorExit, agent_client_protocol::Error> {
     while let Some(command) = commands.recv().await {
         match command {
@@ -1924,7 +1919,6 @@ async fn actor_loop(
                     event_bus: &event_bus,
                     local_session_id: &local_session_id,
                     prompt_cancel: &prompt_cancel,
-                    handler_cancel: handler_cancel.clone(),
                 })
                 .await?
                 {
@@ -1933,8 +1927,7 @@ async fn actor_loop(
                 }
             }
             other => {
-                if let Some(closed) =
-                    handle_non_prompt_command(&cx, &agent_session_id, other, &handler_cancel).await
+                if let Some(closed) = handle_non_prompt_command(&cx, &agent_session_id, other).await
                 {
                     return Ok(ActorExit::Closed(closed));
                 }
@@ -1951,7 +1944,6 @@ async fn handle_non_prompt_command(
     cx: &ConnectionTo<Agent>,
     agent_session_id: &SessionId,
     command: ActorCommand,
-    handler_cancel: &CancellationToken,
 ) -> Option<oneshot::Sender<()>> {
     match command {
         ActorCommand::ListProviders { result } => {
@@ -1991,10 +1983,6 @@ async fn handle_non_prompt_command(
             None
         }
         ActorCommand::Cancel => {
-            // Fire handler_cancel so in-flight callbacks (read_text_file,
-            // write_text_file, create_terminal, etc.) abort immediately rather
-            // than continuing to serve a malicious agent that ignores cancel.
-            handler_cancel.cancel();
             if let Err(error) = send_cancel(cx, agent_session_id) {
                 tracing::error!(error = %error, "ACP cancel notification failed");
             }
@@ -2041,7 +2029,6 @@ struct PromptTurn<'a> {
     event_bus: &'a SharedEventBus,
     local_session_id: &'a str,
     prompt_cancel: &'a AtomicBool,
-    handler_cancel: CancellationToken,
 }
 
 /// Await one prompt while continuing to receive session control commands.
@@ -2057,14 +2044,11 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
         event_bus,
         local_session_id,
         prompt_cancel,
-        handler_cancel,
     } = turn;
 
     // Cancel may have won the race onto an idle actor before this Prompt was
     // dequeued. Honor the sticky bit before touching the agent.
     if prompt_cancel.swap(false, Ordering::AcqRel) {
-        // Abort in-flight callbacks for the same reason as the Cancel arm below.
-        handler_cancel.cancel();
         let cancel = send_cancel(&cx, &agent_session_id);
         let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
         cancel?;
@@ -2119,9 +2103,6 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
     while let Ok(command) = commands.try_recv() {
         match command {
             ActorCommand::Cancel => {
-                // Abort in-flight callbacks for the same reason as the Cancel
-                // arm in the main select below.
-                handler_cancel.cancel();
                 let cancel = send_cancel(&cx, &agent_session_id);
                 let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
                 cancel?;
@@ -2137,8 +2118,7 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                 )));
             }
             other => {
-                if let Some(closed) =
-                    handle_non_prompt_command(&cx, &agent_session_id, other, &handler_cancel).await
+                if let Some(closed) = handle_non_prompt_command(&cx, &agent_session_id, other).await
                 {
                     let _ =
                         result.send(Err(AppError::internal("ACP session closed during prompt")));
@@ -2230,10 +2210,6 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
             command = commands.recv() => {
                 match command {
                     Some(ActorCommand::Cancel) => {
-                        // Fire handler_cancel so in-flight callbacks abort
-                        // immediately rather than continuing to serve a
-                        // malicious agent that ignores the cancel notification.
-                        handler_cancel.cancel();
                         let cancel = send_cancel(&cx, &agent_session_id);
                         if let Some(result) = result.take() {
                             let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
@@ -2254,7 +2230,7 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                     }
                     Some(other) => {
                         if let Some(closed) =
-                            handle_non_prompt_command(&cx, &agent_session_id, other, &handler_cancel)
+                            handle_non_prompt_command(&cx, &agent_session_id, other)
                                 .await
                         {
                             if let Some(result) = result.take() {
@@ -2281,736 +2257,6 @@ fn send_cancel(
         .map_err(|_| agent_client_protocol::Error::internal_error())
 }
 
-#[derive(Clone)]
-struct HandlerDeps {
-    local_session_id: String,
-    workspace_id: String,
-    workspace_path: PathBuf,
-    workspaces: Arc<dyn WorkspaceManager>,
-    permissions: Arc<dyn PermissionManager>,
-    event_bus: SharedEventBus,
-    terminals: TerminalRegistry,
-    cancellation: CancellationToken,
-    callback_slots: Arc<Semaphore>,
-}
-
-/// Translate, persist, and publish an inbound ACP update in receive order.
-///
-/// The SDK dispatches notifications in stream order. Awaiting the durable
-/// append here keeps that order through SQLite before subscribers observe it.
-async fn handle_session_notification(
-    deps: &HandlerDeps,
-    notification: SessionNotification,
-) -> Result<(), AppError> {
-    let Some(payload) = super::stream::session_update_to_payload(&notification.update) else {
-        return Ok(());
-    };
-    append_payload(&deps.event_bus, &deps.local_session_id, payload).await
-}
-
-/// Project a typed event through the only public wire adapter, then persist it
-/// before broadcasting to live listeners. An ID of zero requests SQLite's
-/// autoincrement assignment and is replaced before publication.
-async fn append_payload(
-    event_bus: &SharedEventBus,
-    session_id: &str,
-    payload: EventPayload,
-) -> Result<(), AppError> {
-    let typed = TypedEvent {
-        meta: EventMeta {
-            id: 0,
-            session_id: session_id.to_string(),
-            timestamp: Utc::now(),
-        },
-        payload,
-    };
-    event_bus
-        .append_and_publish(typed_event_to_wire(&typed))
-        .await?;
-    Ok(())
-}
-
-/// Reserve one bounded callback worker without blocking SDK request dispatch.
-fn callback_permit(deps: &HandlerDeps) -> Option<OwnedSemaphorePermit> {
-    deps.callback_slots.clone().try_acquire_owned().ok()
-}
-
-/// Run a callback until it completes or its owning ACP session closes.
-fn spawn_callback<F>(cancellation: CancellationToken, permit: OwnedSemaphorePermit, future: F)
-where
-    F: std::future::Future<Output = ()> + Send + 'static,
-{
-    tokio::spawn(async move {
-        let _permit = permit;
-        tokio::select! {
-            () = cancellation.cancelled() => {}
-            () = future => {}
-        }
-    });
-}
-
-/// Bound an inbound ACP request that maps `Result` to typed success/error replies.
-fn spawn_result_callback<T, F, Fut>(
-    deps: HandlerDeps,
-    responder: Responder<T>,
-    warn: &'static str,
-    work: F,
-) where
-    T: JsonRpcResponse,
-    F: FnOnce(HandlerDeps) -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = Result<T, AppError>> + Send + 'static,
-{
-    let Some(permit) = callback_permit(&deps) else {
-        let _ = responder.respond_with_internal_error(callback_limit_error());
-        return;
-    };
-    spawn_callback(deps.cancellation.clone(), permit, async move {
-        match work(deps).await {
-            Ok(response) => {
-                let _ = responder.respond(response);
-            }
-            Err(error) => {
-                tracing::warn!(error = %error, message = warn);
-                let _ = responder.respond_with_internal_error(error);
-            }
-        }
-    });
-}
-
-/// Bound an inbound ACP request that always replies with a typed success value.
-///
-/// Used by `RequestPermission`, which maps failures to `Cancelled` outcomes
-/// instead of JSON-RPC internal errors.
-fn spawn_respond_callback<T, F, Fut>(deps: HandlerDeps, responder: Responder<T>, work: F)
-where
-    T: JsonRpcResponse,
-    F: FnOnce(HandlerDeps) -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = T> + Send + 'static,
-{
-    let Some(permit) = callback_permit(&deps) else {
-        let _ = responder.respond_with_internal_error(callback_limit_error());
-        return;
-    };
-    spawn_callback(deps.cancellation.clone(), permit, async move {
-        let response = work(deps).await;
-        let _ = responder.respond(response);
-    });
-}
-
-fn callback_limit_error() -> AppError {
-    AppError::internal("ACP callback capacity exceeded")
-}
-
-type TerminalRegistry = Arc<Mutex<HashMap<String, Arc<TerminalState>>>>;
-
-/// State shared by callback requests for one ACP terminal.
-///
-/// The standard mutex is intentionally used only for short, synchronous state
-/// updates. Terminal waits observe the watch channel outside the lock.
-struct TerminalState {
-    cancel: CancellationToken,
-    output: Mutex<RetainedOutput>,
-    exit: watch::Sender<Option<TerminalExitStatus>>,
-}
-
-/// Bounded terminal output that discards the oldest complete UTF-8 prefix.
-struct RetainedOutput {
-    text: String,
-    limit: usize,
-    truncated: bool,
-}
-
-impl RetainedOutput {
-    fn new(limit: usize) -> Self {
-        Self {
-            text: String::new(),
-            limit,
-            truncated: false,
-        }
-    }
-
-    fn push_line(&mut self, line: &str) {
-        if self.limit == 0 {
-            // Each callback invocation represents at least a newline, even
-            // when the emitted line is empty.
-            self.truncated = true;
-            return;
-        }
-        self.text.push_str(line);
-        self.text.push('\n');
-        if self.text.len() > self.limit {
-            let excess = self.text.len() - self.limit;
-            let start = self.text.ceil_char_boundary(excess);
-            self.text.drain(..start);
-            self.truncated = true;
-        }
-    }
-}
-
-/// Create an ACP terminal and start its command without delaying the response.
-///
-/// The command is gated on an explicit permission prompt so a malicious agent
-/// cannot bypass `request_permission` and spawn arbitrary commands directly.
-/// The approved action is bound to the exact argv/cwd/env that is executed.
-async fn create_terminal(
-    deps: HandlerDeps,
-    request: CreateTerminalRequest,
-) -> Result<CreateTerminalResponse, AppError> {
-    if deps.cancellation.is_cancelled() {
-        return Err(AppError::internal("ACP session is closing"));
-    }
-    let cwd = terminal_cwd(&deps.workspace_path, request.cwd.as_deref())?;
-    let limit = request
-        .output_byte_limit
-        .map_or(MAX_TERMINAL_OUTPUT_BYTES, |limit| {
-            usize::try_from(limit)
-                .unwrap_or(MAX_TERMINAL_OUTPUT_BYTES)
-                .min(MAX_TERMINAL_OUTPUT_BYTES)
-        });
-
-    // Build a display string carrying the full argv, cwd, and env so the user
-    // can make an informed approval decision and the policy key discriminates
-    // on the exact executed command (target stays empty for execute tools).
-    let command_display = {
-        let mut parts = vec![request.command.clone()];
-        parts.extend(request.args.iter().cloned());
-        let mut display = parts.join(" ");
-        if let Some(cwd) = cwd.as_deref() {
-            display.push_str(&format!(" (cwd: {cwd})"));
-        }
-        if !request.env.is_empty() {
-            let env_pairs: Vec<(String, String)> = request
-                .env
-                .iter()
-                .map(|variable| (variable.name.clone(), variable.value.clone()))
-                .collect();
-            display.push_str(&format!(" (env: {env_pairs:?})"));
-        }
-        display
-    };
-    let permission = crate::interfaces::PermissionRequest {
-        id: Uuid::new_v4().to_string(),
-        // Agent session IDs are protocol transport identifiers. Permissions
-        // belong to the local lifecycle entry so close clears its exact
-        // pending prompts and durable policies.
-        session_id: deps.local_session_id.clone(),
-        tool: "create_terminal".to_string(),
-        tool_kind: "execute".to_string(),
-        command: command_display,
-        target: String::new(),
-        options: Vec::new(),
-        option_details: Vec::new(),
-    };
-    // Gate the spawn on a real permission decision before executing anything.
-    let decision = deps.permissions.request(permission).await?;
-    if matches!(
-        decision,
-        crate::interfaces::PermissionDecision::Deny
-            | crate::interfaces::PermissionDecision::RejectAlways
-    ) {
-        return Err(AppError::Forbidden(
-            "terminal creation denied by permission".to_string(),
-        ));
-    }
-
-    let terminal_id = format!("term-{}", Uuid::new_v4().simple());
-    let (exit, _) = watch::channel(None);
-    let state = Arc::new(TerminalState {
-        cancel: deps.cancellation.child_token(),
-        output: Mutex::new(RetainedOutput::new(limit)),
-        exit,
-    });
-    {
-        let mut terminals = deps
-            .terminals
-            .lock()
-            .map_err(|_| AppError::internal("ACP terminal registry lock poisoned"))?;
-        if terminals.len() >= MAX_TERMINALS_PER_SESSION {
-            return Err(AppError::internal("ACP terminal capacity exceeded"));
-        }
-        terminals.insert(terminal_id.clone(), Arc::clone(&state));
-    }
-
-    // Only inherit a minimal allowlist of safe vars from the daemon so secrets
-    // (provider keys, DEVIN_*, LOCAL_AGENT_*, etc.) don't leak to agent-spawned
-    // commands, and strip dangerous hijack vars (LD_PRELOAD, DYLD_*, etc.) from
-    // the agent-supplied env before merging.
-    let env = merge_env(
-        filter_daemon_env(std::env::vars()),
-        filter_agent_env(
-            request
-                .env
-                .iter()
-                .map(|variable| (variable.name.clone(), variable.value.clone())),
-        ),
-    );
-    let command = request.command;
-    let args = request.args;
-    let executor = Executor::new(&deps.workspace_path)
-        .with_env(env)
-        .with_max_output_bytes(limit);
-    tokio::spawn(async move {
-        let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        let stdout_state = Arc::clone(&state);
-        let stderr_state = Arc::clone(&state);
-        let (result, error) = executor
-            .run_async_args(
-                state.cancel.clone(),
-                &command,
-                &args,
-                cwd.as_deref(),
-                move |line| append_terminal_output(&stdout_state, line),
-                move |line| append_terminal_output(&stderr_state, line),
-            )
-            .await;
-        if let Some(error) = error {
-            // Commands, argv, and environment values may contain credentials;
-            // keep the diagnostic category without recording their contents.
-            tracing::warn!(error = %error, "ACP terminal command ended abnormally");
-        }
-        let status = TerminalExitStatus::new()
-            .exit_code((result.exit_code >= 0).then_some(result.exit_code as u32))
-            .signal(result.signal);
-        state.exit.send_replace(Some(status));
-    });
-    Ok(CreateTerminalResponse::new(terminal_id))
-}
-
-/// Return a snapshot of terminal output without waiting for the command.
-fn terminal_output(
-    deps: HandlerDeps,
-    request: TerminalOutputRequest,
-) -> Result<TerminalOutputResponse, AppError> {
-    let terminal = terminal_state(&deps.terminals, &request.terminal_id.to_string())?;
-    let output = terminal
-        .output
-        .lock()
-        .map_err(|_| AppError::internal("ACP terminal output lock poisoned"))?;
-    let exit_status = terminal.exit.borrow().clone();
-    Ok(TerminalOutputResponse::new(output.text.clone(), output.truncated).exit_status(exit_status))
-}
-
-/// Wait asynchronously for an owned terminal to exit.
-async fn wait_for_terminal_exit(
-    deps: HandlerDeps,
-    request: WaitForTerminalExitRequest,
-) -> Result<WaitForTerminalExitResponse, AppError> {
-    let terminal = terminal_state(&deps.terminals, &request.terminal_id.to_string())?;
-    let mut exit = terminal.exit.subscribe();
-    loop {
-        if let Some(status) = exit.borrow().clone() {
-            return Ok(WaitForTerminalExitResponse::new(status));
-        }
-        exit.changed()
-            .await
-            .map_err(|_| AppError::internal("ACP terminal exited without a status"))?;
-    }
-}
-
-/// Cancel a terminal while retaining its output for subsequent inspection.
-fn kill_terminal(
-    deps: HandlerDeps,
-    request: KillTerminalRequest,
-) -> Result<KillTerminalResponse, AppError> {
-    let terminal = terminal_state(&deps.terminals, &request.terminal_id.to_string())?;
-    terminal.cancel.cancel();
-    Ok(KillTerminalResponse::new())
-}
-
-/// Cancel and remove a terminal, releasing its registry-owned resources.
-fn release_terminal(
-    deps: HandlerDeps,
-    request: ReleaseTerminalRequest,
-) -> Result<ReleaseTerminalResponse, AppError> {
-    let terminal = deps
-        .terminals
-        .lock()
-        .map_err(|_| AppError::internal("ACP terminal registry lock poisoned"))?
-        .remove(&request.terminal_id.to_string())
-        .ok_or_else(|| AppError::not_found_id("terminal", &request.terminal_id.to_string()))?;
-    terminal.cancel.cancel();
-    Ok(ReleaseTerminalResponse::new())
-}
-
-fn terminal_state(
-    registry: &TerminalRegistry,
-    terminal_id: &str,
-) -> Result<Arc<TerminalState>, AppError> {
-    registry
-        .lock()
-        .map_err(|_| AppError::internal("ACP terminal registry lock poisoned"))?
-        .get(terminal_id)
-        .cloned()
-        .ok_or_else(|| AppError::not_found_id("terminal", terminal_id))
-}
-
-fn append_terminal_output(state: &TerminalState, line: &str) {
-    if let Ok(mut output) = state.output.lock() {
-        output.push_line(line);
-    }
-}
-
-/// Cancel every terminal when its owning ACP session disconnects.
-fn cancel_terminals(registry: &TerminalRegistry) {
-    if let Ok(mut terminals) = registry.lock() {
-        for terminal in terminals.values() {
-            terminal.cancel.cancel();
-        }
-        terminals.clear();
-    }
-}
-
-/// Validate the ACP-required absolute CWD and translate it for Executor.
-fn terminal_cwd(root: &Path, cwd: Option<&Path>) -> Result<Option<String>, AppError> {
-    let Some(cwd) = cwd else {
-        return Ok(None);
-    };
-    if !cwd.is_absolute() {
-        return Err(AppError::validation(
-            "terminal cwd must be an absolute path within the workspace",
-        ));
-    }
-    let root = std::fs::canonicalize(root)
-        .map_err(|error| AppError::internal(format!("canonicalize workspace: {error}")))?;
-    let cwd = std::fs::canonicalize(cwd)
-        .map_err(|error| AppError::validation(format!("invalid terminal cwd: {error}")))?;
-    if !cwd.is_dir() {
-        return Err(AppError::validation("terminal cwd is not a directory"));
-    }
-    let relative = cwd
-        .strip_prefix(&root)
-        .map_err(|_| AppError::validation("terminal cwd is outside the workspace"))?;
-    if relative.as_os_str().is_empty() {
-        Ok(None)
-    } else {
-        relative
-            .to_str()
-            .map(|path| Some(path.to_string()))
-            .ok_or_else(|| AppError::validation("terminal cwd is not valid Unicode"))
-    }
-}
-
-/// Load enabled MCP servers for session/new, filtered by agent capabilities
-/// and the active profile's complete-server allowlist.
-///
-/// Missing path / missing file / parse errors yield an empty list (Go parity:
-/// MCP is additive and must not block session creation).
-///
-/// # Profile filtering
-///
-/// Omitted `mcpServers` = all capability-filtered servers; an explicit list
-/// attaches only named servers (including an explicit empty list for none).
-async fn load_session_mcp_servers(
-    path: Option<&Path>,
-    caps: &McpCapabilities,
-    profiles: &super::profile::ProfileMiddleware,
-    session_id: &str,
-) -> Vec<McpServer> {
-    let Some(path) = path else {
-        return Vec::new();
-    };
-    let file = match crate::mcp::File::load(path) {
-        Ok(file) => file,
-        Err(error) => {
-            tracing::warn!(
-                path = %path.display(),
-                %error,
-                "loading mcp config; continuing without mcp servers"
-            );
-            return Vec::new();
-        }
-    };
-    let servers = match file.to_acp(caps) {
-        Ok(servers) => servers,
-        Err(error) => {
-            tracing::warn!(
-                path = %path.display(),
-                %error,
-                "converting mcp config; continuing without mcp servers"
-            );
-            return Vec::new();
-        }
-    };
-    if servers.is_empty() {
-        return servers;
-    }
-
-    let allowlist = profiles.mcp_servers_for_session(session_id).unwrap_or(None);
-    let servers = crate::mcp::filter_servers_by_name(servers, allowlist.as_deref());
-
-    if !servers.is_empty() {
-        tracing::debug!(
-            path = %path.display(),
-            count = servers.len(),
-            allowlist_len = allowlist.as_ref().map_or(0, Vec::len),
-            "attaching MCP servers to session/new"
-        );
-    }
-    servers
-}
-
-async fn read_text_file(
-    deps: HandlerDeps,
-    request: ReadTextFileRequest,
-) -> Result<ReadTextFileResponse, AppError> {
-    let path = workspace_relative_path(&deps.workspace_path, &request.path)?;
-    deps.workspaces
-        .read_file(&deps.workspace_id, &path)
-        .await
-        .map(|result| ReadTextFileResponse::new(result.content))
-}
-
-async fn write_text_file(
-    deps: HandlerDeps,
-    request: WriteTextFileRequest,
-) -> Result<WriteTextFileResponse, AppError> {
-    let path = workspace_relative_path(&deps.workspace_path, &request.path)?;
-    deps.workspaces
-        .write_file(&deps.workspace_id, &path, &request.content, 0)
-        .await?;
-    // Broadcast FileWritten so the UI refreshes the explorer. App writes are
-    // suppressed in fswatch (note_app_write) to avoid a duplicate
-    // FileChangedOnDisk for the same change — without this event the tree
-    // would stay stale for agent-created files.
-    if let Err(error) = append_payload(
-        &deps.event_bus,
-        &deps.local_session_id,
-        EventPayload::FileWritten {
-            workspace_id: deps.workspace_id.clone(),
-            target: path,
-        },
-    )
-    .await
-    {
-        // File is already on disk; failing the ACP response would mislead the
-        // agent. Log loudly so a broken event bus is still visible.
-        tracing::error!(
-            session_id = %deps.local_session_id,
-            workspace_id = %deps.workspace_id,
-            %error,
-            "failed to publish FileWritten after agent write"
-        );
-    }
-    Ok(WriteTextFileResponse::new())
-}
-
-async fn request_permission(
-    deps: HandlerDeps,
-    request: RequestPermissionRequest,
-) -> RequestPermissionResponse {
-    let tool = request
-        .tool_call
-        .fields
-        .title
-        .clone()
-        .unwrap_or_else(|| "Tool call".to_string());
-    let tool_kind = request
-        .tool_call
-        .fields
-        .kind
-        .as_ref()
-        .map_or_else(String::new, tool_kind_name);
-    let command = request
-        .tool_call
-        .fields
-        .raw_input
-        .as_ref()
-        .map_or_else(String::new, ToString::to_string);
-    let target = request
-        .tool_call
-        .fields
-        .locations
-        .as_ref()
-        .and_then(|locations| locations.first())
-        .map_or_else(String::new, |location| {
-            location.path.to_string_lossy().into_owned()
-        });
-    let options = request
-        .options
-        .iter()
-        .filter_map(|option| permission_decision(&option.kind))
-        .collect();
-    let option_details = request
-        .options
-        .iter()
-        .map(|option| crate::interfaces::PermissionOptionInfo {
-            id: option.option_id.to_string(),
-            name: option.name.clone(),
-            kind: permission_kind_name(&option.kind).to_string(),
-        })
-        .collect();
-    let permission = crate::interfaces::PermissionRequest {
-        id: Uuid::new_v4().to_string(),
-        // Agent session IDs are protocol transport identifiers. Permissions
-        // belong to the local lifecycle entry so close clears its exact
-        // pending prompts and durable policies.
-        session_id: deps.local_session_id.clone(),
-        tool,
-        tool_kind,
-        command,
-        target,
-        options,
-        option_details,
-    };
-    match deps.permissions.request(permission).await {
-        Ok(decision) => request
-            .options
-            .iter()
-            .find(|option| permission_decision(&option.kind) == Some(decision))
-            .map_or_else(
-                || RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
-                |option| {
-                    RequestPermissionResponse::new(RequestPermissionOutcome::Selected(
-                        SelectedPermissionOutcome::new(option.option_id.clone()),
-                    ))
-                },
-            ),
-        Err(error) => {
-            tracing::warn!(error = %error, "ACP permission request cancelled");
-            RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)
-        }
-    }
-}
-
-fn tool_kind_name(kind: &agent_client_protocol::schema::v1::ToolKind) -> String {
-    use agent_client_protocol::schema::v1::ToolKind;
-
-    match kind {
-        ToolKind::Read => "read",
-        ToolKind::Edit => "edit",
-        ToolKind::Delete => "delete",
-        ToolKind::Move => "move",
-        ToolKind::Search => "search",
-        ToolKind::Execute => "execute",
-        ToolKind::Think => "think",
-        ToolKind::Fetch => "fetch",
-        ToolKind::SwitchMode => "switch_mode",
-        ToolKind::Other => "other",
-        _ => "other",
-    }
-    .to_string()
-}
-
-fn permission_kind_name(
-    kind: &agent_client_protocol::schema::v1::PermissionOptionKind,
-) -> &'static str {
-    use agent_client_protocol::schema::v1::PermissionOptionKind;
-
-    match kind {
-        PermissionOptionKind::AllowOnce => "allow_once",
-        PermissionOptionKind::AllowAlways => "allow_always",
-        PermissionOptionKind::RejectOnce => "reject_once",
-        PermissionOptionKind::RejectAlways => "reject_always",
-        _ => "unknown",
-    }
-}
-
-fn permission_decision(
-    kind: &agent_client_protocol::schema::v1::PermissionOptionKind,
-) -> Option<crate::interfaces::PermissionDecision> {
-    use crate::interfaces::PermissionDecision;
-    use agent_client_protocol::schema::v1::PermissionOptionKind;
-
-    match kind {
-        PermissionOptionKind::AllowOnce => Some(PermissionDecision::AllowOnce),
-        PermissionOptionKind::AllowAlways => Some(PermissionDecision::AllowAlways),
-        PermissionOptionKind::RejectOnce => Some(PermissionDecision::Deny),
-        PermissionOptionKind::RejectAlways => Some(PermissionDecision::RejectAlways),
-        _ => None,
-    }
-}
-
-fn workspace_relative_path(root: &Path, path: &Path) -> Result<String, AppError> {
-    if path.is_absolute() {
-        path_to_workspace_relative(root, path)
-    } else {
-        Ok(path.to_string_lossy().into_owned())
-    }
-}
-
-fn spawn_stderr_drain<R>(mut stderr: R, tail: Arc<Mutex<StderrTail>>)
-where
-    R: futures_util::io::AsyncRead + Unpin + Send + 'static,
-{
-    tokio::spawn(async move {
-        let mut buffer = [0_u8; 1024];
-        loop {
-            match stderr.read(&mut buffer).await {
-                Ok(0) | Err(_) => break,
-                Ok(read) => {
-                    if let Ok(mut tail) = tail.lock() {
-                        tail.push(&buffer[..read]);
-                    }
-                }
-            }
-        }
-    });
-}
-
-/// Keywords that hint a stderr line may carry a secret. Used by
-/// [`StderrTail::safe_diagnostic`] to redact credential-bearing output.
-const SENSITIVE_KEYWORDS: &[&str] = &[
-    "token",
-    "password",
-    "passwd",
-    "api_key",
-    "apikey",
-    "api-key",
-    "secret",
-    "key",
-    "credential",
-    "auth",
-    "bearer",
-    "authorization",
-];
-
-#[derive(Default)]
-struct StderrTail {
-    bytes: Vec<u8>,
-}
-
-impl StderrTail {
-    fn push(&mut self, chunk: &[u8]) {
-        self.bytes.extend_from_slice(chunk);
-        if self.bytes.len() > STDERR_TAIL_BYTES {
-            let excess = self.bytes.len() - STDERR_TAIL_BYTES;
-            self.bytes.drain(..excess);
-        }
-    }
-
-    fn as_string(&self) -> String {
-        String::from_utf8_lossy(&self.bytes).into_owned()
-    }
-
-    /// Return a bounded startup diagnostic without obvious credential-bearing lines.
-    fn safe_diagnostic(&self) -> String {
-        self.as_string()
-            .lines()
-            .filter(|line| {
-                let line = line.to_ascii_lowercase();
-                // Security: redact any line that looks like it may carry a secret.
-                // Case-insensitive substring match keeps the filter cheap and broad.
-                !SENSITIVE_KEYWORDS
-                    .iter()
-                    .any(|keyword| line.contains(keyword))
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .take(STDERR_TAIL_BYTES)
-            .collect::<String>()
-            .trim()
-            .to_string()
-    }
-}
-
-fn path_to_workspace_relative(root: &Path, path: &Path) -> Result<String, AppError> {
-    let relative = path
-        .strip_prefix(root)
-        .map_err(|_| AppError::validation("agent path is outside the workspace"))?;
-    Ok(relative.to_string_lossy().into_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -3022,7 +2268,7 @@ mod tests {
 
     use super::{
         session_exists, should_attempt_load, AgentRegistry, Client, ClientDeps, ConversationStore,
-        RetainedOutput, StoredSession,
+        StoredSession,
     };
     use crate::config::{AgentInfo, AgentModel};
     use crate::events::{EventBus, Store};
@@ -3167,17 +2413,6 @@ mod tests {
         })
         .await
         .expect("prompt did not reserve its session slot");
-    }
-
-    #[test]
-    fn retained_terminal_output_truncates_at_utf8_boundary() {
-        let mut output = RetainedOutput::new(5);
-        output.push_line("éé");
-        output.push_line("x");
-
-        assert!(output.truncated);
-        assert!(output.text.len() <= 5);
-        assert!(std::str::from_utf8(output.text.as_bytes()).is_ok());
     }
 
     /// ACP agent spawn uses process-group isolation so descendants die on
@@ -3702,163 +2937,6 @@ mod tests {
             reloaded[0].acp_session_id, "acp-durable-9",
             "rename must preserve durable acpSessionId"
         );
-    }
-
-    #[tokio::test]
-    async fn load_session_mcp_servers_attaches_enabled_stdio() {
-        use agent_client_protocol::schema::v1::{McpCapabilities, McpServer};
-        use std::fs;
-
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("mcp.json");
-        fs::write(
-            &path,
-            r#"{
-  "version": 1,
-  "mcpServers": {
-    "echo": {
-      "command": "echo",
-      "args": ["hi"]
-    },
-    "remote": {
-      "type": "http",
-      "url": "https://example.com/mcp",
-      "enabled": true
-    },
-    "off": {
-      "command": "false",
-      "enabled": false
-    }
-  }
-}"#,
-        )
-        .unwrap();
-
-        let profiles = super::super::profile::ProfileMiddleware::from_config(
-            crate::acp::ProfileConfig::builtin_defaults(),
-        );
-        // Default caps: stdio always ok; http/sse off unless advertised.
-        // Omitted mcpServers = allow all capability-eligible servers.
-        let stdio_only = super::load_session_mcp_servers(
-            Some(&path),
-            &McpCapabilities::new(),
-            &profiles,
-            "sess-test",
-        )
-        .await;
-        assert_eq!(stdio_only.len(), 1);
-        assert!(matches!(stdio_only[0], McpServer::Stdio(_)));
-
-        let with_http = super::load_session_mcp_servers(
-            Some(&path),
-            &McpCapabilities::new().http(true),
-            &profiles,
-            "sess-test",
-        )
-        .await;
-        assert_eq!(with_http.len(), 2);
-
-        // Malformed config must not fail session create.
-        fs::write(&path, "{not-json").unwrap();
-        assert!(super::load_session_mcp_servers(
-            Some(&path),
-            &McpCapabilities::new(),
-            &profiles,
-            "sess-test",
-        )
-        .await
-        .is_empty());
-        assert!(super::load_session_mcp_servers(
-            None,
-            &McpCapabilities::new(),
-            &profiles,
-            "sess-test",
-        )
-        .await
-        .is_empty());
-    }
-
-    #[tokio::test]
-    async fn load_session_mcp_servers_respects_profile_server_allowlist() {
-        use agent_client_protocol::schema::v1::{McpCapabilities, McpServer};
-        use std::collections::BTreeMap;
-        use std::fs;
-
-        use crate::acp::profile_config::{Profile, ProfileConfig};
-
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("mcp.json");
-        fs::write(
-            &path,
-            r#"{
-  "version": 1,
-  "mcpServers": {
-    "alpha": { "command": "true" },
-    "beta": { "command": "true" }
-  }
-}"#,
-        )
-        .unwrap();
-
-        let mut profiles_map = BTreeMap::new();
-        profiles_map.insert(
-            "code".to_string(),
-            Profile {
-                label: "Code".into(),
-                instructions: "x".into(),
-                mcp_servers: Some(vec!["beta".into()]),
-                legacy_tools: None,
-            },
-        );
-        let profile_cfg = ProfileConfig {
-            profiles: profiles_map,
-            default_profile_id: "code".into(),
-        };
-        let profiles = super::super::profile::ProfileMiddleware::from_config(profile_cfg);
-
-        let filtered = super::load_session_mcp_servers(
-            Some(&path),
-            &McpCapabilities::new(),
-            &profiles,
-            "sess-allowlist",
-        )
-        .await;
-        assert_eq!(filtered.len(), 1);
-        assert!(matches!(&filtered[0], McpServer::Stdio(s) if s.name == "beta"));
-
-        // Missing mcpServers allows all capability-eligible configured servers.
-        let open = super::super::profile::ProfileMiddleware::from_config(
-            crate::acp::ProfileConfig::builtin_defaults(),
-        );
-        let all = super::load_session_mcp_servers(
-            Some(&path),
-            &McpCapabilities::new(),
-            &open,
-            "sess-all",
-        )
-        .await;
-        assert_eq!(all.len(), 2);
-
-        let none = super::super::profile::ProfileMiddleware::from_config(ProfileConfig {
-            profiles: BTreeMap::from([(
-                "code".to_string(),
-                Profile {
-                    label: "Code".into(),
-                    instructions: "x".into(),
-                    mcp_servers: Some(Vec::new()),
-                    legacy_tools: None,
-                },
-            )]),
-            default_profile_id: "code".into(),
-        });
-        assert!(super::load_session_mcp_servers(
-            Some(&path),
-            &McpCapabilities::new(),
-            &none,
-            "sess-none",
-        )
-        .await
-        .is_empty());
     }
 
     #[test]

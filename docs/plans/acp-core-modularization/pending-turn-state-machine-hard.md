@@ -1,30 +1,37 @@
-# Story S-ACP-MOD-TURN: Extract Single-Owner Actor Turn State Machine
+# Story S-ACP-MOD-TURN: Extract Actor Turn State Machine
 
 > **Status:** pending | **Difficulty:** hard
 > **Epic:** [ACP Core Modularization](../pending-acp-core-modularization-hard.md).
-> **Depends on:** S-ACP-MOD-CALLBACKS, S-ACP-MOD-ACTOR.
-> **Blocks:** S-ACP-MOD-REGISTRY.
+> **Depends on:** S-ACP-MOD-ACTOR. **Blocks:** S-ACP-MOD-REGISTRY.
 
 ## Goal
 
-Move `ActorCommand`, prompt execution, cancellation, control-RPC dispatch, and
-close handling into `turn.rs` while preserving the one-task ACP connection
-owner model.
+Move the actor command protocol and complete prompt/control state machine into
+`core/actor/turn.rs` (currently roughly lines 1,291–1,327 and 1,891–2,260).
 
 ## Acceptance criteria
 
-- [ ] `turn.rs` owns the command enum and all `ConnectionTo<Agent>` request
-      and notification use after connection setup.
-- [ ] Prompt admission, sticky early cancellation, cancel pre-emption, and
-      close pre-emption remain behaviorally identical.
-- [ ] Provider, model, and profile control commands retain their existing
-      capability gates and response/error mapping.
-- [ ] Unexpected actor exit still appends the event, updates state, and clears
-      local permissions in the correct order.
-- [ ] Existing prompt/cancel/close/rebind tests remain green; add a regression
-      test if extraction reveals an ordering ambiguity.
-- [ ] Rust format, tests, and clippy pass.
+- [ ] `turn.rs` owns `ActorCommand`, prompt execution, control-RPC dispatch,
+      stop-reason mapping, cancellation notification, and close handling.
+- [ ] Actor handles expose intent-level send methods or a private sender; client
+      lifecycle/operations code cannot access a connection or bypass admission.
+- [ ] Prompt reservation, sticky cancel-before-dequeue, control-command draining,
+      cancel/close pre-emption, and nested-prompt rejection preserve ordering.
+- [ ] Provider, model, and profile commands preserve capability gates and exact
+      response/error mapping; prompt lifecycle events remain durably ordered.
+- [ ] A malicious agent that ignores cancellation is still force-closed after the
+      grace period, killing its process group and clearing local permission state.
+- [ ] Move prompt/cancel/close tests with the turn module; retain end-to-end
+      lifecycle coverage and add deterministic regressions for early cancel and
+      grace-period force-close if they are not directly covered.
+- [ ] No public API changes, concurrent prompts, channel-capacity changes, or new
+      actor framework.
+- [ ] Run `cargo fmt -q`, `cargo test -q --all-targets`, and
+      `cargo clippy -q --all-targets -- -D warnings`.
 
-## Out of scope
+## File references
 
-Concurrent prompts, changing channel capacity, or an external actor framework.
+- `src/acp/core.rs:1291-1327`
+- `src/acp/core.rs:1891-2260`
+- `src/acp/providers.rs`
+- `tests/acp_core_lifecycle.rs`
