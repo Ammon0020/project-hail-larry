@@ -19,6 +19,10 @@ const MAX_READ_FILE_SIZE: u64 = 50 * 1024 * 1024;
 const BINARY_SNIFF_SIZE: usize = 512;
 const MAX_FILE_TREE_DEPTH: usize = 20;
 const MAX_FILE_TREE_NODES: usize = 100_000;
+/// Server-side deadline for a single search. The cancellation token passed to
+/// `search` is cancelled on expiry so a slow or huge workspace cannot hold a
+/// blocking thread indefinitely (defense against the dead-token DoS).
+const SEARCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// One registered workspace root, available or retained-as-unavailable.
 #[derive(Clone)]
@@ -305,9 +309,20 @@ impl WorkspaceManager for Manager {
     ) -> Result<Vec<SearchResult>, AppError> {
         let root = self.root_for(workspace_id)?;
         opts.pattern = pattern.to_string();
-        crate::search::search(&root, &opts, CancellationToken::new())
-            .await
-            .map_err(|err| AppError::validation(err.to_string()))
+        // Create a real cancellation token and cancel it on deadline so the
+        // search loop aborts instead of running uncancellable to completion.
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        let timeout = tokio::time::sleep(SEARCH_DEADLINE);
+        tokio::select! {
+            result = crate::search::search(&root, &opts, cancel) => {
+                result.map_err(|err| AppError::validation(err.to_string()))
+            }
+            _ = timeout => {
+                cancel_clone.cancel();
+                Err(AppError::validation("search timed out"))
+            }
+        }
     }
 }
 
@@ -404,11 +419,12 @@ fn read_file(root: &Path, rel_path: &str) -> Result<ReadFileResult, AppError> {
     let path = Manager::safe_path(root, rel_path)?;
     let metadata = fs::symlink_metadata(&path).map_err(|err| {
         // Go returns `stat file: lstat <path>: no such file or directory` as a
-        // 404 via handleReadFile; mirror that client-facing string.
+        // 404 via handleReadFile. Use the workspace-relative path (not the
+        // absolute canonical path) to avoid leaking the host filesystem layout.
         if err.kind() == std::io::ErrorKind::NotFound {
             AppError::not_found(format!(
                 "stat file: lstat {}: no such file or directory",
-                path.display()
+                rel_path
             ))
         } else {
             AppError::internal(format!("stat file: {err}"))

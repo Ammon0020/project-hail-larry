@@ -194,6 +194,13 @@ impl FileSync {
         content: &str,
         expected_revision: i64,
     ) -> Result<i64, AppError> {
+        // Defense-in-depth: the workspace manager always resolves workspace_id to
+        // a canonical absolute root before calling FileSync. A raw client string
+        // must never reach clean_path as a root. Catch mis-wiring in debug builds.
+        debug_assert!(
+            Path::new(workspace_path).is_absolute(),
+            "workspace_path must be an absolute resolved root, got {workspace_path:?}"
+        );
         let key = file_key(workspace_path, rel_path);
         let lock = self.lock_for(&key).await;
         // Move the owned guard into the blocking task. If this async future is

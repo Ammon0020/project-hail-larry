@@ -19,7 +19,9 @@ use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, FromRequestParts, OriginalUri, Path, Query, State};
+use axum::extract::{
+    ConnectInfo, DefaultBodyLimit, FromRequestParts, OriginalUri, Path, Query, State,
+};
 use axum::http::request::Parts;
 use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
@@ -52,6 +54,12 @@ pub const MAX_API_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 /// File-write exception matching Go `fileWriteMaxBodyBytes` (large editor saves).
 pub const FILE_WRITE_MAX_BODY_BYTES: usize = 50 * 1024 * 1024;
+
+/// Per-field size limits for agent config (defense-in-depth on top of loopback gate).
+const MAX_AGENT_COMMAND_LEN: usize = 1024;
+const MAX_AGENT_ARGS_COUNT: usize = 64;
+const MAX_AGENT_MODELS_COUNT: usize = 256;
+
 const MAX_EVENT_LIMIT: i32 = 10_000;
 const DEFAULT_EVENT_LIMIT: i32 = 1_000;
 const PAIR_RATE_PER_MINUTE: f64 = 5.0;
@@ -145,7 +153,12 @@ pub struct AppState {
     pair_rate: Arc<Mutex<HashMap<String, PairRateBucket>>>,
     /// In-memory, workspace-scoped preview tickets with short expiry.
     preview_tokens: Arc<Mutex<HashMap<String, PreviewToken>>>,
+    /// Cached autodetect results with a cooldown to prevent probe-spawn DoS.
+    autodetect_cache: AutodetectCache,
 }
+
+/// Cached autodetect results: `(timestamp, agent list)`.
+type AutodetectCache = Arc<Mutex<Option<(Instant, Vec<AgentInfo>)>>>;
 
 /// Per-IP token bucket matching Go's five-request burst and 5/minute refill.
 struct PairRateBucket {
@@ -191,6 +204,7 @@ impl AppState {
             fs_watcher,
             pair_rate: Arc::new(Mutex::new(HashMap::new())),
             preview_tokens: Arc::new(Mutex::new(HashMap::new())),
+            autodetect_cache: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -336,6 +350,13 @@ pub fn router(state: AppState) -> Router {
 /// responses never pin a host that was reached over HTTP. These three headers
 /// are not set by any per-route handler, so `insert` cannot clobber the preview
 /// CSP or raw Referrer-Policy that handlers attach themselves.
+///
+/// A restrictive CSP is applied to the SPA shell and API responses as
+/// defense-in-depth against XSS. It is only inserted when the handler has not
+/// already set its own CSP (e.g. the preview handler uses `sandbox
+/// allow-same-origin` for agent-written HTML). `style-src 'unsafe-inline'` is
+/// required because CodeMirror injects inline styles; no `'unsafe-inline'` is
+/// granted to `script-src`.
 async fn security_headers(request: Request<Body>, next: Next) -> Response {
     let over_tls = request.extensions().get::<TlsConnection>().is_some();
     let mut response = next.run(request).await;
@@ -352,6 +373,18 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
         headers.insert(
             header::STRICT_TRANSPORT_SECURITY,
             HeaderValue::from_static("max-age=63072000; includeSubDomains"),
+        );
+    }
+    // Only set the SPA CSP when the handler hasn't already attached one
+    // (e.g. the preview endpoint sets `sandbox allow-same-origin`).
+    if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(
+                "default-src 'self'; script-src 'self'; connect-src 'self' ws: wss:; \
+                 img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; \
+                 frame-src 'self'",
+            ),
         );
     }
     response
@@ -423,24 +456,30 @@ struct PairVerifyRequest {
 
 async fn pair_verify_passcode(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     body: Result<Json<PairVerifyRequest>, JsonRejection>,
 ) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
+    let peer_key = pair_rate_key(&addr.ip());
     pair_verify(state, body, |pairing, request| {
         pairing.verify_passcode(
             request.passcode.as_deref().unwrap_or_default(),
             request.device_name,
+            Some(&peer_key),
         )
     })
 }
 
 async fn pair_verify_token(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     body: Result<Json<PairVerifyRequest>, JsonRejection>,
 ) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
+    let peer_key = pair_rate_key(&addr.ip());
     pair_verify(state, body, |pairing, request| {
         pairing.verify_token(
             request.token.as_deref().unwrap_or_default(),
             request.device_name,
+            Some(&peer_key),
         )
     })
 }
@@ -1072,6 +1111,23 @@ async fn upsert_agent(
             "agent id and command are required",
         ));
     }
+    // Per-field size limits: reject oversized agent configs before persisting
+    // (defense-in-depth on top of the loopback gate).
+    if agent.command.len() > MAX_AGENT_COMMAND_LEN {
+        return Err(ApiResponseError::bad_request(format!(
+            "agent command exceeds {MAX_AGENT_COMMAND_LEN} characters"
+        )));
+    }
+    if agent.args.len() > MAX_AGENT_ARGS_COUNT {
+        return Err(ApiResponseError::bad_request(format!(
+            "too many agent args (max {MAX_AGENT_ARGS_COUNT})"
+        )));
+    }
+    if agent.models.len() > MAX_AGENT_MODELS_COUNT {
+        return Err(ApiResponseError::bad_request(format!(
+            "too many agent models (max {MAX_AGENT_MODELS_COUNT})"
+        )));
+    }
     state.acp.register_agent(agent.clone());
     let mut config = state.config.write();
     config.upsert_agent(agent.clone()).map_err(|error| {
@@ -1099,8 +1155,25 @@ async fn delete_agent(
     Ok(Json(json!({"status": "deleted"})))
 }
 
-async fn autodetect_agents() -> Json<Vec<AgentInfo>> {
-    Json(acp::autodetect().await)
+/// Cooldown for autodetect probe spawning to prevent resource exhaustion from
+// repeated calls. Each autodetect spawns up to 5 child processes.
+const AUTODETECT_COOLDOWN: Duration = Duration::from_secs(60);
+
+async fn autodetect_agents(State(state): State<AppState>) -> Json<Vec<AgentInfo>> {
+    // Rate-limit probe spawning: return cached results if within the cooldown
+    // so repeated calls don't re-spawn child processes (DoS defense).
+    if let Ok(cache) = state.autodetect_cache.lock() {
+        if let Some((at, ref results)) = *cache {
+            if at.elapsed() < AUTODETECT_COOLDOWN {
+                return Json(results.clone());
+            }
+        }
+    }
+    let results = acp::autodetect().await;
+    if let Ok(mut cache) = state.autodetect_cache.lock() {
+        *cache = Some((Instant::now(), results.clone()));
+    }
+    Json(results)
 }
 
 async fn list_sessions(State(state): State<AppState>) -> Json<Vec<crate::interfaces::SessionInfo>> {
@@ -1296,7 +1369,7 @@ async fn close_session(
     state.acp.close_session(&id).await.map_err(app_error)?;
     // Best-effort upload cleanup — ACP is intentionally decoupled from uploads.
     if let Some(uploads) = &state.uploads {
-        if let Ok(manager) = uploads.lock() {
+        if let Ok(mut manager) = uploads.lock() {
             if let Err(error) = manager.remove_session(&id) {
                 warn!(session_id = %id, %error, "failed to remove session uploads");
             }
@@ -1356,8 +1429,8 @@ async fn require_auth(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    // Direct Router tests lack ConnectInfo; peer_addr_string treats that as
-    // loopback so host-only tests never open a LAN request.
+    // peer_addr_string fails closed (non-loopback) when ConnectInfo is
+    // absent in production; tests insert it via `oneshot_peer`.
     let remote_addr = peer_addr_string(request.extensions());
     match authorize_request(
         &state.pairing,
@@ -1635,13 +1708,24 @@ fn revocation_grace_period(state: &AppState) -> Duration {
     Duration::from_secs(u64::try_from(secs).unwrap_or(0))
 }
 
-/// Socket address string for loopback checks. Missing `ConnectInfo` (unit tests)
-/// defaults to loopback so host-only paths stay open without LAN exposure.
+/// Socket address string for loopback checks. Missing `ConnectInfo` is a
+/// misconfiguration signal: in production we fail closed by returning a
+/// non-loopback address so `authorize_request` requires a device credential
+/// rather than silently treating the request as trusted loopback. Tests
+/// insert `ConnectInfo` explicitly via `oneshot_peer`, but the loopback
+/// fallback is kept under `cfg(test)` as defense-in-depth.
 fn peer_addr_string(extensions: &axum::http::Extensions) -> String {
     extensions
         .get::<axum::extract::ConnectInfo<SocketAddr>>()
         .map(|connect| connect.0.to_string())
-        .unwrap_or_else(|| "127.0.0.1:0".to_string())
+        .unwrap_or_else(|| {
+            if cfg!(test) {
+                "127.0.0.1:0".to_string()
+            } else {
+                // Fail closed: a non-loopback address forces credential checks.
+                "0.0.0.0:0".to_string()
+            }
+        })
 }
 
 /// Device ID from the `Authorization: Bearer` header — empty on loopback-only
@@ -1919,7 +2003,7 @@ mod tests {
             .expect("pairing session");
         let cred = state
             .pairing
-            .verify_passcode(&session.passcode, "Device")
+            .verify_passcode(&session.passcode, "Device", None)
             .expect("pair device");
         (dir, state, cred)
     }
@@ -1982,7 +2066,9 @@ mod tests {
     async fn pairing_rate_limit_is_exposed_as_a_client_error() {
         let (_dir, state) = state();
         for _ in 0..5 {
-            let _ = state.pairing.verify_passcode("invalid", "device");
+            let _ = state
+                .pairing
+                .verify_passcode("invalid", "device", Some("127.0.0.1"));
         }
         let request = Request::builder()
             .method(Method::POST)

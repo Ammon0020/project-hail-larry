@@ -184,7 +184,7 @@ fn get_rejects_invalid_session_id() {
 #[test]
 fn remove_session_rejects_invalid_id() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let m = Manager::new(tmp.path()).expect("new");
+    let mut m = Manager::new(tmp.path()).expect("new");
     let err = m.remove_session("../escape").unwrap_err();
     assert!(matches!(err, UploadError::InvalidSessionId), "got {err:?}");
 }

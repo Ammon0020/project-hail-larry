@@ -17,6 +17,7 @@
 //!
 //! See `docs/plans/rust-port/complete-S-UPLOADS-uploads-med.md`.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -28,6 +29,11 @@ use uuid::Uuid;
 /// base64-encoded image and a raw upload share the same ceiling. Mirrors Go
 /// `MaxUploadBytes`.
 pub const MAX_UPLOAD_BYTES: usize = 10 << 20; // 10 MB
+
+/// Aggregate upload size cap per session. Prevents a single session from
+/// filling the disk with repeated uploads. Cleanup happens on
+/// `remove_session`, which resets the tracked total.
+pub const MAX_SESSION_UPLOAD_BYTES: u64 = 100 << 20; // 100 MB
 
 /// Supported image MIME types. Mirrors Go `mimePNG`/`mimeJPEG`/`mimeGIF`/
 /// `mimeWebP`.
@@ -56,6 +62,11 @@ pub enum UploadError {
     #[error("uploads: file exceeds {0} bytes")]
     Oversize(usize),
 
+    /// The aggregate uploaded bytes for the session exceeded
+    /// [`MAX_SESSION_UPLOAD_BYTES`].
+    #[error("uploads: session aggregate size limit exceeded")]
+    SessionQuotaExceeded,
+
     /// The bytes did not match a supported image format (PNG/JPEG/GIF/WebP).
     #[error("uploads: unsupported file type (must be PNG, JPEG, GIF, or WebP)")]
     UnsupportedType,
@@ -67,6 +78,12 @@ pub enum UploadError {
     /// An underlying `std::fs` operation failed (read, write, mkdir, readdir).
     #[error("uploads: io: {0}")]
     Io(#[from] std::io::Error),
+
+    /// A session directory or stored file was a symlink (defense-in-depth:
+    /// uploads must stay within the uploads root and never follow a planted
+    /// symlink to an arbitrary location).
+    #[error("uploads: symlink detected at {0}")]
+    SymlinkDetected(String),
 
     /// No upload with the requested ID was found in the session directory.
     #[error("uploads: upload {upload_id} not found in session {session_id}")]
@@ -106,6 +123,9 @@ pub struct StoredUpload {
 /// first `store` call.
 pub struct Manager {
     root: PathBuf,
+    /// Running total of stored bytes per session, used to enforce
+    /// [`MAX_SESSION_UPLOAD_BYTES`]. Reset on `remove_session`.
+    session_totals: HashMap<String, u64>,
 }
 
 impl Manager {
@@ -114,7 +134,10 @@ impl Manager {
     pub fn new(root_dir: impl Into<PathBuf>) -> Result<Self, UploadError> {
         let root = root_dir.into();
         crate::fsutil::create_dir_all(&root)?;
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            session_totals: HashMap::new(),
+        })
     }
 
     /// Returns the absolute root directory. Mirrors Go `Manager.Root`.
@@ -160,12 +183,45 @@ impl Manager {
             return Err(UploadError::UnsupportedType);
         }
 
+        // Enforce the per-session aggregate cap so repeated uploads cannot fill
+        // the disk. The check is conservative: we account the new file's size
+        // before writing and roll back the total on a write failure below.
+        let new_total = self
+            .session_totals
+            .get(session_id)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(data.len() as u64);
+        if new_total > MAX_SESSION_UPLOAD_BYTES {
+            return Err(UploadError::SessionQuotaExceeded);
+        }
+
         let upload_id = new_id();
         let session_dir = self.root.join(session_id);
         crate::fsutil::create_dir_all(&session_dir)?;
 
+        // Defense-in-depth: reject a symlink planted at the session directory
+        // so fs::write cannot follow it outside the uploads root. The session
+        // dir is created with 0o700 and IDs are random, but a same-UID process
+        // could still plant a symlink between create_dir_all and write.
+        if let Ok(meta) = fs::symlink_metadata(&session_dir) {
+            if meta.file_type().is_symlink() {
+                return Err(UploadError::SymlinkDetected(
+                    session_dir.display().to_string(),
+                ));
+            }
+        }
+
         let stored_name = format!("{upload_id}{ext}");
         let abs_path = session_dir.join(&stored_name);
+        // The stored file is new (random ID), so it cannot be a pre-planted
+        // symlink; verify anyway so a race or relaxed validation can't write
+        // through a symlink.
+        if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+            if meta.file_type().is_symlink() {
+                return Err(UploadError::SymlinkDetected(abs_path.display().to_string()));
+            }
+        }
         fs::write(&abs_path, &data)?;
         #[cfg(unix)]
         {
@@ -174,6 +230,10 @@ impl Manager {
         }
 
         let uri = format!("file://{}", abs_path.display());
+        // Record the aggregate total only after the write succeeds so a failed
+        // write does not consume quota.
+        self.session_totals
+            .insert(session_id.to_string(), new_total);
         Ok(StoredUpload {
             id: upload_id,
             name: sanitize_filename(filename),
@@ -211,8 +271,11 @@ impl Manager {
         let prefix = format!("{upload_id}.");
         for entry in entries {
             let entry = entry?;
-            let meta = entry.metadata()?;
-            if meta.is_dir() {
+            // Use symlink_metadata so a planted symlink is detected rather
+            // than followed — serving a symlink target would leak arbitrary
+            // files outside the uploads root.
+            let meta = std::fs::symlink_metadata(entry.path())?;
+            if meta.is_dir() || meta.file_type().is_symlink() {
                 continue;
             }
             if let Some(name) = entry.file_name().to_str() {
@@ -229,15 +292,23 @@ impl Manager {
 
     /// Delete all uploads for a session. Safe to call when no uploads exist for
     /// the session. Mirrors Go `Manager.RemoveSession`.
-    pub fn remove_session(&self, session_id: &str) -> Result<(), UploadError> {
+    pub fn remove_session(&mut self, session_id: &str) -> Result<(), UploadError> {
         if !is_valid_session_id(session_id) {
             return Err(UploadError::InvalidSessionId);
         }
         let session_dir = self.root.join(session_id);
         // A missing dir is a no-op (matches Go's os.RemoveAll behaviour).
         match fs::remove_dir_all(&session_dir) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Ok(()) => {
+                // Reset the aggregate quota tracker now that the session's
+                // uploads are gone.
+                self.session_totals.remove(session_id);
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.session_totals.remove(session_id);
+                Ok(())
+            }
             Err(e) => Err(UploadError::Io(e)),
         }
     }
@@ -246,13 +317,19 @@ impl Manager {
     /// to clean up all per-session upload directories. The manager remains
     /// usable after this only if [`Manager::new`] is called again to recreate
     /// the root. Mirrors Go `Manager.RemoveAll`.
-    pub fn remove_all(&self) -> Result<(), UploadError> {
+    pub fn remove_all(&mut self) -> Result<(), UploadError> {
         if self.root.as_os_str().is_empty() {
             return Ok(());
         }
         match fs::remove_dir_all(&self.root) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Ok(()) => {
+                self.session_totals.clear();
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.session_totals.clear();
+                Ok(())
+            }
             Err(e) => Err(UploadError::Io(e)),
         }
     }

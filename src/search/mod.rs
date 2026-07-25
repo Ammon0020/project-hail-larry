@@ -47,6 +47,13 @@ mod tests;
 /// Matches Go's `defaultMaxResults`. A giant workspace cannot exhaust memory.
 pub const DEFAULT_MAX_RESULTS: i32 = 200;
 
+/// Maximum number of files the search walk will scan before stopping with
+/// partial results. Caps resource use on pathologically large workspaces
+/// (mirrors the file-tree `MAX_FILE_TREE_NODES` guard). When hit, the results
+/// collected so far are returned and `SearchError::FileLimitHit` is NOT raised
+/// — the caller simply receives a truncated set.
+pub const MAX_SEARCH_FILES: usize = 100_000;
+
 /// Convert a relative path to the stable forward-slash wire representation.
 pub(crate) fn path_to_slash(path: &Path) -> String {
     let value = path.to_string_lossy();

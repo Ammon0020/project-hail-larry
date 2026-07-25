@@ -6,9 +6,12 @@
 //! with `kill(-pgid, SIGKILL)`. That ensures grandchildren of a shell pipeline
 //! or an ACP agent cannot survive daemon shutdown.
 //!
-//! On Windows we create a new process group (`CREATE_NEW_PROCESS_GROUP`) and
-//! terminate via the child handle. Full tree kill needs a Job Object and is
-//! deferred (matches prior Go / shell behaviour: immediate child only).
+//! On Windows the child is assigned to a Job Object with
+//! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; closing the job handle on cancel or
+//! drop kills the entire process tree (the standard Windows equivalent of Unix
+//! `killpg`). `CREATE_NEW_PROCESS_GROUP` is also set for console signal
+//! isolation. On Linux, [`kill_process_tree`] supplements the group kill by
+//! walking `/proc` for descendants that escaped via `setsid()`.
 //!
 //! Callers configure a `std::process::Command` (via tokio's `as_std_mut()` or
 //! before converting into `async_process::Command`), then keep a
@@ -20,8 +23,7 @@ use std::process::Command;
 ///
 /// Tokio / async-process `kill_on_drop` only handles the direct child. This
 /// guard extends that behavior to the dedicated process group configured by
-/// [`configure_process_group`]. On Windows, `kill_on_drop` remains deliberately
-/// bounded to the child handle: terminating descendants requires a Job Object.
+/// [`configure_process_group`].
 #[cfg(unix)]
 pub struct ProcessGroupCleanup {
     pgid: Option<i32>,
@@ -52,20 +54,77 @@ impl Drop for ProcessGroupCleanup {
     }
 }
 
-/// No additional drop behavior is needed on Windows because Tokio /
-/// async-process `kill_on_drop` safely terminates the immediate child handle.
-#[cfg(not(unix))]
+/// Windows Job Object cleanup guard. The child (and all its descendants) are
+/// assigned to a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; closing
+/// the job handle on drop or cancel kills the entire tree — the standard
+/// Windows equivalent of Unix `kill(-pgid, SIGKILL)`.
+#[cfg(windows)]
+pub struct ProcessGroupCleanup {
+    job: Option<*mut std::ffi::c_void>,
+}
+
+#[cfg(windows)]
+impl ProcessGroupCleanup {
+    /// Create a Job Object, assign the child process (identified by `pid`) to
+    /// it, and return a guard whose drop closes the job handle. If the job or
+    /// process cannot be opened, returns a guard with no job — callers fall
+    /// back to `child.kill()` (immediate child only).
+    #[must_use]
+    pub fn new(pid: Option<u32>) -> Self {
+        let Some(pid) = pid else {
+            return Self { job: None };
+        };
+        let job = unsafe { create_kill_on_close_job() };
+        if job.is_null() {
+            return Self { job: None };
+        }
+        // Open the child process to assign it to the job. Only
+        // PROCESS_SET_QUOTA (required by AssignProcessToJobObject) and
+        // PROCESS_TERMINATE are requested.
+        const PROCESS_SET_QUOTA: u32 = 0x0100;
+        const PROCESS_TERMINATE: u32 = 0x0001;
+        unsafe {
+            let process = winapi::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+            if !process.is_null() {
+                winapi::AssignProcessToJobObject(job, process);
+                winapi::CloseHandle(process);
+            }
+        }
+        Self { job: Some(job) }
+    }
+
+    /// Close the job handle after a successful reap. Because
+    /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` only signals remaining members,
+    /// closing after all have exited is a no-op.
+    pub fn disarm(&mut self) {
+        if let Some(job) = self.job.take() {
+            unsafe { winapi::CloseHandle(job) };
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessGroupCleanup {
+    fn drop(&mut self) {
+        // Closing the job handle kills all assigned processes and their
+        // descendants (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE).
+        if let Some(job) = self.job.take() {
+            unsafe { winapi::CloseHandle(job) };
+        }
+    }
+}
+
+/// Fallback for non-Unix non-Windows targets (no process-group tree kill).
+#[cfg(not(any(unix, windows)))]
 pub struct ProcessGroupCleanup;
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl ProcessGroupCleanup {
-    /// Windows stub — process-group tree kill is not available without Job Objects.
     #[must_use]
     pub fn new(_pid: Option<u32>) -> Self {
         Self
     }
 
-    /// No-op on Windows.
     pub fn disarm(&mut self) {}
 }
 
@@ -82,6 +141,74 @@ pub fn kill_process_group(pgid: i32) {
     unsafe {
         let _ = libc::kill(-pgid, libc::SIGKILL);
     }
+}
+
+/// Best-effort kill of all descendants of `root_pid` by walking `/proc`.
+///
+/// This supplements [`kill_process_group`]: a grandchild that called
+/// `setsid()` escapes the process group (it starts a new session), but is
+/// still a descendant of `root_pid` and will be caught by this tree walk.
+/// Race conditions are inherent (processes can spawn between scan and kill),
+/// so this is a best-effort supplementary measure, not a guarantee. The
+/// process group kill is the primary mechanism; this catches escapees.
+#[cfg(target_os = "linux")]
+pub fn kill_process_tree(root_pid: i32) {
+    for pid in collect_descendants(root_pid) {
+        // SAFETY: SIGKILL is non-catchable; ESRCH means already gone.
+        unsafe {
+            let _ = libc::kill(pid, libc::SIGKILL);
+        }
+    }
+}
+
+/// Walk `/proc/*/stat` to collect every descendant of `root_pid` (BFS by
+/// PPID relationship). Returns only descendants, not `root_pid` itself.
+#[cfg(target_os = "linux")]
+fn collect_descendants(root_pid: i32) -> Vec<i32> {
+    use std::collections::{HashMap, VecDeque};
+
+    // Build parent → children map from /proc.
+    let mut children_by_parent: HashMap<i32, Vec<i32>> = HashMap::new();
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            let pid: i32 = match entry.file_name().to_str().and_then(|s| s.parse().ok()) {
+                Some(p) => p,
+                None => continue,
+            };
+            let stat = match std::fs::read_to_string(entry.path().join("stat")) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            // Format: "pid (comm) state ppid ..." — comm may contain spaces
+            // and parens, so split at the LAST ")".
+            let (_, rest) = match stat.rsplit_once(") ") {
+                Some(t) => t,
+                None => continue,
+            };
+            let ppid: i32 = rest
+                .split_whitespace()
+                .nth(1) // state is field 0, ppid is field 1
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            if ppid > 0 {
+                children_by_parent.entry(ppid).or_default().push(pid);
+            }
+        }
+    }
+
+    // BFS from root_pid to collect all descendants.
+    let mut descendants = Vec::new();
+    let mut queue = VecDeque::new();
+    queue.push_back(root_pid);
+    while let Some(pid) = queue.pop_front() {
+        if let Some(children) = children_by_parent.get(&pid) {
+            for &child in children {
+                descendants.push(child);
+                queue.push_back(child);
+            }
+        }
+    }
+    descendants
 }
 
 /// Put `cmd`'s child into an isolated process group (Unix) or new Windows group.
@@ -115,10 +242,114 @@ fn configure_process_group_inner(cmd: &mut Command) {
 fn configure_process_group_inner(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
     // CREATE_NEW_PROCESS_GROUP = 0x00000200. Children of this process form a
-    // new group; child.kill() terminates the immediate child. Full group
-    // kill requires a Job Object (deferred — Go also only kills the child).
+    // new group for console signal isolation. Full tree kill is handled by
+    // the Job Object assigned in `ProcessGroupCleanup::new`.
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+}
+
+// ---- Windows Job Object FFI (raw declarations; no windows-sys dependency) ----
+#[cfg(windows)]
+mod winapi {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    pub struct JobObjectBasicLimitInformation {
+        pub per_process_user_time_limit: i64,
+        pub per_job_user_time_limit: i64,
+        pub limit_flags: u32,
+        pub minimum_working_set_size: usize,
+        pub maximum_working_set_size: usize,
+        pub active_process_limit: u32,
+        pub affinity: usize,
+        pub priority_class: u32,
+        pub scheduling_class: u32,
+    }
+
+    #[repr(C)]
+    pub struct IoCounters {
+        pub read_operation_count: u64,
+        pub write_operation_count: u64,
+        pub other_operation_count: u64,
+        pub read_transfer_count: u64,
+        pub write_transfer_count: u64,
+        pub other_transfer_count: u64,
+    }
+
+    #[repr(C)]
+    pub struct JobObjectExtendedLimitInformation {
+        pub basic_limit_information: JobObjectBasicLimitInformation,
+        pub io_info: IoCounters,
+        pub process_memory_limit: usize,
+        pub job_memory_limit: usize,
+        pub peak_process_memory_used: usize,
+        pub peak_job_memory_used: usize,
+    }
+
+    pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+    pub const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
+
+    extern "system" {
+        pub fn CreateJobObjectW(lp_job_attributes: *mut c_void, lp_name: *const u16)
+            -> *mut c_void;
+        pub fn SetInformationJobObject(
+            h_job: *mut c_void,
+            info_class: u32,
+            info: *mut c_void,
+            len: u32,
+        ) -> i32;
+        pub fn AssignProcessToJobObject(h_job: *mut c_void, h_process: *mut c_void) -> i32;
+        pub fn CloseHandle(handle: *mut c_void) -> i32;
+        pub fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+    }
+}
+
+/// Create a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` so that
+/// closing the handle kills all assigned processes. Returns a null handle on
+/// failure.
+#[cfg(windows)]
+unsafe fn create_kill_on_close_job() -> *mut std::ffi::c_void {
+    use winapi::*;
+    let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+    if job.is_null() {
+        return std::ptr::null_mut();
+    }
+    let mut info = JobObjectExtendedLimitInformation {
+        basic_limit_information: JobObjectBasicLimitInformation {
+            per_process_user_time_limit: 0,
+            per_job_user_time_limit: 0,
+            limit_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            minimum_working_set_size: 0,
+            maximum_working_set_size: 0,
+            active_process_limit: 0,
+            affinity: 0,
+            priority_class: 0,
+            scheduling_class: 0,
+        },
+        io_info: IoCounters {
+            read_operation_count: 0,
+            write_operation_count: 0,
+            other_operation_count: 0,
+            read_transfer_count: 0,
+            write_transfer_count: 0,
+            other_transfer_count: 0,
+        },
+        process_memory_limit: 0,
+        job_memory_limit: 0,
+        peak_process_memory_used: 0,
+        peak_job_memory_used: 0,
+    };
+    if SetInformationJobObject(
+        job,
+        JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+        &mut info as *mut _ as *mut std::ffi::c_void,
+        std::mem::size_of::<JobObjectExtendedLimitInformation>() as u32,
+    ) == 0
+    {
+        CloseHandle(job);
+        return std::ptr::null_mut();
+    }
+    job
 }
 
 #[cfg(test)]

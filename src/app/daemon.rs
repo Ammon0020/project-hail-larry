@@ -251,7 +251,7 @@ impl Daemon {
         self.pairing.close();
         self.hub.shutdown();
         self.permission_sweeper.abort();
-        if let Ok(manager) = self.uploads.lock() {
+        if let Ok(mut manager) = self.uploads.lock() {
             if let Err(error) = manager.remove_all() {
                 warn!(%error, "remove temporary upload data during shutdown");
             }

@@ -3,5 +3,5 @@
   "path": "/api/workspaces/<REDACTED_WORKSPACE_ID>/file?path=nope.txt",
   "status": 404,
   "contentType": "application/json",
-  "body": "{\"error\":\"stat file: lstat \u003cREDACTED_PATH\u003e/tests/contract/fixtures/seed-workspace/nope.txt: no such file or directory\"}\n"
+  "body": "{\"error\":\"stat file: lstat nope.txt: no such file or directory\"}\n"
 }

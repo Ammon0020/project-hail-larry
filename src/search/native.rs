@@ -19,7 +19,7 @@ use regex::Regex;
 use tokio_util::sync::CancellationToken;
 
 use crate::interfaces::{SearchOptions, SearchResult};
-use crate::search::{glob_to_regex, path_to_slash, SearchError, IGNORE_DIRS};
+use crate::search::{glob_to_regex, path_to_slash, SearchError, IGNORE_DIRS, MAX_SEARCH_FILES};
 
 /// Walks `root` with the `ignore` crate and scans each file for matches.
 ///
@@ -85,9 +85,16 @@ pub(crate) async fn search_with_walker(
     let cancel_clone = cancel.clone();
     tokio::task::spawn_blocking(move || {
         let mut results: Vec<SearchResult> = Vec::new();
+        let mut files_scanned: usize = 0;
         for entry in walker {
             if cancel_clone.is_cancelled() {
                 return Err(SearchError::Cancelled);
+            }
+            // Cap the number of files scanned so a workspace with millions of
+            // files cannot exhaust blocking-thread time. Partial results are
+            // returned; the caller sees a truncated set.
+            if files_scanned >= MAX_SEARCH_FILES {
+                break;
             }
             let entry = match entry {
                 Ok(e) => e,
@@ -99,6 +106,7 @@ pub(crate) async fn search_with_walker(
             if ft.is_dir() || ft.is_symlink() {
                 continue;
             }
+            files_scanned += 1;
 
             let path = entry.path();
             let base = path.file_name().and_then(|n| n.to_str()).unwrap_or("");

@@ -80,6 +80,10 @@ const MODEL_SWITCH_TRANSFER_BYTES: i64 = 256 * 1024;
 const ACP_CLIENT_NAME: &str = "LocalAgentInterface";
 /// ACP `clientInfo.version` — same Go parity constraint as [`ACP_CLIENT_NAME`].
 const ACP_CLIENT_VERSION: &str = "1.0";
+/// Grace period after a cooperative cancel before force-closing the session.
+/// A malicious agent can ignore the cancel notification; after this timeout the
+/// session is force-closed to kill the agent process and abort in-flight callbacks.
+const CANCEL_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Constructor-only dependencies for ACP core.
 pub struct ClientDeps {
@@ -398,21 +402,7 @@ impl Client {
     fn persist_sessions(&self) -> Result<(), AppError> {
         let live = self.sessions_read()?;
         let dormant = self.dormant_read()?;
-        // Live metadata wins for shared ids; dormant fills the rest so a
-        // create/rename cannot wipe conversations that have not been restored.
-        let mut by_id: HashMap<String, StoredSession> =
-            HashMap::with_capacity(live.len() + dormant.len());
-        for stored in dormant.values() {
-            by_id.insert(stored.info.id.clone(), stored.clone());
-        }
-        for entry in live.values() {
-            by_id.insert(
-                entry.info.id.clone(),
-                StoredSession::from_parts(entry.info.clone(), entry.acp_session_id.clone()),
-            );
-        }
-        let sessions = by_id.into_values().collect::<Vec<_>>();
-        self.deps.conversation_store.persist(&sessions)
+        persist_sessions_to(&live, &dormant, &self.deps.conversation_store)
     }
 
     fn has_live_session(&self, session_id: &str) -> Result<bool, AppError> {
@@ -1038,6 +1028,60 @@ impl ACPClient for Client {
             .await
             .map_err(|_| AppError::internal("ACP session actor is unavailable"))?;
         self.update_state(session_id, SessionState::Interrupted);
+
+        // Security: cancel is cooperative — a malicious agent can ignore the
+        // notification and keep its process alive. Spawn a grace-period watchdog
+        // that force-closes the session (killing the process group) if the agent
+        // has not acknowledged within CANCEL_GRACE_PERIOD. Removing the registry
+        // entry first makes this idempotent against a concurrent close_session.
+        let sessions = Arc::clone(&self.sessions);
+        let dormant = Arc::clone(&self.dormant);
+        let permissions = Arc::clone(&self.deps.permissions);
+        let conversation_store = self.deps.conversation_store.clone();
+        let pipeline = Arc::clone(&self.pipeline);
+        let session_id_owned = session_id.to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(CANCEL_GRACE_PERIOD).await;
+            // Only escalate if the session is still live and interrupted — if the
+            // agent acknowledged or the user already closed, leave it alone.
+            let sender = {
+                let Ok(sessions) = sessions.read() else {
+                    return;
+                };
+                let Some(entry) = sessions.get(&session_id_owned) else {
+                    return;
+                };
+                if entry.state != SessionState::Interrupted {
+                    return;
+                }
+                entry.commands.clone()
+            };
+            // Remove first to make the force-close idempotent (mirrors close_session).
+            let removed = sessions
+                .write()
+                .ok()
+                .and_then(|mut s| s.remove(&session_id_owned));
+            if removed.is_none() {
+                return;
+            }
+            let _ = dormant
+                .write()
+                .ok()
+                .and_then(|mut s| s.remove(&session_id_owned));
+            if let (Ok(live), Ok(dormant)) = (sessions.read(), dormant.read()) {
+                let _ = persist_sessions_to(&live, &dormant, &conversation_store);
+            }
+            permissions.clear_session(&session_id_owned);
+            let (closed_tx, closed_rx) = oneshot::channel();
+            if sender.send(ActorCommand::Close(closed_tx)).await.is_ok() {
+                let _ = closed_rx.await;
+            }
+            pipeline.clear(&session_id_owned);
+            tracing::info!(
+                session_id = %session_id_owned,
+                "force-closed ACP session after cancel grace period expired"
+            );
+        });
         Ok(())
     }
 
@@ -1219,6 +1263,29 @@ impl ACPClient for Client {
             .await
             .map_err(|_| AppError::internal("ACP disable_provider actor exited"))?
     }
+}
+
+/// Merge live + dormant sessions and persist to durable storage.
+/// Live metadata wins for shared ids; dormant fills the rest so a
+/// create/rename cannot wipe conversations that have not been restored.
+fn persist_sessions_to(
+    live: &HashMap<String, SessionEntry>,
+    dormant: &HashMap<String, StoredSession>,
+    conversation_store: &ConversationStore,
+) -> Result<(), AppError> {
+    let mut by_id: HashMap<String, StoredSession> =
+        HashMap::with_capacity(live.len() + dormant.len());
+    for stored in dormant.values() {
+        by_id.insert(stored.info.id.clone(), stored.clone());
+    }
+    for entry in live.values() {
+        by_id.insert(
+            entry.info.id.clone(),
+            StoredSession::from_parts(entry.info.clone(), entry.acp_session_id.clone()),
+        );
+    }
+    let sessions = by_id.into_values().collect::<Vec<_>>();
+    conversation_store.persist(&sessions)
 }
 
 enum ActorCommand {
@@ -1557,7 +1624,9 @@ async fn run_actor_inner(
             },
             agent_client_protocol::on_receive_request!(),
         )
-        .connect_with(transport, |cx: ConnectionTo<Agent>| async move {
+        .connect_with(transport, {
+            let handler_cancel = handler_cancel.clone();
+            move |cx: ConnectionTo<Agent>| async move {
             // clientInfo is required by agents that forward name/version into
             // upstream provider metadata (Mistral rejects empty strings).
             let initialize = InitializeRequest::new(ProtocolVersion::V1)
@@ -1700,8 +1769,10 @@ async fn run_actor_inner(
                 event_bus,
                 local_session_id,
                 prompt_cancel,
+                handler_cancel.clone(),
             )
             .await
+        }
         })
         .await;
     handler_cancel.cancel();
@@ -1832,6 +1903,7 @@ async fn actor_loop(
     event_bus: SharedEventBus,
     local_session_id: String,
     prompt_cancel: Arc<AtomicBool>,
+    handler_cancel: CancellationToken,
 ) -> Result<ActorExit, agent_client_protocol::Error> {
     while let Some(command) = commands.recv().await {
         match command {
@@ -1852,6 +1924,7 @@ async fn actor_loop(
                     event_bus: &event_bus,
                     local_session_id: &local_session_id,
                     prompt_cancel: &prompt_cancel,
+                    handler_cancel: handler_cancel.clone(),
                 })
                 .await?
                 {
@@ -1860,7 +1933,8 @@ async fn actor_loop(
                 }
             }
             other => {
-                if let Some(closed) = handle_non_prompt_command(&cx, &agent_session_id, other).await
+                if let Some(closed) =
+                    handle_non_prompt_command(&cx, &agent_session_id, other, &handler_cancel).await
                 {
                     return Ok(ActorExit::Closed(closed));
                 }
@@ -1877,6 +1951,7 @@ async fn handle_non_prompt_command(
     cx: &ConnectionTo<Agent>,
     agent_session_id: &SessionId,
     command: ActorCommand,
+    handler_cancel: &CancellationToken,
 ) -> Option<oneshot::Sender<()>> {
     match command {
         ActorCommand::ListProviders { result } => {
@@ -1916,6 +1991,10 @@ async fn handle_non_prompt_command(
             None
         }
         ActorCommand::Cancel => {
+            // Fire handler_cancel so in-flight callbacks (read_text_file,
+            // write_text_file, create_terminal, etc.) abort immediately rather
+            // than continuing to serve a malicious agent that ignores cancel.
+            handler_cancel.cancel();
             if let Err(error) = send_cancel(cx, agent_session_id) {
                 tracing::error!(error = %error, "ACP cancel notification failed");
             }
@@ -1962,6 +2041,7 @@ struct PromptTurn<'a> {
     event_bus: &'a SharedEventBus,
     local_session_id: &'a str,
     prompt_cancel: &'a AtomicBool,
+    handler_cancel: CancellationToken,
 }
 
 /// Await one prompt while continuing to receive session control commands.
@@ -1977,11 +2057,14 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
         event_bus,
         local_session_id,
         prompt_cancel,
+        handler_cancel,
     } = turn;
 
     // Cancel may have won the race onto an idle actor before this Prompt was
     // dequeued. Honor the sticky bit before touching the agent.
     if prompt_cancel.swap(false, Ordering::AcqRel) {
+        // Abort in-flight callbacks for the same reason as the Cancel arm below.
+        handler_cancel.cancel();
         let cancel = send_cancel(&cx, &agent_session_id);
         let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
         cancel?;
@@ -2036,6 +2119,9 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
     while let Ok(command) = commands.try_recv() {
         match command {
             ActorCommand::Cancel => {
+                // Abort in-flight callbacks for the same reason as the Cancel
+                // arm in the main select below.
+                handler_cancel.cancel();
                 let cancel = send_cancel(&cx, &agent_session_id);
                 let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
                 cancel?;
@@ -2051,7 +2137,8 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                 )));
             }
             other => {
-                if let Some(closed) = handle_non_prompt_command(&cx, &agent_session_id, other).await
+                if let Some(closed) =
+                    handle_non_prompt_command(&cx, &agent_session_id, other, &handler_cancel).await
                 {
                     let _ =
                         result.send(Err(AppError::internal("ACP session closed during prompt")));
@@ -2143,6 +2230,10 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
             command = commands.recv() => {
                 match command {
                     Some(ActorCommand::Cancel) => {
+                        // Fire handler_cancel so in-flight callbacks abort
+                        // immediately rather than continuing to serve a
+                        // malicious agent that ignores the cancel notification.
+                        handler_cancel.cancel();
                         let cancel = send_cancel(&cx, &agent_session_id);
                         if let Some(result) = result.take() {
                             let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
@@ -2163,7 +2254,8 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                     }
                     Some(other) => {
                         if let Some(closed) =
-                            handle_non_prompt_command(&cx, &agent_session_id, other).await
+                            handle_non_prompt_command(&cx, &agent_session_id, other, &handler_cancel)
+                                .await
                         {
                             if let Some(result) = result.take() {
                                 let _ = result.send(Err(AppError::internal(

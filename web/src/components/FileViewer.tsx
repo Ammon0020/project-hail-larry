@@ -24,6 +24,7 @@
  * instead of putting the device secret in the URL query string.
  */
 import { useEffect, useRef, useState } from 'react'
+import DOMPurify from 'dompurify'
 import { FileX, Download, Loader2, Box, Code } from 'lucide-react'
 import { api, previewFileUrl } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -173,7 +174,6 @@ function TiffViewer({ url, name }: { url: string; name: string }) {
       .then((res) => res.arrayBuffer())
       .then(async (buf) => {
         if (cancelled) return
-        // @ts-expect-error utif does not publish TypeScript declarations.
         const UTIF = await import('utif')
         const ifds = UTIF.decode(buf)
         UTIF.decodeImage(buf, ifds[0])
@@ -331,7 +331,10 @@ function DocxViewer({ url, name }: { url: string; name: string }) {
       })
       .then((buf) => import('mammoth').then((m) => m.convertToHtml({ arrayBuffer: buf })))
       .then((result) => {
-        if (!cancelled) setState({ html: result.value, error: null })
+        // Sanitize before injecting: mammoth escapes text by default, but
+        // a library bug or unescaped code path could allow script injection.
+        if (!cancelled)
+          setState({ html: DOMPurify.sanitize(result.value, { USE_PROFILES: { html: true } }), error: null })
       })
       .catch((err) => {
         if (!cancelled) setState({ html: null, error: err instanceof Error ? err.message : String(err) })
@@ -382,7 +385,11 @@ function XlsxViewer({ url, name }: { url: string; name: string }) {
         const wb = XLSX.read(buf, { type: 'array' })
         const sheetData = wb.SheetNames.map((sheetName) => {
           const sheet = wb.Sheets[sheetName]
-          const html = XLSX.utils.sheet_to_html(sheet, { editable: false })
+          // Sanitize before injecting: SheetJS escapes cell text by default,
+          // but a library bug could allow script injection.
+          const html = DOMPurify.sanitize(XLSX.utils.sheet_to_html(sheet, { editable: false }), {
+            USE_PROFILES: { html: true },
+          })
           return { name: sheetName, html }
         })
         if (!cancelled) {

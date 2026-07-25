@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rcgen::{CertificateParams, KeyPair, SanType, PKCS_ECDSA_P256_SHA256};
+use sha2::{Digest, Sha256};
+use tracing::warn;
 
 use crate::fsutil;
 
@@ -61,6 +63,17 @@ pub fn ensure_self_signed(cert_dir: &Path, host: &str) -> Result<CertificatePath
     let cert = params
         .self_signed(&key)
         .context("self-sign TLS certificate")?;
+
+    // Log the SHA-256 fingerprint of the new certificate so operators can
+    // verify it on paired devices (trust-on-first-use). An attacker with write
+    // access to the cert directory could delete these files to force a silent
+    // re-mint; this warning makes that visible on every fresh generation.
+    let fingerprint = hex::encode(Sha256::digest(cert.der().as_ref()));
+    warn!(
+        %fingerprint,
+        cert = %paths.cert.display(),
+        "generated a new self-signed TLS certificate; verify this fingerprint on paired devices"
+    );
 
     // Ensure the directory exists even before the first atomic write, then
     // persist both files with restrictive permissions.

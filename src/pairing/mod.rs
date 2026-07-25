@@ -107,12 +107,39 @@ struct Inner {
     session_ttl: Duration,
     inactivity_ttl: Duration,
     last_persist: Option<DateTime<Utc>>,
-    failures: Vec<DateTime<Utc>>,
-    lockout_until: Option<DateTime<Utc>>,
-    lockout_count: u32,
+    /// Per-IP lockout state so one attacker cannot lock out all pairing
+    /// attempts. Key is the normalized peer IP (or `GLOBAL_LOCKOUT_KEY` for
+    /// calls without a peer address, e.g. CLI).
+    lockouts: HashMap<String, LockoutState>,
     workspace_registrar: Option<Arc<dyn WorkspaceRegistrar>>,
     revocation_listener: Option<Arc<dyn RevocationListener>>,
 }
+
+/// Per-IP brute-force lockout state, mirroring the former global fields.
+struct LockoutState {
+    failures: Vec<DateTime<Utc>>,
+    lockout_until: Option<DateTime<Utc>>,
+    lockout_count: u32,
+}
+
+impl LockoutState {
+    fn new() -> Self {
+        Self {
+            failures: Vec::new(),
+            lockout_until: None,
+            lockout_count: 0,
+        }
+    }
+}
+
+impl Default for LockoutState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Fallback key for verify calls without a peer address (e.g. CLI).
+const GLOBAL_LOCKOUT_KEY: &str = "_global";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -138,6 +165,10 @@ impl Manager {
     ) -> Result<Self, PairingError> {
         let data_dir = data_dir.into();
         let devices = load_devices(&data_dir)?;
+        // Remove orphaned pairing QR PNGs from a prior crash/kill. In-memory
+        // sessions no longer exist, so any leftover file contains a stale
+        // (possibly still-valid within TTL) pairing token.
+        cleanup_stale_qr_files(&data_dir);
         Ok(Self {
             inner: Arc::new(Mutex::new(Inner {
                 sessions: HashMap::new(),
@@ -147,9 +178,7 @@ impl Manager {
                 session_ttl: DEFAULT_SESSION_TTL,
                 inactivity_ttl: Duration::ZERO,
                 last_persist: None,
-                failures: Vec::new(),
-                lockout_until: None,
-                lockout_count: 0,
+                lockouts: HashMap::new(),
                 workspace_registrar,
                 revocation_listener: None,
             })),
@@ -206,11 +235,13 @@ impl Manager {
         &self,
         passcode: &str,
         device_name: impl Into<String>,
+        peer_key: Option<&str>,
     ) -> Result<DeviceCredential, PairingError> {
         self.verify(
             device_name.into(),
             |session| bool::from(session.passcode.as_bytes().ct_eq(passcode.as_bytes())),
             PairingError::InvalidPasscode,
+            peer_key,
         )
     }
 
@@ -218,11 +249,13 @@ impl Manager {
         &self,
         token: &str,
         device_name: impl Into<String>,
+        peer_key: Option<&str>,
     ) -> Result<DeviceCredential, PairingError> {
         self.verify(
             device_name.into(),
             |session| bool::from(session.token.as_bytes().ct_eq(token.as_bytes())),
             PairingError::InvalidToken,
+            peer_key,
         )
     }
 
@@ -231,10 +264,12 @@ impl Manager {
         device_name: String,
         matches: impl Fn(&PairingSession) -> bool,
         miss: PairingError,
+        peer_key: Option<&str>,
     ) -> Result<DeviceCredential, PairingError> {
+        let key = peer_key.unwrap_or(GLOBAL_LOCKOUT_KEY);
         let mut inner = lock(&self.inner);
         cleanup_sessions(&mut inner);
-        check_rate_limit(&mut inner)?;
+        check_rate_limit(&mut inner, key)?;
         let now = Utc::now();
         let session_id = inner
             .sessions
@@ -242,15 +277,17 @@ impl Manager {
             .find(|s| !s.used && s.expires_at > now && matches(s))
             .map(|s| s.id.clone());
         let Some(session_id) = session_id else {
-            record_failure(&mut inner);
+            record_failure(&mut inner, key);
             return Err(miss);
         };
         let credential = issue_credential(&mut inner, &session_id, device_name)?;
         // A verified pairing proves the user controls the valid credential, so
         // stale failed attempts must not escalate future lockouts indefinitely.
-        inner.failures.clear();
-        inner.lockout_count = 0;
-        inner.lockout_until = None;
+        if let Some(state) = inner.lockouts.get_mut(key) {
+            state.failures.clear();
+            state.lockout_count = 0;
+            state.lockout_until = None;
+        }
         Ok(credential)
     }
 
@@ -564,25 +601,29 @@ fn pending_info(
     })
 }
 
-fn check_rate_limit(inner: &mut Inner) -> Result<(), PairingError> {
+fn check_rate_limit(inner: &mut Inner, key: &str) -> Result<(), PairingError> {
     let now = Utc::now();
-    inner
+    let Some(state) = inner.lockouts.get_mut(key) else {
+        return Ok(());
+    };
+    state
         .failures
         .retain(|time| now - *time < chrono_duration(RATE_LIMIT_WINDOW));
-    if inner.lockout_until.is_some_and(|until| now < until) {
+    if state.lockout_until.is_some_and(|until| now < until) {
         return Err(PairingError::RateLimited);
     }
     Ok(())
 }
 
-fn record_failure(inner: &mut Inner) {
-    inner.failures.push(Utc::now());
-    if inner.failures.len() >= MAX_VERIFY_ATTEMPTS {
-        let multiplier = 1_u64 << inner.lockout_count.min(8);
+fn record_failure(inner: &mut Inner, key: &str) {
+    let state = inner.lockouts.entry(key.to_string()).or_default();
+    state.failures.push(Utc::now());
+    if state.failures.len() >= MAX_VERIFY_ATTEMPTS {
+        let multiplier = 1_u64 << state.lockout_count.min(8);
         let seconds = (BASE_LOCKOUT.as_secs() * multiplier).min(MAX_LOCKOUT.as_secs());
-        inner.lockout_until = Some(Utc::now() + chrono::Duration::seconds(seconds as i64));
-        inner.lockout_count = inner.lockout_count.saturating_add(1);
-        inner.failures.clear();
+        state.lockout_until = Some(Utc::now() + chrono::Duration::seconds(seconds as i64));
+        state.lockout_count = state.lockout_count.saturating_add(1);
+        state.failures.clear();
     }
 }
 
@@ -595,6 +636,23 @@ fn cleanup_sessions(inner: &mut Inner) {
         }
         active
     });
+}
+
+/// Remove orphaned `pairing-*.png` files left by a crash or kill before
+/// cleanup could run. Their in-memory sessions no longer exist, so the PNGs
+/// contain stale (but potentially still-valid within TTL) pairing tokens.
+fn cleanup_stale_qr_files(data_dir: &Path) {
+    let Ok(entries) = fs::read_dir(data_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with("pairing-") && name.ends_with(".png") {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
 }
 
 fn load_devices(data_dir: &Path) -> Result<HashMap<String, StoredDevice>, PairingError> {
@@ -699,7 +757,7 @@ mod tests {
     fn pair(manager: &Manager) -> DeviceCredential {
         let session = manager.create_session("localhost", 7337).expect("session");
         manager
-            .verify_passcode(&session.passcode, "test device")
+            .verify_passcode(&session.passcode, "test device", None)
             .expect("credential")
     }
 
@@ -709,19 +767,24 @@ mod tests {
         let session = manager.create_session("localhost", 7337).expect("session");
         {
             let mut inner = lock(&manager.inner);
-            inner.failures.push(Utc::now());
-            inner.lockout_count = 4;
-            inner.lockout_until = Some(Utc::now() - chrono::Duration::seconds(1));
+            let state = inner
+                .lockouts
+                .entry(GLOBAL_LOCKOUT_KEY.to_string())
+                .or_default();
+            state.failures.push(Utc::now());
+            state.lockout_count = 4;
+            state.lockout_until = Some(Utc::now() - chrono::Duration::seconds(1));
         }
 
         manager
-            .verify_token(&session.token, "test device")
+            .verify_token(&session.token, "test device", None)
             .expect("successful pairing");
 
         let inner = lock(&manager.inner);
-        assert!(inner.failures.is_empty());
-        assert_eq!(inner.lockout_count, 0);
-        assert!(inner.lockout_until.is_none());
+        let state = inner.lockouts.get(GLOBAL_LOCKOUT_KEY);
+        assert!(state.is_none_or(|s| s.failures.is_empty()));
+        assert!(state.is_none_or(|s| s.lockout_count == 0));
+        assert!(state.is_none_or(|s| s.lockout_until.is_none()));
     }
 
     #[test]
@@ -756,12 +819,12 @@ mod tests {
         let (dir, manager) = manager();
         let session = manager.create_session("localhost", 7337).expect("session");
         let credential = manager
-            .verify_passcode(&session.passcode, "phone")
+            .verify_passcode(&session.passcode, "phone", None)
             .expect("credential");
         assert!(manager.validate_credential(&credential.id, &credential.secret));
         assert!(!manager.validate_credential(&credential.id, "wrong"));
         assert!(matches!(
-            manager.verify_passcode(&session.passcode, "other"),
+            manager.verify_passcode(&session.passcode, "other", None),
             Err(PairingError::InvalidPasscode)
         ));
         let state = fs::read_to_string(dir.path().join(DEVICES_FILE)).expect("state");
@@ -777,7 +840,7 @@ mod tests {
         manager.set_inactivity_ttl(Duration::from_secs(60));
         let session = manager.create_session("localhost", 7337).expect("session");
         let credential = manager
-            .verify_token(&session.token, "laptop")
+            .verify_token(&session.token, "laptop", None)
             .expect("credential");
         {
             let mut inner = lock(&manager.inner);
@@ -805,12 +868,12 @@ mod tests {
         let session = manager.create_session("localhost", 7337).expect("session");
         for _ in 0..MAX_VERIFY_ATTEMPTS {
             assert!(matches!(
-                manager.verify_passcode("wrong-wrong-wrong-wrong", "attacker"),
+                manager.verify_passcode("wrong-wrong-wrong-wrong", "attacker", None),
                 Err(PairingError::InvalidPasscode)
             ));
         }
         assert!(matches!(
-            manager.verify_passcode(&session.passcode, "valid"),
+            manager.verify_passcode(&session.passcode, "valid", None),
             Err(PairingError::RateLimited)
         ));
     }

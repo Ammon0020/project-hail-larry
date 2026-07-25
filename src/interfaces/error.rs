@@ -23,7 +23,7 @@ pub enum AppError {
     /// Requested resource does not exist (workspace, session, device, upload, …).
     ///
     /// `resource` is the full client-facing message (Go `err.Error()`), e.g.
-    /// `"session not found: nonexistent"` or `"stat file: lstat …"`.
+    /// `"session not found: nonexistent"` or `"stat file: lstat <rel_path>: …"`.
     #[error("{resource}")]
     NotFound {
         /// Full Go-compatible error string returned in `{"error":…}`.
@@ -198,7 +198,15 @@ pub fn map_api_error(err: &AppError) -> ApiError {
         AppError::RateLimited(msg) => ApiError::new(ApiStatusCode::TOO_MANY_REQUESTS, msg.clone()),
         AppError::Path(path_err) => {
             // Path traversal is a client error (bad input), not a server failure.
-            ApiError::new(ApiStatusCode::BAD_REQUEST, path_err.to_string())
+            // Use generic messages without absolute paths to avoid leaking the
+            // host filesystem layout to clients.
+            let msg = match path_err {
+                PathError::TraversalAttempted(_) => "path traversal rejected",
+                PathError::SymlinkEscapesRoot(_) => "path escapes workspace root",
+                PathError::InvalidPath(_) => "invalid path",
+                PathError::IoError(_) => "path I/O error",
+            };
+            ApiError::new(ApiStatusCode::BAD_REQUEST, msg)
         }
         AppError::Config(cfg_err) => {
             ApiError::new(ApiStatusCode::INTERNAL_SERVER_ERROR, cfg_err.to_string())

@@ -17,7 +17,10 @@
 //!   (or timeout) the entire process *group* is signalled, not just the
 //!   immediate child — so orphaned grandchildren of a shell pipeline cannot
 //!   survive daemon shutdown. Isolation and kill live in [`crate::procutil`]
-//!   (Unix `setpgid` + `killpg`; Windows `CREATE_NEW_PROCESS_GROUP` + child kill).
+//!   (Unix `setpgid` + `killpg` (+ `/proc` tree walk for `setsid` escapes);
+//!   Windows Job Object with `KILL_ON_JOB_CLOSE`).
+//! - Each command has a configurable timeout ([`Executor::with_command_timeout`],
+//!   default 30 min). On expiry the process group is killed just as on cancel.
 //! - Captured/streamed output is bounded by [`Executor::max_output_bytes`]
 //!   per stream so a noisy command cannot exhaust daemon memory.
 //!
@@ -26,15 +29,18 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use crate::pathutil::{clean_path, PathError};
+use crate::pathutil::{clean_path, resolve_symlink, PathError};
 #[cfg(unix)]
 use crate::procutil::kill_process_group;
+#[cfg(target_os = "linux")]
+use crate::procutil::kill_process_tree;
 use crate::procutil::{configure_process_group, ProcessGroupCleanup};
 
 /// Default per-stream output cap (1 MiB). Matches the Go daemon's practical
@@ -42,6 +48,12 @@ use crate::procutil::{configure_process_group, ProcessGroupCleanup};
 /// [`Executor::with_max_output_bytes`]. Without a bound a single
 /// `cat /dev/urandom` or runaway `find /` could OOM the daemon.
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+
+/// Default per-command execution timeout (30 minutes). Without a deadline an
+/// agent can spawn long-running commands (e.g. `sleep 1000000`) that pin a
+/// process slot and consume a PIPED stdout reader task until the session is
+/// closed. Callers may override via [`Executor::with_command_timeout`].
+pub const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// Errors returned by the shell executor.
 ///
@@ -104,6 +116,7 @@ pub struct Executor {
     workspace_path: PathBuf,
     env: Option<Vec<(String, String)>>,
     max_output_bytes: usize,
+    command_timeout: Option<Duration>,
 }
 
 impl Executor {
@@ -117,6 +130,7 @@ impl Executor {
             workspace_path: workspace_path.into(),
             env: None,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+            command_timeout: Some(DEFAULT_COMMAND_TIMEOUT),
         }
     }
 
@@ -145,6 +159,16 @@ impl Executor {
     pub fn with_max_output_bytes(self, bytes: usize) -> Self {
         Self {
             max_output_bytes: bytes,
+            ..self
+        }
+    }
+
+    /// Return a copy of the executor with a custom per-command timeout.
+    /// Pass `None` to disable the timeout entirely (commands run until
+    /// cancelled or exited). The default is [`DEFAULT_COMMAND_TIMEOUT`].
+    pub fn with_command_timeout(self, timeout: Option<Duration>) -> Self {
+        Self {
+            command_timeout: timeout,
             ..self
         }
     }
@@ -304,21 +328,36 @@ impl Executor {
             })
         };
 
-        // Race the child's exit against cancellation. On cancel we kill the
-        // process group by PID (saved above) — this avoids borrowing `child`
-        // while the wait future holds `&mut child`. By putting `child.wait()`
-        // directly in the select (not pre-pinned), the macro owns the future
-        // and drops it when the cancel branch wins, releasing the borrow.
+        // Race the child's exit against cancellation and the per-command
+        // timeout. On either firing we kill the process group by PID (saved
+        // above) — this avoids borrowing `child` while the wait future holds
+        // `&mut child`. By putting `child.wait()` directly in the select (not
+        // pre-pinned), the macro owns the future and drops it when the stop
+        // branch wins, releasing the borrow.
         let (wait_status_opt, cancelled) = tokio::select! {
-            biased; // poll cancellation first so a concurrent cancel wins.
-            () = token.cancelled() => {
+            biased; // poll the stop signal first so a concurrent cancel/timeout wins.
+            // Combine cancellation and the per-command deadline into a single
+            // "stop" future so the select stays two-way.
+            () = async {
+                tokio::select! {
+                    () = token.cancelled() => {},
+                    () = command_deadline(self.command_timeout) => {},
+                }
+            } => {
                 // Kill the process group by PID. On Unix this sends SIGKILL
                 // to the entire group (setpgid was called in pre_exec); on
-                // Windows we kill the immediate child after the select when
-                // the borrow is released.
+                // Windows the Job Object handle (held by
+                // `process_group_cleanup`) kills the tree when dropped. We
+                // also kill the immediate child after the select on Windows
+                // when the borrow is released.
                 #[cfg(unix)]
                 if let Some(pid) = pid.and_then(|pid| i32::try_from(pid).ok()) {
                     kill_process_group(pid);
+                    // Best-effort: also kill descendants that may have escaped
+                    // the process group via setsid() (new session). Linux-only
+                    // via /proc walk; macOS relies on the group kill alone.
+                    #[cfg(target_os = "linux")]
+                    kill_process_tree(pid);
                 }
                 // Return a sentinel; the real wait happens after the select
                 // drops the wait future and frees child for a fresh borrow.
@@ -401,10 +440,14 @@ impl Executor {
 }
 
 /// Resolve `cwd` (relative to the workspace root) to an absolute directory,
-/// enforcing containment via [`clean_path`].
+/// enforcing containment via [`clean_path`] and on-disk symlink resolution via
+/// [`resolve_symlink`].
 ///
 /// `None` or `""` returns the workspace root itself. A traversal attempt
-/// (`../../etc`) or absolute path (`/etc`) is rejected.
+/// (`../../etc`) or absolute path (`/etc`) is rejected. A symlink that points
+/// outside the workspace (e.g. `ln -s /etc ./etc` then `cwd="etc"`) is also
+/// rejected — `clean_path` is lexical only, so [`resolve_symlink`] is layered
+/// on top to defend against symlink-based escapes.
 fn resolve_cwd(
     workspace_root: &Path,
     cwd: Option<&str>,
@@ -417,7 +460,19 @@ fn resolve_cwd(
             std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf())
         );
     }
-    clean_path(workspace_root, cwd)
+    let path = clean_path(workspace_root, cwd)?;
+    // Layer on-disk symlink resolution so a CWD like "etc" (where ./etc →
+    // /etc) cannot bypass workspace containment. clean_path is lexical only.
+    resolve_symlink(workspace_root, &path)
+}
+
+/// Resolve the per-command deadline into a future. `None` ⇒ no timeout (the
+/// future never resolves, so only cancellation can stop the command).
+async fn command_deadline(timeout: Option<Duration>) {
+    match timeout {
+        Some(d) => tokio::time::sleep(d).await,
+        None => std::future::pending::<()>().await,
+    }
 }
 
 /// Build the OS-specific shell invocation.

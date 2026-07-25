@@ -279,9 +279,14 @@ fn upload_store_error(error: UploadError) -> ApiResponseError {
         | UploadError::UnsupportedType
         | UploadError::InvalidUploadId
         | UploadError::Io(_)
-        | UploadError::NotFound { .. } => {
+        | UploadError::NotFound { .. }
+        | UploadError::SymlinkDetected(_) => {
             warn!(%error, "failed to store upload");
             ApiResponseError::bad_request("failed to store upload")
+        }
+        UploadError::SessionQuotaExceeded => {
+            warn!(%error, "session upload quota exceeded");
+            ApiResponseError::bad_request("session upload quota exceeded")
         }
     }
 }

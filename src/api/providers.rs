@@ -19,6 +19,11 @@ use super::{app_error, decode_json_body, ApiResponseError, AppState};
 /// Accepted `apiType` values for PUT (Go `validLLMProtocols`).
 const VALID_LLM_PROTOCOLS: &[&str] = &["anthropic", "openai", "azure", "vertex", "bedrock"];
 
+/// Per-field size limits to prevent resource exhaustion from oversized configs.
+const MAX_HEADER_COUNT: usize = 50;
+const MAX_HEADER_KEY_LEN: usize = 4 * 1024;
+const MAX_HEADER_VALUE_LEN: usize = 4 * 1024;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SetProviderRequest {
@@ -61,6 +66,25 @@ pub async fn set_provider(
     }
     if request.base_url.is_empty() {
         return Err(ApiResponseError::bad_request("baseUrl is required"));
+    }
+    // Per-field size limits: reject oversized header maps before they reach the
+    // agent process or are held in memory (defense-in-depth).
+    if request.headers.len() > MAX_HEADER_COUNT {
+        return Err(ApiResponseError::bad_request(format!(
+            "too many headers (max {MAX_HEADER_COUNT})"
+        )));
+    }
+    for (key, value) in &request.headers {
+        if key.len() > MAX_HEADER_KEY_LEN {
+            return Err(ApiResponseError::bad_request(format!(
+                "header key exceeds {MAX_HEADER_KEY_LEN} bytes"
+            )));
+        }
+        if value.len() > MAX_HEADER_VALUE_LEN {
+            return Err(ApiResponseError::bad_request(format!(
+                "header value exceeds {MAX_HEADER_VALUE_LEN} bytes"
+            )));
+        }
     }
 
     state
