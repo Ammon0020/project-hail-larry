@@ -364,6 +364,80 @@ async fn rebind_refreshes_profile_config_id_from_replacement_agent() {
         .expect("close rebound session");
 }
 
+/// When the agent does NOT advertise the `mode`-category `profile` config
+/// option (`mock-nocap`), the capability gate must take the prompt-injection
+/// fallback branch: `find_profile_config_id` returns `None`, no
+/// `session/set_config_option` RPC is sent, and profile instructions are
+/// injected into the prompt context instead. Verified end-to-end by asserting
+/// the streamed reply contains no `[profile:` marker (the mock only emits that
+/// prefix when it received the RPC) while `session_for_profile_switch` reports
+/// a `None` config id, proving the fallback path was selected. This is the
+/// integration counterpart to `profile_is_injected_when_the_agent_lacks_profile_configuration`.
+#[tokio::test]
+async fn prompt_injection_fallback_skips_set_config_option() {
+    let (client, _permissions, _workspace, workspace_id) =
+        mock_client_empty(ConversationStore::new(None)).await;
+    let session = client
+        .create_session("mock-nocap", "mock-model", &workspace_id)
+        .await
+        .expect("create session without mode capability");
+
+    // The capability gate must have cached no profile config id for mock-nocap.
+    let (_, profile_config_id) = client
+        .session_for_profile_switch(&session.id)
+        .expect("live session lookup");
+    assert_eq!(
+        profile_config_id, None,
+        "mock-nocap must not advertise a mode/profile config option"
+    );
+
+    // Seed a local profile selection so the fallback has instructions to inject.
+    client
+        .pipeline
+        .profiles
+        .set_profile(&session.id, "code")
+        .expect("seed local profile");
+
+    client
+        .send_prompt(&session.id, "hello", &[])
+        .await
+        .expect("complete prompt against mock-nocap");
+
+    // Concatenate non-thought StreamUpdate chunks; the mock prefixes its first
+    // streamed reply with `[profile: X]` only when it received the
+    // `session/set_config_option` RPC, so absence proves the RPC was skipped.
+    let events = client
+        .deps
+        .event_bus
+        .query(&session.id, 0, 1000)
+        .await
+        .expect("query session events");
+    let mut streamed = String::new();
+    for event in &events {
+        if event.event_type == EventType::StreamUpdate && !event.thought {
+            streamed.push_str(&event.content);
+        }
+    }
+    assert!(
+        !streamed.contains("[profile:"),
+        "fallback must not send set_config_option; reply contained `[profile:` marker: {streamed}"
+    );
+
+    // Re-confirm the capability gate stayed on the fallback path after the turn.
+    let (_, profile_config_id_after) = client
+        .session_for_profile_switch(&session.id)
+        .expect("live session lookup after prompt");
+    assert_eq!(
+        profile_config_id_after, None,
+        "fallback path must keep the cached profile config id None"
+    );
+
+    client
+        .close_session(&session.id)
+        .await
+        .expect("close mock-nocap session");
+}
+
 /// When a live profile RPC cannot be delivered, local middleware must not
 /// advance — client and agent stay consistent (commit-after-RPC order).
 #[tokio::test]

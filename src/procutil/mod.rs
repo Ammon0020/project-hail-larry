@@ -367,7 +367,9 @@ unsafe fn create_kill_on_close_job() -> *mut std::ffi::c_void {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::*;
+    #[cfg(unix)]
     use std::time::Duration;
 
     /// Dropping the cleanup guard kills a Unix process group, including a

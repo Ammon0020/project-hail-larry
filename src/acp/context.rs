@@ -221,8 +221,8 @@ impl PromptPipeline {
         self.transfers.insert(session_id, transfer)
     }
 
-    /// Builds context. Workspace/git failures are logged and omitted so an
-    /// unavailable optional context source never prevents a user prompt.
+    /// Builds bounded optional context. Workspace failures are logged and
+    /// omitted so an unavailable hint never prevents a user prompt.
     pub async fn prepare(
         &self,
         session_id: &str,
@@ -549,12 +549,11 @@ mod tests {
                 "workspace",
                 Path::new("/tmp"),
                 false,
+                true,
                 workspace.as_ref(),
             )
             .await
             .expect("prepare prompt");
-        assert!(prepared.prefix.contains("## Workspace Context"));
-        assert!(prepared.prefix.contains("## Current Time"));
         assert!(prepared.prefix.contains("## Open Files"));
         assert!(prepared.prefix.contains("## Recently Edited Files"));
         assert!(prepared.prefix.contains("## Active Profile: Code"));
@@ -566,7 +565,7 @@ mod tests {
         assert_eq!(prepared.injected_context()[0].name, "Prompt additions");
         assert!(prepared.injected_context()[0]
             .content
-            .contains("## Workspace Context"));
+            .contains("## Active Profile: Code"));
     }
 
     #[tokio::test]
@@ -580,18 +579,15 @@ mod tests {
                 "workspace",
                 Path::new("/tmp"),
                 true,
+                true,
                 workspace.as_ref(),
             )
             .await
             .expect("prepare prompt");
         let context = prepared.injected_context();
 
-        assert_eq!(context[0].name, "Prompt additions");
-        assert!(context[0].content.contains("## Current Time"));
-        assert!(context.iter().any(|item| item.name == "Workspace Context"));
-        assert!(context
-            .iter()
-            .any(|item| item.name == "Profile Instructions"));
+        assert_eq!(context.len(), 1);
+        assert_eq!(context[0].name, "Profile Instructions");
     }
 
     #[tokio::test]
@@ -622,6 +618,7 @@ mod tests {
                 "workspace",
                 Path::new("/tmp"),
                 true,
+                true,
                 workspace.as_ref(),
             )
             .await
@@ -634,6 +631,87 @@ mod tests {
             .resources
             .iter()
             .any(|resource| resource.name == "demo1.html"));
+    }
+
+    #[tokio::test]
+    async fn profile_is_omitted_when_the_agent_supports_profile_configuration() {
+        let pipeline = PromptPipeline::default();
+        let workspace = Arc::new(EmptyWorkspace);
+
+        let prepared = pipeline
+            .prepare(
+                "session",
+                "workspace",
+                Path::new("/tmp"),
+                true,
+                false,
+                workspace.as_ref(),
+            )
+            .await
+            .expect("prepare prompt");
+
+        assert!(!prepared
+            .resources
+            .iter()
+            .any(|resource| resource.name == "Profile Instructions"));
+    }
+
+    /// Inverse of `profile_is_omitted_when_the_agent_supports_profile_configuration`:
+    /// when the caller passes `include_profile = true` (the fallback path taken
+    /// when `find_profile_config_id` returns `None` because the agent does not
+    /// advertise the `mode`-category `profile` config option), `prepare` must
+    /// inject the active profile instructions — as a `Profile Instructions`
+    /// resource when `embedded_context` is negotiated, and as a text section
+    /// otherwise. This is the unit-level coverage for the prompt-injection
+    /// fallback branch; the lifecycle test
+    /// `prompt_injection_fallback_skips_set_config_option` covers the same gate
+    /// end-to-end against the `mock-nocap` agent.
+    #[tokio::test]
+    async fn profile_is_injected_when_the_agent_lacks_profile_configuration() {
+        let pipeline = PromptPipeline::default();
+        pipeline
+            .profiles
+            .set_profile("session", "code")
+            .expect("seed session profile");
+        let workspace = Arc::new(EmptyWorkspace);
+
+        // Embedded-context path: profile ships as a named resource.
+        let embedded = pipeline
+            .prepare(
+                "session",
+                "workspace",
+                Path::new("/tmp"),
+                true,
+                true,
+                workspace.as_ref(),
+            )
+            .await
+            .expect("prepare prompt with embedded profile");
+        assert!(
+            embedded
+                .resources
+                .iter()
+                .any(|resource| resource.name == "Profile Instructions"),
+            "embedded fallback must include a Profile Instructions resource"
+        );
+
+        // Text-fallback path: profile ships as a `## Active Profile:` section.
+        let text_fallback = pipeline
+            .prepare(
+                "session",
+                "workspace",
+                Path::new("/tmp"),
+                false,
+                true,
+                workspace.as_ref(),
+            )
+            .await
+            .expect("prepare prompt with text profile");
+        assert!(
+            text_fallback.prefix.contains("## Active Profile: Code"),
+            "text fallback must include the profile section, got: {}",
+            text_fallback.prefix
+        );
     }
 
     #[test]

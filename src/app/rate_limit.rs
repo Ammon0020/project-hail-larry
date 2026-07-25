@@ -35,6 +35,7 @@ pub type IpGovernorLayer = GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware>;
 ///
 /// Returns `None` if `per_second` is zero (governor requires a non-zero
 /// quota); callers should treat that as "rate limiting disabled" and log it.
+#[must_use]
 pub fn build_ip_rate_limit_layer(per_second: u64, burst: u32) -> Option<IpGovernorLayer> {
     if per_second == 0 || burst == 0 {
         return None;
@@ -49,6 +50,7 @@ pub fn build_ip_rate_limit_layer(per_second: u64, burst: u32) -> Option<IpGovern
 }
 
 /// Convenience: the default governor layer for unauthenticated endpoints.
+#[must_use]
 pub fn default_unauthenticated_layer() -> Option<IpGovernorLayer> {
     build_ip_rate_limit_layer(DEFAULT_PER_IP_PER_SECOND, DEFAULT_BURST)
 }

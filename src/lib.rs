@@ -9,7 +9,7 @@
 //! - [`acp`]        — Agent Client Protocol client (Go `acp/`)
 //! - [`api`]        — REST API handlers (Go `server/api.go`)
 //! - [`config`]     — `~/.local-agent/` config storage (Go `config/`)
-//! - [`events`]     — SQLite event store, WAL, append-only (Go `events/`)
+//! - [`events`]     — `SQLite` event store, WAL, append-only (Go `events/`)
 //! - [`files`]      — revision tracking, per-file locking, LRU base-content cache (Go `files/`)
 //! - [`fsutil`]     — shared home-dir + durable atomic write (used by config/MCP/logging)
 //! - [`fswatch`]    — on-disk change detection, external file changes (Go `fswatch/`)

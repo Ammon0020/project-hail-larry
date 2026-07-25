@@ -29,6 +29,11 @@ pub const LOG_SUBDIR: &str = "logs";
 ///
 /// Uses [`Config::resolved_state_dir`] so `LOCAL_AGENT_STATE_DIR` redirects
 /// logs into the isolated state tree (default: `~/.local-agent/logs`).
+///
+/// # Errors
+///
+/// Returns an error if the state directory cannot be resolved (e.g. the home
+/// directory is unavailable and `LOCAL_AGENT_STATE_DIR` is unset).
 pub fn log_dir() -> Result<PathBuf> {
     let state_dir =
         Config::resolved_state_dir().context("could not resolve state directory for log path")?;
@@ -39,6 +44,10 @@ pub fn log_dir() -> Result<PathBuf> {
 ///
 /// Returns a `WorkerGuard` that must be kept alive for the process lifetime;
 /// dropping it flushes the non-blocking writer.
+///
+/// # Errors
+///
+/// Returns an error if the log directory cannot be resolved or created.
 pub fn init_file_logging() -> Result<(WorkerGuard, PathBuf)> {
     let log_dir = log_dir()?;
     crate::fsutil::create_dir_all(&log_dir)

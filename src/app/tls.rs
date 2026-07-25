@@ -23,6 +23,11 @@ use rustls::crypto::aws_lc_rs::default_provider;
 /// present) rather than a startup failure, since the test harness and the
 /// binary both call this path. We do verify *some* default is installed after
 /// the call so a silent misconfiguration is surfaced.
+///
+/// # Errors
+///
+/// Returns an error only if `install_default` reports a conflict but no
+/// default provider is actually installed (a real misconfiguration).
 pub fn install_crypto_provider() -> Result<()> {
     match default_provider().install_default() {
         Ok(()) => Ok(()),

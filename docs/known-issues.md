@@ -70,59 +70,49 @@ handshake when valid, or (c) a daemon-side approach that keeps auth alive
 across restarts (not possible while tokens are opaque). Track upstream SDK
 releases for (a).
 
-## Profile-over-ACP fallback branch untested (Medium)
+## Profile-over-ACP fallback branch — tested 2026-07-25 (was Medium)
 
-Investigated 2026-07-21. The prompt-injection fallback in
+Resolved 2026-07-25. The prompt-injection fallback in
 `src/acp/providers.rs` (`find_profile_config_id == None` path, triggered when
-an agent does NOT advertise the `mode`-category `profile` config option) has no
-test. The mockagent supports `MOCKAGENT_NO_MODE_CAP=1`
-(`cmd/mockagent/main.go:37,129-131`) to suppress the advertisement, but the
-test harness in `tests/acp_core_lifecycle.rs` spawns the mockagent via
-`AgentInfo { command, args, ... }` with no per-test env-var field, and
-`std::process::Command::new(&config.agent.command)` in `src/acp/core.rs` does
-not thread env vars from the registry. Setting the env var process-wide would
-race with the parallel capability-present tests (`cargo test` runs them
-concurrently). Adding per-test env wiring requires an `AgentInfo` schema change
-in `src/`, out of scope for the review pass.
+an agent does NOT advertise the `mode`-category `profile` config option) is now
+covered by two tests:
 
-The capability-present branch IS covered by
-`mockagent_initial_profile_sent_over_acp_when_capability_advertised`. Story
-S-PROF-ACP acceptance criterion #2 is marked `[~]` (partial) in
-`docs/plans/profiles-over-acp/done-acp-set-config-option-send-hard.md`.
+- `profile_is_injected_when_the_agent_lacks_profile_configuration` in
+  `src/acp/context.rs` — unit-level: asserts profile instructions are injected
+  as a `Profile Instructions` resource (embedded path) and as a
+  `## Active Profile:` text section (text-fallback path) when
+  `include_profile=true`.
+- `prompt_injection_fallback_skips_set_config_option` in
+  `src/acp/core/lifecycle/tests.rs` — end-to-end: uses the `mock-nocap` agent
+  (registered in `mock_client_empty` via the `env MOCKAGENT_NO_MODE_CAP=1`
+  wrapper), sends a prompt, and asserts the streamed reply contains no
+  `[profile:` marker (proving `session/set_config_option` was skipped) while
+  `session_for_profile_switch` reports `None`.
 
-**Fix path:** Add an `env: Vec<(String, String)>` (or `HashMap`) field to
-`AgentInfo` (`src/config/...`), thread it through `AgentRegistry` → actor spawn
-in `src/acp/core.rs` (`std::process::Command::new(...).envs(...)`), then add a
-test that registers a mockagent entry with `MOCKAGENT_NO_MODE_CAP=1`, creates a
-session, sends a prompt, and asserts the reply does NOT start with
-`[profile: code]` (proving `set_config_option` was skipped) while profile
-instructions are still injected.
+No `AgentInfo` schema change was needed: `mock_client_empty` already works
+around the per-test env-var limitation by using `env` as the agent command and
+passing `MOCKAGENT_NO_MODE_CAP=1` as an arg. The earlier note about a schema
+change being required was incorrect — the `env` wrapper avoids the
+process-global `set_var` race without touching `AgentInfo`.
 
-## Clippy 1.92.0 — `manual_inspect` lint in `src/acp/core.rs` (Low)
+The capability-present branch remains covered by
+`mockagent_initial_profile_sent_over_acp_when_capability_advertised`.
 
-Investigated 2026-07-21. A toolchain bump to rust-1.92.0 introduced the
-`clippy::manual_inspect` lint, which fires at `src/acp/core.rs:1422` (a
-`map_err` closure that only logs and rethrows). Pre-existing on `main`;
-unrelated to model-autodetection work. Fix: replace `map_err` with
-`inspect_err` per the clippy suggestion. Out of scope for the current task.
+## Clippy pedantic — lib clean, ~187 test-code findings to ratchet to deny (Low)
 
-## Clippy pedantic — 4 findings to ratchet to deny (Low)
-
-Investigated 2026-07-15. The `[lints.clippy]` table in `Cargo.toml` denies
+Investigated 2026-07-25. The `[lints.clippy]` table in `Cargo.toml` denies
 `clippy::all` plus a curated set of restriction lints (no panics, no
 `unwrap`/`expect`, no `dbg!`/`println!`/`eprintln!`, no `todo!`/`unimplemented!`)
 in non-test code. The tree is clean under that policy.
 
-Four `clippy::pedantic` findings exist today and are intentionally NOT denied
-yet (denying them as `warn` would be escalated to errors by CI's blanket
-`-D warnings`). Fix these, then add them to `[lints.clippy]` as `"deny"`:
-
-- `src/lib.rs:12` — `doc_markdown`: item in documentation missing backticks
-- `src/app/logging.rs:26` — `missing_errors_doc`: `Result`-returning fn lacks
-  `# Errors` section
-- `src/app/tls.rs:26` — `missing_errors_doc`: same
-- `src/app/rate_limit.rs:38,52` — `must_use_candidate`: two fns could have
-  `#[must_use]`
+The lib target is now clean under `clippy::pedantic` for `doc_markdown`,
+`missing_errors_doc`, and `must_use_candidate` (6 findings fixed 2026-07-25:
+`src/lib.rs`, `src/app/logging.rs`, `src/app/tls.rs`, `src/app/rate_limit.rs`).
+However `--all-targets` surfaces ~187 more in test code (68 `doc_markdown`,
+84 `missing_errors_doc`, 35 `must_use_candidate`). These are NOT denied yet
+(denying them as `warn` would be escalated to errors by CI's blanket
+`-D warnings`). Fix the test-code findings, then add the three lints to
+`[lints.clippy]` as `"deny"`.
 
 Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic`
 

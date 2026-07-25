@@ -244,10 +244,11 @@ panic = "deny"            # no `panic!()` — return `Result` instead
 unwrap_used = "deny"      # no `.unwrap()` — can panic; use `?` or `let Ok(..) = ..`
 expect_used = "deny"      # no `.expect()` — same rationale as `unwrap_used`
 
-# Aspirational pedantic lints (missing_errors_doc, missing_panics_doc,
-# must_use_candidate, doc_markdown) are NOT denied yet: 4 findings exist today
-# (see docs/known-issues.md). Deny them once those are fixed. Adding them as
-# `warn` here would be escalated to errors by CI's blanket `-D warnings`.
+# Aspirational pedantic lints (missing_errors_doc, must_use_candidate,
+# doc_markdown) are NOT denied yet: the lib target is clean (6 findings fixed
+# 2026-07-25) but `--all-targets` surfaces ~187 more in test code. Deny them
+# once the test-code findings are fixed too. Adding them as `warn` here would
+# be escalated to errors by CI's blanket `-D warnings`.
 
 # Release binaries: strip symbols for smaller single-binary distribution
 # (S-BUILD). Debug builds keep symbols for local development.

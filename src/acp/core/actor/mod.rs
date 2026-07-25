@@ -510,8 +510,8 @@ async fn run_actor_inner(
             }
             // Send the initial profile over ACP when the agent advertised the
             // mode-category config option. Best-effort: a failure here is logged
-            // but does not fail session setup — profile is a hint, not critical,
-            // and the prompt-injection fallback still applies on the next turn.
+            // but does not fail session setup — profile selection is a hint, not
+            // critical to the session lifecycle.
             if let Some(config_id) = profile_config_id.as_deref() {
                 let active_profile = config
                     .profiles
@@ -534,7 +534,7 @@ async fn run_actor_inner(
                         session_id = %config.local_session_id,
                         profile = %active_profile,
                         error = %error,
-                        "initial session/set_config_option (profile) failed; prompt-injection fallback will apply"
+                        "initial session/set_config_option (profile) failed; agent keeps its current profile configuration"
                     );
                 } else {
                     tracing::info!(
@@ -673,9 +673,12 @@ async fn new_acp_session(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::path::Path;
+    #[cfg(unix)]
     use std::time::Duration;
 
+    #[cfg(unix)]
     use tempfile::TempDir;
 
     use super::{session_exists, should_attempt_load, ACP_CLIENT_NAME, ACP_CLIENT_VERSION};
