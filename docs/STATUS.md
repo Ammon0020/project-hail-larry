@@ -1,6 +1,6 @@
 # Project Status — Local Agent Interface
 
-> Updated: 2026-07-24. Task detail lives in `docs/plans/`; deferred gaps in
+> Updated: 2026-07-25. Task detail lives in `docs/plans/`; deferred gaps in
 > `docs/known-issues.md`; architecture is `docs/plans/Blueprint.md`.
 
 ## What Works
@@ -31,9 +31,10 @@
 - [ ] **Multi-user** — multi-device/single-user is decided; multi-user is future.
 - [ ] **ACP futures** — workers, session lifecycle, elicitation, NES, audio,
   and ACP inspector.
-- [~] **ACP core modularization** — callback/events/MCP/diagnostics modules
-  extracted (`S-ACP-MOD-CALLBACKS`); actor runtime extracted with terminal-outcome
-  watcher (`S-ACP-MOD-ACTOR`); turn, registry, and facade splits remain. See
+- [~] **ACP core modularization** — callback/events/MCP/diagnostics modules,
+  actor runtime, and the actor turn state machine are extracted
+  (`S-ACP-MOD-CALLBACKS`, `S-ACP-MOD-ACTOR`, `S-ACP-MOD-TURN`); registry and
+  facade splits remain. See
   `docs/plans/pending-acp-core-modularization-hard.md`.
 - [~] **Agent-owned history** — PROBE + fallback complete; migration deferred;
   local history remains for agents without list/load. Q7/Q8 still block browse.
@@ -65,6 +66,10 @@
   actor→registry back-reference was replaced with a terminal-outcome channel
   consumed by a lifecycle watcher that owns session-failed transitions and
   AgentExited publication. `core.rs` reduced ~724 lines.
+- **S-ACP-MOD-TURN** — actor commands, prompt/control dispatch, cancellation,
+  stop-reason mapping, and prompt/close tests moved to `actor/turn.rs`. Cancelled
+  sessions now retain their interrupted state until explicit or grace teardown,
+  so a non-cooperative agent is force-closed instead of disabling the watchdog.
 - **S-ACP-MOD-CALLBACKS** — inbound callbacks, terminals, MCP attachment,
   ordered event append, and stderr diagnostics moved out of `core.rs` into
   private `src/acp/core/{events,diagnostics,mcp,handlers}` modules.

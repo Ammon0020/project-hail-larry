@@ -110,7 +110,7 @@ async fn mockagent_session_prompt_cancel_close_lifecycle() {
             .get_session_info(&session.id)
             .expect("session remains registered after cancellation")
             .status,
-        "idle"
+        "interrupted"
     );
 
     client

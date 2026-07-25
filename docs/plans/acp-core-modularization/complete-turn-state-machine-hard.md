@@ -1,6 +1,6 @@
 # Story S-ACP-MOD-TURN: Extract Actor Turn State Machine
 
-> **Status:** active | **Difficulty:** hard
+> **Status:** complete | **Difficulty:** hard
 > **Epic:** [ACP Core Modularization](../pending-acp-core-modularization-hard.md).
 > **Depends on:** S-ACP-MOD-ACTOR. **Blocks:** S-ACP-MOD-REGISTRY.
 
@@ -11,22 +11,22 @@ Move the actor command protocol and complete prompt/control state machine into
 
 ## Acceptance criteria
 
-- [ ] `turn.rs` owns `ActorCommand`, prompt execution, control-RPC dispatch,
+- [x] `turn.rs` owns `ActorCommand`, prompt execution, control-RPC dispatch,
       stop-reason mapping, cancellation notification, and close handling.
-- [ ] Actor handles expose intent-level send methods or a private sender; client
+- [x] Actor handles expose intent-level send methods or a private sender; client
       lifecycle/operations code cannot access a connection or bypass admission.
-- [ ] Prompt reservation, sticky cancel-before-dequeue, control-command draining,
+- [x] Prompt reservation, sticky cancel-before-dequeue, control-command draining,
       cancel/close pre-emption, and nested-prompt rejection preserve ordering.
-- [ ] Provider, model, and profile commands preserve capability gates and exact
+- [x] Provider, model, and profile commands preserve capability gates and exact
       response/error mapping; prompt lifecycle events remain durably ordered.
-- [ ] A malicious agent that ignores cancellation is still force-closed after the
+- [x] A malicious agent that ignores cancellation is still force-closed after the
       grace period, killing its process group and clearing local permission state.
-- [ ] Move prompt/cancel/close tests with the turn module; retain end-to-end
+- [x] Move prompt/cancel/close tests with the turn module; retain end-to-end
       lifecycle coverage and add deterministic regressions for early cancel and
       grace-period force-close if they are not directly covered.
-- [ ] No public API changes, concurrent prompts, channel-capacity changes, or new
+- [x] No public API changes, concurrent prompts, channel-capacity changes, or new
       actor framework.
-- [ ] Run `cargo fmt -q`, `cargo test -q --all-targets`, and
+- [x] Run `cargo fmt -q`, `cargo test -q --all-targets`, and
       `cargo clippy -q --all-targets -- -D warnings`.
 
 ## File references

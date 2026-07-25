@@ -22,6 +22,8 @@ use async_process::Command;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio_util::sync::CancellationToken;
 
+mod turn;
+
 use super::super::providers::{find_model_config_id, find_profile_config_id, SessionCaps};
 use super::diagnostics::{spawn_stderr_drain, StderrTail};
 use super::events::handle_session_notification;
@@ -33,7 +35,7 @@ use super::handlers::{
 use super::mcp::load_session_mcp_servers;
 use crate::config::AgentInfo;
 use crate::events::SharedEventBus;
-use crate::interfaces::{AppError, Attachment, PermissionManager, WorkspaceManager};
+use crate::interfaces::{AppError, PermissionManager, WorkspaceManager};
 use crate::procutil::{configure_process_group, ProcessGroupCleanup};
 
 /// Bounded command channel capacity for one actor.
@@ -50,44 +52,7 @@ pub(super) const ACP_CLIENT_VERSION: &str = "1.0";
 /// Monotonic actor identity for staleness checks in terminal watchers.
 static ACTOR_ID: AtomicU64 = AtomicU64::new(0);
 
-/// Commands sent to the connection-owning actor task.
-pub(super) enum ActorCommand {
-    Prompt {
-        /// User text is persisted verbatim; middleware context is transport-only.
-        user_content: String,
-        prepared: super::super::context::PreparedPrompt,
-        attachments: Vec<Attachment>,
-        result: oneshot::Sender<Result<(), AppError>>,
-    },
-    ListProviders {
-        result: oneshot::Sender<Result<Vec<crate::interfaces::ProviderInfo>, AppError>>,
-    },
-    SetProvider {
-        id: String,
-        api_type: String,
-        base_url: String,
-        headers: std::collections::HashMap<String, String>,
-        result: oneshot::Sender<Result<(), AppError>>,
-    },
-    DisableProvider {
-        id: String,
-        result: oneshot::Sender<Result<(), AppError>>,
-    },
-    SwitchModel {
-        config_id: String,
-        model_id: String,
-        result: oneshot::Sender<Result<(), AppError>>,
-    },
-    /// Live profile switch via `session/set_config_option` (mode category).
-    /// Sent only when `SessionEntry::profile_config_id` is `Some`.
-    SetProfile {
-        config_id: String,
-        profile_id: String,
-        result: oneshot::Sender<Result<(), AppError>>,
-    },
-    Cancel,
-    Close(oneshot::Sender<()>),
-}
+pub(super) use turn::{ActorCommand, ActorExit};
 
 /// Startup handshake result returned before the session is published.
 pub(super) struct ActorStartup {
@@ -160,11 +125,6 @@ pub(super) enum TerminalOutcome {
     /// Actor exited unexpectedly (startup failure or post-startup crash).
     /// Lifecycle owns registry mutation and event publication for this case.
     Failed(AppError),
-}
-
-/// Outcome returned by the connection-owning actor loop (defined in core.rs).
-pub(super) enum ActorExit {
-    Closed(oneshot::Sender<()>),
 }
 
 /// All channels returned by [`spawn`] for the readiness/registration handshake
@@ -584,7 +544,7 @@ async fn run_actor_inner(
                     );
                 }
             }
-            super::actor_loop(
+            turn::actor_loop(
                 cx,
                 agent_session_id,
                 commands,
