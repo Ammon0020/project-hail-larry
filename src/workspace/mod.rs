@@ -236,6 +236,15 @@ impl WorkspaceManager for Manager {
             if !metadata.file_type().is_file() {
                 return Err(AppError::validation("path is not a regular file"));
             }
+            // file_path feeds raw/preview serving, which buffers the whole file
+            // into memory (tokio::fs::read). Reject oversized files before the
+            // read to avoid unbounded allocation (DoS). Mirrors read_file.
+            if metadata.len() > MAX_READ_FILE_SIZE {
+                return Err(AppError::validation(format!(
+                    "file too large (max {MAX_READ_FILE_SIZE} bytes, file is {} bytes)",
+                    metadata.len()
+                )));
+            }
             Ok(path.to_string_lossy().into_owned())
         })
         .await

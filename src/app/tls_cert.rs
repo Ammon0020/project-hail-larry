@@ -4,7 +4,6 @@
 //! certificate without an explicit operator action would break paired devices
 //! and weakens trust-on-first-use behavior.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -65,7 +64,7 @@ pub fn ensure_self_signed(cert_dir: &Path, host: &str) -> Result<CertificatePath
 
     // Ensure the directory exists even before the first atomic write, then
     // persist both files with restrictive permissions.
-    fs::create_dir_all(cert_dir)
+    fsutil::create_dir_all(cert_dir)
         .with_context(|| format!("create TLS certificate directory {}", cert_dir.display()))?;
     fsutil::atomic_write(&paths.cert, cert.pem().as_bytes(), Some(0o600))
         .with_context(|| format!("write TLS certificate {}", paths.cert.display()))?;
@@ -78,6 +77,7 @@ pub fn ensure_self_signed(cert_dir: &Path, host: &str) -> Result<CertificatePath
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn generates_persistent_pem_certificate_and_key() {

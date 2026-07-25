@@ -258,6 +258,7 @@ function PdfViewer({ url }: { url: string }) {
       src={url}
       title="PDF preview"
       className="w-full h-full border-0"
+      sandbox=""
     />
   )
 }
@@ -565,7 +566,7 @@ function HtmlViewer({ url }: { url: string }) {
       src={url}
       title="HTML preview"
       className="w-full h-full border-0 bg-white"
-      sandbox="allow-same-origin"
+      sandbox=""
     />
   )
 }

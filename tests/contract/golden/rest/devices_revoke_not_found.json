@@ -3,5 +3,5 @@
   "path": "/api/devices/nonexistent",
   "status": 404,
   "contentType": "application/json",
-  "body": "{\"error\":\"device not found: nonexistent\"}\n"
+  "body": "{\"error\":\"device not found\"}\n"
 }

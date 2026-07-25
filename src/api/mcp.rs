@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::error;
 
+use crate::acp::MAX_FILE_BYTES;
 use crate::mcp::{self, File as McpFile, McpError, ServerStatus};
 
 use super::{decode_json_body, ApiResponseError, AppState};
@@ -41,6 +42,13 @@ pub async fn put_mcp(
     body: Bytes,
 ) -> Result<Response, ApiResponseError> {
     let path = require_mcp_path(&state)?;
+    // Cap body size before parse/write so a huge payload cannot burn CPU or disk.
+    if body.len() as u64 > MAX_FILE_BYTES {
+        return Err(ApiResponseError::payload_too_large(format!(
+            "mcp config body too large: {} bytes (max {MAX_FILE_BYTES})",
+            body.len()
+        )));
+    }
     McpFile::save_raw(path, &body).map_err(mcp_write_error)?;
     Ok(json_bytes_response(StatusCode::OK, body.to_vec()))
 }

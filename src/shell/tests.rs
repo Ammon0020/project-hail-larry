@@ -467,16 +467,22 @@ async fn bounded_output_truncates_at_cap() {
     );
 }
 
-/// A cap of 0 disables truncation (unbounded) — sanity check.
+/// A cap of 0 drops all captured output (matching `RetainedOutput`'s
+/// `limit == 0` "discard" convention) so an agent-supplied 0 cannot disable
+/// the cap and exhaust daemon memory.
 #[tokio::test]
-async fn zero_cap_disables_truncation() {
+async fn zero_cap_drops_all_output() {
     let dir = TempDir::new().unwrap();
     let exec = Executor::new(dir.path()).with_max_output_bytes(0);
     let (result, err) = exec
-        .run(CancellationToken::new(), "echo unbounded-output", None)
+        .run(CancellationToken::new(), "echo dropped-output", None)
         .await;
     assert!(err.is_none());
-    assert_eq!(result.stdout.trim(), "unbounded-output");
+    assert!(
+        result.stdout.is_empty(),
+        "expected no captured output with cap == 0, got {:?}",
+        result.stdout
+    );
 }
 
 /// A non-existent command (direct exec, no shell) returns `ShellError::Spawn`.

@@ -41,7 +41,7 @@ pub fn log_dir() -> Result<PathBuf> {
 /// dropping it flushes the non-blocking writer.
 pub fn init_file_logging() -> Result<(WorkerGuard, PathBuf)> {
     let log_dir = log_dir()?;
-    std::fs::create_dir_all(&log_dir)
+    crate::fsutil::create_dir_all(&log_dir)
         .with_context(|| format!("creating log dir {}", log_dir.display()))?;
 
     // Daily rotation keeps log files bounded. The prefix is the daemon name;

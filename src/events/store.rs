@@ -90,6 +90,28 @@ impl Store {
         conn.execute_batch(SCHEMA_SQL)
             .map_err(|e| AppError::internal(format!("create schema: {e}")))?;
 
+        // Harden the DB and WAL/SHM sidecars to owner-only. SQLite honors the
+        // process umask by default (typically 0o644), but the events DB holds
+        // shell output, file paths, prompts, and tool targets — same sensitivity
+        // class as config/pairing/TLS keys, which are all 0o600 elsewhere.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::Permissions::from_mode(0o600);
+            if let Err(e) = std::fs::set_permissions(path, mode.clone()) {
+                warn!(path = %path.display(), error = %e, "chmod events db 0o600 failed");
+            }
+            let path_str = path.to_string_lossy();
+            for ext in ["-wal", "-shm"] {
+                let sidecar = std::path::PathBuf::from(format!("{path_str}{ext}"));
+                if sidecar.is_file() {
+                    if let Err(e) = std::fs::set_permissions(&sidecar, mode.clone()) {
+                        warn!(path = %sidecar.display(), error = %e, "chmod events sidecar 0o600 failed");
+                    }
+                }
+            }
+        }
+
         debug!(path = %path.display(), "event store opened");
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),

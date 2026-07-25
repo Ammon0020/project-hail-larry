@@ -80,7 +80,7 @@ impl Daemon {
 
     /// Construct a daemon from a validated configuration.
     pub async fn new(config: Config) -> Result<Self> {
-        fs::create_dir_all(&config.data_dir)
+        crate::fsutil::create_dir_all(std::path::Path::new(&config.data_dir))
             .with_context(|| format!("create state directory {}", config.data_dir))?;
 
         // 1. Config / durable events. Autodetect may rewrite agents before the

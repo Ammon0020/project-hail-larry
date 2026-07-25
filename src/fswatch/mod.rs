@@ -408,14 +408,18 @@ fn walk_dirs(
             }
         }
     }
-    // Recurse into subdirectories.
+    // Recurse into subdirectories. Use `DirEntry::file_type` (which does NOT
+    // follow symlinks) and skip symlinks so a symlinked subdir can't pull the
+    // watcher outside the workspace root (e.g. proj/evil -> /etc).
     match fs::read_dir(dir) {
         Ok(entries) => {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_dir() {
-                    walk_dirs(root, &path, debouncer, watched);
+                let Ok(ft) = entry.file_type() else { continue };
+                if ft.is_symlink() || !ft.is_dir() {
+                    continue;
                 }
+                walk_dirs(root, &path, debouncer, watched);
             }
         }
         Err(e) => warn!("fswatch: read_dir {}: {e}", dir.display()),
@@ -497,10 +501,16 @@ fn handle_event(
 
     for path in &event.paths {
         // A newly created directory must be watched too (recursive coverage).
-        // The directory creation itself is not a file change to surface.
+        // The directory creation itself is not a file change to surface. Use
+        // `symlink_metadata` so a newly created symlink to an external dir
+        // (e.g. `ln -s /etc proj/link`) is rejected rather than watched.
         if matches!(event.kind, EventKind::Create(_)) {
-            if let Ok(meta) = fs::metadata(path) {
-                if meta.is_dir() {
+            if let Ok(meta) = fs::symlink_metadata(path) {
+                let ft = meta.file_type();
+                if ft.is_symlink() {
+                    continue;
+                }
+                if ft.is_dir() {
                     let name = path.file_name().and_then(OsStr::to_str).unwrap_or("");
                     if !is_ignored_dir_name(name) && !name.starts_with('.') {
                         let _ = command_tx.send(Command::WatchNewDir(path.clone()));

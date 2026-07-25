@@ -54,7 +54,9 @@ use crate::interfaces::{
     WorkspaceManager,
 };
 use crate::procutil::{configure_process_group, ProcessGroupCleanup};
-use crate::shell::{merge_env, Executor, DEFAULT_MAX_OUTPUT_BYTES};
+use crate::shell::{
+    filter_agent_env, filter_daemon_env, merge_env, Executor, DEFAULT_MAX_OUTPUT_BYTES,
+};
 
 /// Maximum retained agent stderr diagnostic tail. Agent stderr is untrusted and
 /// must never be allowed to grow the daemon's memory without bound.
@@ -2377,12 +2379,18 @@ fn create_terminal(
         terminals.insert(terminal_id.clone(), Arc::clone(&state));
     }
 
+    // Only inherit a minimal allowlist of safe vars from the daemon so secrets
+    // (provider keys, DEVIN_*, LOCAL_AGENT_*, etc.) don't leak to agent-spawned
+    // commands, and strip dangerous hijack vars (LD_PRELOAD, DYLD_*, etc.) from
+    // the agent-supplied env before merging.
     let env = merge_env(
-        std::env::vars(),
-        request
-            .env
-            .iter()
-            .map(|variable| (variable.name.clone(), variable.value.clone())),
+        filter_daemon_env(std::env::vars()),
+        filter_agent_env(
+            request
+                .env
+                .iter()
+                .map(|variable| (variable.name.clone(), variable.value.clone())),
+        ),
     );
     let command = request.command;
     let args = request.args;
@@ -2787,6 +2795,23 @@ where
     });
 }
 
+/// Keywords that hint a stderr line may carry a secret. Used by
+/// [`StderrTail::safe_diagnostic`] to redact credential-bearing output.
+const SENSITIVE_KEYWORDS: &[&str] = &[
+    "token",
+    "password",
+    "passwd",
+    "api_key",
+    "apikey",
+    "api-key",
+    "secret",
+    "key",
+    "credential",
+    "auth",
+    "bearer",
+    "authorization",
+];
+
 #[derive(Default)]
 struct StderrTail {
     bytes: Vec<u8>,
@@ -2811,7 +2836,11 @@ impl StderrTail {
             .lines()
             .filter(|line| {
                 let line = line.to_ascii_lowercase();
-                !line.contains("token") && !line.contains("password") && !line.contains("api_key")
+                // Security: redact any line that looks like it may carry a secret.
+                // Case-insensitive substring match keeps the filter cheap and broad.
+                !SENSITIVE_KEYWORDS
+                    .iter()
+                    .any(|keyword| line.contains(keyword))
             })
             .collect::<Vec<_>>()
             .join(" ")

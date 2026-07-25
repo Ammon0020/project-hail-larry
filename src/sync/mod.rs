@@ -311,18 +311,28 @@ pub fn authorize_handshake(
 
 /// Reports whether `remote_addr` (host:port or bare host) is loopback.
 ///
-/// Matches Go `isLoopbackAddr`: `127.0.0.1`, `::1`, and `localhost`.
+/// Matches Go `isLoopbackAddr`: `127.0.0.1`, `::1`, and `localhost`. Also
+/// recognizes IPv4-mapped IPv6 (`::ffff:127.0.0.1`), which is how a dual-stack
+/// IPv6 listener reports localhost IPv4 connections via `ConnectInfo`.
 #[must_use]
 pub fn is_loopback_addr(remote_addr: &str) -> bool {
     // Prefer std parsing for host:port (handles IPv6 `[::1]:1234`).
     if let Ok(addr) = remote_addr.parse::<SocketAddr>() {
-        return addr.ip().is_loopback();
+        // `to_canonical` maps IPv4-mapped IPv6 (`::ffff:127.0.0.1`) to IPv4 so
+        // `Ipv4Addr::is_loopback` (127.0.0.0/8) applies; for `::1` and plain
+        // IPv4 it is identity.
+        return addr.ip().to_canonical().is_loopback();
     }
     let host = match remote_addr.rsplit_once(':') {
         Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
         _ => remote_addr,
     };
-    host == "127.0.0.1" || host == "::1" || host == "localhost"
+    host == "127.0.0.1"
+        || host == "::1"
+        || host == "localhost"
+        || host
+            .strip_prefix("::ffff:")
+            .is_some_and(|v4| v4 == "127.0.0.1")
 }
 
 /// CSRF Origin check matching Go `originAllowed`.

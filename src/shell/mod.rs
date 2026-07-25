@@ -39,8 +39,8 @@ use crate::procutil::{configure_process_group, ProcessGroupCleanup};
 
 /// Default per-stream output cap (1 MiB). Matches the Go daemon's practical
 /// bound for captured command output; callers may override via
-/// [`Executor::with_max_output_bytes`]. Without a cap a single `cat /dev/urandom`
-/// or runaway `find /` could OOM the daemon.
+/// [`Executor::with_max_output_bytes`]. Without a bound a single
+/// `cat /dev/urandom` or runaway `find /` could OOM the daemon.
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
 /// Errors returned by the shell executor.
@@ -139,7 +139,9 @@ impl Executor {
     }
 
     /// Return a copy of the executor with a custom per-stream output cap.
-    /// `bytes == 0` disables the cap (not recommended for untrusted commands).
+    /// `bytes == 0` drops all captured output (matching `RetainedOutput`'s
+    /// `limit == 0` "discard" convention); use a non-zero value to retain
+    /// output up to the cap.
     pub fn with_max_output_bytes(self, bytes: usize) -> Self {
         Self {
             max_output_bytes: bytes,
@@ -498,16 +500,17 @@ async fn read_stream<R, F>(
 }
 
 /// Append `chunk` to the shared buffer, truncating at `cap` bytes total.
-/// `cap == 0` disables the cap (unbounded — not recommended for untrusted
-/// commands).
+/// `cap == 0` drops everything — matching `RetainedOutput`'s `limit == 0`
+/// "discard" convention so an agent-supplied 0 can never disable the cap and
+/// exhaust daemon memory.
 fn append_capped(buf: &Arc<Mutex<String>>, cap: usize, chunk: &str) {
-    if chunk.is_empty() {
+    if cap == 0 || chunk.is_empty() {
         return;
     }
     let mut guard = buf.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if cap == 0 || guard.len() < cap {
+    if guard.len() < cap {
         let remaining = cap.saturating_sub(guard.len());
-        if cap == 0 || remaining >= chunk.len() {
+        if remaining >= chunk.len() {
             guard.push_str(chunk);
         } else {
             // Push as much as fits (char boundary safe via floor_char_boundary).
@@ -515,6 +518,79 @@ fn append_capped(buf: &Arc<Mutex<String>>, cap: usize, chunk: &str) {
             guard.push_str(&chunk[..take]);
         }
     }
+}
+
+/// Environment keys that are safe to inherit from the daemon process into
+/// agent-spawned commands. Everything else is dropped so daemon secrets
+/// (provider API keys, `DEVIN_API_KEY`, `LOCAL_AGENT_*`, etc.) never leak to
+/// the agent's child processes.
+const SAFE_INHERIT_ENV_KEYS: &[&str] = &["PATH", "HOME", "USER", "SHELL", "LANG", "TERM"];
+
+/// Environment keys (or prefixes) that an agent must not set on commands it
+/// spawns, because they can hijack execution of the child process
+/// (`LD_PRELOAD`, `DYLD_*`, interpreter startup files, `PATH` shenanigans,
+/// etc.). These are stripped from the agent-supplied env before merging.
+const BLOCKED_AGENT_ENV_KEYS: &[&str] = &[
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "DYLD_FALLBACK_LIBRARY_PATH",
+    "DYLD_FRAMEWORK_PATH",
+    "DYLD_FORCE_FLAT_NAMESPACE",
+    "IFS",
+    "BASH_ENV",
+    "ENV",
+    "PERL5OPT",
+    "PYTHONPATH",
+    "PYTHONSTARTUP",
+    "RUBYOPT",
+];
+
+/// Whether a key matches a blocked agent env entry. Blocked entries are matched
+/// exactly or as a prefix (e.g. `DYLD_*`), so an agent cannot smuggle a
+/// hijack var past the filter by suffixing it.
+fn is_blocked_agent_env_key(key: &str) -> bool {
+    BLOCKED_AGENT_ENV_KEYS
+        .iter()
+        .any(|blocked| key == *blocked || key.starts_with(&format!("{}_", blocked)))
+}
+
+/// Filter the daemon's own environment down to a minimal allowlist before it is
+/// passed to agent-spawned commands. This prevents secrets and daemon-specific
+/// vars (provider API keys, `DEVIN_*`, `LOCAL_AGENT_*`, etc.) from leaking into
+/// the agent's child processes. `LC_*` locale vars are allowed through because
+/// they are benign and expected by locale-aware tools.
+pub fn filter_daemon_env<I, K, V>(vars: I) -> Vec<(String, String)>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: Into<String>,
+{
+    vars.into_iter()
+        .filter(|(k, _)| {
+            let k = k.as_ref();
+            SAFE_INHERIT_ENV_KEYS.contains(&k) || k.starts_with("LC_")
+        })
+        .map(|(k, v)| (k.as_ref().to_string(), v.into()))
+        .collect()
+}
+
+/// Strip dangerous env keys from the agent-supplied env before it is merged
+/// onto the (already filtered) daemon env. This stops an agent from hijacking
+/// its child processes via `LD_PRELOAD`, `DYLD_*`, interpreter startup hooks,
+/// or similar execution-redirection variables.
+pub fn filter_agent_env<I, K, V>(vars: I) -> Vec<(String, String)>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: Into<String>,
+{
+    vars.into_iter()
+        .filter(|(k, _)| !is_blocked_agent_env_key(k.as_ref()))
+        .map(|(k, v)| (k.as_ref().to_string(), v.into()))
+        .collect()
 }
 
 /// Overlay `extra` on top of `base`, with `extra` winning for duplicate keys.

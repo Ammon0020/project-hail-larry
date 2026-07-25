@@ -55,7 +55,67 @@ const MAX_EVENT_LIMIT: i32 = 10_000;
 const DEFAULT_EVENT_LIMIT: i32 = 1_000;
 const PAIR_RATE_PER_MINUTE: f64 = 5.0;
 const PAIR_RATE_BURST: f64 = 5.0;
+/// Idle window after which a per-IP bucket has fully refilled to `PAIR_RATE_BURST`
+/// and can be evicted without changing observable rate-limit behavior.
+const PAIR_RATE_IDLE_TTL: Duration = Duration::from_secs(60);
+/// Only run the eviction pass once the map grows past this size, so a healthy
+/// daemon pays no O(n) cost on every pairing request while still bounding
+/// memory under a many-source-IP flood.
+const PAIR_RATE_EVICT_THRESHOLD: usize = 1024;
 const PREVIEW_TOKEN_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// Maximum characters allowed in a paired device name.
+const MAX_DEVICE_NAME_CHARS: usize = 64;
+/// Maximum characters allowed in a session name.
+const MAX_SESSION_NAME_CHARS: usize = 128;
+/// HTML-significant characters rejected in device names to prevent stored XSS
+/// when the name is rendered in the browser UI.
+const HTML_SIGNIFICANT_CHARS: &[char] = &['<', '>', '&', '"', '\''];
+
+/// Validates a paired device name: non-empty, within the length cap, free of
+/// control characters and HTML-significant characters. Device names are
+/// attacker-controlled (any paired device can set one) and may be rendered in
+/// the UI, so both DoS and stored-XSS surfaces are bounded here.
+fn validate_device_name(name: &str) -> Result<(), ApiResponseError> {
+    if name.is_empty() {
+        return Err(ApiResponseError::bad_request(
+            "device name must not be empty",
+        ));
+    }
+    let len = name.chars().count();
+    if len > MAX_DEVICE_NAME_CHARS {
+        return Err(ApiResponseError::bad_request(format!(
+            "device name exceeds {MAX_DEVICE_NAME_CHARS} characters"
+        )));
+    }
+    if let Some(ch) = name
+        .chars()
+        .find(|c| *c < ' ' || HTML_SIGNIFICANT_CHARS.contains(c))
+    {
+        return Err(ApiResponseError::bad_request(format!(
+            "device name contains forbidden character `{ch}`"
+        )));
+    }
+    Ok(())
+}
+
+/// Validates a session name: within the length cap and free of control
+/// characters. Session names are client-controlled and may be displayed in the
+/// UI, so the DoS surface is bounded and control characters are rejected.
+fn validate_session_name(name: &str) -> Result<(), ApiResponseError> {
+    let len = name.chars().count();
+    if len > MAX_SESSION_NAME_CHARS {
+        return Err(ApiResponseError::bad_request(format!(
+            "session name exceeds {MAX_SESSION_NAME_CHARS} characters"
+        )));
+    }
+    if name.chars().any(|c| c < ' ') {
+        return Err(ApiResponseError::bad_request(
+            "session name contains forbidden control character",
+        ));
+    }
+    Ok(())
+}
 
 /// Marks a request that arrived over the daemon's native TLS listener.
 ///
@@ -264,6 +324,36 @@ pub fn router(state: AppState) -> Router {
         .merge(file_write)
         .merge(state.hub.clone().into_router())
         .fallback(get(spa_fallback))
+        .layer(middleware::from_fn(security_headers))
+}
+
+/// Global response hardening applied to every route.
+///
+/// `X-Content-Type-Options` and `X-Frame-Options` defend all responses against
+/// MIME sniffing and clickjacking of the IDE shell. HSTS is gated on the
+/// `TlsConnection` extension (set only by the HTTPS listener) so cleartext
+/// responses never pin a host that was reached over HTTP. These three headers
+/// are not set by any per-route handler, so `insert` cannot clobber the preview
+/// CSP or raw Referrer-Policy that handlers attach themselves.
+async fn security_headers(request: Request<Body>, next: Next) -> Response {
+    let over_tls = request.extensions().get::<TlsConnection>().is_some();
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::X_FRAME_OPTIONS,
+        HeaderValue::from_static("SAMEORIGIN"),
+    );
+    if over_tls {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=63072000; includeSubDomains"),
+        );
+    }
+    response
 }
 
 fn pairing_auth_checker(manager: &PairingManager) -> AuthChecker {
@@ -364,6 +454,9 @@ fn pair_verify(
     ) -> Result<crate::interfaces::DeviceCredential, PairingError>,
 ) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
     let Json(request) = decode_json_body(body)?;
+    // Validate the attacker-controlled device name before it reaches pairing
+    // state (DoS / stored-XSS guard).
+    validate_device_name(&request.device_name)?;
     verify(&state.pairing, request)
         .map(Json)
         .map_err(pairing_error)
@@ -378,10 +471,9 @@ async fn revoke_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    uri: Uri,
 ) -> Result<Response, ApiResponseError> {
     let grace = revocation_grace_period(&state);
-    let requester = device_id_from_request(&headers, uri.query());
+    let requester = device_id_from_request(&headers);
     let info = state
         .pairing
         .request_revocation(&id, requester, grace)
@@ -449,7 +541,6 @@ async fn register_workspace(
     State(state): State<AppState>,
     PeerAddr(remote_addr): PeerAddr,
     headers: HeaderMap,
-    uri: Uri,
     body: Result<Json<RegisterWorkspaceRequest>, JsonRejection>,
 ) -> Result<Response, ApiResponseError> {
     let Json(payload) = decode_json_body(body)?;
@@ -486,7 +577,7 @@ async fn register_workspace(
         return Ok((StatusCode::CREATED, Json(workspace)).into_response());
     }
 
-    let requester = device_id_from_request(&headers, uri.query());
+    let requester = device_id_from_request(&headers);
     let info = state
         .pairing
         .request_workspace_registration(&payload.path, requester, grace)
@@ -926,8 +1017,17 @@ async fn list_agents(
 
 async fn upsert_agent(
     State(state): State<AppState>,
+    PeerAddr(remote_addr): PeerAddr,
     body: Result<Json<AgentInfo>, JsonRejection>,
 ) -> Result<Json<AgentInfo>, ApiResponseError> {
+    // Agent registration persists an arbitrary command that is spawned as a
+    // child process, so restrict it to loopback callers to avoid an RCE
+    // vector from paired LAN devices.
+    if !is_loopback_addr(&remote_addr) {
+        return Err(ApiResponseError::forbidden(
+            "Agent registration is only allowed from loopback. Use 'app add-agent' on the host.",
+        ));
+    }
     let Json(agent) = decode_json_body(body)?;
     if agent.id.trim().is_empty() || agent.command.trim().is_empty() {
         return Err(ApiResponseError::bad_request(
@@ -944,8 +1044,16 @@ async fn upsert_agent(
 
 async fn delete_agent(
     State(state): State<AppState>,
+    PeerAddr(remote_addr): PeerAddr,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    // Agent deletion mutates persisted config and the live agent registry;
+    // restrict it to loopback callers, matching `upsert_agent`.
+    if !is_loopback_addr(&remote_addr) {
+        return Err(ApiResponseError::forbidden(
+            "Agent deletion is only allowed from loopback. Use 'app remove-agent <id>' on the host.",
+        ));
+    }
     state.acp.remove_agent(&id);
     state.config.write().delete_agent(&id).map_err(|error| {
         ApiResponseError::internal(format!("persist agent configuration: {error}"))
@@ -1011,6 +1119,9 @@ async fn patch_session(
 ) -> Result<Json<Value>, ApiResponseError> {
     let Json(request) = decode_json_body(body)?;
     if let Some(name) = request.name {
+        // Validate the client-supplied session name before persisting it
+        // (DoS / control-character guard).
+        validate_session_name(&name)?;
         state.acp.rename_session(&id, &name).map_err(app_error)?;
     }
 
@@ -1215,7 +1326,6 @@ async fn require_auth(
         &remote_addr,
         request.method(),
         request.headers(),
-        request.uri().query(),
     ) {
         Ok(()) => next.run(request).await,
         Err(error) if request.method() == Method::GET || request.method() == Method::HEAD => {
@@ -1353,6 +1463,12 @@ fn allow_pair_request(state: &AppState, peer: &str) -> bool {
         }
     };
     let now = Instant::now();
+    // Evict buckets idle beyond the refill window. A bucket idle for >= 60s has
+    // refilled to PAIR_RATE_BURST, so re-creating it on the next request is
+    // equivalent. Threshold-gated to avoid O(n) retain on every call.
+    if buckets.len() > PAIR_RATE_EVICT_THRESHOLD {
+        buckets.retain(|_, b| now.duration_since(b.updated_at) < PAIR_RATE_IDLE_TTL);
+    }
     let bucket = buckets
         .entry(peer.to_string())
         .or_insert_with(|| PairRateBucket {
@@ -1376,7 +1492,6 @@ fn authorize_request(
     remote_addr: &str,
     method: &Method,
     headers: &HeaderMap,
-    query: Option<&str>,
 ) -> Result<(), ApiResponseError> {
     if is_loopback_addr(remote_addr) {
         if is_mutating(method) && !loopback_origin_allowed(headers.get(header::ORIGIN)) {
@@ -1390,7 +1505,7 @@ fn authorize_request(
         }
         return Ok(());
     }
-    let (device_id, secret) = extract_credential(headers, query);
+    let (device_id, secret) = extract_credential(headers);
     if device_id.is_empty()
         || secret.is_empty()
         || !pairing.validate_credential(&device_id, &secret)
@@ -1421,33 +1536,22 @@ fn loopback_origin_allowed(origin: Option<&HeaderValue>) -> bool {
     let Ok(url) = reqwest::Url::parse(origin) else {
         return false;
     };
-    matches!(
-        url.host_str(),
-        Some("localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
-    )
+    // Loopback Origin allowlist. `0.0.0.0` is intentionally excluded: it is
+    // a wildcard, not a loopback address, and is not listed in
+    // `is_loopback_addr` (src/sync/mod.rs). A page whose origin is
+    // `http://0.0.0.0:<port>` should connect via `127.0.0.1`/`localhost`
+    // instead.
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
 }
 
-fn extract_credential(headers: &HeaderMap, query: Option<&str>) -> (String, String) {
-    if let Some(value) = headers
+fn extract_credential(headers: &HeaderMap) -> (String, String) {
+    headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .and_then(|value| value.split_once(':'))
-    {
-        return (value.0.to_string(), value.1.to_string());
-    }
-    let url =
-        query.and_then(|query| reqwest::Url::parse(&format!("http://localhost/?{query}")).ok());
-    let lookup = |name: &str| {
-        url.as_ref()
-            .and_then(|url| {
-                url.query_pairs()
-                    .find(|(key, _)| key == name)
-                    .map(|(_, value)| value.into_owned())
-            })
-            .unwrap_or_default()
-    };
-    (lookup("deviceId"), lookup("secret"))
+        .map(|(id, secret)| (id.to_string(), secret.to_string()))
+        .unwrap_or_default()
 }
 
 fn event_limit(limit: Option<i32>) -> i32 {
@@ -1485,9 +1589,11 @@ fn peer_addr_string(extensions: &axum::http::Extensions) -> String {
         .unwrap_or_else(|| "127.0.0.1:0".to_string())
 }
 
-/// Device ID from Bearer/`deviceId` query — empty on loopback-only requests.
-fn device_id_from_request(headers: &HeaderMap, query: Option<&str>) -> String {
-    extract_credential(headers, query).0
+/// Device ID from the `Authorization: Bearer` header — empty on loopback-only
+/// requests (where `authorize_request` bypasses credential checks) or when no
+/// bearer credential is present.
+fn device_id_from_request(headers: &HeaderMap) -> String {
+    extract_credential(headers).0
 }
 
 /// Shared cancel flow for grace-period pending actions (decode → cancel → event).
@@ -1802,14 +1908,8 @@ mod tests {
     fn remote_request_without_a_credential_is_rejected() {
         let (_dir, state) = state();
         let headers = HeaderMap::new();
-        let error = authorize_request(
-            &state.pairing,
-            "192.168.1.2:9000",
-            &Method::GET,
-            &headers,
-            None,
-        )
-        .expect_err("missing remote credential must fail");
+        let error = authorize_request(&state.pairing, "192.168.1.2:9000", &Method::GET, &headers)
+            .expect_err("missing remote credential must fail");
         assert_eq!(error.status, StatusCode::UNAUTHORIZED);
     }
 
@@ -2221,8 +2321,9 @@ mod tests {
 
     #[tokio::test]
     async fn preview_requires_auth_for_non_loopback() {
-        // Unit test uses a non-loopback ConnectInfo peer. Full LAN + query-param
-        // credential fallback is covered by the query-auth test below.
+        // Non-loopback ConnectInfo peer with no Bearer header and no preview
+        // ticket must be rejected. The previewToken cookie flow is covered by
+        // `preview_session_cookie_authenticates_relative_asset`.
         let (_state_dir, state) = state();
         let (_site, ws) = preview_fixture_workspace(&state).await;
 
@@ -2236,26 +2337,6 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn preview_accepts_query_credentials_for_non_loopback() {
-        let (_state_dir, state, cred) = pending_actions_state(0, false);
-        let (_site, ws) = preview_fixture_workspace(&state).await;
-
-        let response = oneshot_peer(
-            state,
-            Request::builder()
-                .uri(format!(
-                    "/preview/{}/index.html?deviceId={}&secret={}",
-                    ws.id, cred.id, cred.secret
-                ))
-                .body(Body::empty())
-                .expect("request"),
-            "10.0.0.1:9",
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

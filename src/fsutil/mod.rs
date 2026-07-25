@@ -85,15 +85,10 @@ pub fn atomic_write(path: &Path, data: &[u8], mode: Option<u32>) -> io::Result<(
     Ok(())
 }
 
-/// Create the parent of `path` if missing. On Unix, state directories get mode
-/// `0700` because they may hold secrets (config, MCP, TLS keys).
-fn ensure_parent_dir(path: &Path) -> io::Result<()> {
-    let Some(dir) = path.parent() else {
-        return Ok(());
-    };
-    if dir.as_os_str().is_empty() {
-        return Ok(());
-    }
+/// Create `dir` and any missing parents with mode `0700` on Unix (default
+/// `create_dir_all` semantics on non-Unix). Use for security-sensitive state
+/// directories that may hold secrets (config, MCP, TLS keys, logs, uploads).
+pub fn create_dir_all(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -107,6 +102,18 @@ fn ensure_parent_dir(path: &Path) -> io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     Ok(())
+}
+
+/// Create the parent of `path` if missing. On Unix, state directories get mode
+/// `0700` because they may hold secrets (config, MCP, TLS keys).
+fn ensure_parent_dir(path: &Path) -> io::Result<()> {
+    let Some(dir) = path.parent() else {
+        return Ok(());
+    };
+    if dir.as_os_str().is_empty() {
+        return Ok(());
+    }
+    create_dir_all(dir)
 }
 
 #[cfg(test)]

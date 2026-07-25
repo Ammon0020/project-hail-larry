@@ -111,8 +111,12 @@ fn loopback_addr_detection() {
     assert!(is_loopback_addr("[::1]:1234"));
     assert!(is_loopback_addr("localhost:7337"));
     assert!(is_loopback_addr("localhost"));
+    // IPv4-mapped IPv6: how a dual-stack IPv6 listener reports localhost IPv4.
+    assert!(is_loopback_addr("[::ffff:127.0.0.1]:1234"));
+    assert!(is_loopback_addr("::ffff:127.0.0.1"));
     assert!(!is_loopback_addr("192.168.1.10:1234"));
     assert!(!is_loopback_addr("10.0.0.1:80"));
+    assert!(!is_loopback_addr("[::ffff:192.168.1.10]:1234"));
 }
 
 #[test]

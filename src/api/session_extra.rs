@@ -210,9 +210,40 @@ pub async fn serve_upload(
         error!(path = %path.display(), %error, "read upload failed");
         ApiResponseError::internal(format!("read upload: {error}"))
     })?;
+
+    // The on-disk name is `<upload_id>.<ext>` with a hex id and a magic-byte
+    // extension, but sanitize anyway in case the upload-id validation is ever
+    // relaxed. Force a download (no inline rendering / MIME sniffing) and keep
+    // deleted uploads out of the browser cache.
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let mut filename = sanitize_download_filename(&upload_id);
+    if filename.is_empty() {
+        filename = "upload".into();
+    }
+    if !ext.is_empty() {
+        filename.push('.');
+        filename.push_str(ext);
+    }
+    let disposition = format!("attachment; filename=\"{filename}\"");
     Ok((
         StatusCode::OK,
-        [(header::CONTENT_TYPE, mime_from_path(&path))],
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(mime_from_path(&path)),
+            ),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_str(&disposition).unwrap_or_else(|_| {
+                    HeaderValue::from_static("attachment; filename=\"upload\"")
+                }),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
         bytes,
     )
         .into_response())

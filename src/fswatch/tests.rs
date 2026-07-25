@@ -297,3 +297,31 @@ fn handles_create_modify_delete() {
     let e3 = wait_for_event(&rx, Duration::from_secs(3)).expect("expected delete event");
     assert_eq!(e3.target, "lifecycle.txt");
 }
+
+/// A symlinked subdirectory inside the workspace is NOT followed: writes to a
+/// file inside the symlink target must not surface as workspace events, and the
+/// watcher must not recurse outside the workspace root.
+#[cfg(unix)]
+#[test]
+fn symlinked_subdir_not_watched() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().expect("tempdir");
+    // External tree the symlink would point at.
+    let outside = TempDir::new().expect("tempdir");
+    fs::write(outside.path().join("leaked.txt"), b"x").expect("write outside");
+    symlink(outside.path(), dir.path().join("evil")).expect("symlink");
+
+    let Some((w, rx)) = make_watcher() else {
+        return;
+    };
+    w.add_workspace("ws1", dir.path().to_str().expect("utf8 path"));
+    settle();
+
+    // A write inside the symlinked dir should NOT produce an event, because the
+    // watcher must not have added a watch for it (or its target).
+    fs::write(outside.path().join("after.txt"), b"y").expect("write outside");
+    if let Some(e) = wait_for_event(&rx, Duration::from_millis(800)) {
+        panic!("expected no event for symlinked dir, got {:?}", e.target);
+    }
+}

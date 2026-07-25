@@ -182,6 +182,24 @@ async fn read_enforces_size_limit_without_loading_file() {
 }
 
 #[tokio::test]
+async fn file_path_enforces_size_limit() {
+    let manager = manager();
+    let dir = TempDir::new().unwrap();
+    let big = dir.path().join("big.bin");
+    let file = fs::File::create(&big).unwrap();
+    file.set_len(super::MAX_READ_FILE_SIZE + 1).unwrap();
+    let workspace = manager
+        .register(&dir.path().to_string_lossy())
+        .await
+        .unwrap();
+    let error = manager
+        .file_path(&workspace.id, "big.bin")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::Validation(message) if message.contains("too large")));
+}
+
+#[tokio::test]
 async fn file_operations_reject_traversal_and_symlink_escape() {
     use std::os::unix::fs::symlink;
 

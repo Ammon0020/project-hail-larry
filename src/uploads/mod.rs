@@ -113,16 +113,7 @@ impl Manager {
     /// `0o700`) if missing. Mirrors Go `uploads.New`.
     pub fn new(root_dir: impl Into<PathBuf>) -> Result<Self, UploadError> {
         let root = root_dir.into();
-        fs::create_dir_all(&root)?;
-        // Best-effort tighten permissions to 0o700 on POSIX; ignore failures
-        // (e.g. on Windows or when the dir already exists with other perms) to
-        // match Go's lenient behaviour where MkdirAll is a no-op for existing
-        // dirs.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&root, fs::Permissions::from_mode(0o700));
-        }
+        crate::fsutil::create_dir_all(&root)?;
         Ok(Self { root })
     }
 
@@ -171,12 +162,7 @@ impl Manager {
 
         let upload_id = new_id();
         let session_dir = self.root.join(session_id);
-        fs::create_dir_all(&session_dir)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&session_dir, fs::Permissions::from_mode(0o700));
-        }
+        crate::fsutil::create_dir_all(&session_dir)?;
 
         let stored_name = format!("{upload_id}{ext}");
         let abs_path = session_dir.join(&stored_name);

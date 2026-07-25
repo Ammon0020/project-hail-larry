@@ -55,7 +55,9 @@ pub enum PairingError {
     InvalidToken,
     #[error("too many pairing attempts; try again later")]
     RateLimited,
-    #[error("device not found: {0}")]
+    // The id is kept for server-side Debug introspection but intentionally
+    // omitted from Display so the HTTP body cannot act as a device-id oracle.
+    #[error("device not found")]
     DeviceNotFound(String),
     #[error("pending action not found")]
     PendingActionNotFound,
