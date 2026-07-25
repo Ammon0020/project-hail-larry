@@ -99,6 +99,7 @@ async fn file_tree_sorts_and_filters_entries() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn tree_skips_symlinks_and_bounds_deep_recursion() {
     use std::os::unix::fs::symlink;
 
@@ -200,6 +201,7 @@ async fn file_path_enforces_size_limit() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn file_operations_reject_traversal_and_symlink_escape() {
     use std::os::unix::fs::symlink;
 

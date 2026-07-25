@@ -71,12 +71,24 @@ mod platform {
     }
 
     pub(super) fn request_stop(pid: u32) -> Result<()> {
-        let status = Command::new("taskkill")
+        // Try graceful close first (no /F). A background daemon started with
+        // `--background` has no window/console to receive the WM_CLOSE signal,
+        // so the graceful taskkill can fail with "process can only be
+        // terminated forcefully". Fall back to `/F` in that case so the daemon
+        // is still stopped rather than orphaned.
+        let graceful = Command::new("taskkill")
             .args(["/PID", &pid.to_string()])
             .status()
             .context("invoke taskkill")?;
-        if !status.success() {
-            bail!("taskkill failed for daemon PID {pid} with status {status}");
+        if graceful.success() {
+            return Ok(());
+        }
+        let forced = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .status()
+            .context("invoke taskkill /F")?;
+        if !forced.success() {
+            bail!("taskkill failed for daemon PID {pid} with status {forced}");
         }
         Ok(())
     }

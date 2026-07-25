@@ -224,6 +224,7 @@ fn is_within_root(root: &Path, path: &Path) -> bool {
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use tempfile::tempdir;
 
@@ -326,6 +327,7 @@ mod tests {
     // ---- resolve_symlink: containment ----
 
     #[test]
+    #[cfg(unix)]
     fn resolve_symlink_rejects_link_outside_root() {
         let dir = tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -341,6 +343,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn resolve_symlink_allows_link_inside_root() {
         let dir = tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -377,6 +380,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn resolve_symlink_rejects_symlink_parent() {
         let dir = tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -456,6 +460,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn resolve_symlink_chain_inside_root_resolves() {
         // chain: link3 -> link2 -> link1 -> real.txt, all inside root.
         let dir = tempdir().unwrap();

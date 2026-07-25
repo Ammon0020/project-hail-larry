@@ -148,11 +148,18 @@ pub async fn search(
     }
     let re = Regex::new(&pattern)?;
 
-    if rg::on_path() {
-        rg::search_with_rg(root, &opts, &re, cancel).await
+    let mut results = if rg::on_path() {
+        rg::search_with_rg(root, &opts, &re, cancel).await?
     } else {
-        native::search_with_walker(root, &opts, &re, cancel).await
-    }
+        native::search_with_walker(root, &opts, &re, cancel).await?
+    };
+    // Sort by (path, line_number) so results are deterministic regardless of
+    // the backend (rg vs native) or filesystem directory-iteration order.
+    // Without this, the same query can return results in different order on
+    // different platforms/filesystems, breaking order-sensitive comparisons
+    // (e.g. the contract suite golden fixtures).
+    results.sort_by(|a, b| a.path.cmp(&b.path).then(a.line_number.cmp(&b.line_number)));
+    Ok(results)
 }
 
 /// Converts a simple glob (with `*` and `?`) into an anchored regex pattern

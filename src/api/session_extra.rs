@@ -102,9 +102,12 @@ pub async fn session_context(
     AxumPath(session_id): AxumPath<String>,
     body: Result<Json<SessionContextRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    // Decode and validate the request body before checking session existence.
+    // This ensures a malformed body returns 400 regardless of whether the
+    // session exists, matching the Go contract (sessions_context_bad_body).
+    let Json(request) = decode_json_body(body)?;
     // Validate the session exists before mutating per-session editor state.
     state.acp.get_session_info(&session_id).map_err(app_error)?;
-    let Json(request) = decode_json_body(body)?;
     let tracker = state.acp.open_files_tracker();
     if let Some(open_files) = request.open_files {
         tracker
