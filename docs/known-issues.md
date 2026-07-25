@@ -3,6 +3,13 @@
 Gaps and deferred work tracked from review passes. Each entry is a one-line
 note so the next agent can pick it up without re-reading the full review file.
 
+## Search tests require a ripgrep build with `--max-filecount`
+
+On 2026-07-25, `cargo test -q --all-targets` had six unrelated failures in
+`search::tests` and `workspace::tests::search_delegates_to_workspace_search`:
+the installed `rg` rejects the project's `--max-filecount` argument (exit 2).
+Use a compatible ripgrep build or adapt the search implementation separately.
+
 ## Agent-owned history migration — explicitly deferred
 
 Deferred by Product on 2026-07-18. Local `conversations.json` metadata and
