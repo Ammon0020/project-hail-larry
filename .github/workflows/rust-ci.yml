@@ -48,6 +48,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # The ACP core/spike/lifecycle tests spawn the Go mockagent binary.
+      # Build it to the path the tests default to (/tmp/mockagent).
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Build mockagent
+        run: go build -o /tmp/mockagent ./cmd/mockagent/
       - name: Ensure SPA embed marker
         run: |
           mkdir -p web/dist
@@ -102,6 +110,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # The ACP core/spike/lifecycle tests spawn the Go mockagent binary.
+      # `go build` appends `.exe` on Windows, so build to an explicit path and
+      # point the tests at it via LOCAL_AGENT_MOCKAGENT_BIN.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Build mockagent
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\tmp | Out-Null
+          go build -o C:\tmp\mockagent.exe ./cmd/mockagent/
+          "LOCAL_AGENT_MOCKAGENT_BIN=C:\tmp\mockagent.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Ensure SPA embed marker
         shell: pwsh
         run: |

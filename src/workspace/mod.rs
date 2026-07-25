@@ -338,7 +338,6 @@ impl WorkspaceManager for Manager {
 #[cfg(unix)]
 fn open_dir_no_symlink(path: &Path) -> Result<PathBuf, AppError> {
     use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::io::AsRawFd;
 
     // Pre-check for a clear error message. The O_NOFOLLOW open below is the
     // authoritative, race-free check.
@@ -369,6 +368,7 @@ fn open_dir_no_symlink(path: &Path) -> Result<PathBuf, AppError> {
     // resolves to the canonical path of the inode the fd refers to.
     #[cfg(target_os = "linux")]
     {
+        use std::os::unix::io::AsRawFd;
         let fd_path = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
         fs::canonicalize(&fd_path)
             .map_err(|err| AppError::internal(format!("canonicalize workspace: {err}")))

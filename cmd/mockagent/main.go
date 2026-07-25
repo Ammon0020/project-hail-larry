@@ -36,6 +36,12 @@ const osWindows = "windows"
 // into the prompt instead).
 const envNoModeCap = "MOCKAGENT_NO_MODE_CAP"
 
+// envExitAfterInit, when set to a non-empty value, makes the mock agent exit
+// with a non-zero code immediately after the first session/new or session/load
+// completes. Rust tests use this to exercise the terminal-outcome watcher path
+// for unexpected post-startup actor exits.
+const envExitAfterInit = "MOCKAGENT_EXIT_AFTER_INIT"
+
 // profileConfigID is the SessionConfigOption id the Rust client sends via
 // `session/set_config_option` to switch the active profile (S-PROF-ACP).
 const profileConfigID acp.SessionConfigId = "profile"
@@ -129,6 +135,12 @@ func (a *mockAgent) NewSession(_ context.Context, _ acp.NewSessionRequest) (acp.
 	// MOCKAGENT_NO_MODE_CAP is set so the prompt-injection fallback is testable.
 	if a.modeCap {
 		resp.ConfigOptions = []acp.SessionConfigOption{a.profileConfigOption("")}
+	}
+	// Simulate an unexpected crash after a successful initialize + session/new.
+	// The Rust actor has already sent readiness; the terminal watcher must
+	// transition the session to Failed and append an AgentExited event.
+	if os.Getenv(envExitAfterInit) != "" {
+		os.Exit(1)
 	}
 	return resp, nil
 }

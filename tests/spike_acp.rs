@@ -81,9 +81,13 @@ use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo};
 use std::str::FromStr;
 use tokio::sync::Mutex;
 
-/// Path to the pre-built Go mockagent binary (built by the spike harness:
-/// `go build -o /tmp/mockagent ./cmd/mockagent/`).
-const MOCKAGENT_BIN: &str = "/tmp/mockagent";
+/// Resolve the mockagent binary path. CI builds the Go mockagent to a
+/// platform-specific location and points `LOCAL_AGENT_MOCKAGENT_BIN` at it
+/// (Windows needs a `.exe` suffix); the default `/tmp/mockagent` matches the
+/// local-dev build documented in the assertion below.
+fn mockagent_bin() -> String {
+    std::env::var("LOCAL_AGENT_MOCKAGENT_BIN").unwrap_or_else(|_| "/tmp/mockagent".to_string())
+}
 
 /// How long to wait for the mockagent to stream a full response before
 /// declaring the spike failed. Generous because the mock streams word-by-word
@@ -115,11 +119,12 @@ impl ContentBlockTextExt for ContentBlock {
 /// `acp.NewAgentSideConnection` / `ClientSideConnection` over `os.Stdin`/
 /// `os.Stdout`.
 fn mockagent_transport() -> AcpAgent {
+    let bin = mockagent_bin();
     assert!(
-        std::path::Path::new(MOCKAGENT_BIN).exists(),
-        "mockagent binary missing at {MOCKAGENT_BIN}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/`"
+        std::path::Path::new(&bin).exists(),
+        "mockagent binary missing at {bin}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/` or set LOCAL_AGENT_MOCKAGENT_BIN"
     );
-    AcpAgent::from_str(MOCKAGENT_BIN).expect("valid mockagent command")
+    AcpAgent::from_str(&bin).expect("valid mockagent command")
 }
 
 /// Shared state collected by the notification handler during a prompt turn.
@@ -472,7 +477,7 @@ async fn spike_permission_response_shape() {
 async fn spike_cancel_terminates_child() {
     use agent_client_protocol::ByteStreams;
 
-    let mut cmd = async_process::Command::new(MOCKAGENT_BIN);
+    let mut cmd = async_process::Command::new(mockagent_bin());
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

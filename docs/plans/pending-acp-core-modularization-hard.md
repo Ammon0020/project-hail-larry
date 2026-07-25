@@ -1,7 +1,7 @@
 # Epic: ACP Core Modularization
 
 > **Status:** pending. **Owner:** —. **Created:** 2026-07-22.
-> **Updated:** 2026-07-24 (CALLBACKS complete). **Difficulty:** hard.
+> **Updated:** 2026-07-25 (ACTOR complete). **Difficulty:** hard.
 > **Related:** `src/acp/core.rs`, `src/acp/{providers,context,store}.rs`,
 > `tests/acp_core_lifecycle.rs`. Stories: `docs/plans/acp-core-modularization/`.
 
@@ -83,8 +83,8 @@ src/acp/core/actor/turn.rs            commands, prompt/control loop, cancellatio
 | ID | Story | Difficulty | Depends on | Status |
 |----|-------|------------|------------|--------|
 | S-ACP-MOD-CALLBACKS | [Extract callback services](acp-core-modularization/complete-callback-services-hard.md) | hard | — | complete |
-| S-ACP-MOD-ACTOR | [Extract actor runtime](acp-core-modularization/pending-actor-runtime-hard.md) | hard | CALLBACKS | pending |
-| S-ACP-MOD-TURN | [Extract actor turn state machine](acp-core-modularization/pending-turn-state-machine-hard.md) | hard | ACTOR | pending |
+| S-ACP-MOD-ACTOR | [Extract actor runtime](acp-core-modularization/complete-actor-runtime-hard.md) | hard | CALLBACKS | complete |
+| S-ACP-MOD-TURN | [Extract actor turn state machine](acp-core-modularization/active-turn-state-machine-hard.md) | hard | ACTOR | active |
 | S-ACP-MOD-REGISTRY | [Extract session registry](acp-core-modularization/pending-session-registry-hard.md) | hard | TURN | pending |
 | S-ACP-MOD-FACADE | [Finish client facade and lifecycle split](acp-core-modularization/pending-client-facade-hard.md) | hard | REGISTRY | pending |
 

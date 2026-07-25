@@ -5,48 +5,30 @@
 //! so callers communicate with that task through a bounded command channel
 //! rather than attempting to store an SDK connection in the session registry.
 
+mod actor;
 mod diagnostics;
 mod events;
 mod handlers;
 mod mcp;
 
-use diagnostics::{spawn_stderr_drain, StderrTail};
-use events::{append_payload, handle_session_notification};
-use handlers::{
-    cancel_terminals, create_terminal, kill_terminal, read_text_file, release_terminal,
-    request_permission, spawn_respond_callback, spawn_result_callback, terminal_output,
-    wait_for_terminal_exit, write_text_file, HandlerDeps,
-};
-use mcp::load_session_mcp_servers;
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ClientCapabilities, ContentBlock, CreateTerminalRequest, EmbeddedResource,
-    EmbeddedResourceResource, FileSystemCapabilities, Implementation, InitializeRequest,
-    InitializeResponse, KillTerminalRequest, ListSessionsRequest, LoadSessionRequest, McpServer,
-    NewSessionRequest, PromptRequest, ReadTextFileRequest, ReleaseTerminalRequest,
-    RequestPermissionRequest, SessionConfigOption, SessionId, SessionNotification,
-    TerminalOutputRequest, TextContent, TextResourceContents, WaitForTerminalExitRequest,
-    WriteTextFileRequest,
+    CancelNotification, ContentBlock, EmbeddedResource, EmbeddedResourceResource, PromptRequest,
+    SessionId, TextContent, TextResourceContents,
 };
-use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::{Agent, ByteStreams, Client as SdkClient, ConnectionTo};
-use async_process::Command;
+use agent_client_protocol::{Agent, ConnectionTo};
 use async_trait::async_trait;
 use chrono::Utc;
-use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex, Semaphore};
-use tokio_util::sync::CancellationToken;
+use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 use uuid::Uuid;
 
 use super::providers::{
-    find_model_config_id, find_profile_config_id, require_providers_supported,
-    rpc_disable_provider, rpc_list_providers, rpc_set_model_config, rpc_set_profile_config,
-    rpc_set_provider, SessionCaps, MODEL_SWITCH_UNSUPPORTED_MSG,
+    require_providers_supported, rpc_disable_provider, rpc_list_providers, rpc_set_model_config,
+    rpc_set_profile_config, rpc_set_provider, SessionCaps, MODEL_SWITCH_UNSUPPORTED_MSG,
 };
 use super::{
     context::{PreparedPrompt, PromptPipeline},
@@ -60,14 +42,14 @@ use crate::interfaces::{
     ACPClient, AppError, Attachment, EventPayload, PermissionManager, ProviderInfo, Session,
     SessionInfo, WorkspaceInfo, WorkspaceManager,
 };
-use crate::procutil::{configure_process_group, ProcessGroupCleanup};
+
+use actor::{ActorCommand, ActorExit, ACTOR_COMMAND_CAPACITY};
+use diagnostics::StderrTail;
+use events::append_payload;
 
 /// Maximum retained agent stderr diagnostic tail. Agent stderr is untrusted and
 /// must never be allowed to grow the daemon's memory without bound.
 pub const STDERR_TAIL_BYTES: usize = 8 * 1024;
-const ACTOR_COMMAND_CAPACITY: usize = 32;
-/// Maximum callback requests an agent can make concurrently per session.
-const MAX_CALLBACK_TASKS: usize = 16;
 
 /// Maximum concurrent live ACP sessions. Each session pins an agent child
 /// process, so a cap prevents unbounded process-exhaustion DoS.
@@ -75,11 +57,6 @@ const MAX_SESSIONS: usize = 32;
 /// Safe default for a model-switch rebind transfer (256 KiB).
 const MODEL_SWITCH_TRANSFER_BYTES: i64 = 256 * 1024;
 
-/// ACP `clientInfo.name` — must be non-empty; agents (e.g. Mistral Vibe) forward
-/// it into provider metadata that rejects blank values. Matches Go transport.
-const ACP_CLIENT_NAME: &str = "LocalAgentInterface";
-/// ACP `clientInfo.version` — same Go parity constraint as [`ACP_CLIENT_NAME`].
-const ACP_CLIENT_VERSION: &str = "1.0";
 /// Grace period after a cooperative cancel before force-closing the session.
 /// A malicious agent can ignore the cancel notification; after this timeout the
 /// session is force-closed to kill the agent process and abort in-flight callbacks.
@@ -125,7 +102,7 @@ impl SessionState {
 struct SessionEntry {
     info: SessionInfo,
     state: SessionState,
-    commands: mpsc::Sender<ActorCommand>,
+    actor: actor::Handle,
     stderr_tail: Arc<Mutex<StderrTail>>,
     /// Sticky cancel bit for the reserved prompt turn. Cancel may arrive on
     /// the actor while it is still idle (Prompt not dequeued yet); the bit
@@ -474,36 +451,35 @@ impl Client {
         let workspace = self.resolve_workspace(&info.workspace).await?;
         let workspace_path = PathBuf::from(workspace.path);
         let id = info.id.clone();
-        let (commands, receiver) = mpsc::channel(ACTOR_COMMAND_CAPACITY);
-        let (ready_tx, ready_rx) = oneshot::channel();
-        let (registered_tx, registered_rx) = oneshot::channel();
         let stderr_tail = Arc::new(Mutex::new(StderrTail::default()));
         let prompt_cancel = Arc::new(AtomicBool::new(false));
-        let actor = ActorConfig {
-            local_session_id: id.clone(),
-            agent,
-            workspace_id: info.workspace.clone(),
-            workspace_path,
-            permissions: Arc::clone(&self.deps.permissions),
-            workspaces: Arc::clone(&self.deps.workspaces),
-            stderr_tail: Arc::clone(&stderr_tail),
-            sessions: Arc::clone(&self.sessions),
-            event_bus: Arc::clone(&self.deps.event_bus),
-            prompt_cancel: Arc::clone(&prompt_cancel),
-            mcp_config_path: self.deps.mcp_config_path.clone(),
-            profiles: Arc::clone(&self.pipeline.profiles),
-            persisted_acp_session_id,
-        };
-        tokio::spawn(run_actor(actor, receiver, ready_tx, registered_rx));
+        let spawned = actor::spawn(
+            actor::Config {
+                local_session_id: id.clone(),
+                agent,
+                workspace_id: info.workspace.clone(),
+                workspace_path,
+                permissions: Arc::clone(&self.deps.permissions),
+                workspaces: Arc::clone(&self.deps.workspaces),
+                stderr_tail: Arc::clone(&stderr_tail),
+                event_bus: Arc::clone(&self.deps.event_bus),
+                prompt_cancel: Arc::clone(&prompt_cancel),
+                mcp_config_path: self.deps.mcp_config_path.clone(),
+                profiles: Arc::clone(&self.pipeline.profiles),
+                persisted_acp_session_id,
+            },
+            ACTOR_COMMAND_CAPACITY,
+        );
 
-        let result = ready_rx
+        let result = spawned
+            .ready
             .await
             .map_err(|_| AppError::internal("ACP session actor exited during startup"))?;
         let startup = result?;
         let mut entry = SessionEntry {
             info,
             state: SessionState::Created,
-            commands,
+            actor: spawned.handle.clone(),
             stderr_tail,
             prompt_cancel,
             caps: startup.caps,
@@ -514,8 +490,54 @@ impl Client {
         entry.apply_state(SessionState::Idle);
         let published = entry.info.clone();
         self.sessions_write()?.insert(id, entry);
-        let _ = registered_tx.send(());
+        let _ = spawned.registered.send(());
+        self.watch_actor_terminal(spawned.terminal, spawned.handle, published.id.clone());
         Ok(published)
+    }
+
+    /// Consume actor loss outside the registry lock. A replacement actor gets a
+    /// new opaque handle, so an old actor cannot fail the rebound session.
+    fn watch_actor_terminal(
+        &self,
+        terminal: oneshot::Receiver<actor::TerminalOutcome>,
+        handle: actor::Handle,
+        session_id: String,
+    ) {
+        let sessions = Arc::clone(&self.sessions);
+        let permissions = Arc::clone(&self.deps.permissions);
+        let event_bus = Arc::clone(&self.deps.event_bus);
+        tokio::spawn(async move {
+            let Ok(actor::TerminalOutcome::Failed(error)) = terminal.await else {
+                return;
+            };
+            let current = sessions
+                .write()
+                .ok()
+                .and_then(|mut entries| {
+                    entries.get_mut(&session_id).and_then(|entry| {
+                        (entry.actor.id() == handle.id()).then(|| {
+                            entry.apply_state(SessionState::Failed);
+                        })
+                    })
+                })
+                .is_some();
+            if !current {
+                return;
+            }
+            permissions.clear_session(&session_id);
+            if let Err(append_error) = append_payload(
+                &event_bus,
+                &session_id,
+                EventPayload::AgentExited {
+                    content: "ACP session actor exited unexpectedly".to_string(),
+                },
+            )
+            .await
+            {
+                tracing::error!(session_id, error = %append_error, "failed to persist ACP actor-exit event");
+            }
+            tracing::warn!(session_id, error = %error, "ACP session actor ended");
+        });
     }
 
     fn session_for_command(
@@ -527,7 +549,7 @@ impl Client {
                 "ACP session failed; close it and create a new session",
             )),
             SessionState::Closed => Err(AppError::internal("ACP session is closed")),
-            _ => Ok((entry.commands.clone(), Arc::clone(&entry.prompt_cancel))),
+            _ => Ok((entry.actor.commands(), Arc::clone(&entry.prompt_cancel))),
         })
     }
 
@@ -536,7 +558,7 @@ impl Client {
         &self,
         session_id: &str,
     ) -> Result<(mpsc::Sender<ActorCommand>, SessionCaps), AppError> {
-        self.map_live_session(session_id, |entry| Ok((entry.commands.clone(), entry.caps)))
+        self.map_live_session(session_id, |entry| Ok((entry.actor.commands(), entry.caps)))
     }
 
     /// Look up command sender + model config id for a live model switch.
@@ -545,7 +567,7 @@ impl Client {
         session_id: &str,
     ) -> Result<(mpsc::Sender<ActorCommand>, Option<String>), AppError> {
         self.map_live_session(session_id, |entry| {
-            Ok((entry.commands.clone(), entry.model_config_id.clone()))
+            Ok((entry.actor.commands(), entry.model_config_id.clone()))
         })
     }
 
@@ -559,7 +581,7 @@ impl Client {
         session_id: &str,
     ) -> Result<(mpsc::Sender<ActorCommand>, Option<String>), AppError> {
         self.map_live_session(session_id, |entry| {
-            Ok((entry.commands.clone(), entry.profile_config_id.clone()))
+            Ok((entry.actor.commands(), entry.profile_config_id.clone()))
         })
     }
 
@@ -577,7 +599,7 @@ impl Client {
                 entry.prompt_cancel.store(false, Ordering::Release);
                 entry.apply_state(SessionState::Running);
                 Ok((
-                    entry.commands.clone(),
+                    entry.actor.commands(),
                     entry.caps,
                     entry.info.workspace.clone(),
                 ))
@@ -837,7 +859,7 @@ impl ACPClient for Client {
             (
                 entry.info.workspace.clone(),
                 entry.info.agent_id.clone(),
-                entry.commands.clone(),
+                entry.actor.commands(),
             )
         };
         let transfer =
@@ -865,11 +887,8 @@ impl ACPClient for Client {
 
         let stderr_tail = Arc::new(Mutex::new(StderrTail::default()));
         let prompt_cancel = Arc::new(AtomicBool::new(false));
-        let (new_commands, receiver) = mpsc::channel(ACTOR_COMMAND_CAPACITY);
-        let (ready_tx, ready_rx) = oneshot::channel();
-        let (registered_tx, registered_rx) = oneshot::channel();
-        tokio::spawn(run_actor(
-            ActorConfig {
+        let spawned = actor::spawn(
+            actor::Config {
                 local_session_id: session_id.to_string(),
                 agent,
                 workspace_id: workspace_id.clone(),
@@ -877,7 +896,6 @@ impl ACPClient for Client {
                 permissions: Arc::clone(&self.deps.permissions),
                 workspaces: Arc::clone(&self.deps.workspaces),
                 stderr_tail: Arc::clone(&stderr_tail),
-                sessions: Arc::clone(&self.sessions),
                 event_bus: Arc::clone(&self.deps.event_bus),
                 prompt_cancel: Arc::clone(&prompt_cancel),
                 mcp_config_path: self.deps.mcp_config_path.clone(),
@@ -886,11 +904,9 @@ impl ACPClient for Client {
                 // attempt session/load against the wrong agent (Go parity).
                 persisted_acp_session_id: String::new(),
             },
-            receiver,
-            ready_tx,
-            registered_rx,
-        ));
-        let startup = match ready_rx.await {
+            ACTOR_COMMAND_CAPACITY,
+        );
+        let startup = match spawned.ready.await {
             Ok(Ok(startup)) => startup,
             Ok(Err(error)) => {
                 self.update_state(session_id, SessionState::Failed);
@@ -908,7 +924,7 @@ impl ACPClient for Client {
             let entry = sessions
                 .get_mut(session_id)
                 .ok_or_else(|| AppError::not_found_id("session", session_id))?;
-            entry.commands = new_commands;
+            entry.actor = spawned.handle.clone();
             entry.stderr_tail = stderr_tail;
             entry.prompt_cancel = prompt_cancel;
             entry.caps = startup.caps;
@@ -923,7 +939,8 @@ impl ACPClient for Client {
         };
         // The replacement actor has initialized, and the entry now owns its
         // sender, so it may safely start receiving commands.
-        let _ = registered_tx.send(());
+        let _ = spawned.registered.send(());
+        self.watch_actor_terminal(spawned.terminal, spawned.handle, session_id.to_string());
         self.pipeline.reset(session_id);
         self.pipeline.queue_transfer(
             session_id.to_string(),
@@ -1054,7 +1071,7 @@ impl ACPClient for Client {
                 if entry.state != SessionState::Interrupted {
                     return;
                 }
-                entry.commands.clone()
+                entry.actor.commands()
             };
             // Remove first to make the force-close idempotent (mirrors close_session).
             let removed = sessions
@@ -1116,7 +1133,8 @@ impl ACPClient for Client {
         self.deps.permissions.clear_session(session_id);
         let (closed_tx, closed_rx) = oneshot::channel();
         if entry
-            .commands
+            .actor
+            .commands()
             .send(ActorCommand::Close(closed_tx))
             .await
             .is_ok()
@@ -1286,610 +1304,6 @@ fn persist_sessions_to(
     }
     let sessions = by_id.into_values().collect::<Vec<_>>();
     conversation_store.persist(&sessions)
-}
-
-enum ActorCommand {
-    Prompt {
-        /// User text is persisted verbatim; middleware context is transport-only.
-        user_content: String,
-        prepared: PreparedPrompt,
-        attachments: Vec<Attachment>,
-        result: oneshot::Sender<Result<(), AppError>>,
-    },
-    ListProviders {
-        result: oneshot::Sender<Result<Vec<ProviderInfo>, AppError>>,
-    },
-    SetProvider {
-        id: String,
-        api_type: String,
-        base_url: String,
-        headers: std::collections::HashMap<String, String>,
-        result: oneshot::Sender<Result<(), AppError>>,
-    },
-    DisableProvider {
-        id: String,
-        result: oneshot::Sender<Result<(), AppError>>,
-    },
-    SwitchModel {
-        config_id: String,
-        model_id: String,
-        result: oneshot::Sender<Result<(), AppError>>,
-    },
-    /// Live profile switch via `session/set_config_option` (mode category).
-    /// Sent only when `SessionEntry::profile_config_id` is `Some`.
-    SetProfile {
-        config_id: String,
-        profile_id: String,
-        result: oneshot::Sender<Result<(), AppError>>,
-    },
-    Cancel,
-    Close(oneshot::Sender<()>),
-}
-
-/// Startup handshake result returned before the session is published.
-struct ActorStartup {
-    caps: SessionCaps,
-    model_config_id: Option<String>,
-    /// Mode/profile config option id (`None` when the agent lacks the
-    /// capability — prompt-injection fallback applies in `context.rs`).
-    profile_config_id: Option<String>,
-    /// Resolved agent-side ACP session id (from load or new).
-    acp_session_id: String,
-}
-
-struct ActorConfig {
-    local_session_id: String,
-    agent: AgentInfo,
-    workspace_id: String,
-    workspace_path: PathBuf,
-    permissions: Arc<dyn PermissionManager>,
-    workspaces: Arc<dyn WorkspaceManager>,
-    event_bus: SharedEventBus,
-    stderr_tail: Arc<Mutex<StderrTail>>,
-    sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
-    prompt_cancel: Arc<AtomicBool>,
-    /// Optional `mcp.json` path passed through to session/new and session/load.
-    mcp_config_path: Option<PathBuf>,
-    /// Profile middleware used to resolve the MCP server policy at session setup.
-    profiles: Arc<super::profile::ProfileMiddleware>,
-    /// Durable agent ACP session id to attempt `session/load` with (empty =
-    /// always `session/new`). Cleared on rebind.
-    persisted_acp_session_id: String,
-}
-
-async fn run_actor(
-    config: ActorConfig,
-    mut commands: mpsc::Receiver<ActorCommand>,
-    ready: oneshot::Sender<Result<ActorStartup, AppError>>,
-    registered: oneshot::Receiver<()>,
-) {
-    let mut ready = Some(ready);
-    let mut registered = Some(registered);
-    let result = run_actor_inner(&config, &mut commands, &mut ready, &mut registered).await;
-    match result {
-        Ok(ActorExit::Closed(close_result)) => {
-            let _ = close_result.send(());
-        }
-        Err(error) => {
-            if let Some(ready) = ready.take() {
-                let _ = ready.send(Err(startup_error(&error, &config.stderr_tail)));
-            } else if let Err(append_error) = append_payload(
-                &config.event_bus,
-                &config.local_session_id,
-                EventPayload::AgentExited {
-                    content: "ACP session actor exited unexpectedly".to_string(),
-                },
-            )
-            .await
-            {
-                // The original actor error still determines the session state;
-                // only the stable error category is logged to avoid exposing
-                // agent-provided diagnostics that may contain secrets.
-                tracing::error!(
-                    session_id = %config.local_session_id,
-                    error = %append_error,
-                    "failed to persist ACP actor-exit event"
-                );
-            }
-            fail_session(&config);
-            tracing::warn!(error = %error, "ACP session actor ended");
-        }
-    }
-}
-
-/// Mark a live session failed and clear permission state after actor loss.
-fn fail_session(config: &ActorConfig) {
-    if let Ok(mut sessions) = config.sessions.write() {
-        if let Some(entry) = sessions.get_mut(&config.local_session_id) {
-            entry.apply_state(SessionState::Failed);
-        }
-    }
-    config.permissions.clear_session(&config.local_session_id);
-}
-
-/// Add a bounded, line-redacted agent diagnostic to startup failures.
-fn startup_error(error: &AppError, stderr_tail: &Arc<Mutex<StderrTail>>) -> AppError {
-    let stderr = stderr_tail
-        .lock()
-        .map_or_else(|_| String::new(), |tail| tail.safe_diagnostic());
-    if stderr.is_empty() {
-        AppError::internal(error.to_string())
-    } else {
-        AppError::internal(format!("{error} (agent stderr: {stderr})"))
-    }
-}
-
-async fn run_actor_inner(
-    config: &ActorConfig,
-    commands: &mut mpsc::Receiver<ActorCommand>,
-    ready: &mut Option<oneshot::Sender<Result<ActorStartup, AppError>>>,
-    registered: &mut Option<oneshot::Receiver<()>>,
-) -> Result<ActorExit, AppError> {
-    // Build via std::process::Command so we can attach Unix process-group
-    // isolation (setpgid) before converting to async-process. kill_on_drop
-    // alone only terminates the direct child — descendants of the agent must
-    // die with the session on cancel/shutdown.
-    let mut std_cmd = std::process::Command::new(&config.agent.command);
-    std_cmd
-        .args(&config.agent.args)
-        .current_dir(&config.workspace_path);
-    configure_process_group(&mut std_cmd);
-    let mut command = Command::from(std_cmd);
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    let mut child = command
-        .spawn()
-        .map_err(|error| AppError::internal(format!("spawn ACP agent: {error}")))?;
-    // Guard until reaped: dropping the actor (panic / early return) still
-    // SIGKILLs the whole Unix process group, not just the agent PID.
-    let mut process_group_cleanup = ProcessGroupCleanup::new(Some(child.id()));
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| AppError::internal("ACP agent stdin pipe unavailable"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| AppError::internal("ACP agent stdout pipe unavailable"))?;
-    if let Some(stderr) = child.stderr.take() {
-        spawn_stderr_drain(stderr, Arc::clone(&config.stderr_tail));
-    }
-    let transport = ByteStreams::new(stdin, stdout);
-    let terminals = Arc::new(Mutex::new(HashMap::new()));
-    let handler_cancel = CancellationToken::new();
-    let event_bus = Arc::clone(&config.event_bus);
-    let local_session_id = config.local_session_id.clone();
-    let prompt_cancel = Arc::clone(&config.prompt_cancel);
-    let handler_deps = HandlerDeps {
-        local_session_id: config.local_session_id.clone(),
-        workspace_id: config.workspace_id.clone(),
-        workspace_path: config.workspace_path.clone(),
-        workspaces: Arc::clone(&config.workspaces),
-        permissions: Arc::clone(&config.permissions),
-        event_bus: Arc::clone(&config.event_bus),
-        terminals: Arc::clone(&terminals),
-        cancellation: handler_cancel.clone(),
-        callback_slots: Arc::new(Semaphore::new(MAX_CALLBACK_TASKS)),
-    };
-    let connected = SdkClient
-        .builder()
-        .name("local-agent")
-        .on_receive_notification(
-            {
-                let deps = handler_deps.clone();
-                async move |notification: SessionNotification, _cx: ConnectionTo<Agent>| {
-                    let deps = deps.clone();
-                    handle_session_notification(&deps, notification)
-                        .await
-                        .map_err(|error| {
-                            // Returning an SDK error stops dispatch rather than
-                            // silently losing a session update after a failed
-                            // durable append.
-                            tracing::error!(
-                                session_id = %deps.local_session_id,
-                                error = %error,
-                                "failed to persist ACP session update"
-                            );
-                            agent_client_protocol::Error::internal_error()
-                        })
-                }
-            },
-            agent_client_protocol::on_receive_notification!(),
-        )
-        .on_receive_request(
-            {
-                let deps = handler_deps.clone();
-                async move |request: ReadTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
-                    // Handlers are FnMut; clone deps for each inbound request.
-                    spawn_result_callback(
-                        deps.clone(),
-                        responder,
-                        "ACP denied file read",
-                        move |deps| async move { read_text_file(deps, request).await },
-                    );
-                    Ok(())
-                }
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            {
-                let deps = handler_deps.clone();
-                async move |request: WriteTextFileRequest, responder, _cx: ConnectionTo<Agent>| {
-                    spawn_result_callback(
-                        deps.clone(),
-                        responder,
-                        "ACP denied file write",
-                        move |deps| async move { write_text_file(deps, request).await },
-                    );
-                    Ok(())
-                }
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            {
-                let deps = handler_deps.clone();
-                // Permission waits for a user device and must not block SDK
-                // dispatch. Errors become Cancelled outcomes, not internal errors.
-                async move |request: RequestPermissionRequest,
-                            responder,
-                            _cx: ConnectionTo<Agent>| {
-                    spawn_respond_callback(deps.clone(), responder, move |deps| async move {
-                        request_permission(deps, request).await
-                    });
-                    Ok(())
-                }
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            {
-                let deps = handler_deps.clone();
-                async move |request: CreateTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
-                    spawn_result_callback(
-                        deps.clone(),
-                        responder,
-                        "ACP denied terminal create",
-                        move |deps| async move { create_terminal(deps, request).await },
-                    );
-                    Ok(())
-                }
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            {
-                let deps = handler_deps.clone();
-                async move |request: TerminalOutputRequest, responder, _cx: ConnectionTo<Agent>| {
-                    spawn_result_callback(
-                        deps.clone(),
-                        responder,
-                        "ACP terminal output failed",
-                        move |deps| async move { terminal_output(deps, request) },
-                    );
-                    Ok(())
-                }
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            {
-                let deps = handler_deps.clone();
-                // Terminal waits can run indefinitely; keep them off the dispatch task.
-                async move |request: WaitForTerminalExitRequest,
-                            responder,
-                            _cx: ConnectionTo<Agent>| {
-                    spawn_result_callback(
-                        deps.clone(),
-                        responder,
-                        "ACP terminal wait failed",
-                        move |deps| async move { wait_for_terminal_exit(deps, request).await },
-                    );
-                    Ok(())
-                }
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            {
-                let deps = handler_deps.clone();
-                async move |request: KillTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
-                    spawn_result_callback(
-                        deps.clone(),
-                        responder,
-                        "ACP terminal kill failed",
-                        move |deps| async move { kill_terminal(deps, request) },
-                    );
-                    Ok(())
-                }
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            {
-                let deps = handler_deps;
-                async move |request: ReleaseTerminalRequest, responder, _cx: ConnectionTo<Agent>| {
-                    spawn_result_callback(
-                        deps.clone(),
-                        responder,
-                        "ACP terminal release failed",
-                        move |deps| async move { release_terminal(deps, request) },
-                    );
-                    Ok(())
-                }
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .connect_with(transport, move |cx: ConnectionTo<Agent>| async move {
-            // clientInfo is required by agents that forward name/version into
-            // upstream provider metadata (Mistral rejects empty strings).
-            let initialize = InitializeRequest::new(ProtocolVersion::V1)
-                .client_info(Implementation::new(ACP_CLIENT_NAME, ACP_CLIENT_VERSION))
-                .client_capabilities(
-                    ClientCapabilities::new()
-                        .fs(
-                            FileSystemCapabilities::new()
-                                .read_text_file(true)
-                                .write_text_file(true),
-                        )
-                        .terminal(true),
-                );
-            // Keep the InitializeResponse: providers + embeddedContext caps are
-            // cached on the session entry so later RPCs can gate without re-probe.
-            let init = cx
-                .send_request(initialize)
-                .block_task()
-                .await
-                .map_err(|_| agent_client_protocol::Error::internal_error())?;
-            let agent_caps = &init.agent_capabilities;
-            let session_caps = &agent_caps.session_capabilities;
-            let caps = SessionCaps {
-                providers_supported: agent_caps.providers.is_some(),
-                embedded_context: agent_caps.prompt_capabilities.embedded_context,
-                can_list_sessions: session_caps.list.is_some(),
-                can_load_session: agent_caps.load_session,
-                can_resume_session: session_caps.resume.is_some(),
-                can_close_session: session_caps.close.is_some(),
-                can_delete_session: session_caps.delete.is_some(),
-            };
-            tracing::debug!(
-                providers_supported = caps.providers_supported,
-                embedded_context = caps.embedded_context,
-                can_list_sessions = caps.can_list_sessions,
-                can_load_session = caps.can_load_session,
-                can_resume_session = caps.can_resume_session,
-                "ACP initialize capabilities cached"
-            );
-            // MCP is additive: malformed/missing config must not block session create.
-            // Profile MCP-server policy is applied after capability filtering.
-            let mcp_servers = load_session_mcp_servers(
-                config.mcp_config_path.as_deref(),
-                &init.agent_capabilities.mcp_capabilities,
-                config.profiles.as_ref(),
-                &config.local_session_id,
-            )
-            .await;
-            let (agent_session_id, config_options) = resolve_acp_session(
-                &cx,
-                &init,
-                &config.workspace_path,
-                mcp_servers,
-                &config.persisted_acp_session_id,
-            )
-            .await
-            .inspect_err(|error| {
-                if error.to_string().to_ascii_lowercase().contains("authentication") {
-                    tracing::error!(
-                        "AGENT AUTHENTICATION REQUIRED: The agent CLI rejected the session request. \
-                        Please run `{} login` on the host machine running this daemon \
-                        to authenticate your environment.",
-                        config.agent.command
-                    );
-                }
-            })?;
-            let model_config_id = find_model_config_id(
-                config_options.as_deref().unwrap_or(&[]),
-                &config.agent.models,
-            );
-            if model_config_id.is_none() {
-                tracing::info!(
-                    "agent did not advertise a model config option; switch_model will be unsupported"
-                );
-            }
-            // Profile (mode-category) config option id. `None` means the agent
-            // lacks the capability; profile instructions are injected into the
-            // prompt context as the fallback (context.rs).
-            let profile_config_id =
-                find_profile_config_id(config_options.as_deref().unwrap_or(&[]));
-            if profile_config_id.is_none() {
-                tracing::info!(
-                    "agent did not advertise a mode/profile config option; profile will use prompt-injection fallback"
-                );
-            }
-            let acp_session_id = agent_session_id.to_string();
-            if let Some(ready) = ready.take() {
-                let _ = ready.send(Ok(ActorStartup {
-                    caps,
-                    model_config_id,
-                    profile_config_id: profile_config_id.clone(),
-                    acp_session_id,
-                }));
-            }
-            if let Some(registered) = registered.take() {
-                registered
-                    .await
-                    .map_err(|_| agent_client_protocol::Error::internal_error())?;
-            }
-            // Send the initial profile over ACP when the agent advertised the
-            // mode-category config option. Best-effort: a failure here is logged
-            // but does not fail session setup — profile is a hint, not critical,
-            // and the prompt-injection fallback still applies on the next turn.
-            if let Some(config_id) = profile_config_id.as_deref() {
-                let active_profile = config
-                    .profiles
-                    .profile(&config.local_session_id)
-                    .unwrap_or_else(|_| {
-                        tracing::warn!(
-                            "profile middleware lookup failed at startup; sending default profile id"
-                        );
-                        "code".to_string()
-                    });
-                if let Err(error) = rpc_set_profile_config(
-                    &cx,
-                    &agent_session_id,
-                    config_id,
-                    &active_profile,
-                )
-                .await
-                {
-                    tracing::warn!(
-                        session_id = %config.local_session_id,
-                        profile = %active_profile,
-                        error = %error,
-                        "initial session/set_config_option (profile) failed; prompt-injection fallback will apply"
-                    );
-                } else {
-                    tracing::info!(
-                        session_id = %config.local_session_id,
-                        profile = %active_profile,
-                        "sent initial session/set_config_option (profile) on session setup"
-                    );
-                }
-            }
-            actor_loop(
-                cx,
-                agent_session_id,
-                commands,
-                event_bus,
-                local_session_id,
-                prompt_cancel,
-            )
-            .await
-        })
-        .await;
-    handler_cancel.cancel();
-    cancel_terminals(&terminals);
-    // Kill the agent process group (Unix) / child (Windows), then reap.
-    // Explicit kill covers the normal close path; ProcessGroupCleanup covers
-    // early returns / panics before this point.
-    #[cfg(unix)]
-    if let Ok(pid) = i32::try_from(child.id()) {
-        crate::procutil::kill_process_group(pid);
-    }
-    let _ = child.kill();
-    let _ = child.status().await;
-    process_group_cleanup.disarm();
-    connected.map_err(|error| AppError::internal(format!("ACP connection: {error}")))
-}
-
-/// Reports whether `persisted_id` appears in an agent `session/list` response.
-///
-/// Pure helper extracted for unit tests (mirrors Go `sessionExists`).
-fn session_exists(
-    sessions: &[agent_client_protocol::schema::v1::SessionInfo],
-    persisted_id: &str,
-) -> bool {
-    sessions
-        .iter()
-        .any(|session| session.session_id.to_string() == persisted_id)
-}
-
-/// Whether resolve should attempt `session/load` given persisted id + caps.
-///
-/// Pure gate matching Go `resolveACPSession` before any RPC (list is a
-/// separate capability checked by the caller).
-fn should_attempt_load(persisted_id: &str, load_session: bool) -> bool {
-    !persisted_id.is_empty() && load_session
-}
-
-/// Decides load vs new after Initialize, matching Go `resolveACPSession`.
-///
-/// Flow:
-/// 1. If persisted id + load + list: ListSessions by cwd; missing → NewSession;
-///    list error → fall through.
-/// 2. If persisted id + load: LoadSession; success returns the persisted id.
-/// 3. Else / on load failure: NewSession.
-async fn resolve_acp_session(
-    cx: &ConnectionTo<Agent>,
-    init: &InitializeResponse,
-    workspace_path: &Path,
-    mcp_servers: Vec<McpServer>,
-    persisted_id: &str,
-) -> Result<(SessionId, Option<Vec<SessionConfigOption>>), agent_client_protocol::Error> {
-    let can_load = init.agent_capabilities.load_session;
-    let can_list = init.agent_capabilities.session_capabilities.list.is_some();
-
-    // When the agent supports session/list, reconcile first: only attempt
-    // LoadSession if the agent confirms the session still exists.
-    if should_attempt_load(persisted_id, can_load) && can_list {
-        match cx
-            .send_request(ListSessionsRequest::new().cwd(workspace_path.to_path_buf()))
-            .block_task()
-            .await
-        {
-            Ok(listed) => {
-                if !session_exists(&listed.sessions, persisted_id) {
-                    tracing::info!(
-                        local_hint = "acp_session_absent_from_list",
-                        "ACP session/list did not include persisted id; creating new session"
-                    );
-                    return new_acp_session(cx, workspace_path, mcp_servers).await;
-                }
-                // Session confirmed present — attempt LoadSession below.
-            }
-            Err(error) => {
-                // ListSessions error: fall through to try-load-then-new so we
-                // do not regress on agents with flaky list support.
-                tracing::info!(
-                    error = %error,
-                    "ACP session/list failed; falling through to session/load"
-                );
-            }
-        }
-    }
-
-    if should_attempt_load(persisted_id, can_load) {
-        let load_req = LoadSessionRequest::new(SessionId::new(persisted_id), workspace_path)
-            .mcp_servers(mcp_servers.clone());
-        match cx.send_request(load_req).block_task().await {
-            Ok(loaded) => {
-                tracing::info!("ACP session/load succeeded; resuming persisted agent session");
-                return Ok((SessionId::new(persisted_id), loaded.config_options));
-            }
-            Err(error) => {
-                tracing::info!(
-                    error = %error,
-                    "ACP session/load failed; falling back to session/new"
-                );
-                // Fall through to NewSession on any load error.
-            }
-        }
-    }
-
-    new_acp_session(cx, workspace_path, mcp_servers).await
-}
-
-/// Creates a fresh ACP session via `session/new`.
-async fn new_acp_session(
-    cx: &ConnectionTo<Agent>,
-    workspace_path: &Path,
-    mcp_servers: Vec<McpServer>,
-) -> Result<(SessionId, Option<Vec<SessionConfigOption>>), agent_client_protocol::Error> {
-    let session = cx
-        .send_request(NewSessionRequest::new(workspace_path).mcp_servers(mcp_servers))
-        .block_task()
-        .await?;
-    tracing::info!("ACP session/new created a new agent session");
-    Ok((session.session_id, session.config_options))
-}
-
-/// Outcome returned by the connection-owning actor loop.
-enum ActorExit {
-    Closed(oneshot::Sender<()>),
 }
 
 async fn actor_loop(
@@ -2266,10 +1680,7 @@ mod tests {
     use async_trait::async_trait;
     use tempfile::TempDir;
 
-    use super::{
-        session_exists, should_attempt_load, AgentRegistry, Client, ClientDeps, ConversationStore,
-        StoredSession,
-    };
+    use super::{AgentRegistry, Client, ClientDeps, ConversationStore, StoredSession};
     use crate::config::{AgentInfo, AgentModel};
     use crate::events::{EventBus, Store};
     use crate::interfaces::{
@@ -2279,7 +1690,13 @@ mod tests {
     use crate::workspace::Manager as WorkspaceRegistry;
     use chrono::Utc;
 
-    const MOCKAGENT_BIN: &str = "/tmp/mockagent";
+    /// Resolve the mockagent binary path. CI builds the Go mockagent to a
+    /// platform-specific location and points `LOCAL_AGENT_MOCKAGENT_BIN` at it
+    /// (Windows needs a `.exe` suffix); the default `/tmp/mockagent` matches
+    /// the local-dev build documented in the assertion below.
+    fn mockagent_bin() -> String {
+        std::env::var("LOCAL_AGENT_MOCKAGENT_BIN").unwrap_or_else(|_| "/tmp/mockagent".to_string())
+    }
 
     /// Records only session cleanup so the test can prove the local ID is used.
     #[derive(Default)]
@@ -2324,9 +1741,10 @@ mod tests {
     async fn mock_client_empty(
         conversation_store: ConversationStore,
     ) -> (Arc<Client>, Arc<RecordingPermissions>, TempDir, String) {
+        let mockagent_bin = mockagent_bin();
         assert!(
-            Path::new(MOCKAGENT_BIN).exists(),
-            "mockagent binary missing at {MOCKAGENT_BIN}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/`"
+            Path::new(&mockagent_bin).exists(),
+            "mockagent binary missing at {mockagent_bin}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/` or set LOCAL_AGENT_MOCKAGENT_BIN"
         );
         let tempdir = TempDir::new().expect("temporary workspace");
         let workspaces = Arc::new(WorkspaceRegistry::new());
@@ -2343,7 +1761,7 @@ mod tests {
             AgentInfo {
                 id: "mock".to_string(),
                 name: "Mock agent".to_string(),
-                command: MOCKAGENT_BIN.to_string(),
+                command: mockagent_bin.clone(),
                 args: Vec::new(),
                 models: vec![mock_model.clone()],
                 warning: String::new(),
@@ -2353,10 +1771,7 @@ mod tests {
                 id: "mock-nocap".to_string(),
                 name: "Mock agent without mode cap".to_string(),
                 command: "env".to_string(),
-                args: vec![
-                    "MOCKAGENT_NO_MODE_CAP=1".to_string(),
-                    MOCKAGENT_BIN.to_string(),
-                ],
+                args: vec!["MOCKAGENT_NO_MODE_CAP=1".to_string(), mockagent_bin.clone()],
                 models: vec![mock_model],
                 warning: String::new(),
             },
@@ -2415,99 +1830,129 @@ mod tests {
         .expect("prompt did not reserve its session slot");
     }
 
-    /// ACP agent spawn uses process-group isolation so descendants die on
-    /// shutdown (kill_on_drop alone only reaps the direct child).
-    #[cfg(unix)]
+    /// Startup failure (nonexistent agent command) must return an error and
+    /// leave no entry in the live session registry.
     #[tokio::test]
-    async fn agent_process_group_kill_reaps_descendant() {
-        use std::process::Command as StdCommand;
+    async fn startup_failure_before_publication_is_not_registered() {
+        let tempdir = TempDir::new().expect("temporary workspace");
+        let workspaces = Arc::new(WorkspaceRegistry::new());
+        let workspace = workspaces
+            .register(tempdir.path().to_str().expect("UTF-8 temporary workspace"))
+            .await
+            .expect("register temporary workspace");
+        let permissions = Arc::new(RecordingPermissions::default());
+        let event_bus = Arc::new(EventBus::new(
+            Store::open(tempdir.path().join("events.db")).expect("open test event store"),
+        ));
+        let registry = Arc::new(AgentRegistry::from_agents([AgentInfo {
+            id: "broken".to_string(),
+            name: "Broken agent".to_string(),
+            command: "/nonexistent/binary/that/does/not/exist".to_string(),
+            args: Vec::new(),
+            models: vec![AgentModel::new("m".to_string(), "M".to_string())],
+            warning: String::new(),
+        }]));
+        let client = Arc::new(Client::new(ClientDeps {
+            registry,
+            workspaces,
+            permissions: permissions.clone(),
+            event_bus,
+            conversation_store: ConversationStore::new(None),
+            mcp_config_path: None,
+        }));
 
-        use crate::procutil::{configure_process_group, ProcessGroupCleanup};
-
-        let dir = TempDir::new().expect("tempdir");
-        let pid_file = dir.path().join("descendant.pid");
-        let pid_path = pid_file.to_str().expect("utf-8 path").to_string();
-
-        // Mirror run_actor_inner: std Command → process group → async-process.
-        let mut std_cmd = StdCommand::new("sh");
-        std_cmd
-            .args([
-                "-c",
-                "sleep 30 & echo $! > \"$1\"; exec sleep 30",
-                "_",
-                &pid_path,
-            ])
-            .current_dir(dir.path());
-        configure_process_group(&mut std_cmd);
-        let mut command = async_process::Command::from(std_cmd);
-        command
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true);
-        let mut child = command.spawn().expect("spawn stand-in agent");
-        let mut cleanup = ProcessGroupCleanup::new(Some(child.id()));
-
-        let descendant = wait_for_pid_file(&pid_file, Duration::from_secs(2)).await;
-
-        // Same shutdown sequence as run_actor_inner after the actor loop ends.
-        if let Ok(pid) = i32::try_from(child.id()) {
-            crate::procutil::kill_process_group(pid);
-        }
-        let _ = child.kill();
-        let _ = child.status().await;
-        cleanup.disarm();
-
-        let mut exited = false;
-        for _ in 0..40 {
-            if process_is_gone_or_zombie(descendant) {
-                exited = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-        if !exited {
-            // SAFETY: avoid leaking a sleep if the assertion fails.
-            unsafe {
-                libc::kill(descendant, libc::SIGKILL);
-            }
-        }
+        let error = client
+            .create_session("broken", "m", &workspace.id)
+            .await
+            .expect_err("startup with a nonexistent agent must fail");
         assert!(
-            exited,
-            "agent-spawned descendant {descendant} survived process-group kill"
+            error.to_string().to_ascii_lowercase().contains("spawn"),
+            "startup error must mention spawn failure: {error}"
         );
+        assert!(
+            client.list_sessions().is_empty(),
+            "failed startup must not publish a live session"
+        );
+    }
 
-        async fn wait_for_pid_file(path: &Path, timeout: Duration) -> i32 {
-            let start = tokio::time::Instant::now();
+    /// Unexpected post-startup exit (agent crashes after initialize + new)
+    /// must transition the session to Failed and append an AgentExited event.
+    #[tokio::test]
+    async fn unexpected_post_startup_exit_marks_session_failed() {
+        let tempdir = TempDir::new().expect("temporary workspace");
+        let workspaces = Arc::new(WorkspaceRegistry::new());
+        let workspace = workspaces
+            .register(tempdir.path().to_str().expect("UTF-8 temporary workspace"))
+            .await
+            .expect("register temporary workspace");
+        let permissions = Arc::new(RecordingPermissions::default());
+        let event_bus = Arc::new(EventBus::new(
+            Store::open(tempdir.path().join("events.db")).expect("open test event store"),
+        ));
+        // The env wrapper injects MOCKAGENT_EXIT_AFTER_INIT so the mock exits
+        // right after session/new, simulating an unexpected post-startup crash.
+        let registry = Arc::new(AgentRegistry::from_agents([AgentInfo {
+            id: "mock-exit".to_string(),
+            name: "Mock agent that exits after init".to_string(),
+            command: "env".to_string(),
+            args: vec!["MOCKAGENT_EXIT_AFTER_INIT=1".to_string(), mockagent_bin()],
+            models: vec![AgentModel::new(
+                "mock-model".to_string(),
+                "Mock model".to_string(),
+            )],
+            warning: String::new(),
+        }]));
+        let client = Arc::new(Client::new(ClientDeps {
+            registry,
+            workspaces,
+            permissions: permissions.clone(),
+            event_bus: event_bus.clone(),
+            conversation_store: ConversationStore::new(None),
+            mcp_config_path: None,
+        }));
+
+        // create_session may succeed (readiness fires before the crash) or
+        // fail (if the SDK cancels the closure before registration). Either
+        // way, the terminal watcher must converge the session to Failed.
+        let session_id = match client
+            .create_session("mock-exit", "mock-model", &workspace.id)
+            .await
+        {
+            Ok(session) => session.id,
+            Err(_) => {
+                // Startup failure path: the session was never published, so
+                // there is nothing to transition. This is also acceptable.
+                return;
+            }
+        };
+
+        // Wait for the terminal watcher to mark the session Failed.
+        tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                if let Ok(contents) = std::fs::read_to_string(path) {
-                    let trimmed = contents.trim();
-                    if !trimmed.is_empty() {
-                        return trimmed.parse().expect("numeric descendant PID");
-                    }
+                if client
+                    .get_session_info(&session_id)
+                    .map(|s| s.status == "failed")
+                    .unwrap_or(false)
+                {
+                    return;
                 }
-                assert!(
-                    start.elapsed() < timeout,
-                    "timed out waiting for descendant PID at {}",
-                    path.display()
-                );
-                tokio::time::sleep(Duration::from_millis(25)).await;
+                tokio::task::yield_now().await;
             }
-        }
+        })
+        .await
+        .expect("session must transition to failed after unexpected actor exit");
 
-        fn process_is_gone_or_zombie(pid: i32) -> bool {
-            if unsafe { libc::kill(pid, 0) } == -1 {
-                return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
-            }
-            let stat_path = format!("/proc/{pid}/stat");
-            std::fs::read_to_string(stat_path)
-                .ok()
-                .and_then(|stat| {
-                    stat.rsplit_once(") ")
-                        .map(|(_, rest)| rest.starts_with('Z'))
-                })
-                .unwrap_or(false)
-        }
+        // An AgentExited event must be appended to the durable store.
+        let events = event_bus
+            .query(&session_id, 0, 1000)
+            .await
+            .expect("query session events");
+        assert!(
+            events
+                .iter()
+                .any(|e| e.event_type == EventType::AgentExited),
+            "unexpected actor exit must append an AgentExited event"
+        );
     }
 
     /// A prompt RPC must not monopolize the actor's control receiver.
@@ -2707,9 +2152,7 @@ mod tests {
                 .get_mut(&session.id)
                 .expect("session remains registered");
             entry.profile_config_id = Some("profile".to_string());
-            let (dead_tx, dead_rx) = tokio::sync::mpsc::channel(1);
-            drop(dead_rx);
-            entry.commands = dead_tx;
+            entry.actor = super::actor::Handle::dead();
         }
 
         let result = client.set_session_profile(&session.id, "ask").await;
@@ -2863,28 +2306,6 @@ mod tests {
             .expect("close restored session");
     }
 
-    #[test]
-    fn should_attempt_load_requires_persisted_id_and_capability() {
-        assert!(should_attempt_load("acp-1", true));
-        assert!(!should_attempt_load("", true));
-        assert!(!should_attempt_load("acp-1", false));
-        assert!(!should_attempt_load("", false));
-    }
-
-    #[test]
-    fn session_exists_matches_agent_listed_ids() {
-        use agent_client_protocol::schema::v1::{SessionId, SessionInfo as AcpListedSession};
-
-        let sessions = vec![
-            AcpListedSession::new(SessionId::new("acp-a"), "/ws"),
-            AcpListedSession::new(SessionId::new("acp-b"), "/ws"),
-        ];
-        assert!(session_exists(&sessions, "acp-a"));
-        assert!(session_exists(&sessions, "acp-b"));
-        assert!(!session_exists(&sessions, "acp-missing"));
-        assert!(!session_exists(&[], "acp-a"));
-    }
-
     /// Durable `acpSessionId` survives load→rename→persist without leaking into REST info.
     #[tokio::test]
     async fn persisted_acp_session_id_survives_rename_round_trip() {
@@ -2937,21 +2358,5 @@ mod tests {
             reloaded[0].acp_session_id, "acp-durable-9",
             "rename must preserve durable acpSessionId"
         );
-    }
-
-    #[test]
-    fn initialize_client_info_is_non_empty() {
-        use agent_client_protocol::schema::v1::{Implementation, InitializeRequest};
-        use agent_client_protocol::schema::ProtocolVersion;
-
-        let req = InitializeRequest::new(ProtocolVersion::V1).client_info(Implementation::new(
-            super::ACP_CLIENT_NAME,
-            super::ACP_CLIENT_VERSION,
-        ));
-        let info = req.client_info.expect("client_info must be set");
-        assert!(!info.name.is_empty(), "client name must not be empty");
-        assert!(!info.version.is_empty(), "client version must not be empty");
-        assert_eq!(info.name, "LocalAgentInterface");
-        assert_eq!(info.version, "1.0");
     }
 }

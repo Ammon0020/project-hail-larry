@@ -32,8 +32,9 @@
 - [ ] **ACP futures** — workers, session lifecycle, elicitation, NES, audio,
   and ACP inspector.
 - [~] **ACP core modularization** — callback/events/MCP/diagnostics modules
-  extracted (`S-ACP-MOD-CALLBACKS`); actor, turn, registry, and facade splits
-  remain. See `docs/plans/pending-acp-core-modularization-hard.md`.
+  extracted (`S-ACP-MOD-CALLBACKS`); actor runtime extracted with terminal-outcome
+  watcher (`S-ACP-MOD-ACTOR`); turn, registry, and facade splits remain. See
+  `docs/plans/pending-acp-core-modularization-hard.md`.
 - [~] **Agent-owned history** — PROBE + fallback complete; migration deferred;
   local history remains for agents without list/load. Q7/Q8 still block browse.
 - [~] **Workspace preview** — serving, browse tab, live reload, sandbox, and
@@ -59,6 +60,11 @@
 
 ## Recent Changes (2026-07)
 
+- **S-ACP-MOD-ACTOR** — actor startup, SDK connection construction, initialize,
+  and session new/load resolution moved to `src/acp/core/actor/mod.rs`; the
+  actor→registry back-reference was replaced with a terminal-outcome channel
+  consumed by a lifecycle watcher that owns session-failed transitions and
+  AgentExited publication. `core.rs` reduced ~724 lines.
 - **S-ACP-MOD-CALLBACKS** — inbound callbacks, terminals, MCP attachment,
   ordered event append, and stderr diagnostics moved out of `core.rs` into
   private `src/acp/core/{events,diagnostics,mcp,handlers}` modules.

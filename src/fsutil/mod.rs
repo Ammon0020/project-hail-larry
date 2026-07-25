@@ -9,7 +9,6 @@
 //!   `atomic-write-file`, with an optional Unix file mode and a best-effort
 //!   parent-directory fsync matching Go `mcp.WriteFileAtomic`.
 
-use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -47,7 +46,13 @@ pub fn atomic_write(path: &Path, data: &[u8], mode: Option<u32>) -> io::Result<(
 
     ensure_parent_dir(path)?;
 
+    // `mut` is only needed on Unix, where the mode/owner options below mutate
+    // `options`. On non-Unix the binding is never mutated, so a single `mut`
+    // would trip `-D unused-mut` on Windows.
+    #[cfg(unix)]
     let mut options = AtomicWriteFile::options();
+    #[cfg(not(unix))]
+    let options = AtomicWriteFile::options();
     // Do not preserve a pre-existing mode from an older file; callers pass the
     // intended mode (e.g. 0600 for config). Preserve owner when possible so a
     // non-root daemon does not fail when the original file is ours.
@@ -73,6 +78,7 @@ pub fn atomic_write(path: &Path, data: &[u8], mode: Option<u32>) -> io::Result<(
     // directories; ignore those errors (matches Go WriteFileAtomic).
     #[cfg(unix)]
     {
+        use std::fs::File;
         if let Some(dir) = path.parent() {
             if !dir.as_os_str().is_empty() {
                 if let Ok(d) = File::open(dir) {

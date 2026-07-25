@@ -114,6 +114,19 @@ impl Drop for ProcessGroupCleanup {
     }
 }
 
+// SAFETY: The wrapped Job Object handle is an opaque kernel object reference,
+// not thread-affine. `CloseHandle` (the only operation performed on the stored
+// handle after construction) is thread-safe per the Windows API. All
+// mutation of the handle occurs in `new` (before the guard is shared) or under
+// `&mut self` in `disarm`/`drop`, so there is no concurrent access to the
+// stored pointer itself. Implementing `Send` lets the guard be held across
+// `.await` points inside a `tokio::spawn` future; `Sync` is implemented for
+// symmetry and because shared `&self` access never touches the handle.
+#[cfg(windows)]
+unsafe impl Send for ProcessGroupCleanup {}
+#[cfg(windows)]
+unsafe impl Sync for ProcessGroupCleanup {}
+
 /// Fallback for non-Unix non-Windows targets (no process-group tree kill).
 #[cfg(not(any(unix, windows)))]
 pub struct ProcessGroupCleanup;

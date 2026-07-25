@@ -16,7 +16,14 @@ use local_agent::permissions::{null_sink, Manager as PermissionManager};
 use local_agent::workspace::Manager as WorkspaceManagerImpl;
 use tempfile::TempDir;
 
-const MOCKAGENT_BIN: &str = "/tmp/mockagent";
+/// Resolve the mockagent binary path. CI builds the Go mockagent to a
+/// platform-specific location and points `LOCAL_AGENT_MOCKAGENT_BIN` at it
+/// (Windows needs a `.exe` suffix); the default `/tmp/mockagent` matches the
+/// local-dev build documented in the assertion below.
+fn mockagent_bin() -> String {
+    std::env::var("LOCAL_AGENT_MOCKAGENT_BIN").unwrap_or_else(|_| "/tmp/mockagent".to_string())
+}
+
 const ACTOR_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Build the production client with a registered scratch workspace.
@@ -24,9 +31,10 @@ const ACTOR_TIMEOUT: Duration = Duration::from_secs(15);
 /// Returns `(client, temp_dir, workspace_id, event_bus)` so tests can query the
 /// event store for streamed reply text assertions.
 async fn client_with_workspace() -> (Arc<Client>, TempDir, String, Arc<EventBus>) {
+    let mockagent_bin = mockagent_bin();
     assert!(
-        std::path::Path::new(MOCKAGENT_BIN).exists(),
-        "mockagent binary missing at {MOCKAGENT_BIN}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/`"
+        std::path::Path::new(&mockagent_bin).exists(),
+        "mockagent binary missing at {mockagent_bin}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/` or set LOCAL_AGENT_MOCKAGENT_BIN"
     );
 
     let directory = tempfile::tempdir().expect("create scratch workspace");
@@ -38,7 +46,7 @@ async fn client_with_workspace() -> (Arc<Client>, TempDir, String, Arc<EventBus>
     let registry = Arc::new(AgentRegistry::from_agents([AgentInfo {
         id: "mockagent".into(),
         name: "Mock agent".into(),
-        command: MOCKAGENT_BIN.into(),
+        command: mockagent_bin.clone(),
         args: Vec::new(),
         models: vec![AgentModel::new("mock-model".into(), "Mock model".into())],
         warning: String::new(),
