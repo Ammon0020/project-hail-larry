@@ -40,7 +40,7 @@ docs/           plans, specs, references, reviews, status, known issues
 - Before completion, run relevant checks quietly: `cargo test -q --all-targets`,
   `cargo clippy -q --all-targets -- -D warnings`, frontend build/lint, and
   `make test-contract` when touching the HTTP/WS surface.
-- For Rust changes, run `cargo test -q --all-targets`, `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt --check -q`.
+- For Rust changes, run `cargo test -q --all-targets`, `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt -q`.
 - Record unrelated test failures in `docs/known-issues.md`; do not expand scope.
 - Keep `docs/STATUS.md` honest and current. Keep it under 100 lines and 90 characters per line. 
 - For planning work, follow `.agents/skills/plan-management/SKILL.md`.
