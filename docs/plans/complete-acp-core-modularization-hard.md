@@ -1,7 +1,7 @@
 # Epic: ACP Core Modularization
 
-> **Status:** pending. **Owner:** —. **Created:** 2026-07-22.
-> **Updated:** 2026-07-25 (REGISTRY complete). **Difficulty:** hard.
+> **Status:** complete. **Owner:** —. **Created:** 2026-07-22.
+> **Updated:** 2026-07-25 (FACADE complete). **Difficulty:** hard.
 > **Related:** `src/acp/core.rs`, `src/acp/{providers,context,store}.rs`,
 > `tests/acp_core_lifecycle.rs`. Stories: `docs/plans/acp-core-modularization/`.
 
@@ -86,7 +86,7 @@ src/acp/core/actor/turn.rs            commands, prompt/control loop, cancellatio
 | S-ACP-MOD-ACTOR | [Extract actor runtime](acp-core-modularization/complete-actor-runtime-hard.md) | hard | CALLBACKS | complete |
 | S-ACP-MOD-TURN | [Extract actor turn state machine](acp-core-modularization/complete-turn-state-machine-hard.md) | hard | ACTOR | complete |
 | S-ACP-MOD-REGISTRY | [Extract session registry](acp-core-modularization/complete-session-registry-hard.md) | hard | TURN | complete |
-| S-ACP-MOD-FACADE | [Finish client facade and lifecycle split](acp-core-modularization/pending-client-facade-hard.md) | hard | REGISTRY | pending |
+| S-ACP-MOD-FACADE | [Finish client facade and lifecycle split](acp-core-modularization/complete-client-facade-hard.md) | hard | REGISTRY | complete |
 
 **Sequence:** CALLBACKS → ACTOR → TURN → REGISTRY → FACADE. Each story must
 leave the branch green and remove a complete implementation cluster from

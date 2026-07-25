@@ -1,7 +1,7 @@
 # Story S-ACP-MOD-CALLBACKS: Extract Callback Services
 
 > **Status:** complete | **Difficulty:** hard
-> **Epic:** [ACP Core Modularization](../pending-acp-core-modularization-hard.md).
+> **Epic:** [ACP Core Modularization](../complete-acp-core-modularization-hard.md).
 > **Depends on:** —. **Blocks:** S-ACP-MOD-ACTOR.
 
 ## Goal

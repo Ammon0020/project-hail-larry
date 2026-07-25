@@ -19,7 +19,7 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use crate::interfaces::{SearchOptions, SearchResult};
-use crate::search::{path_to_slash, SearchError, IGNORE_DIRS, MAX_SEARCH_FILES};
+use crate::search::{path_to_slash, SearchError, IGNORE_DIRS};
 
 /// Cached result of probing `PATH` for `rg` — resolved once and reused for
 /// every search so we do not re-scan `PATH` on each call. Mirrors Go's
@@ -71,10 +71,8 @@ pub(crate) async fn search_with_rg(
     args.push("-n".into());
     args.push("--max-count".into());
     args.push(opts.max_results.to_string());
-    // Cap the number of files rg will walk so a huge workspace cannot run
-    // indefinitely (mirrors the native fallback's MAX_SEARCH_FILES guard).
-    args.push("--max-filecount".into());
-    args.push(MAX_SEARCH_FILES.to_string());
+    // ripgrep's --max-count is per file. `parse_rg_output` additionally caps
+    // the returned result set globally to the requested API limit.
     if opts.ignore_case {
         args.push("--ignore-case".into());
     }

@@ -1,7 +1,7 @@
 # Story S-ACP-MOD-ACTOR: Extract Actor Runtime
 
 > **Status:** complete | **Difficulty:** hard
-> **Epic:** [ACP Core Modularization](../pending-acp-core-modularization-hard.md).
+> **Epic:** [ACP Core Modularization](../complete-acp-core-modularization-hard.md).
 > **Depends on:** S-ACP-MOD-CALLBACKS. **Blocks:** S-ACP-MOD-TURN.
 
 ## Goal

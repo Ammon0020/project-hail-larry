@@ -1,7 +1,7 @@
 # Story S-ACP-MOD-REGISTRY: Extract Session Registry
 
 > **Status:** complete | **Difficulty:** hard
-> **Epic:** [ACP Core Modularization](../pending-acp-core-modularization-hard.md).
+> **Epic:** [ACP Core Modularization](../complete-acp-core-modularization-hard.md).
 > **Depends on:** S-ACP-MOD-TURN. **Blocks:** S-ACP-MOD-FACADE.
 
 ## Goal

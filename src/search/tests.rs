@@ -490,6 +490,30 @@ async fn rg_primary_skips_ignore_dirs_when_available() {
     assert_eq!(results[0].path, "top.txt");
 }
 
+/// The rg path returns no more than the API's global result limit. ripgrep's
+/// own `--max-count` is per file, so this also guards the parser-side cap.
+#[tokio::test]
+#[allow(clippy::print_stderr)] // skip notice — `tracing` is overkill in tests
+async fn rg_primary_max_results_when_available() {
+    if !super::rg::on_path() {
+        eprintln!("rg not on PATH; skipping rg primary test");
+        return;
+    }
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    for index in 0..5 {
+        fs::write(root.join(format!("match-{index}.txt")), "TODO\n").expect("write");
+    }
+
+    let opts = SearchOptions {
+        pattern: "TODO".into(),
+        max_results: 3,
+        ..Default::default()
+    };
+    let results = search(root, &opts, no_cancel()).await.expect("rg search");
+    assert_eq!(results.len(), 3, "rg max_results cap not honored");
+}
+
 /// Synthetic rg JSON parse test — guards against the regression where the
 /// parser put the file path into LineContent instead of the matched line text.
 /// Mirrors Go's `TestParseRgJSON_LineContentNotPath`. Runs everywhere (no rg

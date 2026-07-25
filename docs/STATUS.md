@@ -31,11 +31,10 @@
 - [ ] **Multi-user** — multi-device/single-user is decided; multi-user is future.
 - [ ] **ACP futures** — workers, session lifecycle, elicitation, NES, audio,
   and ACP inspector.
-- [~] **ACP core modularization** — callback/events/MCP/diagnostics modules,
-  actor runtime, and the actor turn state machine are extracted
-  (`S-ACP-MOD-CALLBACKS`, `S-ACP-MOD-ACTOR`, `S-ACP-MOD-TURN`,
-  `S-ACP-MOD-REGISTRY`); only the client facade split remains. See
-  `docs/plans/pending-acp-core-modularization-hard.md`.
+- [x] **ACP core modularization** — callbacks, actor runtime, turn state,
+  session registry, lifecycle, operations, and the thin client facade are
+  extracted (`S-ACP-MOD-CALLBACKS` through `S-ACP-MOD-FACADE`). See
+  `docs/plans/complete-acp-core-modularization-hard.md`.
 - [~] **Agent-owned history** — PROBE + fallback complete; migration deferred;
   local history remains for agents without list/load. Q7/Q8 still block browse.
 - [~] **Workspace preview** — serving, browse tab, live reload, sandbox, and
@@ -73,6 +72,9 @@
 - **S-ACP-MOD-REGISTRY** — live/dormant metadata, state transitions, actor
   handles, and merged durable snapshots moved to `core/registry.rs`; registry
   operations return owned data and never expose a lock across async lifecycle work.
+- **S-ACP-MOD-FACADE** — `core.rs` is now a 34-line module surface; client,
+  lifecycle, and operations own their respective responsibilities. Regressions
+  cover stale actor generations, concurrent restore serialization, and session caps.
 - **S-ACP-MOD-CALLBACKS** — inbound callbacks, terminals, MCP attachment,
   ordered event append, and stderr diagnostics moved out of `core.rs` into
   private `src/acp/core/{events,diagnostics,mcp,handlers}` modules.

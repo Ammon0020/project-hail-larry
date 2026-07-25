@@ -1,7 +1,7 @@
 # Story S-ACP-MOD-TURN: Extract Actor Turn State Machine
 
 > **Status:** complete | **Difficulty:** hard
-> **Epic:** [ACP Core Modularization](../pending-acp-core-modularization-hard.md).
+> **Epic:** [ACP Core Modularization](../complete-acp-core-modularization-hard.md).
 > **Depends on:** S-ACP-MOD-ACTOR. **Blocks:** S-ACP-MOD-REGISTRY.
 
 ## Goal

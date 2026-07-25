@@ -449,7 +449,7 @@ mod tests {
     use agent_client_protocol::schema::v1::StopReason;
 
     use super::{stop_reason_name, take_sticky_cancel};
-    use crate::acp::core::tests::{mock_client, wait_until_running};
+    use crate::acp::core::lifecycle::tests::{mock_client, wait_until_running};
     use crate::interfaces::ACPClient;
 
     #[test]
