@@ -21,7 +21,9 @@ use crate::events::{EventBus, SharedEventBus};
 use crate::files::FileSync;
 use crate::fswatch;
 use crate::interfaces::WorkspaceManager;
-use crate::pairing::{Manager as PairingManager, PairingError, WorkspaceRegistrar};
+use crate::pairing::{
+    Manager as PairingManager, PairingError, RevocationListener, WorkspaceRegistrar,
+};
 use crate::permissions::{EventBusPermissionSink, Manager as PermissionsManager, PermissionSink};
 use crate::sync::Hub;
 use crate::uploads::Manager as UploadsManager;
@@ -144,6 +146,8 @@ impl Daemon {
         // Go parity: Append → SyncHub.Broadcast. Without this, `/ws` clients that
         // omit `?after=` (the UI) never receive live stream updates.
         events.set_live_fanout(Arc::clone(&hub) as Arc<dyn crate::events::LiveFanout>);
+        // Wire revocation → hub so a revoked device's active WebSocket is dropped.
+        pairing.set_revocation_listener(Arc::new(HubRevocationListener(Arc::clone(&hub))));
 
         // 5. Supporting stores consumed by REST upload/MCP routes.
         let uploads = Arc::new(Mutex::new(
@@ -375,6 +379,16 @@ impl WorkspaceRegistrar for DaemonWorkspaceRegistrar {
             }
         });
         Ok(())
+    }
+}
+
+/// Bridges pairing revocation events to the sync hub so a revoked device's
+/// active WebSocket connections are force-closed immediately.
+struct HubRevocationListener(Arc<Hub>);
+
+impl RevocationListener for HubRevocationListener {
+    fn device_revoked(&self, device_id: &str) {
+        self.0.disconnect_device(device_id);
     }
 }
 

@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use axum::body::Body;
-use axum::extract::Request;
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -106,8 +106,22 @@ pub async fn bind(config: &Config) -> Result<Listeners> {
 pub async fn serve(listeners: Listeners, router: Router, cancel: CancellationToken) -> Result<()> {
     let Listeners { http, https } = listeners;
     let router = with_timeouts(router);
+
+    // When TLS is enabled, redirect all cleartext HTTP requests to HTTPS.
+    // This ensures the browser loads the SPA over HTTPS (so WebSocket
+    // upgrades use `wss://`) and device credentials never travel in cleartext.
+    let https_port = https
+        .as_ref()
+        .and_then(|(l, _)| l.local_addr().ok())
+        .map(|a| a.port());
     let http_cancel = cancel.child_token();
-    let http = serve_http(http, router.clone(), http_cancel);
+    let http_router = match https_port {
+        Some(port) => router
+            .clone()
+            .layer(middleware::from_fn_with_state(port, redirect_to_https)),
+        None => router.clone(),
+    };
+    let http = serve_http(http, http_router, http_cancel);
 
     let https = async move {
         match https {
@@ -118,6 +132,33 @@ pub async fn serve(listeners: Listeners, router: Router, cancel: CancellationTok
 
     tokio::try_join!(http, https)?;
     Ok(())
+}
+
+/// Redirect every cleartext request to the same URL over HTTPS.
+///
+/// The browser follows the redirect, loads the SPA over HTTPS, and subsequent
+/// WebSocket upgrades naturally use `wss://` — so device credentials are never
+/// sent over `ws://`.
+async fn redirect_to_https(
+    State(https_port): State<u16>,
+    request: Request,
+    _next: Next,
+) -> Response {
+    let uri = request.uri();
+    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+    // Derive the host from the Host header, swapping in the HTTPS port.
+    let host = request
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost");
+    let host_no_port = host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host);
+    let location = format!("https://{host_no_port}:{https_port}{path_and_query}");
+    (
+        StatusCode::PERMANENT_REDIRECT,
+        [(axum::http::header::LOCATION, location.as_str())],
+    )
+        .into_response()
 }
 
 /// Serve cleartext HTTP with the same per-connection safeguards as HTTPS.

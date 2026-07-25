@@ -38,6 +38,7 @@ use crate::events::SharedEventBus;
 use crate::interfaces::{
     map_api_error, ACPClient, AppError, Attachment, Event, EventStore, EventType,
     PermissionDecision, PermissionManager, SearchOptions, WorkspaceManager,
+    PENDING_ACTION_TYPE_REVOCATION,
 };
 use crate::pairing::{Manager as PairingManager, PairingError};
 use crate::permissions::Manager as PermissionsManager;
@@ -502,13 +503,36 @@ struct CancelActionRequest {
 }
 
 /// `POST /api/devices/cancel-revocation` — body `{"actionId":"..."}`.
+///
+/// A device that is the target of a pending revocation must not be able to
+/// cancel its own revocation, otherwise it can indefinitely prevent its own
+/// removal during the grace period. The host (loopback, no device id) and any
+/// other paired device may still cancel — matching the consensus model where
+/// any paired device can act on a pending action.
 async fn cancel_revocation(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: Result<Json<CancelActionRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    let request = decode_json_body(body)?.0;
+    let caller = device_id_from_request(&headers);
+    if !caller.is_empty() {
+        if let Some(action) = state
+            .pairing
+            .list_pending_actions()
+            .into_iter()
+            .find(|a| a.id == request.action_id)
+        {
+            if action.action_type == PENDING_ACTION_TYPE_REVOCATION && action.device_id == caller {
+                return Err(ApiResponseError::forbidden(
+                    "a device cannot cancel its own revocation",
+                ));
+            }
+        }
+    }
     cancel_pending_action(
         &state,
-        body,
+        request,
         |id| state.pairing.cancel_revocation(id),
         EventType::DeviceRevocationCancelled,
     )
@@ -649,7 +673,7 @@ async fn cancel_workspace_registration(
 ) -> Result<Json<Value>, ApiResponseError> {
     cancel_pending_action(
         &state,
-        body,
+        decode_json_body(body)?.0,
         |id| state.pairing.cancel_workspace_registration(id),
         EventType::WorkspaceRegistrationCancelled,
     )
@@ -1596,14 +1620,15 @@ fn device_id_from_request(headers: &HeaderMap) -> String {
     extract_credential(headers).0
 }
 
-/// Shared cancel flow for grace-period pending actions (decode → cancel → event).
+/// Shared cancel flow for grace-period pending actions (cancel → event). The
+/// body is decoded by the caller so handlers can perform authorization checks
+/// against the action id before cancelling.
 async fn cancel_pending_action(
     state: &AppState,
-    body: Result<Json<CancelActionRequest>, JsonRejection>,
+    request: CancelActionRequest,
     cancel: impl FnOnce(&str) -> Result<(), PairingError>,
     event_type: EventType,
 ) -> Result<Json<Value>, ApiResponseError> {
-    let Json(request) = decode_json_body(body)?;
     if request.action_id.is_empty() {
         return Err(ApiResponseError::bad_request("missing 'actionId'"));
     }

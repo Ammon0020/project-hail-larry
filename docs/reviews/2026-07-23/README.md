@@ -9,20 +9,10 @@ the finding is fixed.
 | Urgency | Open | Fixed |
 |---------|------|-------|
 | Critical | 4 | 2 |
-| High | 8 | 8 |
-| Medium | 14 | 7 |
+| High | 2 | 14 |
+| Medium | 12 | 9 |
 | Low | 20 | 5 |
-| **Total** | **46** | **22** |
-
-**Fixed (22):** cert dir permissions, events DB world-readable, 0.0.0.0 origin
-handling, output byte limit, loopback IPv4-mapped IPv6, revocation device-id
-leak, raw file unbounded read, fswatch symlink following, serve_upload security
-headers, global security headers (X-Content-Type-Options/X-Frame-Options/HSTS),
-extract_credential query-string fallback, pair_rate unbounded bucket growth,
-upsert_agent loopback gate, delete_agent loopback gate, terminal env hardening
-(daemon secret leak + agent hijack vars), device_name validation, session_name
-validation, HtmlViewer iframe sandbox, PDF iframe sandbox, MCP PUT size cap,
-stderr redaction keyword expansion.
+| **Total** | **38** | **30** |
 
 ---
 
@@ -40,16 +30,9 @@ stderr redaction keyword expansion.
 
 | Finding | Difficulty | File |
 |---------|-----------|------|
-| [Cancel revocation has no authorization check](cancel-revocation-no-authorization,easy,high.md) | easy | `src/api/mod.rs` |
 | [Device credential stored in localStorage (XSS-exfiltrable)](device-credential-localstorage,easy,high.md) | easy | `web/src/lib/api.ts` |
-| [MCP ${VAR} expansion leaks daemon secrets to agent](mcp-env-expansion-leaks-secrets,easy,high.md) | easy | `src/mcp/mod.rs` |
-| [MCP config accepts arbitrary server config, no validation](mcp-config-no-validation,easy,high.md) | easy | `src/api/mcp.rs` |
 | [Device secret leaked via query-param URLs for raw endpoint](raw-url-secret-referer-leak,easy,high.md) | easy | `web/src/lib/api.ts` |
-| [Revoked device keeps WebSocket connection](revoked-device-keeps-ws,easy,high.md) | easy | `src/sync/mod.rs` |
-| [session_context global tracker — cross-session context leakage](session-context-global-tracker,easy,high.md) | easy | `src/api/session_extra.rs` |
-| [Workspace root symlink accepted](workspace-root-symlink-accepted,easy,high.md) | easy | `src/workspace/mod.rs` |
 | [Workspace root TOCTOU symlink](workspace-root-toctou-symlink,medium,high.md) | medium | `src/workspace/mod.rs` |
-| [WS upgrade has no TLS gate](ws-upgrade-no-tls-gate,easy,high.md) | easy | `src/sync/mod.rs` |
 
 ## Open findings — Medium
 
@@ -59,7 +42,6 @@ stderr redaction keyword expansion.
 | [Cleartext HTTP listener with TLS enabled](cleartext-http-listener-with-tls,easy,medium.md) | easy | `src/app/listen.rs` |
 | [FS op TOCTOU symlink race](fs-op-toctou-symlink,hard,medium.md) | hard | `src/workspace/mod.rs` |
 | [Hub fails open when no auth checker registered](hub-fails-open-no-checker,easy,medium.md) | easy | `src/sync/mod.rs` |
-| [MCP GET returns raw secrets](mcp-get-leaks-secrets,easy,medium.md) | easy | `src/api/mcp.rs` |
 | [No command timeout](no-command-timeout,easy,medium.md) | easy | `src/shell/mod.rs` |
 | [Pairing lockout is global — DoS](pairing-lockout-global-dos,trivial,medium.md) | trivial | `src/pairing/mod.rs` |
 | [Pair rate IPv6 /64 rotation bypass](pair-rate-ipv6-rotation,easy,medium.md) | easy | `src/api/mod.rs` |
@@ -108,12 +90,13 @@ Findings were deduplicated across batches.
 
 ## Fix sets
 
-Four batches of fixes were applied during the review, each verified with
+Five batches of fixes were applied during the review, each verified with
 `cargo test`, `cargo clippy -- -D warnings`, and `cargo fmt`:
 
 - **Fix Set 1:** cert dir permissions, events DB perms, 0.0.0.0 origin, output byte limit
 - **Fix Set 2:** loopback IPv4-mapped IPv6, revocation device-id leak, raw file unbounded read, fswatch symlinks
 - **Fix Set 3:** serve_upload headers, global security headers, extract_credential query fallback, pair_rate bucket growth
 - **Fix Set 4:** upsert/delete agent loopback gates, terminal env hardening, device/session name validation, iframe sandboxing, MCP PUT size cap, stderr redaction expansion
+- **Fix Set 5:** MCP env expansion + config validation + GET redaction, WS TLS gate, revoked device WS disconnect, session_context session-keying, cancel-revocation self-cancellation guard, workspace root symlink rejection
 
 All 443 tests pass; clippy and fmt are clean.

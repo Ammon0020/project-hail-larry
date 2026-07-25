@@ -68,6 +68,10 @@ struct ClientEntry {
     tx: mpsc::Sender<Vec<u8>>,
     /// Highest durable event ID delivered to this client (replay or live).
     last_seen_id: AtomicI64,
+    /// Device ID authenticated at handshake (empty for loopback bypass).
+    device_id: String,
+    /// Per-connection cancel token so revocation can force-close the socket.
+    cancel: CancellationToken,
 }
 
 /// WebSocket hub: client registry, broadcast, keepalive, reconnect replay.
@@ -202,22 +206,53 @@ impl Hub {
         self.cancel.child_token()
     }
 
-    fn register(&self, tx: mpsc::Sender<Vec<u8>>, after_id: i64) -> u64 {
+    fn register(
+        &self,
+        tx: mpsc::Sender<Vec<u8>>,
+        after_id: i64,
+        device_id: String,
+    ) -> (u64, CancellationToken) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let cancel = self.cancel.child_token();
         self.clients.insert(
             id,
             ClientEntry {
                 tx,
                 last_seen_id: AtomicI64::new(after_id),
+                device_id,
+                cancel: cancel.clone(),
             },
         );
         debug!(client_id = id, after_id, "sync: client registered");
-        id
+        (id, cancel)
     }
 
     fn unregister(&self, id: u64) {
         if self.clients.remove(&id).is_some() {
             debug!(client_id = id, "sync: client unregistered");
+        }
+    }
+
+    /// Force-close all WebSocket connections authenticated as `device_id`.
+    /// Called when a device is revoked so it stops receiving events immediately.
+    pub fn disconnect_device(&self, device_id: &str) {
+        if device_id.is_empty() {
+            return;
+        }
+        let ids: Vec<u64> = self
+            .clients
+            .iter()
+            .filter(|e| e.device_id == device_id)
+            .map(|e| *e.key())
+            .collect();
+        for id in ids {
+            if let Some(entry) = self.clients.get(&id) {
+                entry.cancel.cancel();
+                debug!(
+                    client_id = id,
+                    device_id, "sync: disconnecting revoked device"
+                );
+            }
         }
     }
 
@@ -402,17 +437,17 @@ async fn handle_ws(
     // `after` is optional: when present (and a bus is configured), the client
     // gets durable replay then live EventBus delivery with ID dedupe.
     let after = query.after;
+    let device_id = query.device_id.unwrap_or_default();
     ws.max_message_size(MAX_MESSAGE_SIZE)
-        .on_upgrade(move |socket| run_client_pumps(hub, socket, after))
+        .on_upgrade(move |socket| run_client_pumps(hub, socket, after, device_id))
 }
 
 /// Unified read / write / keepalive / optional EventBus feed for one client.
-async fn run_client_pumps(hub: Arc<Hub>, socket: WebSocket, after: Option<i64>) {
+async fn run_client_pumps(hub: Arc<Hub>, socket: WebSocket, after: Option<i64>, device_id: String) {
     let (sink, stream) = socket.split();
     let (tx, rx) = mpsc::channel::<Vec<u8>>(CLIENT_SEND_CAPACITY);
     let after_id = after.unwrap_or(0);
-    let client_id = hub.register(tx.clone(), after_id);
-    let cancel = hub.child_token();
+    let (client_id, cancel) = hub.register(tx.clone(), after_id, device_id);
 
     // Updated on every inbound frame / pong so keepalive can detect dead peers.
     let last_pong = Arc::new(tokio::sync::Mutex::new(Instant::now()));

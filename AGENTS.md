@@ -47,6 +47,7 @@ docs/           plans, specs, references, reviews, status, known issues
 - Discover work by listing `docs/plans/`, then the chosen epic folder. Use status-prefixed filenames; rename them when status changes. Keep plans concise and executable in one branch.
 - Suggest a commit message and tests when handing work off.
 - Add brief comments for non-obvious intent, constraints, and security-sensitive behavior. Do not comment code that is already self-explanatory.
+- Avoid megafiles. Break up files when they get too large. 
 
 ## Plans
 List relevant folder to see task status. Review after milestones. Task reviewer deletes tasks after review, or updates status if work is not complete. Add action items from review as stories unless they are immediately fixable. 

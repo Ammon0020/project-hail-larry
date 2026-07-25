@@ -155,6 +155,14 @@ impl WorkspaceManager for Manager {
     async fn register(&self, path: &str) -> Result<WorkspaceInfo, AppError> {
         let input = PathBuf::from(path);
         let root = tokio::task::spawn_blocking(move || {
+            // Reject a symlink root outright: fs::metadata and canonicalize both
+            // follow links, so without this check an agent could register a
+            // symlink pointing outside the intended directory.
+            if let Ok(meta) = fs::symlink_metadata(&input) {
+                if meta.file_type().is_symlink() {
+                    return Err(AppError::validation("workspace root must not be a symlink"));
+                }
+            }
             let metadata = fs::metadata(&input)
                 .map_err(|err| AppError::internal(format!("stat workspace: {err}")))?;
             if !metadata.is_dir() {

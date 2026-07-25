@@ -26,14 +26,22 @@ pub(crate) struct PatchMcpServerRequest {
     enabled: Option<bool>,
 }
 
-/// `GET /api/mcp` — raw mcp.json bytes (or empty envelope when missing).
+/// `GET /api/mcp` — mcp.json with `headers`/`env` values redacted.
 pub async fn get_mcp(State(state): State<AppState>) -> Result<Response, ApiResponseError> {
     let path = require_mcp_path(&state)?;
     let raw = McpFile::load_raw(path).map_err(|error| {
         error!(%error, "read mcp config failed");
         ApiResponseError::internal(format!("read mcp config: {error}"))
     })?;
-    Ok(json_bytes_response(StatusCode::OK, raw))
+    // Redact sensitive header/env values before returning to paired devices.
+    let file = McpFile::parse(&raw).map_err(|error| {
+        error!(%error, "parse mcp config failed");
+        ApiResponseError::internal(format!("parse mcp config: {error}"))
+    })?;
+    let mut body = serde_json::to_vec_pretty(&file.redacted())
+        .map_err(|error| ApiResponseError::internal(format!("serialize mcp config: {error}")))?;
+    body.push(b'\n');
+    Ok(json_bytes_response(StatusCode::OK, body))
 }
 
 /// `PUT /api/mcp` — validate then write raw request bytes verbatim.
@@ -117,6 +125,9 @@ fn mcp_write_error(error: McpError) -> ApiResponseError {
         McpError::UnsupportedVersion(version) => {
             ApiResponseError::bad_request(format!("unsupported mcp config version: {version}"))
         }
+        McpError::UnsafeServerName { .. }
+        | McpError::InvalidCommand { .. }
+        | McpError::UnsafeEnvVar { .. } => ApiResponseError::bad_request(error.to_string()),
         other => {
             error!(%other, "save mcp config failed");
             ApiResponseError::internal(format!("save mcp config: {other}"))

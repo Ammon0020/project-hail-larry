@@ -43,6 +43,14 @@ pub trait WorkspaceRegistrar: Send + Sync {
     fn register_workspace(&self, path: &str) -> Result<(), PairingError>;
 }
 
+/// Dependency used to notify the sync hub when a device revocation executes.
+/// Injected via [`Manager::set_revocation_listener`] so the hub can drop the
+/// revoked device's active WebSocket connections immediately.
+pub trait RevocationListener: Send + Sync {
+    /// Called after a device's credentials have been removed.
+    fn device_revoked(&self, device_id: &str);
+}
+
 /// Pairing manager failures intentionally contain no supplied credentials.
 #[derive(Debug, Error)]
 pub enum PairingError {
@@ -103,6 +111,7 @@ struct Inner {
     lockout_until: Option<DateTime<Utc>>,
     lockout_count: u32,
     workspace_registrar: Option<Arc<dyn WorkspaceRegistrar>>,
+    revocation_listener: Option<Arc<dyn RevocationListener>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -142,6 +151,7 @@ impl Manager {
                 lockout_until: None,
                 lockout_count: 0,
                 workspace_registrar,
+                revocation_listener: None,
             })),
         })
     }
@@ -156,6 +166,12 @@ impl Manager {
 
     pub fn set_inactivity_ttl(&self, ttl: Duration) {
         lock(&self.inner).inactivity_ttl = ttl;
+    }
+
+    /// Install a listener invoked when a device revocation executes (immediate
+    /// or grace-delayed) so the sync hub can drop active WebSocket connections.
+    pub fn set_revocation_listener(&self, listener: Arc<dyn RevocationListener>) {
+        lock(&self.inner).revocation_listener = Some(listener);
     }
 
     /// Create a single-use session. The URL intentionally remains `http` to
@@ -485,8 +501,16 @@ fn execute_pending(shared: &Arc<Mutex<Inner>>, action_id: &str) {
     }
     match action.info.action_type.as_str() {
         PENDING_ACTION_TYPE_REVOCATION => {
-            if inner.devices.remove(&action.info.device_id).is_some() {
+            let device_id = action.info.device_id.clone();
+            if inner.devices.remove(&device_id).is_some() {
                 let _ = save_devices(&mut inner);
+            }
+            // Notify the sync hub to drop the revoked device's active WebSocket
+            // connections so it stops receiving events immediately.
+            let listener = inner.revocation_listener.clone();
+            drop(inner);
+            if let Some(listener) = listener {
+                listener.device_revoked(&device_id);
             }
         }
         PENDING_ACTION_TYPE_WORKSPACE_REGISTRATION => {

@@ -60,61 +60,87 @@ pub struct EditorSelection {
     pub text: String,
 }
 
-/// Concurrent tracker for open files, recent edits, and a selected range.
+/// Per-session editor state (open files, recent edits, selection).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct OpenFilesEntry {
+    open_files: Vec<String>,
+    recent_edits: Vec<String>,
+    selection: EditorSelection,
+}
+
+/// Concurrent tracker for open files, recent edits, and a selected range,
+/// keyed by session id so editor context cannot leak across sessions.
 #[derive(Default)]
 pub struct OpenFilesTracker {
-    open_files: RwLock<Vec<String>>,
-    recent_edits: RwLock<Vec<String>>,
-    selection: RwLock<EditorSelection>,
+    sessions: RwLock<HashMap<String, OpenFilesEntry>>,
 }
 
 impl OpenFilesTracker {
-    /// Replaces the active editor file paths.
-    pub fn set_open_files(&self, paths: Vec<String>) -> Result<(), AppError> {
-        *self
-            .open_files
-            .write()
-            .map_err(|_| AppError::internal("open-files tracker lock poisoned"))? = paths;
-        Ok(())
-    }
-
-    /// Replaces recently edited paths.
-    pub fn set_recent_edits(&self, paths: Vec<String>) -> Result<(), AppError> {
-        *self
-            .recent_edits
-            .write()
-            .map_err(|_| AppError::internal("recent-edits tracker lock poisoned"))? = paths;
-        Ok(())
-    }
-
-    /// Replaces the selected editor range.
-    pub fn set_selection(&self, selection: EditorSelection) -> Result<(), AppError> {
-        *self
-            .selection
-            .write()
-            .map_err(|_| AppError::internal("open-files selection lock poisoned"))? = selection;
-        Ok(())
-    }
-
-    fn open_files(&self) -> Result<Vec<String>, AppError> {
-        self.open_files
+    fn entry(&self, session_id: &str) -> Result<Option<OpenFilesEntry>, AppError> {
+        self.sessions
             .read()
-            .map(|paths| paths.clone())
+            .map(|sessions| sessions.get(session_id).cloned())
             .map_err(|_| AppError::internal("open-files tracker lock poisoned"))
     }
 
-    fn recent_edits(&self) -> Result<Vec<String>, AppError> {
-        self.recent_edits
-            .read()
-            .map(|paths| paths.clone())
-            .map_err(|_| AppError::internal("recent-edits tracker lock poisoned"))
+    fn with_entry_mut(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&mut OpenFilesEntry),
+    ) -> Result<(), AppError> {
+        let mut sessions = self
+            .sessions
+            .write()
+            .map_err(|_| AppError::internal("open-files tracker lock poisoned"))?;
+        f(sessions.entry(session_id.to_string()).or_default());
+        Ok(())
     }
 
-    fn selection(&self) -> Result<EditorSelection, AppError> {
-        self.selection
-            .read()
-            .map(|selection| selection.clone())
-            .map_err(|_| AppError::internal("open-files selection lock poisoned"))
+    /// Replaces the active editor file paths for a session.
+    pub fn set_open_files(&self, session_id: &str, paths: Vec<String>) -> Result<(), AppError> {
+        self.with_entry_mut(session_id, |entry| entry.open_files = paths)
+    }
+
+    /// Replaces recently edited paths for a session.
+    pub fn set_recent_edits(&self, session_id: &str, paths: Vec<String>) -> Result<(), AppError> {
+        self.with_entry_mut(session_id, |entry| entry.recent_edits = paths)
+    }
+
+    /// Replaces the selected editor range for a session.
+    pub fn set_selection(
+        &self,
+        session_id: &str,
+        selection: EditorSelection,
+    ) -> Result<(), AppError> {
+        self.with_entry_mut(session_id, |entry| entry.selection = selection)
+    }
+
+    /// Drops per-session editor state when a session closes.
+    pub fn clear(&self, session_id: &str) {
+        if let Ok(mut sessions) = self.sessions.write() {
+            sessions.remove(session_id);
+        }
+    }
+
+    fn open_files(&self, session_id: &str) -> Result<Vec<String>, AppError> {
+        Ok(self
+            .entry(session_id)?
+            .map(|e| e.open_files)
+            .unwrap_or_default())
+    }
+
+    fn recent_edits(&self, session_id: &str) -> Result<Vec<String>, AppError> {
+        Ok(self
+            .entry(session_id)?
+            .map(|e| e.recent_edits)
+            .unwrap_or_default())
+    }
+
+    fn selection(&self, session_id: &str) -> Result<EditorSelection, AppError> {
+        Ok(self
+            .entry(session_id)?
+            .map(|e| e.selection)
+            .unwrap_or_default())
     }
 }
 
@@ -151,6 +177,7 @@ impl PromptPipeline {
         self.reset(session_id);
         self.profiles.clear(session_id);
         self.transfers.clear(session_id);
+        self.tracker.clear(session_id);
     }
 
     /// Queues the durable transcript for a first prompt after rebind.
@@ -204,13 +231,13 @@ impl PromptPipeline {
         append_paths(
             &mut text_sections,
             "## Open Files",
-            self.tracker.open_files()?,
+            self.tracker.open_files(session_id)?,
             MAX_OPEN_FILES,
         );
         append_paths(
             &mut text_sections,
             "## Recently Edited Files",
-            self.tracker.recent_edits()?,
+            self.tracker.recent_edits(session_id)?,
             MAX_RECENT_EDITS,
         );
 
@@ -223,7 +250,14 @@ impl PromptPipeline {
                 text: profile,
             });
             resources.extend(
-                open_file_resources(&self.tracker, workspace_id, workspace_path, workspace).await,
+                open_file_resources(
+                    &self.tracker,
+                    session_id,
+                    workspace_id,
+                    workspace_path,
+                    workspace,
+                )
+                .await,
             );
         } else {
             text_sections.push(profile);
@@ -343,11 +377,12 @@ fn append_paths(sections: &mut Vec<String>, heading: &str, mut paths: Vec<String
 
 async fn open_file_resources(
     tracker: &OpenFilesTracker,
+    session_id: &str,
     workspace_id: &str,
     workspace_path: &Path,
     workspace: &dyn WorkspaceManager,
 ) -> Vec<ContextResource> {
-    let Ok(paths) = tracker.open_files() else {
+    let Ok(paths) = tracker.open_files(session_id) else {
         return Vec::new();
     };
     let mut total = 0;
@@ -372,7 +407,7 @@ async fn open_file_resources(
             break;
         }
     }
-    let Ok(selection) = tracker.selection() else {
+    let Ok(selection) = tracker.selection(session_id) else {
         return resources;
     };
     if !selection.text.is_empty() {
@@ -498,11 +533,11 @@ mod tests {
         let pipeline = PromptPipeline::default();
         pipeline
             .tracker
-            .set_open_files(vec!["src/main.rs".to_string()])
+            .set_open_files("session", vec!["src/main.rs".to_string()])
             .expect("set open files");
         pipeline
             .tracker
-            .set_recent_edits(vec!["Cargo.toml".to_string()])
+            .set_recent_edits("session", vec!["Cargo.toml".to_string()])
             .expect("set recent edits");
         let workspace = Arc::new(EmptyWorkspace);
 

@@ -94,27 +94,39 @@ pub async fn session_capabilities(
 }
 
 /// `POST /api/sessions/{id}/context` — update open-files / selection tracker.
+///
+/// The `session_id` is validated for existence and used to key the tracker so
+/// editor context from one session cannot leak into another session's prompts.
 pub async fn session_context(
     State(state): State<AppState>,
-    AxumPath(_session_id): AxumPath<String>,
+    AxumPath(session_id): AxumPath<String>,
     body: Result<Json<SessionContextRequest>, JsonRejection>,
 ) -> Result<Json<Value>, ApiResponseError> {
+    // Validate the session exists before mutating per-session editor state.
+    state.acp.get_session_info(&session_id).map_err(app_error)?;
     let Json(request) = decode_json_body(body)?;
     let tracker = state.acp.open_files_tracker();
     if let Some(open_files) = request.open_files {
-        tracker.set_open_files(open_files).map_err(app_error)?;
+        tracker
+            .set_open_files(&session_id, open_files)
+            .map_err(app_error)?;
     }
     if let Some(recent_edits) = request.recent_edits {
-        tracker.set_recent_edits(recent_edits).map_err(app_error)?;
+        tracker
+            .set_recent_edits(&session_id, recent_edits)
+            .map_err(app_error)?;
     }
     if let Some(selection) = request.selection {
         tracker
-            .set_selection(EditorSelection {
-                path: selection.path,
-                start_line: selection.start_line,
-                end_line: selection.end_line,
-                text: selection.text,
-            })
+            .set_selection(
+                &session_id,
+                EditorSelection {
+                    path: selection.path,
+                    start_line: selection.start_line,
+                    end_line: selection.end_line,
+                    text: selection.text,
+                },
+            )
             .map_err(app_error)?;
     }
     Ok(Json(json!({"status": "updated"})))
@@ -348,7 +360,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_context_updates_tracker() {
+    async fn session_context_rejects_unknown_session() {
         let dir = tempfile::tempdir().expect("temp");
         let state = state_with_uploads(&dir);
         let response = crate::api::router(state.clone())
@@ -364,22 +376,8 @@ mod tests {
             )
             .await
             .expect("response");
-        assert_eq!(response.status(), StatusCode::OK);
-        // Tracker is process-global on the client; verify via a second write that clears text.
-        let clear = crate::api::router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/sessions/sess-1/context")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"selection":{"path":"a.rs","startLine":1,"endLine":1,"text":""}}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-        assert_eq!(clear.status(), StatusCode::OK);
+        // Session does not exist, so the handler must reject before touching the tracker.
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

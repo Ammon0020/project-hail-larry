@@ -169,8 +169,47 @@ impl File {
         if file.version != CURRENT_VERSION {
             return Err(McpError::UnsupportedVersion(file.version));
         }
+        // Validate content so a paired device cannot inject dangerous commands
+        // or secret-leaking env vars via PUT /api/mcp.
+        file.validate()?;
         fsutil::atomic_write(path, raw, Some(CONFIG_FILE_PERM))?;
         Ok(())
+    }
+
+    /// Validates server names, stdio commands, and env var names so a paired
+    /// device cannot inject dangerous or secret-leaking MCP server configs.
+    pub fn validate(&self) -> Result<(), McpError> {
+        for (name, config) in &self.mcp_servers {
+            validate_server_name(name)?;
+            if matches!(config.effective_transport()?, Transport::Stdio) {
+                validate_command(name, &config.command)?;
+            }
+            for env_name in config.env.keys() {
+                if is_secret_env_name(env_name) {
+                    return Err(McpError::UnsafeEnvVar {
+                        server: name.clone(),
+                        name: env_name.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns a copy with all `headers` and `env` values masked as `"***"` so
+    /// literal secrets stored in `mcp.json` are not exposed via `GET /api/mcp`.
+    #[must_use]
+    pub fn redacted(&self) -> Self {
+        let mut redacted = self.clone();
+        for config in redacted.mcp_servers.values_mut() {
+            for value in config.headers.values_mut() {
+                *value = "***".to_owned();
+            }
+            for value in config.env.values_mut() {
+                *value = "***".to_owned();
+            }
+        }
+        redacted
     }
 
     /// Inserts or replaces a server configuration.
@@ -267,9 +306,17 @@ fn map_to_headers(values: &BTreeMap<String, String>) -> Vec<HttpHeader> {
 }
 
 /// Expands `${NAME}` from the process environment; unset variables become empty.
+///
+/// Only benign, non-secret vars are expanded so a malicious `mcp.json` cannot
+/// exfiltrate daemon secrets (e.g. `DEVIN_API_KEY`) via `${...}` references.
 #[must_use]
 pub fn expand_env(value: &str) -> String {
-    expand_env_with(value, |name| std::env::var(name).ok())
+    expand_env_with(value, |name| {
+        if !is_safe_env_var(name) {
+            return None;
+        }
+        std::env::var(name).ok()
+    })
 }
 
 fn expand_env_with(value: &str, lookup: impl Fn(&str) -> Option<String>) -> String {
@@ -304,6 +351,91 @@ fn is_env_name(name: &str) -> bool {
     let mut chars = name.bytes();
     matches!(chars.next(), Some(b'A'..=b'Z' | b'a'..=b'z' | b'_'))
         && chars.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+/// Whether a `${VAR}` reference in an MCP config may be expanded from the
+/// daemon's process environment. Mirrors the allowlist in `filter_daemon_env`
+/// (`src/shell/mod.rs`): only benign vars, never secret-pattern names.
+fn is_safe_env_var(name: &str) -> bool {
+    const SAFE_EXPAND_ENV_KEYS: &[&str] = &["PATH", "HOME", "USER", "SHELL", "LANG", "TERM"];
+    if is_secret_env_name(name) {
+        return false;
+    }
+    SAFE_EXPAND_ENV_KEYS.contains(&name) || name.starts_with("LC_")
+}
+
+/// Forbidden characters for MCP server names, matching `profile_config.rs`.
+const UNSAFE_SERVER_NAME_CHARS: &[char] = &['/', '\\', ';', '|', '&', '`', '$', '(', ')', '<', '>'];
+const MAX_SERVER_NAME_CHARS: usize = 200;
+
+/// Validates an MCP server name against the same rules as `profile_config.rs`.
+fn validate_server_name(name: &str) -> Result<(), McpError> {
+    if name.is_empty() || name.chars().all(char::is_whitespace) {
+        return Err(McpError::UnsafeServerName {
+            server: name.to_owned(),
+            reason: "name must not be empty or whitespace-only".to_owned(),
+        });
+    }
+    if name.chars().count() > MAX_SERVER_NAME_CHARS {
+        return Err(McpError::UnsafeServerName {
+            server: name.to_owned(),
+            reason: format!("name exceeds {MAX_SERVER_NAME_CHARS} characters"),
+        });
+    }
+    if let Some(ch) = name.chars().find(|c| UNSAFE_SERVER_NAME_CHARS.contains(c)) {
+        return Err(McpError::UnsafeServerName {
+            server: name.to_owned(),
+            reason: format!("name contains forbidden character `{ch}`"),
+        });
+    }
+    if name.chars().any(char::is_whitespace) {
+        return Err(McpError::UnsafeServerName {
+            server: name.to_owned(),
+            reason: "name must not contain whitespace".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Validates that a stdio command is an absolute path or resolves on `PATH`.
+/// Commands containing `${...}` are skipped (resolved at spawn time).
+fn validate_command(server: &str, command: &str) -> Result<(), McpError> {
+    if command.is_empty() || command.contains("${") {
+        return Ok(());
+    }
+    let path = Path::new(command);
+    if path.is_absolute() {
+        if !path.is_file() {
+            return Err(McpError::InvalidCommand {
+                server: server.to_owned(),
+                command: command.to_owned(),
+                reason: "absolute path does not exist".to_owned(),
+            });
+        }
+        return Ok(());
+    }
+    let on_path = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join(command))
+        .any(|candidate| is_executable(&candidate));
+    if !on_path {
+        return Err(McpError::InvalidCommand {
+            server: server.to_owned(),
+            command: command.to_owned(),
+            reason: "command is not an absolute path and not found on PATH".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Whether an env var name matches common secret patterns and must not appear
+/// in MCP server configs.
+fn is_secret_env_name(name: &str) -> bool {
+    name.starts_with("DEVIN_")
+        || name.starts_with("LOCAL_AGENT_")
+        || name.ends_with("_KEY")
+        || name.ends_with("_TOKEN")
+        || name.ends_with("_SECRET")
+        || name.ends_with("_PASSWORD")
 }
 
 /// Health result for one configured server.
@@ -433,6 +565,16 @@ pub enum McpError {
     UnsupportedTransport(String),
     #[error("MCP server not found: {0}")]
     ServerNotFound(String),
+    #[error("unsafe MCP server name `{server}`: {reason}")]
+    UnsafeServerName { server: String, reason: String },
+    #[error("MCP server `{server}`: invalid command `{command}`: {reason}")]
+    InvalidCommand {
+        server: String,
+        command: String,
+        reason: String,
+    },
+    #[error("MCP server `{server}`: env var `{name}` matches a secret pattern")]
+    UnsafeEnvVar { server: String, name: String },
     #[error(transparent)]
     Config(#[from] crate::config::ConfigError),
 }
