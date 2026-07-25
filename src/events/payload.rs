@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::interfaces::types::Attachment;
+use crate::interfaces::types::{Attachment, InjectedContext};
 use crate::interfaces::Event;
 
 /// On-disk JSON payload for one event row.
@@ -53,6 +53,8 @@ pub(crate) struct StoredEventPayload {
     pub workspace_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub injected_context: Vec<InjectedContext>,
 }
 
 impl StoredEventPayload {
@@ -75,6 +77,7 @@ impl StoredEventPayload {
             exit_code: event.exit_code,
             workspace_id: event.workspace_id.clone(),
             attachments: event.attachments.clone(),
+            injected_context: event.injected_context.clone(),
         }
     }
 
@@ -96,6 +99,7 @@ impl StoredEventPayload {
         event.exit_code = self.exit_code;
         event.workspace_id = self.workspace_id;
         event.attachments = self.attachments;
+        event.injected_context = self.injected_context;
     }
 }
 
@@ -144,6 +148,21 @@ mod tests {
         assert_eq!(back.target, "server.js");
         assert_eq!(back.summary, "Added handler");
         assert_eq!(back.exit_code, Some(0));
+    }
+
+    #[test]
+    fn payload_round_trips_injected_context() {
+        let mut event = Event::new(0, EventType::PromptSubmitted, "s1", go_zero_time());
+        event.injected_context = vec![InjectedContext {
+            name: "demo1.html".into(),
+            content: "<h1>Demo</h1>".into(),
+        }];
+
+        let json = encode_payload(&event).expect("encode");
+        let mut back = Event::new(1, EventType::PromptSubmitted, "s1", go_zero_time());
+        decode_payload(&json, &mut back).expect("decode");
+
+        assert_eq!(back.injected_context, event.injected_context);
     }
 
     #[test]

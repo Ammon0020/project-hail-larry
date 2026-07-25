@@ -238,6 +238,7 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
             role: "user".to_string(),
             content: user_content.clone(),
             attachments,
+            injected_context: prepared.injected_context(),
         },
     )
     .await

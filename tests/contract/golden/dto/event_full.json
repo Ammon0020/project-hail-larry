@@ -30,6 +30,12 @@
       "path": "\u003cREDACTED_PATH\u003e/uploads/screenshot.png"
     }
   ],
+  "injectedContext": [
+    {
+      "name": "Workspace Context",
+      "content": "Workspace root: <REDACTED_PATH>"
+    }
+  ],
   "executeAt": "<REDACTED_TIMESTAMP>",
   "deviceName": "fixture-device"
 }

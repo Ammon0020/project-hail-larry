@@ -14,6 +14,7 @@ import type { AppEvent, StopReason } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { ToolExecutionBlock } from './chat/ToolExecutionBlock'
+import { ContextInjectionBlock } from './chat/ContextInjectionBlock'
 
 /**
  * Shared Tailwind prose classes for markdown-rendered chat content (code
@@ -183,6 +184,9 @@ export function ChatMessageItem({
                   )
                 })}
               </div>
+            )}
+            {event.injectedContext && event.injectedContext.length > 0 && (
+              <ContextInjectionBlock context={event.injectedContext} />
             )}
           </div>
         </div>

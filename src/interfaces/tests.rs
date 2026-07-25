@@ -12,9 +12,9 @@ use serde_json::Value;
 use super::error::{map_api_error, ApiStatusCode, AppError};
 use super::types::{
     go_zero_time, AgentInfo, AgentModel, Attachment, DeviceCredential, DeviceInfo, Event,
-    EventPayload, EventType, FileNode, PairingSession, PendingActionInfo, ProviderCurrentConfig,
-    ProviderInfo, SearchOptions, SearchResult, SessionInfo, WorkspaceInfo, FILE_NODE_TYPE_FILE,
-    FILE_NODE_TYPE_FOLDER, PENDING_ACTION_TYPE_REVOCATION,
+    EventPayload, EventType, FileNode, InjectedContext, PairingSession, PendingActionInfo,
+    ProviderCurrentConfig, ProviderInfo, SearchOptions, SearchResult, SessionInfo, WorkspaceInfo,
+    FILE_NODE_TYPE_FILE, FILE_NODE_TYPE_FOLDER, PENDING_ACTION_TYPE_REVOCATION,
 };
 use super::wire::{event_to_json_pretty, typed_event, typed_event_to_wire, wire_to_typed_event};
 
@@ -218,6 +218,10 @@ fn golden_event_full() {
             uri: "file:///secret/not/serialized".into(), // must not appear in JSON
             path: "<REDACTED_PATH>/uploads/screenshot.png".into(),
         }],
+        injected_context: vec![InjectedContext {
+            name: "Workspace Context".into(),
+            content: "Workspace root: <REDACTED_PATH>".into(),
+        }],
         execute_at: ts + chrono::Duration::minutes(5),
         device_name: "fixture-device".into(),
     };
@@ -250,6 +254,7 @@ fn golden_event_minimal() {
         stop_reason: String::new(),
         workspace_id: String::new(),
         attachments: Vec::new(),
+        injected_context: Vec::new(),
         execute_at: go_zero_time(),
         device_name: String::new(),
     };
@@ -498,6 +503,10 @@ fn event_json_roundtrip() {
             uri: "file:///x".into(),
             path: "/tmp/a.png".into(),
         }],
+        injected_context: vec![InjectedContext {
+            name: "Profile Instructions".into(),
+            content: "Use Rust".into(),
+        }],
         execute_at: ts,
         device_name: "dev".into(),
     };
@@ -545,6 +554,10 @@ fn wire_adapter_full_event_matches_golden() {
         uri: String::new(),
         path: "<REDACTED_PATH>/uploads/screenshot.png".into(),
     }];
+    wire.injected_context = vec![InjectedContext {
+        name: "Workspace Context".into(),
+        content: "Workspace root: <REDACTED_PATH>".into(),
+    }];
     wire.execute_at = ts + chrono::Duration::minutes(5);
     wire.device_name = "fixture-device".into();
     assert_matches_golden("event_full", to_value(&wire));
@@ -561,6 +574,7 @@ fn wire_adapter_roundtrip_prompt_submitted() {
             role: "user".into(),
             content: "hello".into(),
             attachments: Vec::new(),
+            injected_context: Vec::new(),
         },
     );
     let wire = typed_event_to_wire(&typed);
@@ -581,6 +595,10 @@ fn wire_adapter_roundtrips_all_event_payloads() {
             role: "user".into(),
             content: "prompt".into(),
             attachments: Vec::new(),
+            injected_context: vec![InjectedContext {
+                name: "Workspace Context".into(),
+                content: "workspace".into(),
+            }],
         },
         EventPayload::ResponseStarted {
             role: "agent".into(),

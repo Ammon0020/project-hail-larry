@@ -10,7 +10,9 @@ use tokio::time::{timeout, Duration};
 
 use super::conversation::{ConversationTransfer, TransferQueue};
 use super::profile::ProfileMiddleware;
-use crate::interfaces::{AppError, FileNode, WorkspaceManager, FILE_NODE_TYPE_FILE};
+use crate::interfaces::{
+    AppError, FileNode, InjectedContext, WorkspaceManager, FILE_NODE_TYPE_FILE,
+};
 
 const CONTEXT_MIME_TYPE: &str = "text/markdown";
 const MAX_CONTEXT_FILES: usize = 200;
@@ -48,6 +50,26 @@ impl PreparedPrompt {
         } else {
             format!("{}\n\n---\n\n{}", self.prefix, user_text)
         }
+    }
+
+    /// Snapshot the additions that will accompany a user prompt.
+    ///
+    /// The actor persists this before the resources are moved into the ACP
+    /// request, letting the client disclose exact daemon-provided context.
+    pub(in crate::acp) fn injected_context(&self) -> Vec<InjectedContext> {
+        let mut context =
+            Vec::with_capacity(self.resources.len() + usize::from(!self.prefix.is_empty()));
+        if !self.prefix.is_empty() {
+            context.push(InjectedContext {
+                name: "Prompt additions".to_string(),
+                content: self.prefix.clone(),
+            });
+        }
+        context.extend(self.resources.iter().map(|resource| InjectedContext {
+            name: resource.name.clone(),
+            content: resource.text.clone(),
+        }));
+        context
     }
 }
 
@@ -560,5 +582,35 @@ mod tests {
         assert!(prepared
             .with_user_text("hello")
             .ends_with("\n\n---\n\nhello"));
+        assert_eq!(prepared.injected_context().len(), 1);
+        assert_eq!(prepared.injected_context()[0].name, "Prompt additions");
+        assert!(prepared.injected_context()[0]
+            .content
+            .contains("## Workspace Context"));
+    }
+
+    #[tokio::test]
+    async fn pipeline_records_embedded_resources_for_prompt_inspection() {
+        let pipeline = PromptPipeline::default();
+        let workspace = Arc::new(EmptyWorkspace);
+
+        let prepared = pipeline
+            .prepare(
+                "session",
+                "workspace",
+                Path::new("/tmp"),
+                true,
+                workspace.as_ref(),
+            )
+            .await
+            .expect("prepare prompt");
+        let context = prepared.injected_context();
+
+        assert_eq!(context[0].name, "Prompt additions");
+        assert!(context[0].content.contains("## Current Time"));
+        assert!(context.iter().any(|item| item.name == "Workspace Context"));
+        assert!(context
+            .iter()
+            .any(|item| item.name == "Profile Instructions"));
     }
 }

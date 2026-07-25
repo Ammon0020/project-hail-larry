@@ -38,11 +38,11 @@ pub use traits::{
 };
 pub use types::{
     go_zero_time, AgentInfo, AgentModel, Attachment, DeviceCredential, DeviceInfo, Event,
-    EventMeta, EventPayload, EventType, FileNode, PairingSession, PendingActionInfo,
-    PermissionDecision, PermissionOption, PermissionOptionInfo, PermissionRequest,
-    PermissionResponse, ProviderCurrentConfig, ProviderInfo, SearchOptions, SearchResult, Session,
-    SessionHistoryCapabilities, SessionInfo, TypedEvent, WorkspaceInfo, FILE_NODE_TYPE_FILE,
-    FILE_NODE_TYPE_FOLDER, PENDING_ACTION_TYPE_REVOCATION,
+    EventMeta, EventPayload, EventType, FileNode, InjectedContext, PairingSession,
+    PendingActionInfo, PermissionDecision, PermissionOption, PermissionOptionInfo,
+    PermissionRequest, PermissionResponse, ProviderCurrentConfig, ProviderInfo, SearchOptions,
+    SearchResult, Session, SessionHistoryCapabilities, SessionInfo, TypedEvent, WorkspaceInfo,
+    FILE_NODE_TYPE_FILE, FILE_NODE_TYPE_FOLDER, PENDING_ACTION_TYPE_REVOCATION,
     PENDING_ACTION_TYPE_WORKSPACE_REGISTRATION,
 };
 pub use wire::{event_to_json_pretty, typed_event, typed_event_to_wire, wire_to_typed_event};

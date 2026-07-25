@@ -142,6 +142,12 @@ export interface Attachment {
   uri?: string
 }
 
+/** Text the daemon added to a user prompt before sending it to the agent. */
+export interface InjectedContext {
+  name: string
+  content: string
+}
+
 /**
  * ACP stop reason for the final StreamUpdate of a turn.
  * Mirrors the ACP spec / coder/acp-go-sdk StopReason union. Kept local
@@ -204,6 +210,9 @@ export interface AppEvent {
   exitCode?: number
   workspaceId?: string
   attachments?: Attachment[]
+  /** Exact daemon-provided prompt context, retained with the user message so
+   * it can be inspected without being mistaken for user-authored text. */
+  injectedContext?: InjectedContext[]
   /** ACP stop reason for the final StreamUpdate of a turn. Empty on
    *  intermediate chunks. The frontend surfaces non-normal terminations
    *  subtly. Mirrors the ACP spec StopReason union — kept as a local type

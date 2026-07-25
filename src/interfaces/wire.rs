@@ -37,6 +37,7 @@ pub fn typed_event_to_wire(typed: &TypedEvent) -> Event {
         stop_reason: String::new(),
         workspace_id: String::new(),
         attachments: Vec::new(),
+        injected_context: Vec::new(),
         execute_at: go_zero_time(),
         device_name: String::new(),
     };
@@ -52,10 +53,12 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             role,
             content,
             attachments,
+            injected_context,
         } => {
             event.role = role.clone();
             event.content = content.clone();
             event.attachments = attachments.clone();
+            event.injected_context = injected_context.clone();
         }
         EventPayload::ResponseStarted { role } => {
             event.role = role.clone();
@@ -216,6 +219,7 @@ pub fn wire_to_typed_event(event: &Event) -> TypedEvent {
             role: event.role.clone(),
             content: event.content.clone(),
             attachments: event.attachments.clone(),
+            injected_context: event.injected_context.clone(),
         },
         EventType::ResponseStarted => EventPayload::ResponseStarted {
             role: event.role.clone(),

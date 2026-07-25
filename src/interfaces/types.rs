@@ -216,6 +216,11 @@ pub struct Event {
     pub workspace_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    /// Context the daemon added to this user prompt before sending it to the
+    /// agent. Kept with the prompt event so clients can inspect the exact
+    /// additions without confusing them with the user's own message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub injected_context: Vec<InjectedContext>,
     /// Scheduled execution time for grace-period pending actions.
     /// Always serialized (Go emits zero times despite `omitempty` on `time.Time`).
     pub execute_at: DateTime<Utc>,
@@ -254,6 +259,7 @@ impl Event {
             stop_reason: String::new(),
             workspace_id: String::new(),
             attachments: Vec::new(),
+            injected_context: Vec::new(),
             execute_at: go_zero_time(),
             device_name: String::new(),
         }
@@ -276,6 +282,19 @@ pub struct Attachment {
     /// Absolute on-disk path; omitted when empty.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub path: String,
+}
+
+/// One daemon-provided item attached to an ACP prompt.
+///
+/// This is deliberately separate from [`Attachment`]: prompt context is text
+/// generated from workspace/editor/profile state, not a user-uploaded file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct InjectedContext {
+    /// Human-readable source shown in the conversation inspector.
+    pub name: String,
+    /// Exact text sent to the agent for this context item.
+    pub content: String,
 }
 
 // ============================================================================
@@ -312,6 +331,7 @@ pub enum EventPayload {
         role: String,
         content: String,
         attachments: Vec<Attachment>,
+        injected_context: Vec<InjectedContext>,
     },
     ResponseStarted {
         role: String,
