@@ -33,8 +33,8 @@
   and ACP inspector.
 - [~] **ACP core modularization** — callback/events/MCP/diagnostics modules,
   actor runtime, and the actor turn state machine are extracted
-  (`S-ACP-MOD-CALLBACKS`, `S-ACP-MOD-ACTOR`, `S-ACP-MOD-TURN`); registry and
-  facade splits remain. See
+  (`S-ACP-MOD-CALLBACKS`, `S-ACP-MOD-ACTOR`, `S-ACP-MOD-TURN`,
+  `S-ACP-MOD-REGISTRY`); only the client facade split remains. See
   `docs/plans/pending-acp-core-modularization-hard.md`.
 - [~] **Agent-owned history** — PROBE + fallback complete; migration deferred;
   local history remains for agents without list/load. Q7/Q8 still block browse.
@@ -70,6 +70,9 @@
   stop-reason mapping, and prompt/close tests moved to `actor/turn.rs`. Cancelled
   sessions now retain their interrupted state until explicit or grace teardown,
   so a non-cooperative agent is force-closed instead of disabling the watchdog.
+- **S-ACP-MOD-REGISTRY** — live/dormant metadata, state transitions, actor
+  handles, and merged durable snapshots moved to `core/registry.rs`; registry
+  operations return owned data and never expose a lock across async lifecycle work.
 - **S-ACP-MOD-CALLBACKS** — inbound callbacks, terminals, MCP attachment,
   ordered event append, and stderr diagnostics moved out of `core.rs` into
   private `src/acp/core/{events,diagnostics,mcp,handlers}` modules.

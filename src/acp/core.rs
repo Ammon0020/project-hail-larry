@@ -10,11 +10,11 @@ mod diagnostics;
 mod events;
 mod handlers;
 mod mcp;
+mod registry;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -25,7 +25,7 @@ use super::providers::{require_providers_supported, SessionCaps, MODEL_SWITCH_UN
 use super::{
     context::PromptPipeline,
     conversation::{export_conversation, ConversationTransfer},
-    store::{ConversationStore, StoredSession},
+    store::ConversationStore,
     AgentRegistry,
 };
 use crate::config::AgentInfo;
@@ -38,6 +38,8 @@ use crate::interfaces::{
 use actor::{ActorCommand, ACTOR_COMMAND_CAPACITY};
 use diagnostics::StderrTail;
 use events::append_payload;
+pub use registry::SessionState;
+use registry::{SessionEntry, SessionRegistry};
 
 /// Maximum retained agent stderr diagnostic tail. Agent stderr is untrusted and
 /// must never be allowed to grow the daemon's memory without bound.
@@ -71,74 +73,11 @@ pub struct ClientDeps {
     pub mcp_config_path: Option<PathBuf>,
 }
 
-/// Session status stored in the in-memory registry during the core port.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionState {
-    Created,
-    Running,
-    Idle,
-    Interrupted,
-    Failed,
-    Closed,
-}
-
-impl SessionState {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Created => "created",
-            Self::Running => "running",
-            Self::Idle => "idle",
-            Self::Interrupted => "interrupted",
-            Self::Failed => "failed",
-            Self::Closed => "closed",
-        }
-    }
-}
-
-struct SessionEntry {
-    info: SessionInfo,
-    state: SessionState,
-    actor: actor::Handle,
-    stderr_tail: Arc<Mutex<StderrTail>>,
-    /// Sticky cancel bit for the reserved prompt turn. Cancel may arrive on
-    /// the actor while it is still idle (Prompt not dequeued yet); the bit
-    /// makes that cancel visible when the prompt eventually starts.
-    prompt_cancel: Arc<AtomicBool>,
-    /// Capabilities captured from Initialize (providers + embeddedContext).
-    caps: SessionCaps,
-    /// Config option id for the model selector when the agent advertises one.
-    /// Empty/`None` means live `switch_model` is unsupported (no rebind here).
-    model_config_id: Option<String>,
-    /// Config option id for the mode/profile selector when the agent advertises
-    /// one. `None` means the agent lacks the capability; profile instructions
-    /// are injected into the prompt context as the fallback (context.rs).
-    profile_config_id: Option<String>,
-    /// Agent-side ACP session id for durable `session/load` resume.
-    ///
-    /// Persisted in `conversations.json` as `acpSessionId`; never exposed on
-    /// REST [`SessionInfo`].
-    acp_session_id: String,
-}
-
-impl SessionEntry {
-    /// Apply a lifecycle state to both the registry enum and public metadata.
-    fn apply_state(&mut self, state: SessionState) {
-        self.state = state;
-        self.info.status = state.as_str().to_string();
-        self.info.updated_at = Utc::now();
-    }
-}
-
 /// ACP lifecycle service. The registry lock protects only metadata and command
 /// senders; every async command is sent after cloning its sender.
 pub struct Client {
     deps: ClientDeps,
-    sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
-    /// Durable sessions from `conversations.json` with no live actor yet.
-    ///
-    /// Loaded at daemon start; actors are spawned lazily on prompt / cancel /
-    /// provider / rebind (not at boot). Includes durable `acpSessionId`.
-    dormant: Arc<RwLock<HashMap<String, StoredSession>>>,
+    sessions: SessionRegistry,
     /// Serializes dormant→live restores so concurrent ops cannot double-spawn.
     restore_lock: AsyncMutex<()>,
     pipeline: Arc<PromptPipeline>,
@@ -153,8 +92,7 @@ impl Client {
     pub fn new(deps: ClientDeps) -> Self {
         Self {
             deps,
-            sessions: Arc::new(RwLock::new(HashMap::new())),
-            dormant: Arc::new(RwLock::new(HashMap::new())),
+            sessions: SessionRegistry::default(),
             restore_lock: AsyncMutex::new(()),
             pipeline: Arc::new(PromptPipeline::default()),
         }
@@ -266,42 +204,6 @@ impl Client {
         Ok(published)
     }
 
-    /// Shared poison mapping for the live session registry read lock.
-    fn sessions_read(
-        &self,
-    ) -> Result<std::sync::RwLockReadGuard<'_, HashMap<String, SessionEntry>>, AppError> {
-        self.sessions
-            .read()
-            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))
-    }
-
-    /// Shared poison mapping for the live session registry write lock.
-    fn sessions_write(
-        &self,
-    ) -> Result<std::sync::RwLockWriteGuard<'_, HashMap<String, SessionEntry>>, AppError> {
-        self.sessions
-            .write()
-            .map_err(|_| AppError::internal("ACP session registry lock poisoned"))
-    }
-
-    /// Shared poison mapping for the dormant session map read lock.
-    fn dormant_read(
-        &self,
-    ) -> Result<std::sync::RwLockReadGuard<'_, HashMap<String, StoredSession>>, AppError> {
-        self.dormant
-            .read()
-            .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))
-    }
-
-    /// Shared poison mapping for the dormant session map write lock.
-    fn dormant_write(
-        &self,
-    ) -> Result<std::sync::RwLockWriteGuard<'_, HashMap<String, StoredSession>>, AppError> {
-        self.dormant
-            .write()
-            .map_err(|_| AppError::internal("ACP dormant session lock poisoned"))
-    }
-
     /// Resolve a registered workspace by id (list + find).
     async fn resolve_workspace(&self, workspace_id: &str) -> Result<WorkspaceInfo, AppError> {
         self.deps
@@ -311,19 +213,6 @@ impl Client {
             .into_iter()
             .find(|workspace| workspace.id == workspace_id)
             .ok_or_else(|| AppError::not_found_id("workspace", workspace_id))
-    }
-
-    /// Look up a live session entry and map it under the registry read lock.
-    fn map_live_session<T>(
-        &self,
-        session_id: &str,
-        map: impl FnOnce(&SessionEntry) -> Result<T, AppError>,
-    ) -> Result<T, AppError> {
-        let sessions = self.sessions_read()?;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
-        map(entry)
     }
 
     /// Load persisted conversation metadata without treating it as live transport state.
@@ -353,33 +242,20 @@ impl Client {
     /// Propagates store I/O/parse failures and poisoned registry locks.
     pub fn load_conversations(&self) -> Result<(), AppError> {
         let records = self.deps.conversation_store.load()?;
-        let live = self.sessions_read()?;
-        let mut dormant = self.dormant_write()?;
-        dormant.clear();
-        for mut stored in records {
-            if live.contains_key(&stored.info.id) {
-                continue;
-            }
-            // Persisted running/failed bits are stale after restart; idle until
-            // the next prompt lazily starts an actor.
-            stored.info.status = SessionState::Idle.as_str().to_string();
-            dormant.insert(stored.info.id.clone(), stored);
-        }
+        let count = self.sessions.load_dormant(records)?;
         tracing::info!(
-            count = dormant.len(),
+            count,
             "loaded persisted ACP conversations; actors deferred until use"
         );
         Ok(())
     }
 
     fn persist_sessions(&self) -> Result<(), AppError> {
-        let live = self.sessions_read()?;
-        let dormant = self.dormant_read()?;
-        persist_sessions_to(&live, &dormant, &self.deps.conversation_store)
+        self.sessions.persist(&self.deps.conversation_store)
     }
 
     fn has_live_session(&self, session_id: &str) -> Result<bool, AppError> {
-        Ok(self.sessions_read()?.contains_key(session_id))
+        self.sessions.contains_live(session_id)
     }
 
     /// Spawn an actor for a stored-but-not-live session, reusing durable
@@ -397,13 +273,7 @@ impl Client {
         if self.has_live_session(session_id)? {
             return Ok(());
         }
-        let stored = {
-            let dormant = self.dormant_read()?;
-            dormant
-                .get(session_id)
-                .cloned()
-                .ok_or_else(|| AppError::not_found_id("session", session_id))?
-        };
+        let stored = self.sessions.dormant(session_id)?;
         tracing::info!(
             session_id,
             agent_id = %stored.info.agent_id,
@@ -415,7 +285,7 @@ impl Client {
         // briefly lose the conversation if handshake fails.
         self.register_live_session(stored.info.clone(), stored.acp_session_id)
             .await?;
-        self.dormant_write()?.remove(session_id);
+        self.sessions.finish_promotion(session_id)?;
         self.persist_sessions()?;
         tracing::info!(session_id, "ACP session actor restored");
         Ok(())
@@ -434,7 +304,7 @@ impl Client {
         persisted_acp_session_id: String,
     ) -> Result<SessionInfo, AppError> {
         // Cap concurrent live sessions to prevent process-exhaustion DoS.
-        if self.sessions_read()?.len() >= MAX_SESSIONS {
+        if self.sessions.live_len()? >= MAX_SESSIONS {
             return Err(AppError::RateLimited(
                 "too many concurrent ACP sessions".to_string(),
             ));
@@ -472,20 +342,16 @@ impl Client {
             .await
             .map_err(|_| AppError::internal("ACP session actor exited during startup"))?;
         let startup = result?;
-        let mut entry = SessionEntry {
+        let published = self.sessions.publish(SessionEntry::new(
             info,
-            state: SessionState::Created,
-            actor: spawned.handle.clone(),
+            spawned.handle.clone(),
             stderr_tail,
             prompt_cancel,
-            caps: startup.caps,
-            model_config_id: startup.model_config_id,
-            profile_config_id: startup.profile_config_id,
-            acp_session_id: startup.acp_session_id,
-        };
-        entry.apply_state(SessionState::Idle);
-        let published = entry.info.clone();
-        self.sessions_write()?.insert(id, entry);
+            startup.caps,
+            startup.model_config_id,
+            startup.profile_config_id,
+            startup.acp_session_id,
+        ))?;
         let _ = spawned.registered.send(());
         self.watch_actor_terminal(spawned.terminal, spawned.handle, published.id.clone());
         Ok(published)
@@ -499,24 +365,14 @@ impl Client {
         handle: actor::Handle,
         session_id: String,
     ) {
-        let sessions = Arc::clone(&self.sessions);
+        let sessions = self.sessions.clone();
         let permissions = Arc::clone(&self.deps.permissions);
         let event_bus = Arc::clone(&self.deps.event_bus);
         tokio::spawn(async move {
             let Ok(actor::TerminalOutcome::Failed(error)) = terminal.await else {
                 return;
             };
-            let current = sessions
-                .write()
-                .ok()
-                .and_then(|mut entries| {
-                    entries.get_mut(&session_id).and_then(|entry| {
-                        (entry.actor.id() == handle.id()).then(|| {
-                            entry.apply_state(SessionState::Failed);
-                        })
-                    })
-                })
-                .is_some();
+            let current = sessions.mark_failed_if_current(&session_id, handle.id());
             if !current {
                 return;
             }
@@ -540,13 +396,7 @@ impl Client {
         &self,
         session_id: &str,
     ) -> Result<(mpsc::Sender<ActorCommand>, Arc<AtomicBool>), AppError> {
-        self.map_live_session(session_id, |entry| match entry.state {
-            SessionState::Failed => Err(AppError::internal(
-                "ACP session failed; close it and create a new session",
-            )),
-            SessionState::Closed => Err(AppError::internal("ACP session is closed")),
-            _ => Ok((entry.actor.commands(), Arc::clone(&entry.prompt_cancel))),
-        })
+        self.sessions.command(session_id)
     }
 
     /// Look up a session's command sender and cached initialize capabilities.
@@ -554,7 +404,7 @@ impl Client {
         &self,
         session_id: &str,
     ) -> Result<(mpsc::Sender<ActorCommand>, SessionCaps), AppError> {
-        self.map_live_session(session_id, |entry| Ok((entry.actor.commands(), entry.caps)))
+        self.sessions.provider_command(session_id)
     }
 
     /// Look up command sender + model config id for a live model switch.
@@ -562,9 +412,7 @@ impl Client {
         &self,
         session_id: &str,
     ) -> Result<(mpsc::Sender<ActorCommand>, Option<String>), AppError> {
-        self.map_live_session(session_id, |entry| {
-            Ok((entry.actor.commands(), entry.model_config_id.clone()))
-        })
+        self.sessions.model_command(session_id)
     }
 
     /// Look up command sender + profile config id for a live profile switch.
@@ -576,9 +424,7 @@ impl Client {
         &self,
         session_id: &str,
     ) -> Result<(mpsc::Sender<ActorCommand>, Option<String>), AppError> {
-        self.map_live_session(session_id, |entry| {
-            Ok((entry.actor.commands(), entry.profile_config_id.clone()))
-        })
+        self.sessions.profile_command(session_id)
     }
 
     /// Reserve the session's sole prompt slot before enqueuing the actor command.
@@ -586,63 +432,21 @@ impl Client {
         &self,
         session_id: &str,
     ) -> Result<(mpsc::Sender<ActorCommand>, SessionCaps, String), AppError> {
-        let mut sessions = self.sessions_write()?;
-        let entry = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
-        match entry.state {
-            SessionState::Idle | SessionState::Interrupted => {
-                entry.prompt_cancel.store(false, Ordering::Release);
-                entry.apply_state(SessionState::Running);
-                Ok((
-                    entry.actor.commands(),
-                    entry.caps,
-                    entry.info.workspace.clone(),
-                ))
-            }
-            SessionState::Running => Err(AppError::validation(
-                "ACP session already has an active prompt",
-            )),
-            SessionState::Failed => Err(AppError::internal(
-                "ACP session failed; close it and create a new session",
-            )),
-            SessionState::Closed | SessionState::Created => {
-                Err(AppError::internal("ACP session is not ready for prompts"))
-            }
-        }
+        self.sessions.begin_prompt(session_id)
     }
 
     fn update_state(&self, session_id: &str, state: SessionState) {
-        if let Ok(mut sessions) = self.sessions_write() {
-            if let Some(entry) = sessions.get_mut(session_id) {
-                entry.apply_state(state);
-            }
-        }
+        self.sessions.update_state(session_id, state);
     }
 
     /// Move a session only when no concurrent lifecycle operation superseded it.
     fn update_state_if(&self, session_id: &str, expected: SessionState, state: SessionState) {
-        if let Ok(mut sessions) = self.sessions_write() {
-            if let Some(entry) = sessions.get_mut(session_id) {
-                if entry.state == expected {
-                    entry.apply_state(state);
-                }
-            }
-        }
+        self.sessions.update_state_if(session_id, expected, state);
     }
 
     /// Return the retained, bounded stderr tail for a session.
     pub fn stderr_tail(&self, session_id: &str) -> Result<String, AppError> {
-        let tail = self
-            .sessions_read()?
-            .get(session_id)
-            .map(|entry| Arc::clone(&entry.stderr_tail))
-            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
-        let stderr = tail
-            .lock()
-            .map_err(|_| AppError::internal("ACP stderr lock poisoned"))?
-            .as_string();
-        Ok(stderr)
+        self.sessions.stderr_tail(session_id)
     }
 }
 
@@ -671,17 +475,7 @@ impl ACPClient for Client {
     }
 
     fn get_session_info(&self, session_id: &str) -> Result<SessionInfo, AppError> {
-        if let Some(info) = self
-            .sessions_read()?
-            .get(session_id)
-            .map(|entry| entry.info.clone())
-        {
-            return Ok(info);
-        }
-        self.dormant_read()?
-            .get(session_id)
-            .map(StoredSession::to_info)
-            .ok_or_else(|| AppError::not_found_id("session", session_id))
+        self.sessions.info(session_id)
     }
 
     /// Live-only projection of negotiated session-history caps (S-HIST-PROBE).
@@ -692,44 +486,21 @@ impl ACPClient for Client {
         &self,
         session_id: &str,
     ) -> Result<crate::interfaces::SessionHistoryCapabilities, AppError> {
-        if let Some(caps) = self
-            .sessions_read()?
-            .get(session_id)
-            .map(|entry| entry.caps)
-        {
-            return Ok(caps.to_history_capabilities(true));
-        }
-        if self.dormant_read()?.contains_key(session_id) {
+        let caps = self.sessions.history_caps(session_id)?;
+        if !self.sessions.contains_live(session_id)? {
             tracing::debug!(
                 session_id,
                 "session history caps unavailable: agent not live (cold-start deferred to Q8)"
             );
-            return Ok(crate::interfaces::SessionHistoryCapabilities::unavailable());
         }
-        Err(AppError::not_found_id("session", session_id))
+        Ok(caps)
     }
 
     fn list_sessions(&self) -> Vec<Session> {
-        let Ok(live) = self.sessions_read() else {
-            tracing::error!("ACP session registry lock poisoned during list_sessions");
-            return Vec::new();
-        };
-        let Ok(dormant) = self.dormant_read() else {
-            tracing::error!("ACP dormant session lock poisoned during list_sessions");
-            return Vec::new();
-        };
-        let mut by_id: HashMap<String, SessionInfo> =
-            HashMap::with_capacity(live.len() + dormant.len());
-        for stored in dormant.values() {
-            by_id.insert(stored.info.id.clone(), stored.to_info());
-        }
-        // Live status/timestamps win when both maps contain the same id.
-        for entry in live.values() {
-            by_id.insert(entry.info.id.clone(), entry.info.clone());
-        }
-        let mut values: Vec<_> = by_id.into_values().collect();
-        values.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-        values
+        self.sessions.list().unwrap_or_else(|error| {
+            tracing::error!(%error, "ACP session registry lock poisoned during list_sessions");
+            Vec::new()
+        })
     }
 
     async fn send_prompt(
@@ -811,24 +582,7 @@ impl ACPClient for Client {
     }
 
     fn rename_session(&self, session_id: &str, name: &str) -> Result<(), AppError> {
-        {
-            let mut sessions = self.sessions_write()?;
-            if let Some(entry) = sessions.get_mut(session_id) {
-                entry.info.name = name.to_string();
-                entry.info.updated_at = Utc::now();
-                drop(sessions);
-                self.persist_sessions()?;
-                return Ok(());
-            }
-        }
-        {
-            let mut dormant = self.dormant_write()?;
-            let entry = dormant
-                .get_mut(session_id)
-                .ok_or_else(|| AppError::not_found_id("session", session_id))?;
-            entry.info.name = name.to_string();
-            entry.info.updated_at = Utc::now();
-        }
+        self.sessions.rename(session_id, name)?;
         self.persist_sessions()?;
         Ok(())
     }
@@ -846,25 +600,9 @@ impl ACPClient for Client {
             .registry
             .resolve(agent_id, model_id)
             .map_err(AppError::validation)?;
-        let (workspace_id, old_agent_id, commands) = {
-            let mut sessions = self.sessions_write()?;
-            let entry = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| AppError::not_found_id("session", session_id))?;
-            if entry.state != SessionState::Idle {
-                return Err(AppError::validation(
-                    "ACP session must be idle before it can be rebound",
-                ));
-            }
-            // Created gates new prompts while the old actor is drained and the
-            // replacement handshake runs; history stays entirely in EventBus.
-            entry.apply_state(SessionState::Created);
-            (
-                entry.info.workspace.clone(),
-                entry.info.agent_id.clone(),
-                entry.actor.commands(),
-            )
-        };
+        // Created gates new prompts while the old actor is drained and the
+        // replacement handshake runs; history stays entirely in EventBus.
+        let (workspace_id, old_agent_id, commands) = self.sessions.rebind_start(session_id)?;
         let transfer =
             match export_conversation(&self.deps.event_bus, session_id, max_transfer_bytes).await {
                 Ok(markdown) => markdown,
@@ -922,24 +660,18 @@ impl ACPClient for Client {
                 ));
             }
         };
-        let updated = {
-            let mut sessions = self.sessions_write()?;
-            let entry = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| AppError::not_found_id("session", session_id))?;
-            entry.actor = spawned.handle.clone();
-            entry.stderr_tail = stderr_tail;
-            entry.prompt_cancel = prompt_cancel;
-            entry.caps = startup.caps;
-            entry.model_config_id = startup.model_config_id;
-            // Replacement agent may advertise a different mode option (or none).
-            entry.profile_config_id = startup.profile_config_id;
-            entry.acp_session_id = startup.acp_session_id;
-            entry.info.agent_id = agent_id.to_string();
-            entry.info.model_id = model_id.to_string();
-            entry.apply_state(SessionState::Idle);
-            entry.info.clone()
-        };
+        let updated = self.sessions.rebind_finish(
+            session_id,
+            spawned.handle.clone(),
+            stderr_tail,
+            prompt_cancel,
+            startup.caps,
+            startup.model_config_id,
+            startup.profile_config_id,
+            startup.acp_session_id,
+            agent_id,
+            model_id,
+        )?;
         // The replacement actor has initialized, and the entry now owns its
         // sender, so it may safely start receiving commands.
         let _ = spawned.registered.send(());
@@ -1014,14 +746,7 @@ impl ACPClient for Client {
             .await
             .map_err(|_| AppError::internal("ACP switch_model actor exited"))??;
 
-        {
-            let mut sessions = self.sessions_write()?;
-            let entry = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| AppError::not_found_id("session", session_id))?;
-            entry.info.model_id = model_id.to_string();
-            entry.info.updated_at = Utc::now();
-        }
+        self.sessions.update_model(session_id, model_id)?;
         self.persist_sessions()?;
 
         append_payload(
@@ -1070,8 +795,7 @@ impl ACPClient for Client {
         // that force-closes the session (killing the process group) if the agent
         // has not acknowledged within CANCEL_GRACE_PERIOD. Removing the registry
         // entry first makes this idempotent against a concurrent close_session.
-        let sessions = Arc::clone(&self.sessions);
-        let dormant = Arc::clone(&self.dormant);
+        let sessions = self.sessions.clone();
         let permissions = Arc::clone(&self.deps.permissions);
         let conversation_store = self.deps.conversation_store.clone();
         let pipeline = Arc::clone(&self.pipeline);
@@ -1080,33 +804,13 @@ impl ACPClient for Client {
             tokio::time::sleep(CANCEL_GRACE_PERIOD).await;
             // Only escalate if the session is still live and interrupted — if the
             // agent acknowledged or the user already closed, leave it alone.
-            let sender = {
-                let Ok(sessions) = sessions.read() else {
-                    return;
-                };
-                let Some(entry) = sessions.get(&session_id_owned) else {
-                    return;
-                };
-                if entry.state != SessionState::Interrupted {
-                    return;
-                }
-                entry.actor.commands()
-            };
             // Remove first to make the force-close idempotent (mirrors close_session).
-            let removed = sessions
-                .write()
-                .ok()
-                .and_then(|mut s| s.remove(&session_id_owned));
-            if removed.is_none() {
+            let Some(removed) = sessions.take_interrupted(&session_id_owned) else {
                 return;
-            }
-            let _ = dormant
-                .write()
-                .ok()
-                .and_then(|mut s| s.remove(&session_id_owned));
-            if let (Ok(live), Ok(dormant)) = (sessions.read(), dormant.read()) {
-                let _ = persist_sessions_to(&live, &dormant, &conversation_store);
-            }
+            };
+            let sender = removed.commands();
+            let _ = sessions.remove_dormant(&session_id_owned);
+            let _ = sessions.persist(&conversation_store);
             permissions.clear_session(&session_id_owned);
             let (closed_tx, closed_rx) = oneshot::channel();
             if sender.send(ActorCommand::Close(closed_tx)).await.is_ok() {
@@ -1125,7 +829,7 @@ impl ACPClient for Client {
         // Dormant-only: delete durable metadata without spawning an agent just
         // to tear it down (spawn failure would otherwise block conversation delete).
         if !self.has_live_session(session_id)? {
-            let removed = self.dormant_write()?.remove(session_id);
+            let removed = self.sessions.remove_dormant(session_id)?;
             if removed.is_none() {
                 return Err(AppError::not_found_id("session", session_id));
             }
@@ -1140,19 +844,15 @@ impl ACPClient for Client {
         // Removing first makes close idempotent from the public registry's
         // perspective and prevents new work from being queued while teardown
         // is in progress. The actor still owns the sender copied below.
-        let entry = self
-            .sessions_write()?
-            .remove(session_id)
-            .ok_or_else(|| AppError::not_found_id("session", session_id))?;
+        let entry = self.sessions.remove_live(session_id)?;
         // Closing removes only live transport state; durable events remain in
         // SQLite and the metadata list is atomically updated before return.
         // Drop any stale dormant twin so persist cannot resurrect this id.
-        let _ = self.dormant_write()?.remove(session_id);
+        let _ = self.sessions.remove_dormant(session_id)?;
         let persist_result = self.persist_sessions();
         self.deps.permissions.clear_session(session_id);
         let (closed_tx, closed_rx) = oneshot::channel();
         if entry
-            .actor
             .commands()
             .send(ActorCommand::Close(closed_tx))
             .await
@@ -1206,7 +906,7 @@ impl ACPClient for Client {
         // leave an orphaned entry in the profile map. Live and dormant sessions
         // are both accepted; dormant sessions pick up the profile on actor
         // startup (initial set_config_option send).
-        if !self.has_live_session(session_id)? && !self.dormant_read()?.contains_key(session_id) {
+        if !self.has_live_session(session_id)? && !self.sessions.contains_dormant(session_id)? {
             return Err(AppError::not_found_id("session", session_id));
         }
 
@@ -1302,29 +1002,6 @@ impl ACPClient for Client {
     }
 }
 
-/// Merge live + dormant sessions and persist to durable storage.
-/// Live metadata wins for shared ids; dormant fills the rest so a
-/// create/rename cannot wipe conversations that have not been restored.
-fn persist_sessions_to(
-    live: &HashMap<String, SessionEntry>,
-    dormant: &HashMap<String, StoredSession>,
-    conversation_store: &ConversationStore,
-) -> Result<(), AppError> {
-    let mut by_id: HashMap<String, StoredSession> =
-        HashMap::with_capacity(live.len() + dormant.len());
-    for stored in dormant.values() {
-        by_id.insert(stored.info.id.clone(), stored.clone());
-    }
-    for entry in live.values() {
-        by_id.insert(
-            entry.info.id.clone(),
-            StoredSession::from_parts(entry.info.clone(), entry.acp_session_id.clone()),
-        );
-    }
-    let sessions = by_id.into_values().collect::<Vec<_>>();
-    conversation_store.persist(&sessions)
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -1334,7 +1011,8 @@ mod tests {
     use async_trait::async_trait;
     use tempfile::TempDir;
 
-    use super::{AgentRegistry, Client, ClientDeps, ConversationStore, StoredSession};
+    use super::{AgentRegistry, Client, ClientDeps, ConversationStore};
+    use crate::acp::store::StoredSession;
     use crate::config::{AgentInfo, AgentModel};
     use crate::events::{EventBus, Store};
     use crate::interfaces::{
@@ -1713,14 +1391,14 @@ mod tests {
 
         // Force the capability path, then break the actor command channel so
         // SetProfile cannot complete. Local state must stay at "code".
-        {
-            let mut sessions = client.sessions.write().expect("sessions lock");
-            let entry = sessions
-                .get_mut(&session.id)
-                .expect("session remains registered");
-            entry.profile_config_id = Some("profile".to_string());
-            entry.actor = super::actor::Handle::dead();
-        }
+        client
+            .sessions
+            .replace_actor_for_test(
+                &session.id,
+                super::actor::Handle::dead(),
+                Some("profile".to_string()),
+            )
+            .expect("session remains registered");
 
         let result = client.set_session_profile(&session.id, "ask").await;
         assert!(
