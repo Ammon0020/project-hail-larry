@@ -11,11 +11,15 @@ export type { AppEvent, Agent, Session, SearchOptions, SearchResult }
 
 const API_BASE = '/api'
 
-/** localStorage key for the paired device credential (id + secret). */
+/** sessionStorage key for the paired device credential (id + secret).
+ *  sessionStorage (not localStorage) limits exposure to the tab session —
+ *  the secret is cleared on tab close rather than persisting indefinitely.
+ *  TODO: migrate to an HttpOnly; SameSite=Strict; Secure cookie set by the
+ *  backend on POST /api/pair/verify-passcode so XSS cannot read it at all. */
 const DEVICE_CREDENTIAL_KEY = 'lai:deviceCredential'
 
 /**
- * Reads the paired device credential from localStorage.
+ * Reads the paired device credential from sessionStorage.
  * Returns `{ id, secret }` or `null` when the device is not paired
  * (e.g. before completing the lock-screen passcode flow). The credential
  * is stored by LockScreen.tsx / useBackend.verifyPasscode after a successful
@@ -23,7 +27,7 @@ const DEVICE_CREDENTIAL_KEY = 'lai:deviceCredential'
  */
 export function getDeviceCredential(): { id: string; secret: string } | null {
   try {
-    const raw = localStorage.getItem(DEVICE_CREDENTIAL_KEY)
+    const raw = sessionStorage.getItem(DEVICE_CREDENTIAL_KEY)
     if (!raw) return null
     const cred = JSON.parse(raw) as { id?: string; secret?: string }
     if (!cred.id || !cred.secret) return null
@@ -48,37 +52,14 @@ function authHeader(): string | null {
 }
 
 /**
- * Appends deviceId/secret query params when a credential is stored.
- * Used by raw + preview URLs (media/iframe tags cannot set Authorization).
- */
-function appendDeviceCredential(params: URLSearchParams): URLSearchParams {
-  const cred = getDeviceCredential()
-  if (cred) {
-    params.set('deviceId', cred.id)
-    params.set('secret', cred.secret)
-  }
-  return params
-}
-
-/**
- * Builds a URL for the raw file serving endpoint (GET /api/workspaces/{id}/raw).
- * Unlike apiFetch, this is used directly in <img>, <video>, <iframe> src
- * attributes and fetch() blob downloads — browser media tags cannot set
- * Authorization headers, so device credentials are appended as query params
- * (deviceId/secret), which the backend's extractCredential supports as a
- * fallback for non-loopback connections. Loopback connections bypass auth
- * entirely, so the host browser works without credentials.
- */
-export function rawFileUrl(workspaceId: string, path: string): string {
-  const params = appendDeviceCredential(new URLSearchParams({ path }))
-  return `${API_BASE}/workspaces/${workspaceId}/raw?${params.toString()}`
-}
-
-/**
  * Builds a URL for the browse-preview endpoint (GET /preview/{id}/{path}).
  * Top-level `/preview/...` (not under `/api`) so relative asset URLs in the
  * iframe resolve correctly. A one-time ticket bootstraps an HttpOnly preview
  * cookie, allowing relative assets to load without exposing device credentials.
+ * Used by both BrowsePreview (multi-file static sites) and FileViewer (single
+ * binary/media files) — the preview endpoint serves the same raw bytes as
+ * /api/workspaces/{id}/raw but authenticates via the cookie instead of
+ * putting the long-lived device secret in the URL query string.
  */
 export function previewFileUrl(workspaceId: string, entryPath: string, previewToken?: string): string {
   const segments = entryPath

@@ -32,9 +32,9 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
     try {
       const deviceName = navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Browser'
       const cred = await api.verifyPasscode(passcode.trim(), deviceName)
-      // Store credential in localStorage (Blueprint Sec 19). Uses the lai: prefix
+      // Store credential in sessionStorage (Blueprint Sec 19). Uses the lai: prefix
       // for consistency with other persisted keys (AGENTS.md — consistent keys).
-      localStorage.setItem('lai:deviceCredential', JSON.stringify(cred))
+      sessionStorage.setItem('lai:deviceCredential', JSON.stringify(cred))
       onPaired()
     } catch (err) {
       setError(true)

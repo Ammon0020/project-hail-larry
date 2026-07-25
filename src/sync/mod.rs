@@ -55,11 +55,17 @@ pub const CLIENT_SEND_CAPACITY: usize = 64;
 /// Max inbound WebSocket message size (matches Go `SetReadLimit(1 << 20)`).
 const MAX_MESSAGE_SIZE: usize = 1 << 20;
 
+/// Maximum concurrent WebSocket clients. Caps file-descriptor / memory / broadcast
+/// CPU exhaustion from a single device opening many connections. Soft check in
+/// `handle_ws` (a few connections may race past before `register`).
+const MAX_WS_CONNECTIONS: usize = 64;
+
 /// Validates a device credential pair.
 ///
 /// Returns `true` when `device_id`/`secret` belong to a paired device. Wired
-/// from pairing via [`Hub::set_auth_checker`]. When unset, auth is skipped
-/// (tests); production always installs a checker.
+/// from pairing via [`Hub::set_auth_checker`]. When unset, non-loopback
+/// connections are rejected (fail-closed); loopback is still allowed for the
+/// host browser. The fail-open default is only safe in tests.
 pub type AuthChecker = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
 
 /// Per-connection outbound handle stored in the hub registry.
@@ -336,6 +342,11 @@ pub fn authorize_handshake(
                 return Err((StatusCode::UNAUTHORIZED, "unauthorized\n"));
             }
         }
+    } else if !is_loopback_addr(remote_addr) {
+        // Fail-closed: no auth checker configured means LAN connections cannot be
+        // validated. Reject with 503 so a misconfigured hub never serves openly.
+        // Loopback (host browser) is still allowed.
+        return Err((StatusCode::SERVICE_UNAVAILABLE, "auth not configured\n"));
     }
 
     if !origin_allowed(origin, host) {
@@ -432,6 +443,16 @@ async fn handle_ws(
     ) {
         debug!(%status, remote = %remote, "sync: websocket handshake rejected");
         return (status, body).into_response();
+    }
+
+    // Cap concurrent connections so a single device cannot exhaust file
+    // descriptors / memory / broadcast CPU by opening thousands of sockets.
+    if hub.client_count() >= MAX_WS_CONNECTIONS {
+        warn!(
+            count = hub.client_count(),
+            "sync: websocket connection rejected; at capacity"
+        );
+        return (StatusCode::SERVICE_UNAVAILABLE, "server at capacity\n").into_response();
     }
 
     // `after` is optional: when present (and a bus is configured), the client

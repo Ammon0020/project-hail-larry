@@ -136,9 +136,9 @@ function remapTabIdAfterRename(
  * Mobile: bottom-nav layout, one panel at a time
  */
 export default function App() {
-  // Pairing state — check localStorage for existing credential (Blueprint Sec 19).
+  // Pairing state — check sessionStorage for existing credential (Blueprint Sec 19).
   const [paired, setPaired] = useState(() => {
-    return !!localStorage.getItem('lai:deviceCredential')
+    return !!sessionStorage.getItem('lai:deviceCredential')
   })
 
   // Panel state — restored from localStorage so the layout survives a reload.

@@ -66,6 +66,10 @@ const ACTOR_COMMAND_CAPACITY: usize = 32;
 const MAX_CALLBACK_TASKS: usize = 16;
 /// Maximum terminal records retained per ACP session.
 const MAX_TERMINALS_PER_SESSION: usize = 16;
+
+/// Maximum concurrent live ACP sessions. Each session pins an agent child
+/// process, so a cap prevents unbounded process-exhaustion DoS.
+const MAX_SESSIONS: usize = 32;
 /// Maximum output retained for an ACP terminal when the agent gives no lower limit.
 const MAX_TERMINAL_OUTPUT_BYTES: usize = DEFAULT_MAX_OUTPUT_BYTES;
 /// Safe default for a model-switch rebind transfer (256 KiB).
@@ -466,6 +470,12 @@ impl Client {
         info: SessionInfo,
         persisted_acp_session_id: String,
     ) -> Result<SessionInfo, AppError> {
+        // Cap concurrent live sessions to prevent process-exhaustion DoS.
+        if self.sessions_read()?.len() >= MAX_SESSIONS {
+            return Err(AppError::RateLimited(
+                "too many concurrent ACP sessions".to_string(),
+            ));
+        }
         let agent = self
             .deps
             .registry
@@ -1477,7 +1487,7 @@ async fn run_actor_inner(
                         deps.clone(),
                         responder,
                         "ACP denied terminal create",
-                        move |deps| async move { create_terminal(deps, request) },
+                        move |deps| async move { create_terminal(deps, request).await },
                     );
                     Ok(())
                 }
@@ -2346,7 +2356,11 @@ impl RetainedOutput {
 }
 
 /// Create an ACP terminal and start its command without delaying the response.
-fn create_terminal(
+///
+/// The command is gated on an explicit permission prompt so a malicious agent
+/// cannot bypass `request_permission` and spawn arbitrary commands directly.
+/// The approved action is bound to the exact argv/cwd/env that is executed.
+async fn create_terminal(
     deps: HandlerDeps,
     request: CreateTerminalRequest,
 ) -> Result<CreateTerminalResponse, AppError> {
@@ -2361,6 +2375,52 @@ fn create_terminal(
                 .unwrap_or(MAX_TERMINAL_OUTPUT_BYTES)
                 .min(MAX_TERMINAL_OUTPUT_BYTES)
         });
+
+    // Build a display string carrying the full argv, cwd, and env so the user
+    // can make an informed approval decision and the policy key discriminates
+    // on the exact executed command (target stays empty for execute tools).
+    let command_display = {
+        let mut parts = vec![request.command.clone()];
+        parts.extend(request.args.iter().cloned());
+        let mut display = parts.join(" ");
+        if let Some(cwd) = cwd.as_deref() {
+            display.push_str(&format!(" (cwd: {cwd})"));
+        }
+        if !request.env.is_empty() {
+            let env_pairs: Vec<(String, String)> = request
+                .env
+                .iter()
+                .map(|variable| (variable.name.clone(), variable.value.clone()))
+                .collect();
+            display.push_str(&format!(" (env: {env_pairs:?})"));
+        }
+        display
+    };
+    let permission = crate::interfaces::PermissionRequest {
+        id: Uuid::new_v4().to_string(),
+        // Agent session IDs are protocol transport identifiers. Permissions
+        // belong to the local lifecycle entry so close clears its exact
+        // pending prompts and durable policies.
+        session_id: deps.local_session_id.clone(),
+        tool: "create_terminal".to_string(),
+        tool_kind: "execute".to_string(),
+        command: command_display,
+        target: String::new(),
+        options: Vec::new(),
+        option_details: Vec::new(),
+    };
+    // Gate the spawn on a real permission decision before executing anything.
+    let decision = deps.permissions.request(permission).await?;
+    if matches!(
+        decision,
+        crate::interfaces::PermissionDecision::Deny
+            | crate::interfaces::PermissionDecision::RejectAlways
+    ) {
+        return Err(AppError::Forbidden(
+            "terminal creation denied by permission".to_string(),
+        ));
+    }
+
     let terminal_id = format!("term-{}", Uuid::new_v4().simple());
     let (exit, _) = watch::channel(None);
     let state = Arc::new(TerminalState {

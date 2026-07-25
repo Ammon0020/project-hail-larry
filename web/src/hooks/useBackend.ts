@@ -638,9 +638,9 @@ export function useBackend() {
   const verifyPasscode = useCallback(
     async (passcode: string, deviceName: string) => {
       const cred = await api.verifyPasscode(passcode, deviceName)
-      // Store credential in localStorage (Blueprint Sec 19 — browser-stored).
+      // Store credential in sessionStorage (Blueprint Sec 19 — browser-stored).
       // Uses the lai: prefix for consistency with other persisted keys.
-      localStorage.setItem('lai:deviceCredential', JSON.stringify(cred))
+      sessionStorage.setItem('lai:deviceCredential', JSON.stringify(cred))
       await loadDevices()
       return cred
     },

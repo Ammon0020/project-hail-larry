@@ -798,10 +798,14 @@ async fn preview_file(
         .await
         .map(|mut response| {
             // Preview HTML may run scripts in a sandboxed iframe; confine who
-            // can embed these responses (IDE only, same origin).
+            // can embed these responses (IDE only, same origin) and neutralize
+            // scripts so agent-written content cannot execute with IDE-origin
+            // authority (same-origin XSS). `sandbox` without `allow-scripts`
+            // blocks script execution; `allow-same-origin` preserves relative
+            // subresource loading for legitimate static previews.
             response.headers_mut().insert(
                 header::CONTENT_SECURITY_POLICY,
-                HeaderValue::from_static("frame-ancestors 'self'"),
+                HeaderValue::from_static("frame-ancestors 'self'; sandbox allow-same-origin"),
             );
             response
         })
@@ -834,6 +838,16 @@ async fn serve_workspace_file(
     response.headers_mut().insert(
         header::REFERRER_POLICY,
         HeaderValue::from_static("no-referrer"),
+    );
+    // Neutralize scripts in agent-written HTML served same-origin with the IDE:
+    // without this, a workspace `evil.html` could call authenticated `/api/*`
+    // endpoints and read IDE cookies/localStorage. `sandbox` without
+    // `allow-scripts` blocks script execution; `allow-same-origin` preserves
+    // relative subresource loading for legitimate static previews. The preview
+    // handler extends this with `frame-ancestors 'self'`.
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("sandbox allow-same-origin"),
     );
     let content_type = HeaderValue::try_from(content_type).map_err(|error| {
         ApiResponseError::internal(format!("derive file content type: {error}"))
@@ -1468,7 +1482,7 @@ async fn require_pair_rate_limit(
     let peer = request
         .extensions()
         .get::<axum::extract::ConnectInfo<SocketAddr>>()
-        .map(|connect| connect.0.ip().to_string())
+        .map(|connect| pair_rate_key(&connect.0.ip()))
         .unwrap_or_else(|| "127.0.0.1".to_string());
     if !allow_pair_request(&state, &peer) {
         debug!(peer, "pairing request rate limited");
@@ -1476,6 +1490,23 @@ async fn require_pair_rate_limit(
             .into_response();
     }
     next.run(request).await
+}
+
+/// Normalize a peer IP for pair-rate-limit bucketing. IPv6 addresses are
+/// collapsed to their /64 prefix so an attacker rotating within a single
+/// allocated subnet cannot mint a fresh bucket per /128 address. IPv4 keeps
+/// the full address (its address space is small enough that per-IP buckets
+/// are meaningful).
+fn pair_rate_key(ip: &std::net::IpAddr) -> String {
+    match ip {
+        std::net::IpAddr::V6(addr) => {
+            let octets = addr.octets();
+            let mut prefix = [0_u8; 16];
+            prefix[..8].copy_from_slice(&octets[..8]);
+            std::net::Ipv6Addr::from(prefix).to_string()
+        }
+        std::net::IpAddr::V4(_) => ip.to_string(),
+    }
 }
 
 fn allow_pair_request(state: &AppState, peer: &str) -> bool {
@@ -2273,7 +2304,7 @@ mod tests {
                 .headers()
                 .get(header::CONTENT_SECURITY_POLICY)
                 .and_then(|v| v.to_str().ok()),
-            Some("frame-ancestors 'self'")
+            Some("frame-ancestors 'self'; sandbox allow-same-origin")
         );
         let bytes = to_bytes(response.into_body(), usize::MAX)
             .await

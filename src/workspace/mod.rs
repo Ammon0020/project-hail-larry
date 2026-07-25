@@ -154,26 +154,9 @@ impl Default for Manager {
 impl WorkspaceManager for Manager {
     async fn register(&self, path: &str) -> Result<WorkspaceInfo, AppError> {
         let input = PathBuf::from(path);
-        let root = tokio::task::spawn_blocking(move || {
-            // Reject a symlink root outright: fs::metadata and canonicalize both
-            // follow links, so without this check an agent could register a
-            // symlink pointing outside the intended directory.
-            if let Ok(meta) = fs::symlink_metadata(&input) {
-                if meta.file_type().is_symlink() {
-                    return Err(AppError::validation("workspace root must not be a symlink"));
-                }
-            }
-            let metadata = fs::metadata(&input)
-                .map_err(|err| AppError::internal(format!("stat workspace: {err}")))?;
-            if !metadata.is_dir() {
-                return Err(AppError::validation("workspace path is not a directory"));
-            }
-            input
-                .canonicalize()
-                .map_err(|err| AppError::internal(format!("canonicalize workspace: {err}")))
-        })
-        .await
-        .map_err(|err| AppError::internal(format!("register task failed: {err}")))??;
+        let root = tokio::task::spawn_blocking(move || open_dir_no_symlink(&input))
+            .await
+            .map_err(|err| AppError::internal(format!("register task failed: {err}")))??;
 
         let id = workspace_id(&root);
         let entry = WorkspaceEntry::available(root);
@@ -326,6 +309,85 @@ impl WorkspaceManager for Manager {
             .await
             .map_err(|err| AppError::validation(err.to_string()))
     }
+}
+
+/// Open a directory without following a symlink at the final component, then
+/// return its canonical path.
+///
+/// This eliminates the TOCTOU race between a `symlink_metadata` check and
+/// `canonicalize` in workspace registration: an attacker cannot swap a real
+/// directory for a symlink between the check and the open because `O_NOFOLLOW`
+/// atomically rejects symlinks at open time. The canonical path is derived
+/// from the pinned file descriptor so later filesystem changes cannot
+/// redirect it.
+#[cfg(unix)]
+fn open_dir_no_symlink(path: &Path) -> Result<PathBuf, AppError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+
+    // Pre-check for a clear error message. The O_NOFOLLOW open below is the
+    // authoritative, race-free check.
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            return Err(AppError::validation("workspace root must not be a symlink"));
+        }
+    }
+
+    // O_NOFOLLOW atomically rejects a symlink at the final component,
+    // eliminating the TOCTOU race between the pre-check and the open.
+    let dir = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|err| AppError::internal(format!("open workspace: {err}")))?;
+
+    // fstat via the fd — the authoritative metadata check on the pinned inode.
+    let metadata = dir
+        .metadata()
+        .map_err(|err| AppError::internal(format!("stat workspace: {err}")))?;
+    if !metadata.is_dir() {
+        return Err(AppError::validation("workspace path is not a directory"));
+    }
+
+    // Canonicalize via the pinned fd so a later symlink swap on the original
+    // path cannot redirect the stored root. On Linux, /proc/self/fd/<fd>
+    // resolves to the canonical path of the inode the fd refers to.
+    #[cfg(target_os = "linux")]
+    {
+        let fd_path = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
+        fs::canonicalize(&fd_path)
+            .map_err(|err| AppError::internal(format!("canonicalize workspace: {err}")))
+    }
+    // On non-Linux Unix (e.g. macOS), fall back to canonicalizing the original
+    // path. The O_NOFOLLOW open already verified it is not a symlink at open
+    // time; the residual race between open and canonicalize is narrow and
+    // accepted.
+    #[cfg(not(target_os = "linux"))]
+    {
+        path.canonicalize()
+            .map_err(|err| AppError::internal(format!("canonicalize workspace: {err}")))
+    }
+}
+
+/// Non-Unix fallback: check `symlink_metadata` then `canonicalize`.
+///
+/// std does not expose `O_NOFOLLOW` on non-Unix platforms, so this has an
+/// inherent TOCTOU race (the path can be swapped between the check and
+/// canonicalize). This is the best available with portable std APIs.
+#[cfg(not(unix))]
+fn open_dir_no_symlink(path: &Path) -> Result<PathBuf, AppError> {
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            return Err(AppError::validation("workspace root must not be a symlink"));
+        }
+    }
+    let metadata =
+        fs::metadata(path).map_err(|err| AppError::internal(format!("stat workspace: {err}")))?;
+    if !metadata.is_dir() {
+        return Err(AppError::validation("workspace path is not a directory"));
+    }
+    path.canonicalize()
+        .map_err(|err| AppError::internal(format!("canonicalize workspace: {err}")))
 }
 
 fn workspace_id(root: &Path) -> String {

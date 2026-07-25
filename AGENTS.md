@@ -32,7 +32,7 @@ docs/           plans, specs, references, reviews, status, known issues
 - The client owns filesystem access, shell execution, permissions, and sessions.
 - The UI never talks directly to an agent implementation.
 - Agents propose actions; the client performs approved actions.
-- Prefer small, maintainable changes; avoid duplicated or speculative code.
+- Prefer small, maintainable code; avoid duplicated or speculative code.
 
 ## Development
 

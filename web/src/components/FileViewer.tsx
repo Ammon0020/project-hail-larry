@@ -17,14 +17,15 @@
  *  - 3D models (stl, 3mf, obj, gltf, glb, ply, dae, wrl, vrml) → Three.js orbit viewer
  *  - Fallback → "preview not available" + download link
  *
- * All binary content is served from GET /api/workspaces/{id}/raw, which
+ * All binary content is served from GET /preview/{id}/{path}, which
  * streams raw bytes with a proper Content-Type (unlike the JSON-wrapped
  * /file endpoint). Browser media tags cannot set Authorization headers,
- * so rawFileUrl appends device credentials as query params.
+ * so a one-time preview-session ticket bootstraps an HttpOnly cookie
+ * instead of putting the device secret in the URL query string.
  */
 import { useEffect, useRef, useState } from 'react'
 import { FileX, Download, Loader2, Box, Code } from 'lucide-react'
-import { rawFileUrl } from '@/lib/api'
+import { api, previewFileUrl } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { Tab } from '@/types'
 
@@ -81,29 +82,41 @@ function viewerKind(name: string): ViewerKind {
 
 export function FileViewer({ tab, active, onToggleViewMode }: { tab: Tab; active: boolean; onToggleViewMode?: (id: string) => void }) {
   const kind = viewerKind(tab.name)
-  const url = rawFileUrl(tab.workspaceId ?? '', tab.path)
   const ext = tab.name.split('.').pop()?.toLowerCase() || ''
+  const workspaceId = tab.workspaceId ?? ''
+  const [previewToken, setPreviewToken] = useState<string>()
+  const url = previewToken ? previewFileUrl(workspaceId, tab.path, previewToken) : ''
+
+  useEffect(() => {
+    if (!workspaceId) return
+    let cancelled = false
+    void api.createPreviewSession(workspaceId)
+      .then(({ token }) => { if (!cancelled) setPreviewToken(token) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [workspaceId])
 
   return (
     <div className={cn('absolute inset-0 items-center justify-center bg-editor', active ? 'flex' : 'hidden')}>
-      {kind === 'image' && (
+      {!url && <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />}
+      {url && kind === 'image' && (
         ext === 'tiff' || ext === 'tif'
           ? <TiffViewer url={url} name={tab.name} />
           : ext === 'heic' || ext === 'heif'
             ? <HeicViewer url={url} name={tab.name} />
             : <ImageViewer url={url} name={tab.name} />
       )}
-      {kind === 'svg' && <SvgViewer url={url} name={tab.name} />}
-      {kind === 'pdf' && <PdfViewer url={url} />}
-      {kind === 'video' && <VideoViewer url={url} name={tab.name} />}
-      {kind === 'audio' && <AudioViewer url={url} name={tab.name} />}
-      {kind === 'docx' && <DocxViewer url={url} name={tab.name} />}
-      {kind === 'xlsx' && <XlsxViewer url={url} name={tab.name} />}
-      {kind === 'epub' && <EpubViewer url={url} />}
-      {kind === 'csv' && <CsvViewer url={url} name={tab.name} />}
-      {kind === 'html' && <HtmlViewer url={url} />}
-      {kind === 'model' && <ModelViewer url={url} name={tab.name} />}
-      {kind === 'fallback' && <FallbackViewer url={url} name={tab.name} />}
+      {url && kind === 'svg' && <SvgViewer url={url} name={tab.name} />}
+      {url && kind === 'pdf' && <PdfViewer url={url} />}
+      {url && kind === 'video' && <VideoViewer url={url} name={tab.name} />}
+      {url && kind === 'audio' && <AudioViewer url={url} name={tab.name} />}
+      {url && kind === 'docx' && <DocxViewer url={url} name={tab.name} />}
+      {url && kind === 'xlsx' && <XlsxViewer url={url} name={tab.name} />}
+      {url && kind === 'epub' && <EpubViewer url={url} />}
+      {url && kind === 'csv' && <CsvViewer url={url} name={tab.name} />}
+      {url && kind === 'html' && <HtmlViewer url={url} />}
+      {url && kind === 'model' && <ModelViewer url={url} name={tab.name} />}
+      {url && kind === 'fallback' && <FallbackViewer url={url} name={tab.name} />}
       {/* View Raw button — shown for text-preview files (SVG, CSV, HTML, OBJ)
           that are in preview mode, so the user can switch back to CodeMirror. */}
       {tab.previewable && !tab.isBinary && onToggleViewMode && (
