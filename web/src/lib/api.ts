@@ -3,7 +3,7 @@
  * All endpoints are relative to the same origin (served by the Go server).
  */
 
-import type { AppEvent, Attachment, Agent, Session, SearchOptions, SearchResult } from '@/types'
+import type { AppEvent, Attachment, Agent, PromptContextSettings, Session, SearchOptions, SearchResult } from '@/types'
 
 // Re-export types so existing callers importing them from '@/lib/api' keep
 // working — the canonical definitions live in @/types.
@@ -305,6 +305,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ openFiles, recentEdits, selection }),
     }),
+  getPromptContextSettings: () =>
+    apiFetch<PromptContextSettings>('/settings/prompt-context'),
+  putPromptContextSettings: (settings: PromptContextSettings) =>
+    apiFetch<PromptContextSettings>('/settings/prompt-context', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    }),
   sendPrompt: (sessionId: string, content: string, attachments?: Attachment[]) =>
     apiFetch<{ status: string }>(`/sessions/${sessionId}/prompt`, {
       method: 'POST',
@@ -448,6 +455,8 @@ export const getMcpConfig = api.getMcpConfig
 export const putMcpConfig = api.putMcpConfig
 export const patchMcpServer = api.patchMcpServer
 export const getMcpStatus = api.getMcpStatus
+export const getPromptContextSettings = api.getPromptContextSettings
+export const putPromptContextSettings = api.putPromptContextSettings
 
 // ---- MCP health status ----
 

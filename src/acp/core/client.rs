@@ -8,7 +8,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use super::super::{context::PromptPipeline, AgentRegistry};
 use super::registry::SessionRegistry;
-use crate::config::AgentInfo;
+use crate::config::{AgentInfo, PromptContextSettings};
 use crate::events::SharedEventBus;
 use crate::interfaces::{
     ACPClient, AppError, Attachment, PermissionManager, ProviderInfo, Session, SessionInfo,
@@ -67,6 +67,14 @@ impl Client {
         config: super::super::profile_config::ProfileConfig,
     ) -> Result<(), AppError> {
         self.pipeline.profiles.replace_config(config)
+    }
+
+    /// Replaces the live bounded path-context settings after a durable config write.
+    pub fn replace_prompt_context_settings(
+        &self,
+        settings: PromptContextSettings,
+    ) -> Result<(), AppError> {
+        self.pipeline.replace_context_settings(settings)
     }
 
     /// Creates a session with an optional profile bound before actor startup.

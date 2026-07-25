@@ -300,6 +300,7 @@ fn write_seed_config(state_dir: &Path, repo_root: &Path, port: u16) -> Result<()
         credential_inactivity_ttl_seconds: 2_592_000,
         allow_remote_workspace_registration: false,
         revocation_grace_period_seconds: 300,
+        prompt_context: local_agent::config::PromptContextSettings::default(),
         extra: toml::Table::new(),
     };
     std::fs::write(

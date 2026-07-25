@@ -1,7 +1,7 @@
 //! Prompt context pipeline: first-prompt workspace context and live editor context.
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Component, Path};
 use std::sync::{Mutex, RwLock};
 
 use chrono::Local;
@@ -10,18 +10,12 @@ use tokio::time::{timeout, Duration};
 
 use super::conversation::{ConversationTransfer, TransferQueue};
 use super::profile::ProfileMiddleware;
-use crate::interfaces::{
-    AppError, FileNode, InjectedContext, WorkspaceManager, FILE_NODE_TYPE_FILE,
-};
+use crate::config::{PromptContextSettings, MAX_PROMPT_CONTEXT_PATHS};
+use crate::interfaces::{AppError, FileNode, InjectedContext, WorkspaceManager};
 
 const CONTEXT_MIME_TYPE: &str = "text/markdown";
-const MAX_CONTEXT_FILES: usize = 200;
-const MAX_FILE_TREE_DEPTH: usize = 3;
 const MAX_CONTEXT_BYTES: usize = 8 * 1024;
-const MAX_OPEN_FILES: usize = 20;
-const MAX_RECENT_EDITS: usize = 10;
-const MAX_OPEN_FILE_BYTES: usize = 32 * 1024;
-const MAX_OPEN_FILES_TOTAL_BYTES: usize = 128 * 1024;
+const MAX_SELECTION_BYTES: usize = 32 * 1024;
 
 /// Structured context emitted as ACP `ContentBlock::Resource` when supported.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +164,7 @@ impl OpenFilesTracker {
 pub struct PromptPipeline {
     counts: Mutex<HashMap<String, usize>>,
     pub tracker: OpenFilesTracker,
+    context_settings: RwLock<PromptContextSettings>,
     /// Shared so ACP session setup can read the tool whitelist (S-PROF-TOOLS).
     pub profiles: std::sync::Arc<ProfileMiddleware>,
     pub transfers: TransferQueue,
@@ -180,6 +175,7 @@ impl Default for PromptPipeline {
         Self {
             counts: Mutex::new(HashMap::new()),
             tracker: OpenFilesTracker::default(),
+            context_settings: RwLock::new(PromptContextSettings::default()),
             profiles: std::sync::Arc::new(ProfileMiddleware::default()),
             transfers: TransferQueue::default(),
         }
@@ -187,6 +183,24 @@ impl Default for PromptPipeline {
 }
 
 impl PromptPipeline {
+    pub(in crate::acp) fn replace_context_settings(
+        &self,
+        settings: PromptContextSettings,
+    ) -> Result<(), AppError> {
+        *self
+            .context_settings
+            .write()
+            .map_err(|_| AppError::internal("prompt context settings lock poisoned"))? = settings;
+        Ok(())
+    }
+
+    fn context_settings(&self) -> Result<PromptContextSettings, AppError> {
+        self.context_settings
+            .read()
+            .map(|settings| settings.clone())
+            .map_err(|_| AppError::internal("prompt context settings lock poisoned"))
+    }
+
     /// Clears first-prompt state after the transport has been rebound.
     pub fn reset(&self, session_id: &str) {
         if let Ok(mut counts) = self.counts.lock() {
@@ -227,12 +241,13 @@ impl PromptPipeline {
             .map_err(|_| AppError::internal("prompt pipeline lock poisoned"))?
             .get(session_id)
             .unwrap_or(&0);
+        let settings = self.context_settings()?;
         let mut text_sections = Vec::new();
         let mut resources = Vec::new();
 
         if prompt_count == 0 {
             let first_resources =
-                first_prompt_resources(workspace_id, workspace_path, workspace).await;
+                first_prompt_resources(workspace_id, workspace_path, workspace, &settings).await;
             if embedded_context {
                 resources.extend(first_resources);
             } else {
@@ -250,18 +265,22 @@ impl PromptPipeline {
         }
 
         text_sections.push(format!("## Current Time\n\n{}", Local::now().to_rfc3339()));
-        append_paths(
-            &mut text_sections,
-            "## Open Files",
+        // Open and recently edited paths share one budget so the default of
+        // ten means ten total automatic editor paths, not ten per section.
+        let path_limit = settings.open_file_limit.min(MAX_PROMPT_CONTEXT_PATHS);
+        let mut seen_paths = HashSet::new();
+        let open_files = bounded_relative_paths(
             self.tracker.open_files(session_id)?,
-            MAX_OPEN_FILES,
+            path_limit,
+            &mut seen_paths,
         );
-        append_paths(
-            &mut text_sections,
-            "## Recently Edited Files",
+        let recent_edits = bounded_relative_paths(
             self.tracker.recent_edits(session_id)?,
-            MAX_RECENT_EDITS,
+            path_limit.saturating_sub(open_files.len()),
+            &mut seen_paths,
         );
+        append_paths(&mut text_sections, "## Open Files", open_files);
+        append_paths(&mut text_sections, "## Recently Edited Files", recent_edits);
 
         let profile = self.profiles.instructions(session_id)?;
         if embedded_context {
@@ -271,16 +290,10 @@ impl PromptPipeline {
                 mime_type: CONTEXT_MIME_TYPE.to_string(),
                 text: profile,
             });
-            resources.extend(
-                open_file_resources(
-                    &self.tracker,
-                    session_id,
-                    workspace_id,
-                    workspace_path,
-                    workspace,
-                )
-                .await,
-            );
+            if let Some(selection) = selection_resource(&self.tracker, session_id, workspace_path)?
+            {
+                resources.push(selection);
+            }
         } else {
             text_sections.push(profile);
         }
@@ -300,6 +313,7 @@ async fn first_prompt_resources(
     workspace_id: &str,
     workspace_path: &Path,
     workspace: &dyn WorkspaceManager,
+    settings: &PromptContextSettings,
 ) -> Vec<ContextResource> {
     let mut body = format!(
         "## Workspace Context\n\n- Workspace root: {}\n- Platform: {}/{}",
@@ -309,12 +323,10 @@ async fn first_prompt_resources(
     );
     match workspace.file_tree(workspace_id).await {
         Ok(nodes) => {
-            let mut paths = Vec::new();
-            flatten_nodes(&nodes, 0, &mut paths);
-            paths.truncate(MAX_CONTEXT_FILES);
+            let paths = top_level_paths(&nodes, settings.workspace_file_list_limit);
             if !paths.is_empty() {
                 body.push_str(&format!(
-                    "\n\n## Files (first {}, depth ≤ {MAX_FILE_TREE_DEPTH})\n\n{}",
+                    "\n\n## Workspace entries (first {}, top level only)\n\n{}",
                     paths.len(),
                     paths.join("\n")
                 ));
@@ -380,75 +392,79 @@ async fn git_status(workspace_path: &Path) -> Option<String> {
     }
 }
 
-fn flatten_nodes(nodes: &[FileNode], depth: usize, paths: &mut Vec<String>) {
-    for node in nodes {
-        if node.node_type == FILE_NODE_TYPE_FILE {
-            paths.push(node.path.clone());
-        } else if depth < MAX_FILE_TREE_DEPTH {
-            flatten_nodes(&node.children, depth + 1, paths);
-        }
-    }
+fn top_level_paths(nodes: &[FileNode], limit: usize) -> Vec<String> {
+    nodes
+        .iter()
+        .filter_map(|node| top_level_path(&node.path))
+        .take(limit.min(MAX_PROMPT_CONTEXT_PATHS))
+        .collect()
 }
 
-fn append_paths(sections: &mut Vec<String>, heading: &str, mut paths: Vec<String>, limit: usize) {
-    paths.truncate(limit);
+fn bounded_relative_paths(
+    paths: Vec<String>,
+    limit: usize,
+    seen: &mut HashSet<String>,
+) -> Vec<String> {
+    paths
+        .into_iter()
+        .filter_map(|path| relative_path(&path))
+        .filter(|path| seen.insert(path.clone()))
+        .take(limit)
+        .collect()
+}
+
+fn append_paths(sections: &mut Vec<String>, heading: &str, paths: Vec<String>) {
     if !paths.is_empty() {
         sections.push(format!("{heading}\n\n- {}", paths.join("\n- ")));
     }
 }
 
-async fn open_file_resources(
+fn relative_path(path: &str) -> Option<String> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return None;
+    }
+    Some(path.to_string_lossy().to_string())
+}
+
+fn top_level_path(path: &str) -> Option<String> {
+    let path = relative_path(path)?;
+    let components = Path::new(&path).components().collect::<Vec<_>>();
+    (components.len() == 1 && !matches!(components[0], Component::CurDir)).then_some(path)
+}
+
+fn selection_resource(
     tracker: &OpenFilesTracker,
     session_id: &str,
-    workspace_id: &str,
     workspace_path: &Path,
-    workspace: &dyn WorkspaceManager,
-) -> Vec<ContextResource> {
-    let Ok(paths) = tracker.open_files(session_id) else {
-        return Vec::new();
-    };
-    let mut total = 0;
-    let mut resources = Vec::new();
-    for path in paths.into_iter().take(MAX_OPEN_FILES) {
-        let Ok(file) = workspace.read_file(workspace_id, &path).await else {
-            continue;
-        };
-        if file.is_binary || file.content.is_empty() {
-            continue;
-        }
-        let mut text = file.content;
-        truncate_string(&mut text, MAX_OPEN_FILE_BYTES);
-        total += text.len();
-        resources.push(ContextResource {
-            name: path.clone(),
-            uri: format!("file://{}", workspace_path.join(&path).display()),
-            mime_type: mime_by_extension(&path).to_string(),
-            text,
-        });
-        if total >= MAX_OPEN_FILES_TOTAL_BYTES {
-            break;
-        }
-    }
-    let Ok(selection) = tracker.selection(session_id) else {
-        return resources;
-    };
+) -> Result<Option<ContextResource>, AppError> {
+    let selection = tracker.selection(session_id)?;
     if !selection.text.is_empty() {
-        resources.push(ContextResource {
-            name: format!(
-                "{}:{}-{}",
-                selection.path, selection.start_line, selection.end_line
-            ),
+        let Some(path) = relative_path(&selection.path) else {
+            return Ok(None);
+        };
+        let mut text = selection.text;
+        truncate_string(&mut text, MAX_SELECTION_BYTES);
+        return Ok(Some(ContextResource {
+            name: format!("{}:{}-{}", path, selection.start_line, selection.end_line),
             uri: format!(
                 "file://{}#L{}-L{}",
-                workspace_path.join(&selection.path).display(),
+                workspace_path.join(&path).display(),
                 selection.start_line,
                 selection.end_line
             ),
-            mime_type: mime_by_extension(&selection.path).to_string(),
-            text: selection.text,
-        });
+            mime_type: mime_by_extension(&path).to_string(),
+            text,
+        }));
     }
-    resources
+    Ok(None)
 }
 
 fn render_resource(resource: ContextResource) -> String {
@@ -494,7 +510,8 @@ mod tests {
 
     use async_trait::async_trait;
 
-    use super::PromptPipeline;
+    use super::{top_level_paths, PromptPipeline};
+    use crate::config::PromptContextSettings;
     use crate::interfaces::{
         AppError, FileNode, ReadFileResult, SearchOptions, SearchResult, WorkspaceInfo,
         WorkspaceManager,
@@ -612,5 +629,79 @@ mod tests {
         assert!(context
             .iter()
             .any(|item| item.name == "Profile Instructions"));
+    }
+
+    #[tokio::test]
+    async fn open_file_context_is_relative_paths_only_and_respects_its_limit() {
+        let pipeline = PromptPipeline::default();
+        pipeline
+            .replace_context_settings(PromptContextSettings {
+                open_file_limit: 1,
+                workspace_file_list_limit: 1,
+            })
+            .expect("set context settings");
+        pipeline
+            .tracker
+            .set_open_files(
+                "session",
+                vec![
+                    "demo1.html".to_string(),
+                    "demo2.html".to_string(),
+                    "/not-relative.html".to_string(),
+                ],
+            )
+            .expect("set open files");
+        let workspace = Arc::new(EmptyWorkspace);
+
+        let prepared = pipeline
+            .prepare(
+                "session",
+                "workspace",
+                Path::new("/tmp"),
+                true,
+                workspace.as_ref(),
+            )
+            .await
+            .expect("prepare prompt");
+
+        assert!(prepared.prefix.contains("demo1.html"));
+        assert!(!prepared.prefix.contains("demo2.html"));
+        assert!(!prepared.prefix.contains("not-relative.html"));
+        assert!(!prepared
+            .resources
+            .iter()
+            .any(|resource| resource.name == "demo1.html"));
+    }
+
+    #[test]
+    fn workspace_context_keeps_only_limited_top_level_entries() {
+        let nodes = vec![
+            FileNode {
+                name: "demo1.html".to_string(),
+                node_type: "file".to_string(),
+                path: "demo1.html".to_string(),
+                children: Vec::new(),
+            },
+            FileNode {
+                name: "src".to_string(),
+                node_type: "folder".to_string(),
+                path: "src".to_string(),
+                children: vec![FileNode {
+                    name: "lib.rs".to_string(),
+                    node_type: "file".to_string(),
+                    path: "src/lib.rs".to_string(),
+                    children: Vec::new(),
+                }],
+            },
+            FileNode {
+                name: "nested".to_string(),
+                node_type: "file".to_string(),
+                path: "nested/file.rs".to_string(),
+                children: Vec::new(),
+            },
+        ];
+
+        assert_eq!(top_level_paths(&nodes, 10), ["demo1.html", "src"]);
+        assert_eq!(top_level_paths(&nodes, 1), ["demo1.html"]);
     }
 }

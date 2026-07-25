@@ -10,6 +10,7 @@ mod mcp;
 mod profiles;
 mod providers;
 mod session_extra;
+mod settings;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -294,6 +295,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/profiles",
             get(profiles::get_profiles).put(profiles::put_profiles),
+        )
+        .route(
+            "/api/settings/prompt-context",
+            get(settings::get_prompt_context).put(settings::put_prompt_context),
         )
         .route("/api/permissions/pending", get(pending_permissions))
         .route("/api/permissions/{id}/respond", post(respond_permission))

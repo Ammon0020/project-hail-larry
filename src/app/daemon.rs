@@ -139,6 +139,8 @@ impl Daemon {
             )),
             mcp_config_path: Some(mcp_config_path.clone()),
         }));
+        acp.replace_prompt_context_settings(config.prompt_context.clone())
+            .context("apply prompt context settings")?;
         // Metadata only — actors start lazily on prompt/cancel/providers/rebind.
         acp.load_conversations()
             .context("load persisted ACP conversations")?;

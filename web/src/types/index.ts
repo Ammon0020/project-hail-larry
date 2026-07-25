@@ -148,6 +148,12 @@ export interface InjectedContext {
   content: string
 }
 
+/** Host-wide limits for automatic workspace/editor path context. */
+export interface PromptContextSettings {
+  openFileLimit: number
+  workspaceFileListLimit: number
+}
+
 /**
  * ACP stop reason for the final StreamUpdate of a turn.
  * Mirrors the ACP spec / coder/acp-go-sdk StopReason union. Kept local

@@ -18,7 +18,7 @@ import {
   HelpCircle,
   Menu,
 } from 'lucide-react'
-import type { Agent, McpServerConfig } from '@/types'
+import type { Agent, McpServerConfig, PromptContextSettings } from '@/types'
 import type { ProviderInfo } from '@/lib/api'
 import {
   getMcpConfig,
@@ -27,6 +27,8 @@ import {
   listProviders,
   setProvider,
   disableProvider,
+  getPromptContextSettings,
+  putPromptContextSettings,
   UnsupportedProvidersError,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -103,6 +105,14 @@ export function SettingsPanel({
   const [togglingServer, setTogglingServer] = useState<string | null>(null)
   const [showQuickRef, setShowQuickRef] = useState(false)
 
+  // Host-wide prompt limits live in config.toml instead of profiles because
+  // they govern how much local workspace state any agent can receive.
+  const [promptContext, setPromptContext] = useState<PromptContextSettings | null>(null)
+  const [promptContextOriginal, setPromptContextOriginal] = useState<PromptContextSettings | null>(null)
+  const [promptContextLoading, setPromptContextLoading] = useState(true)
+  const [promptContextSaving, setPromptContextSaving] = useState(false)
+  const [promptContextError, setPromptContextError] = useState<string | null>(null)
+
   // Providers (advanced) state — capability-gated per active session.
   // `providersStatus` discriminates loading / unsupported / loaded / error so
   // the section can render the right muted note without conflating a 501
@@ -153,6 +163,10 @@ export function SettingsPanel({
     loadMcp()
   }, [])
 
+  useEffect(() => {
+    void loadPromptContext()
+  }, [])
+
   async function loadMcp() {
     setMcpLoading(true)
     try {
@@ -165,6 +179,41 @@ export function SettingsPanel({
     } finally {
       setMcpLoading(false)
     }
+  }
+
+  async function loadPromptContext() {
+    setPromptContextLoading(true)
+    try {
+      const settings = await getPromptContextSettings()
+      setPromptContext(settings)
+      setPromptContextOriginal(settings)
+      setPromptContextError(null)
+    } catch (error) {
+      setPromptContextError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPromptContextLoading(false)
+    }
+  }
+
+  async function savePromptContext() {
+    if (!promptContext) return
+    setPromptContextSaving(true)
+    try {
+      const settings = await putPromptContextSettings(promptContext)
+      setPromptContext(settings)
+      setPromptContextOriginal(settings)
+      setPromptContextError(null)
+    } catch (error) {
+      setPromptContextError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPromptContextSaving(false)
+    }
+  }
+
+  function updatePromptContext(key: keyof PromptContextSettings, value: string) {
+    const number = Number(value)
+    if (!Number.isInteger(number) || number < 0 || number > 100) return
+    setPromptContext((current) => (current ? { ...current, [key]: number } : current))
   }
 
   const servers = useMemo(() => {
@@ -699,6 +748,62 @@ export function SettingsPanel({
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div className="p-4 bg-panel border border-border rounded-lg space-y-3">
+              <div>
+                <h4 className="font-semibold text-sm text-foreground">Prompt context</h4>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Only relative paths are added automatically. File contents are never added from open tabs; explicit editor selections remain separate context.
+                </p>
+              </div>
+              {promptContextError && (
+                <div className="flex items-start gap-2 p-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>{promptContextError}</span>
+                </div>
+              )}
+              {promptContextLoading || !promptContext ? (
+                <p className="text-xs text-muted-foreground">Loading context settings…</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="space-y-1">
+                      <span className="block text-xs text-foreground">Open and recently edited paths</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={promptContext.openFileLimit}
+                        onChange={(event) => updatePromptContext('openFileLimit', event.target.value)}
+                        className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-xs text-foreground">Top-level workspace entries</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={promptContext.workspaceFileListLimit}
+                        onChange={(event) => updatePromptContext('workspaceFileListLimit', event.target.value)}
+                        className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={savePromptContext}
+                      disabled={promptContextSaving || JSON.stringify(promptContext) === JSON.stringify(promptContextOriginal)}
+                      className="px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition disabled:opacity-50"
+                    >
+                      {promptContextSaving ? 'Saving…' : 'Save context limits'}
+                    </button>
+                    <span className="text-[11px] text-muted-foreground">0 disables a list; maximum 100.</span>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Providers (advanced) — per-session ACP provider configuration.

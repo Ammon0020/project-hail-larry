@@ -10,7 +10,8 @@ use std::fs;
 use std::path::Path;
 
 use super::{
-    lock_state_dir_env, AgentInfo, AgentModel, Config, ConfigError, ConfigStore, STATE_DIR_ENV_VAR,
+    lock_state_dir_env, AgentInfo, AgentModel, Config, ConfigError, ConfigStore,
+    PromptContextSettings, STATE_DIR_ENV_VAR,
 };
 
 /// Golden DTO fixture captured from the Go daemon (S-CONTRACT). The default
@@ -47,7 +48,24 @@ fn default_config_has_sensible_values() {
             cfg.credential_inactivity_ttl_seconds, 2_592_000,
             "expected 30-day credential inactivity ttl"
         );
+        assert_eq!(cfg.prompt_context, PromptContextSettings::default());
     });
+}
+
+#[test]
+fn prompt_context_limits_are_bounded() {
+    assert!(PromptContextSettings {
+        open_file_limit: 100,
+        workspace_file_list_limit: 0,
+    }
+    .validate()
+    .is_ok());
+    assert!(PromptContextSettings {
+        open_file_limit: 101,
+        workspace_file_list_limit: 10,
+    }
+    .validate()
+    .is_err());
 }
 /// Saving always targets the active state directory, not the persisted
 /// `data_dir`, which may refer to a previous installation location.
@@ -273,6 +291,7 @@ fn default_config_matches_golden_dto() {
         credential_inactivity_ttl_seconds: 2_592_000,
         allow_remote_workspace_registration: false, // omitted (omitempty)
         revocation_grace_period_seconds: 300,
+        prompt_context: PromptContextSettings::default(),
         extra: toml::Table::new(),
     };
 

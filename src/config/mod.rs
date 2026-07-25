@@ -22,7 +22,7 @@ mod store;
 mod tests;
 
 pub use error::ConfigError;
-pub use model::{AgentInfo, AgentModel, Config};
+pub use model::{AgentInfo, AgentModel, Config, PromptContextSettings, MAX_PROMPT_CONTEXT_PATHS};
 pub use store::ConfigStore;
 
 /// Environment variable that, when set, overrides the default `~/.local-agent`

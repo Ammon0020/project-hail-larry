@@ -20,6 +20,59 @@ use serde::{Deserialize, Serialize};
 use super::error::ConfigError;
 use super::{DEFAULT_CREDENTIAL_INACTIVITY_TTL_SECONDS, DEFAULT_REVOCATION_GRACE_PERIOD_SECONDS};
 
+/// Conservative upper bound for each automatic path list in an agent prompt.
+pub const MAX_PROMPT_CONTEXT_PATHS: usize = 100;
+
+/// User-configurable limits for daemon-provided path context.
+///
+/// These belong in the persistent app config rather than a per-agent profile:
+/// they describe what the host may disclose from the editor/workspace before
+/// an agent gets a prompt.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptContextSettings {
+    /// Maximum relative open/recent file paths added to each prompt.
+    #[serde(default = "default_prompt_context_path_limit")]
+    pub open_file_limit: usize,
+    /// Maximum relative entries from the workspace root added on first prompt.
+    #[serde(default = "default_prompt_context_path_limit")]
+    pub workspace_file_list_limit: usize,
+}
+
+const fn default_prompt_context_path_limit() -> usize {
+    10
+}
+
+impl Default for PromptContextSettings {
+    fn default() -> Self {
+        Self {
+            open_file_limit: default_prompt_context_path_limit(),
+            workspace_file_list_limit: default_prompt_context_path_limit(),
+        }
+    }
+}
+
+impl PromptContextSettings {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("openFileLimit", self.open_file_limit),
+            ("workspaceFileListLimit", self.workspace_file_list_limit),
+        ] {
+            if value > MAX_PROMPT_CONTEXT_PATHS {
+                return Err(format!(
+                    "{name} must be between 0 and {MAX_PROMPT_CONTEXT_PATHS}"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// `AgentModel` describes a single model offered by a registered agent.
 ///
 /// Mirrors Go `interfaces.AgentModel` (`json:"id"`, `json:"name"`). Optional
@@ -127,6 +180,9 @@ pub struct Config {
     /// means "legacy" on load and is defaulted to 300.
     #[serde(skip_serializing_if = "is_zero_i64", default)]
     pub revocation_grace_period_seconds: i64,
+    /// Bounded workspace/editor path summaries sent with agent prompts.
+    #[serde(default, skip_serializing_if = "PromptContextSettings::is_default")]
+    pub prompt_context: PromptContextSettings,
     /// Forward-compatible unknown TOML keys, preserved across round-trips.
     #[serde(flatten)]
     #[serde(default)]
@@ -170,6 +226,7 @@ impl Config {
             credential_inactivity_ttl_seconds: DEFAULT_CREDENTIAL_INACTIVITY_TTL_SECONDS,
             allow_remote_workspace_registration: false,
             revocation_grace_period_seconds: DEFAULT_REVOCATION_GRACE_PERIOD_SECONDS,
+            prompt_context: PromptContextSettings::default(),
             extra: toml::Table::new(),
         })
     }
@@ -282,6 +339,7 @@ impl std::default::Default for Config {
                     credential_inactivity_ttl_seconds: DEFAULT_CREDENTIAL_INACTIVITY_TTL_SECONDS,
                     allow_remote_workspace_registration: false,
                     revocation_grace_period_seconds: DEFAULT_REVOCATION_GRACE_PERIOD_SECONDS,
+                    prompt_context: PromptContextSettings::default(),
                     extra: toml::Table::new(),
                 }
             }
