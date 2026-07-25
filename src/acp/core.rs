@@ -800,6 +800,16 @@ impl ACPClient for Client {
         let prompt_result = result_rx
             .await
             .map_err(|_| AppError::internal("ACP prompt actor exited"))?;
+        // Cancel resolves the prompt with an error while cancel_session has
+        // already moved the session to Interrupted. Release the slot back to
+        // Idle so the grace-period watchdog doesn't force-close a session whose
+        // turn already ended, and so the next prompt can begin immediately.
+        // Also covers the genuine prompt-error path (state is Running there,
+        // so this transition is a no-op for non-cancel errors).
+        if prompt_result.is_err() {
+            self.update_state_if(session_id, SessionState::Interrupted, SessionState::Idle);
+            self.update_state_if(session_id, SessionState::Running, SessionState::Idle);
+        }
         prompt_result?;
         // Cancellation can arrive while the prompt RPC is in flight. Do not
         // overwrite its Interrupted state after the RPC's response arrives.
@@ -1045,6 +1055,22 @@ impl ACPClient for Client {
             .await
             .map_err(|_| AppError::internal("ACP session actor is unavailable"))?;
         self.update_state(session_id, SessionState::Interrupted);
+        // Append a terminal event so connected clients clear their in-flight
+        // (running) indicator. Without this the frontend's last event stays a
+        // streaming/started event and the stop button never disappears.
+        if let Err(error) = append_payload(
+            &self.deps.event_bus,
+            session_id,
+            EventPayload::SessionCancelled,
+        )
+        .await
+        {
+            tracing::error!(
+                session_id,
+                error = %error,
+                "failed to persist ACP session-cancelled event"
+            );
+        }
 
         // Security: cancel is cooperative — a malicious agent can ignore the
         // notification and keep its process alive. Spawn a grace-period watchdog
@@ -1578,16 +1604,18 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                                 thought: false,
                                 stop_reason: stop_reason_name(response.stop_reason).to_string(),
                             };
-                            append_payload(event_bus, local_session_id, final_event)
-                                .await
-                                .map_err(|error| {
-                                    tracing::error!(
-                                        session_id = local_session_id,
-                                        error = %error,
-                                        "failed to persist ACP prompt-complete event"
-                                    );
-                                    agent_client_protocol::Error::internal_error()
-                                })?;
+                            if let Err(error) =
+                                append_payload(event_bus, local_session_id, final_event).await
+                            {
+                                tracing::error!(
+                                    session_id = local_session_id,
+                                    error = %error,
+                                    "failed to persist ACP prompt-complete event"
+                                );
+                                // Do not kill the actor on a durable-append
+                                // failure; the response already streamed via
+                                // notifications and the actor is still usable.
+                            }
                             let _ = result.send(Ok(()));
                         }
                         Err(error) => {
@@ -1597,7 +1625,7 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                                 session_id = local_session_id,
                                 "ACP prompt request failed"
                             );
-                            append_payload(
+                            if let Err(append_error) = append_payload(
                                 event_bus,
                                 local_session_id,
                                 EventPayload::AgentExited {
@@ -1605,14 +1633,16 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                                 },
                             )
                             .await
-                            .map_err(|append_error| {
+                            {
                                 tracing::error!(
                                     session_id = local_session_id,
                                     error = %append_error,
                                     "failed to persist ACP prompt-failure event"
                                 );
-                                agent_client_protocol::Error::internal_error()
-                            })?;
+                                // Do not kill the actor on a durable-append
+                                // failure; the prompt error is still surfaced
+                                // to the caller via the result oneshot below.
+                            }
                             let _ = result.send(Err(AppError::internal(format!(
                                 "ACP prompt: {error}"
                             ))));
