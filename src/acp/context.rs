@@ -4,10 +4,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path};
 use std::sync::{Mutex, RwLock};
 
-use chrono::Local;
-use tokio::process::Command;
-use tokio::time::{timeout, Duration};
-
 use super::conversation::{ConversationTransfer, TransferQueue};
 use super::profile::ProfileMiddleware;
 use crate::config::{PromptContextSettings, MAX_PROMPT_CONTEXT_PATHS};
@@ -233,6 +229,7 @@ impl PromptPipeline {
         workspace_id: &str,
         workspace_path: &Path,
         embedded_context: bool,
+        include_profile: bool,
         workspace: &dyn WorkspaceManager,
     ) -> Result<PreparedPrompt, AppError> {
         let prompt_count = *self
@@ -264,7 +261,6 @@ impl PromptPipeline {
             }
         }
 
-        text_sections.push(format!("## Current Time\n\n{}", Local::now().to_rfc3339()));
         // Open and recently edited paths share one budget so the default of
         // ten means ten total automatic editor paths, not ten per section.
         let path_limit = settings.open_file_limit.min(MAX_PROMPT_CONTEXT_PATHS);
@@ -282,20 +278,24 @@ impl PromptPipeline {
         append_paths(&mut text_sections, "## Open Files", open_files);
         append_paths(&mut text_sections, "## Recently Edited Files", recent_edits);
 
-        let profile = self.profiles.instructions(session_id)?;
+        if include_profile {
+            let profile = self.profiles.instructions(session_id)?;
+            if embedded_context {
+                resources.push(ContextResource {
+                    name: "Profile Instructions".to_string(),
+                    uri: "context://profile".to_string(),
+                    mime_type: CONTEXT_MIME_TYPE.to_string(),
+                    text: profile,
+                });
+            } else {
+                text_sections.push(profile);
+            }
+        }
         if embedded_context {
-            resources.push(ContextResource {
-                name: "Profile Instructions".to_string(),
-                uri: "context://profile".to_string(),
-                mime_type: CONTEXT_MIME_TYPE.to_string(),
-                text: profile,
-            });
             if let Some(selection) = selection_resource(&self.tracker, session_id, workspace_path)?
             {
                 resources.push(selection);
             }
-        } else {
-            text_sections.push(profile);
         }
 
         self.counts
@@ -315,37 +315,27 @@ async fn first_prompt_resources(
     workspace: &dyn WorkspaceManager,
     settings: &PromptContextSettings,
 ) -> Vec<ContextResource> {
-    let mut body = format!(
-        "## Workspace Context\n\n- Workspace root: {}\n- Platform: {}/{}",
-        workspace_path.display(),
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    );
+    let mut resources = Vec::new();
     match workspace.file_tree(workspace_id).await {
         Ok(nodes) => {
             let paths = top_level_paths(&nodes, settings.workspace_file_list_limit);
             if !paths.is_empty() {
-                body.push_str(&format!(
-                    "\n\n## Workspace entries (first {}, top level only)\n\n{}",
-                    paths.len(),
-                    paths.join("\n")
-                ));
+                resources.push(ContextResource {
+                    name: "Workspace entries".to_string(),
+                    uri: "context://workspace-entries".to_string(),
+                    mime_type: CONTEXT_MIME_TYPE.to_string(),
+                    text: format!(
+                        "## Workspace entries (first {}, top level only)\n\n{}",
+                        paths.len(),
+                        paths.join("\n")
+                    ),
+                });
             }
         }
         Err(error) => {
             tracing::warn!(workspace_id, error = %error, "workspace context file tree unavailable")
         }
     }
-    if let Some(status) = git_status(workspace_path).await {
-        body.push_str(&format!("\n\n## Git\n\n```text\n{status}\n```"));
-    }
-    truncate_string(&mut body, MAX_CONTEXT_BYTES);
-    let mut resources = vec![ContextResource {
-        name: "Workspace Context".to_string(),
-        uri: "context://workspace".to_string(),
-        mime_type: CONTEXT_MIME_TYPE.to_string(),
-        text: body,
-    }];
     match workspace.read_file(workspace_id, "AGENTS.md").await {
         Ok(file) if !file.is_binary && !file.content.is_empty() => {
             let mut text = file.content;
@@ -363,33 +353,6 @@ async fn first_prompt_resources(
         }
     }
     resources
-}
-
-async fn git_status(workspace_path: &Path) -> Option<String> {
-    let output = timeout(
-        Duration::from_secs(2),
-        Command::new("git")
-            .arg("-C")
-            .arg(workspace_path)
-            .args(["status", "--short", "-b"])
-            .output(),
-    )
-    .await;
-    match output {
-        Ok(Ok(output)) if output.status.success() => String::from_utf8(output.stdout)
-            .ok()
-            .map(|text| text.trim().to_string())
-            .filter(|text| !text.is_empty()),
-        Ok(Ok(_)) => None,
-        Ok(Err(error)) => {
-            tracing::debug!(error = %error, "git context command unavailable");
-            None
-        }
-        Err(_) => {
-            tracing::debug!("git context command timed out");
-            None
-        }
-    }
 }
 
 fn top_level_paths(nodes: &[FileNode], limit: usize) -> Vec<String> {

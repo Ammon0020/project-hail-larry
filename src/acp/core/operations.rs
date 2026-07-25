@@ -101,7 +101,7 @@ impl Client {
         attachments: &[Attachment],
     ) -> Result<(), AppError> {
         self.ensure_live_session(session_id).await?;
-        let (sender, caps, workspace_id) = self.sessions.begin_prompt(session_id)?;
+        let (sender, caps, workspace_id, include_profile) = self.sessions.begin_prompt(session_id)?;
         let workspace = self.resolve_workspace(&workspace_id).await?;
         let prepared = match self
             .pipeline
@@ -110,6 +110,7 @@ impl Client {
                 &workspace_id,
                 Path::new(&workspace.path),
                 caps.embedded_context,
+                include_profile,
                 self.deps.workspaces.as_ref(),
             )
             .await
