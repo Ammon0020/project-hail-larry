@@ -37,10 +37,13 @@ docs/           plans, specs, references, reviews, status, known issues
 ## Development
 
 - Use `./build.sh` on Linux/macOS or `.\build.ps1` on Windows → `bin/local_agent`.
-- Before completion, run relevant checks quietly: `cargo test -q --all-targets`,
-  `cargo clippy -q --all-targets -- -D warnings`, frontend build/lint, and
-  `make test-contract` when touching the HTTP/WS surface.
-- For Rust changes, run `cargo test -q --all-targets`, `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt -q`.
+- Before completion, run the unified gate: `make check` (fmt + clippy + cargo
+  test + frontend eslint/build + contract suite). For a fast style/correctness
+  pass use `make lint` (fmt + clippy + eslint). Individual targets (`make test`,
+  `make test-contract`, `make lint-rust`, `make lint-frontend`) remain available.
+- For Rust-only changes, `cargo test -q --all-targets`,
+  `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt -q --check`
+  suffice; `make check` adds the frontend + contract bar for full CI parity.
 - Record unrelated test failures in `docs/known-issues.md`; do not expand scope.
 - Keep `docs/STATUS.md` honest and current. Keep it under 100 lines and 90 characters per line. 
 - For planning work, follow `.agents/skills/plan-management/SKILL.md`.
