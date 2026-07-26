@@ -51,6 +51,7 @@ docs/           plans, specs, references, reviews, status, known issues
 - Suggest a commit message and tests when handing work off.
 - Add brief comments for non-obvious intent, constraints, and security-sensitive behavior. Do not comment code that is already self-explanatory.
 - Avoid megafiles. Break up files when they get too large. 
+- Avoid creating tests that overcomplicate the code. If a test is too specific or would make the code harder to maintain, consider if it's really necessary.
 
 ## Plans
 List relevant folder to see task status. Review after milestones. Task reviewer deletes tasks after review, or updates status if work is not complete. Add action items from review as stories unless they are immediately fixable. 
