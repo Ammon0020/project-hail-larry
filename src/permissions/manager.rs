@@ -29,7 +29,7 @@
 //! whose device went away (Wi-Fi drop mid-session).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -91,7 +91,7 @@ fn policy_key_for(req: &PermissionRequest) -> PolicyKey {
         command: String::new(),
     };
     if req.target.is_empty() {
-        key.command = req.command.clone();
+        key.command.clone_from(&req.command);
     }
     key
 }
@@ -142,7 +142,7 @@ impl Drop for PendingCleanup {
         // make the pending map unusable.
         self.inner
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .pending
             .remove(&self.id);
     }
@@ -165,12 +165,14 @@ impl Manager {
     /// Create a manager with the default 5-minute stale timeout and 60s sweep
     /// interval. Returns an `Arc` so the stale sweeper task can hold a weak
     /// reference.
+    #[must_use]
     pub fn new(sink: Option<Arc<dyn PermissionSink>>) -> Arc<Self> {
         Self::with_timeout(sink, DEFAULT_STALE_TIMEOUT, DEFAULT_SWEEP_INTERVAL)
     }
 
     /// Create a manager with a custom stale timeout and sweep interval (used by
     /// tests to avoid waiting 5 minutes for a prompt to go stale).
+    #[must_use]
     pub fn with_timeout(
         sink: Option<Arc<dyn PermissionSink>>,
         stale_timeout: Duration,
@@ -197,6 +199,7 @@ impl Manager {
     /// dropped but whose responding device went away (Wi-Fi drop). Prompts whose
     /// `request` future is cancelled are cleaned up immediately by the
     /// [`PendingCleanup`] guard.
+    #[must_use]
     pub fn start_sweeper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let weak = Arc::downgrade(self);
         let interval = self.sweep_interval;
@@ -239,6 +242,7 @@ impl Manager {
     /// Currently pending prompts (for re-presentation on reconnect). Prunes
     /// stale prompts first so a reconnecting client never receives a list
     /// containing prompts whose context already died. Mirrors Go `GetPending`.
+    #[must_use]
     pub fn get_pending(&self) -> Vec<PermissionRequest> {
         let mut inner = self.lock();
         // Inline stale pruning (std::sync::Mutex is not reentrant).
@@ -259,6 +263,7 @@ impl Manager {
 
     /// Snapshot of the audit log (newest decisions appended at the end).
     /// Mirrors Go `GetAuditLog`.
+    #[must_use]
     pub fn get_audit_log(&self) -> Vec<AuditEntry> {
         self.lock().audit.clone()
     }
@@ -318,9 +323,7 @@ impl Manager {
     /// Mirrors the `unwrap_or_else(|p| p.into_inner())` pattern used in
     /// `events::store`.
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -394,17 +397,14 @@ impl PermissionManager for Manager {
         // Await the decision. The sender is removed from `pending` before
         // sending (see `respond` / sweeper / `clear_session`), so exactly one
         // decision reaches this receiver.
-        let decision = match rx.await {
-            Ok(d) => d,
-            Err(_) => {
-                // Sender dropped without sending. Every removal path sends
-                // before dropping, so this is unexpected — treat as an internal
-                // error and let the cleanup guard remove the entry.
-                warn!(request_id = %req.id, "permission request sender dropped without decision");
-                return Err(AppError::internal(
-                    "permission request cancelled (sender dropped without decision)",
-                ));
-            }
+        // Sender dropped without sending. Every removal path sends
+        // before dropping, so this is unexpected — treat as an internal
+        // error and let the cleanup guard remove the entry.
+        let Ok(decision) = rx.await else {
+            warn!(request_id = %req.id, "permission request sender dropped without decision");
+            return Err(AppError::internal(
+                "permission request cancelled (sender dropped without decision)",
+            ));
         };
 
         // Record the decision and persist durable policies. `allow_once` and

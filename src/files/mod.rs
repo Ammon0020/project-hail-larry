@@ -69,7 +69,7 @@ const MAX_CONTENTS_ENTRIES: usize = 256;
 /// operations — never across disk I/O.
 pub struct FileSync {
     /// Per-file mutexes keyed by `workspace_id/rel_path`. Each entry is an
-    /// `Arc<Mutex<()>>` so the lock can be held after the DashMap entry is
+    /// `Arc<Mutex<()>>` so the lock can be held after the `DashMap` entry is
     /// dropped. Idle entries are evicted by [`Self::lock_for`] after the
     /// operation completes to prevent unbounded growth.
     locks: DashMap<String, Arc<Mutex<()>>>,
@@ -105,16 +105,16 @@ impl FileSync {
 
     /// Returns the per-file mutex for the given key, creating one on first use.
     ///
-    /// The locks DashMap itself is concurrency-safe; the returned `Arc<Mutex>`
+    /// The locks `DashMap` itself is concurrency-safe; the returned `Arc<Mutex>`
     /// is then held by the caller for the duration of the per-file operation
     /// (including disk I/O), which serializes operations on the same file only.
     ///
     /// **GC:** after acquiring the lock, this method attempts to evict the
-    /// DashMap entry if no other reference to the `Arc` exists. This prevents
+    /// `DashMap` entry if no other reference to the `Arc` exists. This prevents
     /// the lock map from growing indefinitely with arbitrary file paths. If
     /// eviction fails (another caller raced and grabbed the same `Arc`), the
     /// entry stays for the next operation to find.
-    async fn lock_for(&self, key: &str) -> Arc<Mutex<()>> {
+    fn lock_for(&self, key: &str) -> Arc<Mutex<()>> {
         // Fast path: entry already exists — clone the Arc and return.
         if let Some(entry) = self.locks.get(key) {
             return Arc::clone(&entry);
@@ -134,7 +134,7 @@ impl FileSync {
     /// if eviction fails (another caller grabbed the Arc between the lock
     /// release and this call), the entry remains for the next caller.
     ///
-    /// We check `Arc::strong_count == 1` (only the DashMap holds it) before
+    /// We check `Arc::strong_count == 1` (only the `DashMap` holds it) before
     /// removing. This is inherently racy but safe: worst case the entry stays
     /// (a minor memory cost) or a new caller re-creates it (no correctness
     /// impact).
@@ -202,7 +202,7 @@ impl FileSync {
             "workspace_path must be an absolute resolved root, got {workspace_path:?}"
         );
         let key = file_key(workspace_path, rel_path);
-        let lock = self.lock_for(&key).await;
+        let lock = self.lock_for(&key);
         // Move the owned guard into the blocking task. If this async future is
         // dropped while awaiting that task, the task continues to own the
         // guard until its disk write has stopped mutating the file.
@@ -324,7 +324,7 @@ impl FileSync {
         contents.len()
     }
 
-    /// Returns the number of per-file lock entries currently in the DashMap.
+    /// Returns the number of per-file lock entries currently in the `DashMap`.
     /// Mainly for testing.
     #[cfg(test)]
     pub fn locks_len(&self) -> usize {
@@ -344,7 +344,7 @@ impl FileSyncTrait for FileSync {
     /// Returns the new revision, or [`AppError::StaleRevision`] on conflict.
     ///
     /// `workspace_id` is treated as the workspace path (the workspace manager
-    /// resolves IDs to paths before calling FileSync in the Go daemon; that
+    /// resolves IDs to paths before calling `FileSync` in the Go daemon; that
     /// resolution will be wired in S-WORKSPACE).
     async fn save(
         &self,

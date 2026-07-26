@@ -44,20 +44,15 @@ fn to_value<T: serde::Serialize>(v: &T) -> Value {
 /// Mirror the Go harness timestamp redactor for comparison-neutral golden checks.
 fn redact_timestamps(s: &str) -> String {
     // Matches ISO-8601 timestamps including optional fractional seconds and Z/offset.
-    let re = regex_lite_timestamp();
-    re.replace_all(s, "<REDACTED_TIMESTAMP>").into_owned()
+    TimestampRe::replace_all(s, "<REDACTED_TIMESTAMP>").into_owned()
 }
 
 /// Minimal timestamp regex without pulling a regex crate (manual scan).
 /// Replaces substrings matching `\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})`.
-fn regex_lite_timestamp() -> TimestampRe {
-    TimestampRe
-}
-
 struct TimestampRe;
 
 impl TimestampRe {
-    fn replace_all<'a>(&self, s: &'a str, replacement: &str) -> std::borrow::Cow<'a, str> {
+    fn replace_all<'a>(s: &'a str, replacement: &str) -> std::borrow::Cow<'a, str> {
         let bytes = s.as_bytes();
         let mut out = String::new();
         let mut i = 0;
@@ -153,9 +148,9 @@ fn match_timestamp_at(bytes: &[u8], i: usize) -> Option<usize> {
     None
 }
 
-fn assert_matches_golden(name: &str, got: Value) {
+fn assert_matches_golden(name: &str, got: &Value) {
     let want = golden(name);
-    assert_eq!(got, want, "DTO {name} must match golden fixture");
+    assert_eq!(got, &want, "DTO {name} must match golden fixture");
 }
 
 // ---- Event type exhaustiveness ------------------------------------------------
@@ -225,7 +220,7 @@ fn golden_event_full() {
         execute_at: ts + chrono::Duration::minutes(5),
         device_name: "fixture-device".into(),
     };
-    assert_matches_golden("event_full", to_value(&event));
+    assert_matches_golden("event_full", &to_value(&event));
 }
 
 #[test]
@@ -258,7 +253,7 @@ fn golden_event_minimal() {
         execute_at: go_zero_time(),
         device_name: String::new(),
     };
-    assert_matches_golden("event_minimal", to_value(&event));
+    assert_matches_golden("event_minimal", &to_value(&event));
 }
 
 #[test]
@@ -271,7 +266,7 @@ fn golden_attachment_skips_uri() {
         path: "<REDACTED_PATH>/uploads/screenshot.png".into(),
     };
     let v = to_value(&att);
-    assert_matches_golden("attachment", v.clone());
+    assert_matches_golden("attachment", &v.clone());
     assert!(
         v.get("uri").is_none(),
         "Attachment.uri must be serde(skip) / json:\"-\""
@@ -291,7 +286,7 @@ fn golden_session_info() {
         created_at: ts,
         updated_at: ts,
     };
-    assert_matches_golden("session_info", to_value(&info));
+    assert_matches_golden("session_info", &to_value(&info));
 }
 
 #[test]
@@ -302,7 +297,7 @@ fn golden_file_node_file() {
         path: "README.md".into(),
         children: Vec::new(),
     };
-    assert_matches_golden("file_node_file", to_value(&node));
+    assert_matches_golden("file_node_file", &to_value(&node));
 }
 
 #[test]
@@ -318,7 +313,7 @@ fn golden_file_node_folder() {
             children: Vec::new(),
         }],
     };
-    assert_matches_golden("file_node_folder", to_value(&node));
+    assert_matches_golden("file_node_folder", &to_value(&node));
 }
 
 #[test]
@@ -330,7 +325,7 @@ fn golden_workspace_info() {
         available: true,
         error: String::new(),
     };
-    assert_matches_golden("workspace_info", to_value(&info));
+    assert_matches_golden("workspace_info", &to_value(&info));
 }
 
 #[test]
@@ -344,7 +339,7 @@ fn golden_provider_info() {
             base_url: "https://api.anthropic.com".into(),
         }),
     };
-    assert_matches_golden("provider_info", to_value(&info));
+    assert_matches_golden("provider_info", &to_value(&info));
 }
 
 #[test]
@@ -355,7 +350,7 @@ fn golden_provider_info_disabled() {
         supported: vec!["openai".into()],
         current: None,
     };
-    assert_matches_golden("provider_info_disabled", to_value(&info));
+    assert_matches_golden("provider_info_disabled", &to_value(&info));
 }
 
 #[test]
@@ -371,7 +366,7 @@ fn golden_pending_action_info() {
         requested_at: ts,
         execute_at: ts + chrono::Duration::minutes(5),
     };
-    assert_matches_golden("pending_action_info", to_value(&info));
+    assert_matches_golden("pending_action_info", &to_value(&info));
 }
 
 #[test]
@@ -383,7 +378,7 @@ fn golden_device_info() {
         paired_at: ts,
         last_seen: ts,
     };
-    assert_matches_golden("device_info", to_value(&info));
+    assert_matches_golden("device_info", &to_value(&info));
 }
 
 #[test]
@@ -394,7 +389,7 @@ fn golden_device_credential() {
         secret: "<REDACTED_TOKEN>".into(),
         paired_at: fixture_ts(),
     };
-    assert_matches_golden("device_credential", to_value(&info));
+    assert_matches_golden("device_credential", &to_value(&info));
 }
 
 #[test]
@@ -410,7 +405,7 @@ fn golden_pairing_session() {
         expires_at: ts + chrono::Duration::minutes(5),
         used: false,
     };
-    assert_matches_golden("pairing_session", to_value(&session));
+    assert_matches_golden("pairing_session", &to_value(&session));
 }
 
 #[test]
@@ -427,7 +422,7 @@ fn golden_agent_info() {
         )],
         warning: "Executable not found in PATH".into(),
     };
-    assert_matches_golden("agent_info", to_value(&agent));
+    assert_matches_golden("agent_info", &to_value(&agent));
 }
 
 #[test]
@@ -560,7 +555,7 @@ fn wire_adapter_full_event_matches_golden() {
     }];
     wire.execute_at = ts + chrono::Duration::minutes(5);
     wire.device_name = "fixture-device".into();
-    assert_matches_golden("event_full", to_value(&wire));
+    assert_matches_golden("event_full", &to_value(&wire));
 }
 
 #[test]
@@ -582,12 +577,15 @@ fn wire_adapter_roundtrip_prompt_submitted() {
     assert_eq!(back.meta.id, typed.meta.id);
     assert_eq!(back.meta.session_id, typed.meta.session_id);
     assert_eq!(back.payload.event_type(), EventType::PromptSubmitted);
-    assert_matches_golden("event_minimal", to_value(&wire));
+    assert_matches_golden("event_minimal", &to_value(&wire));
 }
 
 /// Every typed payload must retain its discriminant and fields through the
-/// typed-to-wire-to-typed adapter used by event persistence and WebSockets.
+/// typed-to-wire-to-typed adapter used by event persistence and `WebSockets`.
+// Single linear test sequence enumerating every payload variant — splitting
+// adds indirection without clarity.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn wire_adapter_roundtrips_all_event_payloads() {
     let ts = fixture_ts();
     let payloads = vec![

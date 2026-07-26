@@ -52,7 +52,7 @@ pub async fn export_session(
     }
     let mut filename = sanitize_download_filename(&name);
     if filename.is_empty() {
-        filename = session_id.clone();
+        filename.clone_from(&session_id);
     }
     if filename.is_empty() {
         filename = "session".into();
@@ -161,7 +161,7 @@ pub async fn upload_file(
             break;
         }
     }
-    let filename = file_name
+    let extracted_filename = file_name
         .ok_or_else(|| ApiResponseError::bad_request("missing 'file' field in multipart form"))?;
     let data = file_data
         .ok_or_else(|| ApiResponseError::bad_request("missing 'file' field in multipart form"))?;
@@ -177,8 +177,12 @@ pub async fn upload_file(
             ApiResponseError::internal("uploads manager unavailable")
         })?;
         manager
-            .store(&session_id, &filename, &mut Cursor::new(data.as_ref()))
-            .map_err(upload_store_error)?
+            .store(
+                &session_id,
+                &extracted_filename,
+                &mut Cursor::new(data.as_ref()),
+            )
+            .map_err(|e| upload_store_error(&e))?
     };
 
     Ok((
@@ -273,7 +277,7 @@ fn require_uploads(
         .ok_or_else(|| ApiResponseError::service_unavailable("uploads not configured"))
 }
 
-fn upload_store_error(error: UploadError) -> ApiResponseError {
+fn upload_store_error(error: &UploadError) -> ApiResponseError {
     match error {
         UploadError::InvalidSessionId | UploadError::EmptySessionId => {
             ApiResponseError::bad_request("invalid session id")

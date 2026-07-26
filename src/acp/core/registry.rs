@@ -54,6 +54,7 @@ pub(super) struct SessionEntry {
 }
 
 impl SessionEntry {
+    // Constructor assigns every field directly; a params struct would add indirection.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         info: SessionInfo,
@@ -352,6 +353,7 @@ impl SessionRegistry {
         ))
     }
 
+    // Rebind replaces every mutable field; a params struct would add indirection.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn rebind_finish(
         &self,

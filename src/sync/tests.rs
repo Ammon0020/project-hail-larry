@@ -255,9 +255,8 @@ async fn shutdown_drains_connections() {
     let closed = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             match ws.next().await {
-                Some(Ok(Message::Close(_))) | None => return,
-                Some(Ok(_)) => continue,
-                Some(Err(_)) => return,
+                Some(Ok(Message::Close(_)) | Err(_)) | None => return,
+                Some(Ok(_)) => {}
             }
         }
     })
@@ -314,7 +313,7 @@ async fn rejects_empty_origin_over_ws() {
 // Reconnect replay + dedupe via EventBus
 // ---------------------------------------------------------------------------
 
-async fn test_bus() -> (EventBus, TempDir) {
+fn test_bus() -> (EventBus, TempDir) {
     let dir = TempDir::new().expect("tempdir");
     let path = dir.path().join("sync_events.db");
     let bus = EventBus::open(&path).expect("open bus");
@@ -323,7 +322,7 @@ async fn test_bus() -> (EventBus, TempDir) {
 
 #[tokio::test]
 async fn reconnect_replays_then_dedupes_live() {
-    let (bus, _dir) = test_bus().await;
+    let (bus, _dir) = test_bus();
     let bus = Arc::new(bus);
 
     let e1 = bus
@@ -397,7 +396,7 @@ async fn reconnect_replays_then_dedupes_live() {
 /// UI connects to `/ws` without `?after=` — live stream must still arrive.
 #[tokio::test]
 async fn live_without_after_via_fanout() {
-    let (bus, _dir) = test_bus().await;
+    let (bus, _dir) = test_bus();
     let bus = Arc::new(bus);
     let hub = Hub::with_event_bus(Arc::clone(&bus));
     bus.set_live_fanout(Arc::clone(&hub) as Arc<dyn crate::events::LiveFanout>);
@@ -439,7 +438,7 @@ async fn live_without_after_via_fanout() {
 
 #[tokio::test]
 async fn lagged_resync_from_bus_on_full_buffer() {
-    let (bus, _dir) = test_bus().await;
+    let (bus, _dir) = test_bus();
     let bus = Arc::new(bus);
 
     // Seed durable history the slow client must catch up on.
@@ -472,7 +471,11 @@ async fn lagged_resync_from_bus_on_full_buffer() {
 
     // Flood more than CLIENT_SEND_CAPACITY events without reading.
     for i in 0..(CLIENT_SEND_CAPACITY + 8) {
-        hub.broadcast(&sample_event((100 + i) as i64, &format!("flood-{i}")));
+        // `i` is small (≤ CLIENT_SEND_CAPACITY + 8 = 72), so 100 + i fits in i64
+        // without wrapping on all targets.
+        #[allow(clippy::cast_possible_wrap)]
+        let seq = (100 + i) as i64;
+        hub.broadcast(&sample_event(seq, &format!("flood-{i}")));
     }
 
     // Give resync task a moment, then drain whatever arrived (flood + resync).

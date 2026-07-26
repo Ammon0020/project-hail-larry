@@ -89,6 +89,7 @@ pub enum EventType {
 
 impl EventType {
     /// Stable string form matching the Go wire constants.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::PromptSubmitted => "PromptSubmitted",
@@ -122,6 +123,7 @@ impl EventType {
     }
 
     /// All 27 event type variants in declaration order (for exhaustive tests).
+    #[must_use]
     pub fn all() -> &'static [EventType] {
         &ALL_EVENT_TYPES
     }
@@ -449,6 +451,7 @@ pub enum EventPayload {
 
 impl EventPayload {
     /// Map payload to the corresponding [`EventType`] wire discriminant.
+    #[must_use]
     pub fn event_type(&self) -> EventType {
         match self {
             Self::PromptSubmitted { .. } => EventType::PromptSubmitted,
@@ -552,6 +555,8 @@ pub struct SessionInfo {
 /// Returned by `GET /api/sessions/{id}/capabilities`. When [`Self::available`]
 /// is false the agent process is not warm — do not infer missing list/load
 /// (epic Q8 cold-start probe still open).
+// Flags are independent config knobs; a state enum would conflate them.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionHistoryCapabilities {
@@ -638,6 +643,7 @@ pub enum PermissionDecision {
 
 impl PermissionDecision {
     /// Stable string form matching the Go wire constants.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::AllowOnce => "allow_once",
@@ -779,6 +785,9 @@ pub struct PairingSession {
     pub used: bool,
 }
 
+// `token` and `passcode` are intentionally omitted to avoid leaking them in
+// debug logs (a regression test asserts neither appears in `{:?}`).
+#[allow(clippy::missing_fields_in_debug)]
 impl std::fmt::Debug for PairingSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PairingSession")
@@ -803,6 +812,8 @@ pub struct DeviceCredential {
     pub paired_at: DateTime<Utc>,
 }
 
+// `secret` is intentionally omitted to avoid leaking it in debug logs.
+#[allow(clippy::missing_fields_in_debug)]
 impl std::fmt::Debug for DeviceCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DeviceCredential")
@@ -841,7 +852,7 @@ pub fn go_zero_time() -> DateTime<Utc> {
     })
 }
 
-/// `skip_serializing_if` helper: treat year-1 zero times as empty (SessionInfo
+/// `skip_serializing_if` helper: treat year-1 zero times as empty (`SessionInfo`
 /// `createdAt`/`updatedAt` omitempty).
 fn is_zero_datetime(dt: &DateTime<Utc>) -> bool {
     *dt == go_zero_time()
@@ -851,6 +862,8 @@ fn default_true() -> bool {
     true
 }
 
+// serde's `skip_serializing_if` contract requires `fn(&T) -> bool`.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_true(value: &bool) -> bool {
     *value
 }

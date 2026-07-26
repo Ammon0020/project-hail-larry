@@ -203,6 +203,8 @@ fn startup_error(error: &AppError, stderr_tail: &Arc<Mutex<StderrTail>>) -> AppE
     }
 }
 
+// Actor state machine — splitting would obscure the startup/command transition flow.
+#[allow(clippy::too_many_lines)]
 async fn run_actor_inner(
     config: &Config,
     commands: &mut mpsc::Receiver<ActorCommand>,
@@ -353,7 +355,7 @@ async fn run_actor_inner(
                         deps.clone(),
                         responder,
                         "ACP terminal output failed",
-                        move |deps| async move { terminal_output(deps, request) },
+                        move |deps| async move { terminal_output(&deps, &request) },
                     );
                     Ok(())
                 }
@@ -386,7 +388,7 @@ async fn run_actor_inner(
                         deps.clone(),
                         responder,
                         "ACP terminal kill failed",
-                        move |deps| async move { kill_terminal(deps, request) },
+                        move |deps| async move { kill_terminal(&deps, &request) },
                     );
                     Ok(())
                 }
@@ -401,7 +403,7 @@ async fn run_actor_inner(
                         deps.clone(),
                         responder,
                         "ACP terminal release failed",
-                        move |deps| async move { release_terminal(deps, request) },
+                        move |deps| async move { release_terminal(&deps, &request) },
                     );
                     Ok(())
                 }
@@ -593,10 +595,10 @@ fn should_attempt_load(persisted_id: &str, load_session: bool) -> bool {
 /// Decides load vs new after Initialize, matching Go `resolveACPSession`.
 ///
 /// Flow:
-/// 1. If persisted id + load + list: ListSessions by cwd; missing → NewSession;
+/// 1. If persisted id + load + list: `ListSessions` by cwd; missing → `NewSession`;
 ///    list error → fall through.
-/// 2. If persisted id + load: LoadSession; success returns the persisted id.
-/// 3. Else / on load failure: NewSession.
+/// 2. If persisted id + load: `LoadSession`; success returns the persisted id.
+/// 3. Else / on load failure: `NewSession`.
 async fn resolve_acp_session(
     cx: &ConnectionTo<Agent>,
     init: &InitializeResponse,
@@ -720,13 +722,45 @@ mod tests {
     }
 
     /// ACP agent spawn uses process-group isolation so descendants die on
-    /// shutdown (kill_on_drop alone only reaps the direct child).
+    /// shutdown (`kill_on_drop` alone only reaps the direct child).
     #[cfg(unix)]
     #[tokio::test]
     async fn agent_process_group_kill_reaps_descendant() {
         use std::process::Command as StdCommand;
 
         use crate::procutil::{configure_process_group, ProcessGroupCleanup};
+
+        async fn wait_for_pid_file(path: &Path, timeout: Duration) -> i32 {
+            let start = tokio::time::Instant::now();
+            loop {
+                if let Ok(contents) = std::fs::read_to_string(path) {
+                    let trimmed = contents.trim();
+                    if !trimmed.is_empty() {
+                        return trimmed.parse().expect("numeric descendant PID");
+                    }
+                }
+                assert!(
+                    start.elapsed() < timeout,
+                    "timed out waiting for descendant PID at {}",
+                    path.display()
+                );
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        }
+
+        fn process_is_gone_or_zombie(pid: i32) -> bool {
+            if unsafe { libc::kill(pid, 0) } == -1 {
+                return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            }
+            let stat_path = format!("/proc/{pid}/stat");
+            std::fs::read_to_string(stat_path)
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit_once(") ")
+                        .map(|(_, rest)| rest.starts_with('Z'))
+                })
+                .unwrap_or(false)
+        }
 
         let dir = TempDir::new().expect("tempdir");
         let pid_file = dir.path().join("descendant.pid");
@@ -780,37 +814,5 @@ mod tests {
             exited,
             "agent-spawned descendant {descendant} survived process-group kill"
         );
-
-        async fn wait_for_pid_file(path: &Path, timeout: Duration) -> i32 {
-            let start = tokio::time::Instant::now();
-            loop {
-                if let Ok(contents) = std::fs::read_to_string(path) {
-                    let trimmed = contents.trim();
-                    if !trimmed.is_empty() {
-                        return trimmed.parse().expect("numeric descendant PID");
-                    }
-                }
-                assert!(
-                    start.elapsed() < timeout,
-                    "timed out waiting for descendant PID at {}",
-                    path.display()
-                );
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-        }
-
-        fn process_is_gone_or_zombie(pid: i32) -> bool {
-            if unsafe { libc::kill(pid, 0) } == -1 {
-                return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
-            }
-            let stat_path = format!("/proc/{pid}/stat");
-            std::fs::read_to_string(stat_path)
-                .ok()
-                .and_then(|stat| {
-                    stat.rsplit_once(") ")
-                        .map(|(_, rest)| rest.starts_with('Z'))
-                })
-                .unwrap_or(false)
-        }
     }
 }

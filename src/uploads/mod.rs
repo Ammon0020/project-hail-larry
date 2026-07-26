@@ -131,6 +131,10 @@ pub struct Manager {
 impl Manager {
     /// Create a `Manager` rooted at `root_dir`. The directory is created (mode
     /// `0o700`) if missing. Mirrors Go `uploads.New`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the root directory cannot be created.
     pub fn new(root_dir: impl Into<PathBuf>) -> Result<Self, UploadError> {
         let root = root_dir.into();
         crate::fsutil::create_dir_all(&root)?;
@@ -154,6 +158,11 @@ impl Manager {
     /// bytes; anything beyond is rejected as oversize).
     ///
     /// Mirrors Go `Manager.Store`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session id is empty/invalid, the reader fails,
+    /// the payload is oversize, or the atomic write fails.
     pub fn store(
         &mut self,
         session_id: &str,
@@ -250,6 +259,11 @@ impl Manager {
     /// the session directory for a file named `<id>.<ext>` regardless of
     /// extension (the extension was chosen by magic-byte detection, which the
     /// caller doesn't know). Mirrors Go `Manager.Get`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session/upload id is invalid or the upload
+    /// file cannot be found.
     pub fn get(&self, session_id: &str, upload_id: &str) -> Result<PathBuf, UploadError> {
         if !is_valid_session_id(session_id) {
             return Err(UploadError::InvalidSessionId);
@@ -258,15 +272,12 @@ impl Manager {
             return Err(UploadError::InvalidUploadId);
         }
         let session_dir = self.root.join(session_id);
-        let entries = match fs::read_dir(&session_dir) {
-            Ok(e) => e,
-            // Missing session dir → not found (matches Go's "not found" wrap).
-            Err(_) => {
-                return Err(UploadError::NotFound {
-                    upload_id: upload_id.to_string(),
-                    session_id: session_id.to_string(),
-                });
-            }
+        // Missing session dir → not found (matches Go's "not found" wrap).
+        let Ok(entries) = fs::read_dir(&session_dir) else {
+            return Err(UploadError::NotFound {
+                upload_id: upload_id.to_string(),
+                session_id: session_id.to_string(),
+            });
         };
         let prefix = format!("{upload_id}.");
         for entry in entries {
@@ -292,6 +303,11 @@ impl Manager {
 
     /// Delete all uploads for a session. Safe to call when no uploads exist for
     /// the session. Mirrors Go `Manager.RemoveSession`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session id is invalid or directory removal
+    /// fails (other than not-found).
     pub fn remove_session(&mut self, session_id: &str) -> Result<(), UploadError> {
         if !is_valid_session_id(session_id) {
             return Err(UploadError::InvalidSessionId);
@@ -317,6 +333,10 @@ impl Manager {
     /// to clean up all per-session upload directories. The manager remains
     /// usable after this only if [`Manager::new`] is called again to recreate
     /// the root. Mirrors Go `Manager.RemoveAll`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if directory removal fails (other than not-found).
     pub fn remove_all(&mut self) -> Result<(), UploadError> {
         if self.root.as_os_str().is_empty() {
             return Ok(());
@@ -406,9 +426,8 @@ fn detect_image(data: &[u8]) -> (&'static str, &'static str) {
     // `infer::get` returns the detected MIME type from magic-byte signatures.
     // We map the supported image formats to canonical extensions (matching Go's
     // choice of `.jpg` rather than `.jpeg` for JPEG).
-    let kind = match infer::get(data) {
-        Some(k) => k,
-        None => return ("", ""),
+    let Some(kind) = infer::get(data) else {
+        return ("", "");
     };
     match kind.mime_type() {
         MIME_PNG => (MIME_PNG, ".png"),

@@ -147,6 +147,8 @@ fn send_update(cx: &ConnectionTo<Client>, sid: &SessionId, update: SessionUpdate
     let _ = cx.send_notification(SessionNotification::new(sid.clone(), update));
 }
 
+// Single linear mock-agent sequence — splitting would obscure the flow.
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() {
     // Suppress SDK diagnostic logging — stderr is for our own logs. With no
@@ -266,8 +268,7 @@ async fn main() {
                     //    the active profile marker so contract tests can
                     //    assert the client sent set_config_option.
                     let mut first_chunk = format!(
-                        "I received your message: {:?}\n\nHere's what I found in the current directory:\n{}\n",
-                        user_text, ls_output
+                        "I received your message: {user_text:?}\n\nHere's what I found in the current directory:\n{ls_output}\n"
                     );
                     {
                         let profiles = profiles.lock().await;

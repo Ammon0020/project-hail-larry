@@ -173,7 +173,7 @@ fn remove_workspace_stops_events() {
 
 /// A directory created AFTER `add_workspace` is recursively watched: a write to
 /// a file inside the freshly created nested directory must surface as an event.
-/// Exercises the Create-directory → add_tree path in `handle_event`.
+/// Exercises the Create-directory → `add_tree` path in `handle_event`.
 #[test]
 fn recursive_create_directory_watches() {
     let dir = TempDir::new().expect("tempdir");

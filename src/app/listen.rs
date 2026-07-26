@@ -72,6 +72,13 @@ impl Listeners {
 }
 
 /// Bind HTTP and, when configured, HTTPS listeners.
+///
+/// # Errors
+///
+/// Returns an error if a socket address cannot be parsed, a listener cannot
+/// be bound, or TLS certificate provisioning/loading fails.
+// http/https address pair is intentional — the names mirror the two listeners.
+#[allow(clippy::similar_names)]
 pub async fn bind(config: &Config) -> Result<Listeners> {
     let http_address = socket_address(&config.host, config.port)?;
     let http = TcpListener::bind(http_address)
@@ -103,6 +110,10 @@ pub async fn bind(config: &Config) -> Result<Listeners> {
 }
 
 /// Serve all bound listeners until cancellation, gracefully draining HTTP.
+///
+/// # Errors
+///
+/// Returns an error if an accept loop fails or a listener cannot be drained.
 pub async fn serve(listeners: Listeners, router: Router, cancel: CancellationToken) -> Result<()> {
     let Listeners { http, https } = listeners;
     let router = with_timeouts(router);
@@ -145,14 +156,16 @@ async fn redirect_to_https(
     _next: Next,
 ) -> Response {
     let uri = request.uri();
-    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+    let path_and_query = uri
+        .path_and_query()
+        .map_or("/", axum::http::uri::PathAndQuery::as_str);
     // Derive the host from the Host header, swapping in the HTTPS port.
     let host = request
         .headers()
         .get(axum::http::header::HOST)
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost");
-    let host_no_port = host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host);
+    let host_no_port = host.rsplit_once(':').map_or(host, |(h, _)| h);
     let location = format!("https://{host_no_port}:{https_port}{path_and_query}");
     (
         StatusCode::PERMANENT_REDIRECT,
@@ -172,7 +185,7 @@ async fn serve_http(
     let mut connections = JoinSet::new();
     loop {
         tokio::select! {
-            _ = cancel.cancelled() => break,
+            () = cancel.cancelled() => break,
             accepted = listener.accept() => {
                 let (stream, peer) = accepted.context("accept HTTP connection")?;
                 let make_service = make_service.clone();
@@ -199,7 +212,7 @@ async fn serve_https(
     let mut connections = JoinSet::new();
     loop {
         tokio::select! {
-            _ = cancel.cancelled() => break,
+            () = cancel.cancelled() => break,
             accepted = listener.accept() => {
                 let (stream, peer) = accepted.context("accept HTTPS connection")?;
                 let acceptor = acceptor.clone();
@@ -527,26 +540,23 @@ async fn request_body_read_timeout(request: Request, next: Next) -> Response {
 
 /// Cap handler execution and response streaming at Go's write deadline.
 async fn response_write_timeout(request: Request, next: Next) -> Response {
-    match time::timeout(HTTP_WRITE_TIMEOUT, next.run(request)).await {
-        Ok(response) => {
-            let (parts, body) = response.into_parts();
-            Response::from_parts(
-                parts,
-                Body::new(DeadlineBody::new(
-                    body,
-                    HTTP_WRITE_TIMEOUT,
-                    "HTTP response write timed out",
-                )),
-            )
-        }
-        Err(_) => {
-            warn!("HTTP request processing exceeded write timeout");
-            (
-                StatusCode::GATEWAY_TIMEOUT,
-                "HTTP request processing timed out",
-            )
-                .into_response()
-        }
+    if let Ok(response) = time::timeout(HTTP_WRITE_TIMEOUT, next.run(request)).await {
+        let (parts, body) = response.into_parts();
+        Response::from_parts(
+            parts,
+            Body::new(DeadlineBody::new(
+                body,
+                HTTP_WRITE_TIMEOUT,
+                "HTTP response write timed out",
+            )),
+        )
+    } else {
+        warn!("HTTP request processing exceeded write timeout");
+        (
+            StatusCode::GATEWAY_TIMEOUT,
+            "HTTP request processing timed out",
+        )
+            .into_response()
     }
 }
 

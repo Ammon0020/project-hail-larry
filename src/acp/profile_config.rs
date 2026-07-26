@@ -15,7 +15,7 @@ use crate::config::Config;
 /// On-disk config file name under the resolved state directory.
 const CONFIG_FILE_NAME: &str = "profiles.json";
 
-/// Reject configs larger than this before JSON parsing (DoS guard).
+/// Reject configs larger than this before JSON parsing (`DoS` guard).
 ///
 /// Also used as the REST `PUT /api/profiles` body-size cap so on-disk and
 /// over-the-wire limits stay aligned.
@@ -136,6 +136,10 @@ impl ProfileConfig {
     }
 
     /// Returns `<state_dir>/profiles.json`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the default state directory cannot be resolved.
     pub fn path() -> Result<PathBuf, ProfileConfigError> {
         Ok(Config::resolved_state_dir()?.join(CONFIG_FILE_NAME))
     }
@@ -143,6 +147,9 @@ impl ProfileConfig {
     /// Loads from the default state-dir path.
     ///
     /// Missing file → [`Self::builtin_defaults`] (no error).
+    ///
+    /// # Errors
+    /// Returns an error if the default path cannot be resolved or the file cannot be loaded.
     pub fn load_default() -> Result<Self, ProfileConfigError> {
         Self::load(&Self::path()?)
     }
@@ -152,6 +159,9 @@ impl ProfileConfig {
     /// Missing file → built-in defaults. I/O (other than not-found), parse, and
     /// validation errors are returned and must not be swallowed by callers that
     /// need to surface bad config.
+    ///
+    /// # Errors
+    /// Returns an error on I/O failure (other than not-found), parse errors, or validation failures.
     pub fn load(path: &Path) -> Result<Self, ProfileConfigError> {
         match fs::metadata(path) {
             Ok(meta) => {
@@ -182,6 +192,10 @@ impl ProfileConfig {
     }
 
     /// Parses and validates a raw JSON document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the document cannot be parsed or fails validation.
     pub fn parse(raw: &[u8]) -> Result<Self, ProfileConfigError> {
         let config: Self = serde_json::from_slice(raw).map_err(ProfileConfigError::Json)?;
         config.validate()?;
@@ -193,6 +207,9 @@ impl ProfileConfig {
     /// Used by `PUT /api/profiles`. Does not update in-memory middleware; callers
     /// must [`super::profile::ProfileMiddleware::replace_config`] (or `reload`)
     /// after a successful save.
+    ///
+    /// # Errors
+    /// Returns an error if the default path cannot be resolved, validation fails, serialization fails, or the atomic write fails.
     pub fn save(&self) -> Result<(), ProfileConfigError> {
         self.save_to(&Self::path()?)
     }
@@ -201,6 +218,9 @@ impl ProfileConfig {
     ///
     /// Fails before touching the destination when validation fails or the
     /// serialized payload exceeds [`MAX_FILE_BYTES`].
+    ///
+    /// # Errors
+    /// Returns an error if validation fails, serialization fails, the payload exceeds [`MAX_FILE_BYTES`], or the atomic write fails.
     pub fn save_to(&self, path: &Path) -> Result<(), ProfileConfigError> {
         self.validate()?;
         let data = serde_json::to_vec_pretty(self).map_err(ProfileConfigError::Json)?;
@@ -215,6 +235,9 @@ impl ProfileConfig {
     }
 
     /// Validates structural and security constraints after deserialization.
+    ///
+    /// # Errors
+    /// Returns an error if profiles are empty/too many, the default id is missing, or any profile id/label/instructions/tool/server name is invalid.
     pub fn validate(&self) -> Result<(), ProfileConfigError> {
         if self.profiles.is_empty() {
             return Err(ProfileConfigError::Validation(
@@ -303,6 +326,10 @@ impl ProfileConfig {
     /// Rejects explicit server selections that do not exist in `mcp.json`.
     /// Omitted `mcpServers` and disabled configured servers are valid: the
     /// former means all enabled servers, and the latter may be enabled later.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any profile references an unknown MCP server.
     pub fn validate_mcp_servers_against<'a>(
         &self,
         configured_server_names: impl IntoIterator<Item = &'a str>,
@@ -323,6 +350,10 @@ impl ProfileConfig {
     }
 
     /// Validates the explicit server selection for one resolved profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resolved profile references an unknown MCP server.
     pub fn validate_profile_mcp_servers_against<'a>(
         &self,
         profile_id: &str,
@@ -477,6 +508,7 @@ pub enum ProfileConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
     use std::io::Write;
 
     fn write_temp_config(raw: &str) -> (tempfile::TempDir, PathBuf) {
@@ -580,7 +612,7 @@ mod tests {
 
     #[test]
     fn malformed_json_errors() {
-        let err = ProfileConfig::parse(br#"{ not json"#).expect_err("malformed");
+        let err = ProfileConfig::parse(br"{ not json").expect_err("malformed");
         assert!(matches!(err, ProfileConfigError::Json(_)));
     }
 
@@ -613,6 +645,8 @@ mod tests {
     fn oversized_file_errors() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join(CONFIG_FILE_NAME);
+        // MAX_FILE_BYTES is 256 KiB, well within usize on all supported targets.
+        #[allow(clippy::cast_possible_truncation)]
         let big = vec![b'a'; (MAX_FILE_BYTES as usize) + 1];
         fs::write(&path, big).expect("write oversized");
         let err = ProfileConfig::load(&path).expect_err("oversize");
@@ -626,9 +660,10 @@ mod tests {
             if i > 0 {
                 profiles.push(',');
             }
-            profiles.push_str(&format!(
+            let _ = write!(
+                profiles,
                 r#""p{i}":{{"label":"L{i}","instructions":"i","tools":[]}}"#
-            ));
+            );
         }
         profiles.push('}');
         let raw = format!(r#"{{"profiles":{profiles},"defaultProfileId":"p0"}}"#);

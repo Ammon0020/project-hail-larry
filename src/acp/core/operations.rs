@@ -57,7 +57,7 @@ impl Client {
                     )
                     .map_err(|error| AppError::validation(error.to_string()))?,
                 Err(error) => {
-                    tracing::warn!(path = %path.display(), %error, "skipping profile MCP server-name validation because mcp config is unavailable")
+                    tracing::warn!(path = %path.display(), %error, "skipping profile MCP server-name validation because mcp config is unavailable");
                 }
             }
         }
@@ -244,7 +244,7 @@ impl Client {
             }
             Ok((_, None)) => {}
             Err(error) => {
-                tracing::debug!(session_id, profile = %normalized, error = %error, "set_session_profile: session not live; profile stored for next prompt")
+                tracing::debug!(session_id, profile = %normalized, error = %error, "set_session_profile: session not live; profile stored for next prompt");
             }
         }
         self.pipeline.profiles.set_profile(session_id, profile)

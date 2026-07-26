@@ -230,6 +230,11 @@ fn verify_toml_readable(toml_path: &Path) -> Result<(), MigrateError> {
 ///
 /// Used by tests (and by operators/tools) to roll back a migration. Logs a
 /// warning if the backup is missing.
+///
+/// # Errors
+///
+/// Returns an error if the backup is missing, cannot be read, or the
+/// restore/rename operations fail.
 pub fn restore_config_from_backup(state_dir: &Path) -> Result<(), MigrateError> {
     let backup = config_json_backup_path(state_dir);
     if !backup.is_file() {

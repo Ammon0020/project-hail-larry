@@ -11,7 +11,7 @@ use crate::interfaces::AppError;
 
 /// Profile instruction state owned by the ACP client rather than REST handlers.
 pub struct ProfileMiddleware {
-    /// session_id → normalized profile id from config.
+    /// `session_id` → normalized profile id from config.
     sessions: RwLock<HashMap<String, String>>,
     /// Loaded profile definitions; reloadable after REST writes (S-PROF-REST).
     config: Arc<RwLock<ProfileConfig>>,

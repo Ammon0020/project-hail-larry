@@ -38,6 +38,7 @@ pub enum StateFormat {
 ///
 /// Presence of the file is what matters; contents are validated later by the
 /// migration / load path so detection stays cheap and side-effect free.
+#[must_use]
 pub fn detect_format(state_dir: &Path) -> StateFormat {
     let has_json = state_dir.join(GO_CONFIG_FILE).is_file();
     let has_toml = state_dir.join(RUST_CONFIG_FILE).is_file();
@@ -52,6 +53,7 @@ pub fn detect_format(state_dir: &Path) -> StateFormat {
 /// Backup path for the Go config at the current migration format version.
 ///
 /// Example: `<state_dir>/config.json.bak.v1`
+#[must_use]
 pub fn config_json_backup_path(state_dir: &Path) -> std::path::PathBuf {
     state_dir.join(format!("{GO_CONFIG_FILE}.bak.v{MIGRATE_FORMAT_VERSION}"))
 }

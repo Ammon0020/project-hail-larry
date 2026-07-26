@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -73,6 +74,8 @@ impl RetainedOutput {
 /// The command is gated on an explicit permission prompt so a malicious agent
 /// cannot bypass `request_permission` and spawn arbitrary commands directly.
 /// The approved action is bound to the exact argv/cwd/env that is executed.
+// Single linear terminal-setup sequence — splitting would obscure the flow.
+#[allow(clippy::too_many_lines)]
 pub(in crate::acp::core) async fn create_terminal(
     deps: HandlerDeps,
     request: CreateTerminalRequest,
@@ -97,7 +100,7 @@ pub(in crate::acp::core) async fn create_terminal(
         parts.extend(request.args.iter().cloned());
         let mut display = parts.join(" ");
         if let Some(cwd) = cwd.as_deref() {
-            display.push_str(&format!(" (cwd: {cwd})"));
+            let _ = write!(display, " (cwd: {cwd})");
         }
         if !request.env.is_empty() {
             let env_pairs: Vec<(String, String)> = request
@@ -105,7 +108,7 @@ pub(in crate::acp::core) async fn create_terminal(
                 .iter()
                 .map(|variable| (variable.name.clone(), variable.value.clone()))
                 .collect();
-            display.push_str(&format!(" (env: {env_pairs:?})"));
+            let _ = write!(display, " (env: {env_pairs:?})");
         }
         display
     };
@@ -189,8 +192,11 @@ pub(in crate::acp::core) async fn create_terminal(
             // keep the diagnostic category without recording their contents.
             tracing::warn!(error = %error, "ACP terminal command ended abnormally");
         }
+        // Guarded by `>= 0`: i32→u32 cannot lose the sign.
+        #[allow(clippy::cast_sign_loss)]
+        let exit_code = (result.exit_code >= 0).then_some(result.exit_code as u32);
         let status = TerminalExitStatus::new()
-            .exit_code((result.exit_code >= 0).then_some(result.exit_code as u32))
+            .exit_code(exit_code)
             .signal(result.signal);
         state.exit.send_replace(Some(status));
     });
@@ -199,8 +205,8 @@ pub(in crate::acp::core) async fn create_terminal(
 
 /// Return a snapshot of terminal output without waiting for the command.
 pub(in crate::acp::core) fn terminal_output(
-    deps: HandlerDeps,
-    request: TerminalOutputRequest,
+    deps: &HandlerDeps,
+    request: &TerminalOutputRequest,
 ) -> Result<TerminalOutputResponse, AppError> {
     let terminal = terminal_state(&deps.terminals, &request.terminal_id.to_string())?;
     let output = terminal
@@ -230,8 +236,8 @@ pub(in crate::acp::core) async fn wait_for_terminal_exit(
 
 /// Cancel a terminal while retaining its output for subsequent inspection.
 pub(in crate::acp::core) fn kill_terminal(
-    deps: HandlerDeps,
-    request: KillTerminalRequest,
+    deps: &HandlerDeps,
+    request: &KillTerminalRequest,
 ) -> Result<KillTerminalResponse, AppError> {
     let terminal = terminal_state(&deps.terminals, &request.terminal_id.to_string())?;
     terminal.cancel.cancel();
@@ -240,8 +246,8 @@ pub(in crate::acp::core) fn kill_terminal(
 
 /// Cancel and remove a terminal, releasing its registry-owned resources.
 pub(in crate::acp::core) fn release_terminal(
-    deps: HandlerDeps,
-    request: ReleaseTerminalRequest,
+    deps: &HandlerDeps,
+    request: &ReleaseTerminalRequest,
 ) -> Result<ReleaseTerminalResponse, AppError> {
     let terminal = deps
         .terminals

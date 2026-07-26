@@ -73,6 +73,11 @@ enum Commands {
 }
 
 /// Parse and execute a CLI command.
+///
+/// # Errors
+///
+/// Returns an error if the selected subcommand fails (e.g. daemon start fails,
+/// workspace path is invalid, or a service install/uninstall step errors).
 pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Start { background } => start(background).await,
@@ -180,7 +185,7 @@ async fn status() -> Result<()> {
     }
     writeln!(out, "HTTP:     http://{}", status.http)?;
     if let Some(https) = status.https {
-        writeln!(out, "HTTPS:    https://{} (self-signed)", https)?;
+        writeln!(out, "HTTPS:    https://{https} (self-signed)")?;
     }
     writeln!(out, "Data:     {}", config.data_dir)?;
     writeln!(out, "Workspaces: {}", workspaces.len())?;
@@ -365,6 +370,7 @@ async fn revoke(id: &str) -> Result<()> {
 }
 
 fn logs() -> Result<()> {
+    use std::io::{Read, Seek, SeekFrom};
     let log_dir = logging::log_dir().context("resolve daemon log directory")?;
     let Some(log_file) = newest_log(&log_dir)? else {
         writeln!(io::stdout(), "No log file found. Is the daemon running?")?;
@@ -375,7 +381,6 @@ fn logs() -> Result<()> {
     let offset = metadata.len().saturating_sub(LOG_TAIL_BYTES);
     let mut file = fs::File::open(&log_file)
         .with_context(|| format!("open daemon log {}", log_file.display()))?;
-    use std::io::{Read, Seek, SeekFrom};
     file.seek(SeekFrom::Start(offset))
         .context("seek daemon log")?;
     if offset > 0 {
@@ -397,7 +402,7 @@ fn newest_log(log_dir: &Path) -> Result<Option<std::path::PathBuf>> {
         Err(error) => return Err(error).with_context(|| format!("read {}", log_dir.display())),
     };
     let mut files = entries
-        .filter_map(|entry| entry.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|entry| {
             entry
                 .file_type()
@@ -411,7 +416,7 @@ fn newest_log(log_dir: &Path) -> Result<Option<std::path::PathBuf>> {
                 .starts_with("local-agent.log")
         })
         .collect::<Vec<_>>();
-    files.sort_by_key(|entry| entry.file_name());
+    files.sort_by_key(std::fs::DirEntry::file_name);
     Ok(files.pop().map(|entry| entry.path()))
 }
 

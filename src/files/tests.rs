@@ -428,12 +428,16 @@ fn content_revision_differs_for_different_content() {
     );
 }
 
-/// `content_revision` fits in 48 bits (within JS Number.MAX_SAFE_INTEGER).
+/// `content_revision` fits in 48 bits (within JS `Number.MAX_SAFE_INTEGER`).
 #[test]
 fn content_revision_fits_48_bits() {
     // Test with various content sizes.
     for size in &[1, 100, 1000, 10_000] {
-        let content: Vec<u8> = (0..*size).map(|i| (i % 256) as u8).collect();
+        // `i` ranges over 0..*size (≤ 10_000); `i % 256` is in 0..256 and
+        // non-negative, so try_from is infallible here.
+        let content: Vec<u8> = (0..*size)
+            .map(|i| u8::try_from(i % 256).expect("i % 256 is non-negative and < 256"))
+            .collect();
         let rev = content_revision(&content);
         assert!(
             rev >= 0,
@@ -523,7 +527,7 @@ async fn stress_many_files_revisions() {
 }
 
 /// Saving the same content twice still increments the revision (monotonic,
-/// not content-hash-based in the FileSync layer).
+/// not content-hash-based in the `FileSync` layer).
 #[tokio::test]
 async fn save_same_content_increments() {
     let fs = FileSync::new();

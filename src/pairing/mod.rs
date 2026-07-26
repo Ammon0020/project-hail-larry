@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::Duration;
 
@@ -40,6 +40,10 @@ const PERSIST_THROTTLE: Duration = Duration::from_secs(60);
 /// construction so pairing has no mutable post-construction callback slot.
 pub trait WorkspaceRegistrar: Send + Sync {
     /// Register a workspace after its grace window has elapsed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the workspace cannot be registered.
     fn register_workspace(&self, path: &str) -> Result<(), PairingError>;
 }
 
@@ -159,6 +163,10 @@ struct PendingAction {
 
 impl Manager {
     /// Load Go-compatible `devices.json`; corrupt existing state fails closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `devices.json` cannot be loaded or parsed.
     pub fn new(
         data_dir: impl Into<PathBuf>,
         workspace_registrar: Option<Arc<dyn WorkspaceRegistrar>>,
@@ -205,12 +213,16 @@ impl Manager {
 
     /// Create a single-use session. The URL intentionally remains `http` to
     /// match the checked-in Go contract fixture (`pairing_session.json`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if random token generation or QR PNG writing fails.
     pub fn create_session(&self, host: &str, port: u16) -> Result<PairingSession, PairingError> {
         let mut inner = lock(&self.inner);
         cleanup_sessions(&mut inner);
-        let token = random_hex(32)?;
-        let passcode = generate_passcode()?;
-        let id = random_hex(16)?;
+        let token = random_hex(32);
+        let passcode = generate_passcode();
+        let id = random_hex(16);
         let url = format!("http://{host}:{port}?token={token}");
         let qr_path = inner.data_dir.join(format!("pairing-{id}.png"));
         write_qr(&url, &qr_path)?;
@@ -231,6 +243,11 @@ impl Manager {
         Ok(session)
     }
 
+    /// Verifies a passcode against active pairing sessions and issues device
+    /// credentials on success.
+    ///
+    /// # Errors
+    /// Returns an error if no session matches the passcode or credential issuance/persistence fails.
     pub fn verify_passcode(
         &self,
         passcode: &str,
@@ -245,6 +262,11 @@ impl Manager {
         )
     }
 
+    /// Verifies a single-use pairing token and issues device credentials on
+    /// success.
+    ///
+    /// # Errors
+    /// Returns an error if no session matches the token or credential issuance/persistence fails.
     pub fn verify_token(
         &self,
         token: &str,
@@ -292,6 +314,7 @@ impl Manager {
     }
 
     /// Validate and renew a device's sliding activity window.
+    #[must_use]
     pub fn validate_credential(&self, device_id: &str, secret: &str) -> bool {
         let mut inner = lock(&self.inner);
         let digest = hash_secret(secret);
@@ -323,6 +346,7 @@ impl Manager {
         true
     }
 
+    #[must_use]
     pub fn list_devices(&self) -> Vec<DeviceInfo> {
         let inner = lock(&self.inner);
         let mut devices: Vec<_> = inner
@@ -339,6 +363,11 @@ impl Manager {
         devices
     }
 
+    /// Revokes a device immediately, removing its credentials.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the device is unknown or persistence fails.
     pub fn revoke_device(&self, device_id: &str) -> Result<(), PairingError> {
         let mut inner = lock(&self.inner);
         let removed = inner
@@ -352,6 +381,11 @@ impl Manager {
         Ok(())
     }
 
+    /// Schedules a grace-delayed device revocation, returning the pending
+    /// action info.
+    ///
+    /// # Errors
+    /// Returns an error if the device is unknown or a duplicate revocation is already pending.
     pub fn request_revocation(
         &self,
         device_id: &str,
@@ -370,21 +404,34 @@ impl Manager {
             }) {
                 return Err(PairingError::DuplicatePendingAction);
             }
-            pending_info(
+            Ok(pending_info(
                 PENDING_ACTION_TYPE_REVOCATION,
                 device_id,
                 &device.name,
                 "",
                 requested_by.into(),
                 grace,
-            )
+            ))
         })
     }
 
+    /// Cancels a pending device revocation by action id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PairingError::PendingActionNotFound`] if no pending action has
+    /// the given id, or [`PairingError::PendingActionTypeMismatch`] if the action
+    /// is not a revocation.
     pub fn cancel_revocation(&self, action_id: &str) -> Result<(), PairingError> {
         cancel_pending(&self.inner, action_id, PENDING_ACTION_TYPE_REVOCATION)
     }
 
+    /// Schedules a grace-delayed workspace registration, returning the pending
+    /// action info.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a duplicate registration is already pending.
     pub fn request_workspace_registration(
         &self,
         path: &str,
@@ -399,14 +446,14 @@ impl Manager {
             }) {
                 return Err(PairingError::DuplicatePendingAction);
             }
-            pending_info(
+            Ok(pending_info(
                 PENDING_ACTION_TYPE_WORKSPACE_REGISTRATION,
                 "",
                 "",
                 path,
                 requested_by.into(),
                 grace,
-            )
+            ))
         })
     }
 
@@ -428,6 +475,13 @@ impl Manager {
         Ok(info)
     }
 
+    /// Cancels a pending workspace registration by action id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PairingError::PendingActionNotFound`] if no pending action has
+    /// the given id, or [`PairingError::PendingActionTypeMismatch`] if the action
+    /// is not a workspace registration.
     pub fn cancel_workspace_registration(&self, action_id: &str) -> Result<(), PairingError> {
         cancel_pending(
             &self.inner,
@@ -436,6 +490,7 @@ impl Manager {
         )
     }
 
+    #[must_use]
     pub fn list_pending_actions(&self) -> Vec<PendingActionInfo> {
         let inner = lock(&self.inner);
         let mut actions: Vec<_> = inner.pending.values().map(|p| p.info.clone()).collect();
@@ -462,9 +517,7 @@ impl Drop for Manager {
 }
 
 fn lock(inner: &Arc<Mutex<Inner>>) -> MutexGuard<'_, Inner> {
-    inner
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    inner.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn issue_credential(
@@ -476,8 +529,8 @@ fn issue_credential(
         .sessions
         .remove(session_id)
         .ok_or(PairingError::InvalidPasscode)?;
-    let id = random_hex(16)?;
-    let secret = random_hex(32)?;
+    let id = random_hex(16);
+    let secret = random_hex(32);
     let now = Utc::now();
     let stored = StoredDevice {
         id: id.clone(),
@@ -587,10 +640,10 @@ fn pending_info(
     path: &str,
     requested_by: String,
     grace: Duration,
-) -> Result<PendingActionInfo, PairingError> {
+) -> PendingActionInfo {
     let requested_at = Utc::now();
-    Ok(PendingActionInfo {
-        id: random_hex(16)?,
+    PendingActionInfo {
+        id: random_hex(16),
         action_type: action_type.to_owned(),
         device_id: device_id.to_owned(),
         device_name: device_name.to_owned(),
@@ -598,7 +651,7 @@ fn pending_info(
         requested_by,
         requested_at,
         execute_at: requested_at + chrono_duration(grace),
-    })
+    }
 }
 
 fn check_rate_limit(inner: &mut Inner, key: &str) -> Result<(), PairingError> {
@@ -621,7 +674,10 @@ fn record_failure(inner: &mut Inner, key: &str) {
     if state.failures.len() >= MAX_VERIFY_ATTEMPTS {
         let multiplier = 1_u64 << state.lockout_count.min(8);
         let seconds = (BASE_LOCKOUT.as_secs() * multiplier).min(MAX_LOCKOUT.as_secs());
-        state.lockout_until = Some(Utc::now() + chrono::Duration::seconds(seconds as i64));
+        // `seconds` is bounded by MAX_LOCKOUT (a Duration constant < i64::MAX secs).
+        #[allow(clippy::cast_possible_wrap)]
+        let seconds_i64 = seconds as i64;
+        state.lockout_until = Some(Utc::now() + chrono::Duration::seconds(seconds_i64));
         state.lockout_count = state.lockout_count.saturating_add(1);
         state.failures.clear();
     }
@@ -648,7 +704,12 @@ fn cleanup_stale_qr_files(data_dir: &Path) {
     for entry in entries.flatten() {
         let path = entry.path();
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with("pairing-") && name.ends_with(".png") {
+            if name.starts_with("pairing-")
+                && name
+                    .rsplit('.')
+                    .next()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
+            {
                 let _ = fs::remove_file(&path);
             }
         }
@@ -683,15 +744,15 @@ fn save_devices(inner: &mut Inner) -> Result<(), PairingError> {
         .map_err(PairingError::Persistence)
 }
 
-fn random_hex(bytes: usize) -> Result<String, PairingError> {
+fn random_hex(bytes: usize) -> String {
     let mut value = vec![0_u8; bytes];
     // `rand::rng()` is a CSPRNG seeded from the operating system. It does not
     // expose a fallible API, unlike Go's direct `crypto/rand.Reader`.
     rand::rng().fill_bytes(&mut value);
-    Ok(hex::encode(value))
+    hex::encode(value)
 }
 
-fn generate_passcode() -> Result<String, PairingError> {
+fn generate_passcode() -> String {
     let words = word_list();
     let mut result = Vec::with_capacity(4);
     for _ in 0..4 {
@@ -704,9 +765,11 @@ fn generate_passcode() -> Result<String, PairingError> {
             rand::rng().fill_bytes(&mut value);
             number = u64::from_le_bytes(value);
         }
+        // `number % words.len()` < 2048, so truncation to usize is impossible.
+        #[allow(clippy::cast_possible_truncation)]
         result.push(words[(number % words.len() as u64) as usize]);
     }
-    Ok(result.join("-"))
+    result.join("-")
 }
 
 fn word_list() -> &'static Vec<&'static str> {

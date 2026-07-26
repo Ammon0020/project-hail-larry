@@ -21,7 +21,7 @@ const MAX_FILE_TREE_DEPTH: usize = 20;
 const MAX_FILE_TREE_NODES: usize = 100_000;
 /// Server-side deadline for a single search. The cancellation token passed to
 /// `search` is cancelled on expiry so a slow or huge workspace cannot hold a
-/// blocking thread indefinitely (defense against the dead-token DoS).
+/// blocking thread indefinitely (defense against the dead-token `DoS`).
 const SEARCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// One registered workspace root, available or retained-as-unavailable.
@@ -100,6 +100,10 @@ impl Manager {
     /// Does not touch config. ID is the same path-hash used by successful
     /// register (hash of the configured path string). Replaces any prior entry
     /// for that id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the workspace registry lock is poisoned.
     pub fn retain_unavailable(
         &self,
         path: &str,
@@ -318,7 +322,7 @@ impl WorkspaceManager for Manager {
             result = crate::search::search(&root, &opts, cancel) => {
                 result.map_err(|err| AppError::validation(err.to_string()))
             }
-            _ = timeout => {
+            () = timeout => {
                 cancel_clone.cancel();
                 Err(AppError::validation("search timed out"))
             }
@@ -406,13 +410,15 @@ fn open_dir_no_symlink(path: &Path) -> Result<PathBuf, AppError> {
 }
 
 fn workspace_id(root: &Path) -> String {
+    use std::fmt::Write as _;
     let mut hasher = Sha256::new();
     hasher.update(root.to_string_lossy().as_bytes());
     let digest = hasher.finalize();
-    digest[..8]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    let mut out = String::with_capacity(16);
+    for byte in &digest[..8] {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 fn read_file(root: &Path, rel_path: &str) -> Result<ReadFileResult, AppError> {
@@ -423,8 +429,7 @@ fn read_file(root: &Path, rel_path: &str) -> Result<ReadFileResult, AppError> {
         // absolute canonical path) to avoid leaking the host filesystem layout.
         if err.kind() == std::io::ErrorKind::NotFound {
             AppError::not_found(format!(
-                "stat file: lstat {}: no such file or directory",
-                rel_path
+                "stat file: lstat {rel_path}: no such file or directory"
             ))
         } else {
             AppError::internal(format!("stat file: {err}"))

@@ -3,7 +3,7 @@
 //! Allows the Rust binary to replace the Go binary without losing user state.
 //! The only *format-transforming* migration today is config:
 //! `config.json` (Go/JSON) → `config.toml` (Rust/TOML). Other artifacts
-//! (SQLite event DB, `devices.json`, `conversations.json`, `mcp.json`,
+//! (`SQLite` event DB, `devices.json`, `conversations.json`, `mcp.json`,
 //! uploads, TLS dir) keep their Go on-disk formats and are validated for
 //! openability; semantic load for pairing/MCP/ACP/uploads is deferred to those
 //! module ports.
@@ -59,6 +59,7 @@ pub struct MigrationReport {
 impl MigrationReport {
     /// True when config migration (if any) succeeded and validation has no hard
     /// failures.
+    #[must_use]
     pub fn is_ok(&self) -> bool {
         self.validation.is_ok()
     }

@@ -85,7 +85,7 @@ const HTML_SIGNIFICANT_CHARS: &[char] = &['<', '>', '&', '"', '\''];
 /// Validates a paired device name: non-empty, within the length cap, free of
 /// control characters and HTML-significant characters. Device names are
 /// attacker-controlled (any paired device can set one) and may be rendered in
-/// the UI, so both DoS and stored-XSS surfaces are bounded here.
+/// the UI, so both `DoS` and stored-XSS surfaces are bounded here.
 fn validate_device_name(name: &str) -> Result<(), ApiResponseError> {
     if name.is_empty() {
         return Err(ApiResponseError::bad_request(
@@ -111,7 +111,7 @@ fn validate_device_name(name: &str) -> Result<(), ApiResponseError> {
 
 /// Validates a session name: within the length cap and free of control
 /// characters. Session names are client-controlled and may be displayed in the
-/// UI, so the DoS surface is bounded and control characters are rejected.
+/// UI, so the `DoS` surface is bounded and control characters are rejected.
 fn validate_session_name(name: &str) -> Result<(), ApiResponseError> {
     let len = name.chars().count();
     if len > MAX_SESSION_NAME_CHARS {
@@ -154,7 +154,7 @@ pub struct AppState {
     pair_rate: Arc<Mutex<HashMap<String, PairRateBucket>>>,
     /// In-memory, workspace-scoped preview tickets with short expiry.
     preview_tokens: Arc<Mutex<HashMap<String, PreviewToken>>>,
-    /// Cached autodetect results with a cooldown to prevent probe-spawn DoS.
+    /// Cached autodetect results with a cooldown to prevent probe-spawn `DoS`.
     autodetect_cache: AutodetectCache,
 }
 
@@ -214,6 +214,10 @@ impl AppState {
 ///
 /// Callers serving TCP must use Axum's `into_make_service_with_connect_info` so
 /// the loopback authorization decision uses the real peer address.
+// Single linear request handler — splitting would obscure the flow.
+#[allow(clippy::too_many_lines)]
+// Call sites in src/app/daemon.rs and tests — would require cross-file signature change.
+#[allow(clippy::needless_pass_by_value)]
 pub fn router(state: AppState) -> Router {
     let auth_state = state.clone();
     let protected: Router = Router::new()
@@ -360,7 +364,7 @@ pub fn router(state: AppState) -> Router {
 /// defense-in-depth against XSS. It is only inserted when the handler has not
 /// already set its own CSP (e.g. the preview handler uses `sandbox
 /// allow-same-origin` for agent-written HTML). `style-src 'unsafe-inline'` is
-/// required because CodeMirror injects inline styles; no `'unsafe-inline'` is
+/// required because `CodeMirror` injects inline styles; no `'unsafe-inline'` is
 /// granted to `script-src`.
 async fn security_headers(request: Request<Body>, next: Next) -> Response {
     let over_tls = request.extensions().get::<TlsConnection>().is_some();
@@ -465,7 +469,7 @@ async fn pair_verify_passcode(
     body: Result<Json<PairVerifyRequest>, JsonRejection>,
 ) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
     let peer_key = pair_rate_key(&addr.ip());
-    pair_verify(state, body, |pairing, request| {
+    pair_verify(&state, body, |pairing, request| {
         pairing.verify_passcode(
             request.passcode.as_deref().unwrap_or_default(),
             request.device_name,
@@ -480,7 +484,7 @@ async fn pair_verify_token(
     body: Result<Json<PairVerifyRequest>, JsonRejection>,
 ) -> Result<Json<crate::interfaces::DeviceCredential>, ApiResponseError> {
     let peer_key = pair_rate_key(&addr.ip());
-    pair_verify(state, body, |pairing, request| {
+    pair_verify(&state, body, |pairing, request| {
         pairing.verify_token(
             request.token.as_deref().unwrap_or_default(),
             request.device_name,
@@ -491,7 +495,7 @@ async fn pair_verify_token(
 
 /// Shared decode + verify path for passcode and QR-token pairing.
 fn pair_verify(
-    state: AppState,
+    state: &AppState,
     body: Result<Json<PairVerifyRequest>, JsonRejection>,
     verify: impl FnOnce(
         &PairingManager,
@@ -530,10 +534,10 @@ async fn revoke_device(
 
     // Broadcast so every connected device can surface and cancel the action.
     let mut event = Event::new(0, EventType::DeviceRevocationPending, "", Utc::now());
-    event.target = info.device_id.clone();
-    event.device_name = info.device_name.clone();
-    event.request_id = info.id.clone();
-    event.command = info.requested_by.clone();
+    event.target.clone_from(&info.device_id);
+    event.device_name.clone_from(&info.device_name);
+    event.request_id.clone_from(&info.id);
+    event.command.clone_from(&info.requested_by);
     event.execute_at = info.execute_at;
     record_event(&state, event).await;
 
@@ -652,9 +656,9 @@ async fn register_workspace(
         .map_err(pairing_error)?;
 
     let mut event = Event::new(0, EventType::WorkspaceRegistrationPending, "", Utc::now());
-    event.target = info.path.clone();
-    event.request_id = info.id.clone();
-    event.command = info.requested_by.clone();
+    event.target.clone_from(&info.path);
+    event.request_id.clone_from(&info.id);
+    event.command.clone_from(&info.requested_by);
     event.execute_at = info.execute_at;
     record_event(&state, event).await;
 
@@ -923,9 +927,10 @@ fn content_type_for_path(path: &std::path::Path, data: &[u8]) -> String {
         "webp" => "image/webp".into(),
         "pdf" => "application/pdf".into(),
         "wasm" => "application/wasm".into(),
-        _ => infer::get(data)
-            .map(|kind| kind.mime_type().to_string())
-            .unwrap_or_else(|| "application/octet-stream".into()),
+        _ => infer::get(data).map_or_else(
+            || "application/octet-stream".into(),
+            |kind| kind.mime_type().to_string(),
+        ),
     }
 }
 
@@ -1192,6 +1197,8 @@ async fn get_session(
     state.acp.get_session_info(&id).map(Json).map_err(app_error)
 }
 
+// ids are the natural name for these fields.
+#[allow(clippy::struct_field_names)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateSessionRequest {
@@ -1480,7 +1487,7 @@ struct PreviewAuthorization {
 /// Authenticates a preview read and exchanges an entry ticket for a cookie.
 ///
 /// Query tickets are intentionally one-time: URLs may reach browser history or
-/// server logs, while the replacement value is HttpOnly and path-scoped.
+/// server logs, while the replacement value is `HttpOnly` and path-scoped.
 fn preview_authorization(
     state: &AppState,
     uri: &Uri,
@@ -1560,8 +1567,10 @@ async fn require_pair_rate_limit(
     let peer = request
         .extensions()
         .get::<axum::extract::ConnectInfo<SocketAddr>>()
-        .map(|connect| pair_rate_key(&connect.0.ip()))
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+        .map_or_else(
+            || "127.0.0.1".to_string(),
+            |connect| pair_rate_key(&connect.0.ip()),
+        );
     if !allow_pair_request(&state, &peer) {
         debug!(peer, "pairing request rate limited");
         return ApiResponseError::rate_limited("pairing rate limit exceeded, try again later")
@@ -1722,15 +1731,17 @@ fn revocation_grace_period(state: &AppState) -> Duration {
 fn peer_addr_string(extensions: &axum::http::Extensions) -> String {
     extensions
         .get::<axum::extract::ConnectInfo<SocketAddr>>()
-        .map(|connect| connect.0.to_string())
-        .unwrap_or_else(|| {
-            if cfg!(test) {
-                "127.0.0.1:0".to_string()
-            } else {
-                // Fail closed: a non-loopback address forces credential checks.
-                "0.0.0.0:0".to_string()
-            }
-        })
+        .map_or_else(
+            || {
+                if cfg!(test) {
+                    "127.0.0.1:0".to_string()
+                } else {
+                    // Fail closed: a non-loopback address forces credential checks.
+                    "0.0.0.0:0".to_string()
+                }
+            },
+            |connect| connect.0.to_string(),
+        )
 }
 
 /// Device ID from the `Authorization: Bearer` header — empty on loopback-only
@@ -1778,6 +1789,8 @@ fn cancel_pending_error(error: PairingError) -> ApiResponseError {
     }
 }
 
+// Call sites in src/api/session_extra.rs and src/api/providers.rs — would require cross-file signature change.
+#[allow(clippy::needless_pass_by_value)]
 fn pairing_error(error: PairingError) -> ApiResponseError {
     match error {
         PairingError::InvalidPasscode | PairingError::InvalidToken => {
@@ -1800,6 +1813,8 @@ fn pairing_error(error: PairingError) -> ApiResponseError {
     }
 }
 
+// Call sites in src/api/session_extra.rs and src/api/providers.rs — would require cross-file signature change.
+#[allow(clippy::needless_pass_by_value)]
 fn app_error(error: AppError) -> ApiResponseError {
     let mapped = map_api_error(&error);
     let status = StatusCode::from_u16(mapped.status.0).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -1918,7 +1933,7 @@ pub(crate) mod test_support {
         }
     }
 
-    /// AppState with all optional fields set to `None`.
+    /// `AppState` with all optional fields set to `None`.
     pub(crate) fn test_state(dir: &Path) -> AppState {
         let d = core_deps(dir);
         AppState::new(
@@ -1935,7 +1950,7 @@ pub(crate) mod test_support {
         )
     }
 
-    /// AppState with `mcp_config_path` set (for MCP handler tests).
+    /// `AppState` with `mcp_config_path` set (for MCP handler tests).
     pub(crate) fn test_state_with_mcp(dir: &Path, mcp_path: PathBuf) -> AppState {
         let d = core_deps(dir);
         AppState::new(
@@ -1952,7 +1967,7 @@ pub(crate) mod test_support {
         )
     }
 
-    /// AppState with an `uploads` manager (for session upload tests).
+    /// `AppState` with an `uploads` manager (for session upload tests).
     pub(crate) fn test_state_with_uploads(dir: &Path) -> AppState {
         let d = core_deps(dir);
         let uploads = Arc::new(Mutex::new(
@@ -2175,7 +2190,7 @@ mod tests {
         )
         .await;
         let pending = json_body(list).await;
-        assert_eq!(pending.as_array().map(Vec::len).unwrap_or(1), 0);
+        assert_eq!(pending.as_array().map_or(1, Vec::len), 0);
     }
 
     #[tokio::test]
@@ -2225,7 +2240,7 @@ mod tests {
         .await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = json_body(response).await;
-        assert_eq!(body.as_array().map(Vec::len).unwrap_or(1), 0);
+        assert_eq!(body.as_array().map_or(1, Vec::len), 0);
     }
 
     #[tokio::test]
@@ -2315,7 +2330,7 @@ mod tests {
         )
         .await;
         let pending = json_body(list).await;
-        assert_eq!(pending.as_array().map(Vec::len).unwrap_or(1), 0);
+        assert_eq!(pending.as_array().map_or(1, Vec::len), 0);
     }
 
     #[tokio::test]
@@ -2724,7 +2739,7 @@ mod tests {
                 .method(Method::POST)
                 .uri("/api/sessions/sess-fake/profile")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(r#"{not json"#))
+                .body(Body::from(r"{not json"))
                 .expect("request"),
         )
         .await;

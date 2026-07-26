@@ -152,6 +152,8 @@ struct Observed {
 
 /// Spawn a tokio timeout future. Returns `Err` with a descriptive message
 /// on timeout so the test failure points at the right phase.
+// Timeout path — error variant is irrelevant, only the fact of timeout matters.
+#[allow(clippy::match_wild_err_arm)]
 async fn with_timeout<F, T>(label: &str, f: F) -> T
 where
     F: std::future::Future<Output = T>,
@@ -172,6 +174,8 @@ where
 /// This test covers initialize, create, prompt, stream, and close. Cancellation
 /// has its own test below (`spike_cancel_terminates_child`) because it needs
 /// to assert on process teardown.
+// Single linear test sequence — splitting adds indirection without clarity.
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn spike_initialize_session_prompt_stream_close() {
     let observed = Observed::default();
@@ -234,13 +238,10 @@ async fn spike_initialize_session_prompt_stream_close() {
         .on_receive_request(
             async move |req: RequestPermissionRequest, responder, _cx: ConnectionTo<Agent>| {
                 *observed.permission_requested.lock().await = true;
-                let option_id = req
-                    .options
-                    .first()
-                    .map(|o| o.option_id.clone())
-                    .unwrap_or_else(|| {
-                        agent_client_protocol::schema::v1::PermissionOptionId::new("allow_once")
-                    });
+                let option_id = req.options.first().map_or_else(
+                    || agent_client_protocol::schema::v1::PermissionOptionId::new("allow_once"),
+                    |o| o.option_id.clone(),
+                );
                 responder.respond(RequestPermissionResponse::new(
                     RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id)),
                 ))
@@ -808,6 +809,8 @@ fn command_on_path(command: &str) -> bool {
     false
 }
 
+// Timeout path — error variant is irrelevant, only the fact of timeout matters.
+#[allow(clippy::match_wild_err_arm)]
 async fn with_real_timeout<F, T>(label: &str, f: F) -> T
 where
     F: std::future::Future<Output = T>,
@@ -823,6 +826,8 @@ where
 /// Gated by `ACP_E2E_AGENT`. When unset, skips so CI does not need API keys
 /// or installed adapters. When set (e.g. `ACP_E2E_AGENT=codex`), drives
 /// initialize → session/new → prompt → stream → close against a live agent.
+// Single linear end-to-end test sequence — splitting adds indirection without clarity.
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 #[allow(clippy::print_stderr)] // skip/success diagnostics for opt-in operators
 async fn spike_real_agent_prompt_round_trip() {
@@ -866,13 +871,10 @@ async fn spike_real_agent_prompt_round_trip() {
         .on_receive_request(
             async move |req: RequestPermissionRequest, responder, _cx: ConnectionTo<Agent>| {
                 *permission_h.lock().await = true;
-                let option_id = req
-                    .options
-                    .first()
-                    .map(|o| o.option_id.clone())
-                    .unwrap_or_else(|| {
-                        agent_client_protocol::schema::v1::PermissionOptionId::new("allow_once")
-                    });
+                let option_id = req.options.first().map_or_else(
+                    || agent_client_protocol::schema::v1::PermissionOptionId::new("allow_once"),
+                    |o| o.option_id.clone(),
+                );
                 responder.respond(RequestPermissionResponse::new(
                     RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id)),
                 ))

@@ -22,7 +22,7 @@ pub use registry::SessionState;
 pub const STDERR_TAIL_BYTES: usize = 8 * 1024;
 
 /// Maximum concurrent live ACP sessions. Each session pins an agent child
-/// process, so a cap prevents unbounded process-exhaustion DoS.
+/// process, so a cap prevents unbounded process-exhaustion `DoS`.
 pub(super) const MAX_SESSIONS: usize = 32;
 /// Safe default for a model-switch rebind transfer (256 KiB).
 pub(super) const MODEL_SWITCH_TRANSFER_BYTES: i64 = 256 * 1024;

@@ -1,6 +1,6 @@
 //! Durable conversation metadata stored in `conversations.json`.
 //!
-//! Event history remains in SQLite; this store owns only the lightweight
+//! Event history remains in `SQLite`; this store owns only the lightweight
 //! session list needed to restore names, selected harnesses, timestamps, and
 //! the agent-side ACP session id used for `session/load` after restart.
 

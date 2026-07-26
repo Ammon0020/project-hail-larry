@@ -206,6 +206,8 @@ struct PromptTurn<'a> {
 }
 
 /// Await one prompt while continuing to receive session control commands.
+// Actor state machine — splitting would obscure the prompt/abort transition flow.
+#[allow(clippy::too_many_lines)]
 async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_protocol::Error> {
     let PromptTurn {
         cx,

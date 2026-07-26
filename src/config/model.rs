@@ -58,6 +58,11 @@ impl PromptContextSettings {
         self == &Self::default()
     }
 
+    /// Validates that path-context limits stay within the allowed maximum.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if any limit exceeds `MAX_PROMPT_CONTEXT_PATHS`.
     pub fn validate(&self) -> Result<(), String> {
         for (name, value) in [
             ("openFileLimit", self.open_file_limit),
@@ -191,6 +196,8 @@ pub struct Config {
 
 /// `skip_serializing_if` helper mirroring Go's `omitempty` for integer fields
 /// (drop on zero).
+// serde's `skip_serializing_if` contract requires `fn(&T) -> bool`.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero_i64(v: &i64) -> bool {
     *v == 0
 }
@@ -201,6 +208,10 @@ impl Config {
     ///
     /// Errors only when the state directory cannot be resolved (no home dir
     /// and `LOCAL_AGENT_STATE_DIR` unset). Mirrors Go `DefaultOrError`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the state directory cannot be resolved.
     pub fn default_or_error() -> Result<Self, ConfigError> {
         let state_dir = Self::resolved_state_dir()?;
         let data_dir = state_dir.to_string_lossy().to_string();
@@ -238,6 +249,9 @@ impl Config {
     /// the user's home directory. This is the single override point consulted
     /// by both `default_or_error` and `load` so the CLI and daemon agree on
     /// the state directory (mirrors Go `resolvedStateDir`).
+    ///
+    /// # Errors
+    /// Returns an error if no home directory can be resolved and `LOCAL_AGENT_STATE_DIR` is unset.
     pub fn resolved_state_dir() -> Result<PathBuf, ConfigError> {
         if let Some(dir) = std::env::var_os(super::STATE_DIR_ENV_VAR) {
             if !dir.is_empty() {
@@ -253,6 +267,10 @@ impl Config {
     /// `add_workspace` registers an absolute workspace path and persists the
     /// config. Duplicate paths are silently kept unique (no-op if already
     /// registered). Mirrors the host-CLI `app add-folder` persistence path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the path is empty or the config cannot be persisted.
     pub fn add_workspace(&mut self, abs_path: &str) -> Result<(), ConfigError> {
         if abs_path.is_empty() {
             return Err(ConfigError::InvalidInput(
@@ -268,6 +286,9 @@ impl Config {
     /// `remove_workspace` drops the given absolute path from the workspaces
     /// list and persists. Errors if the path was not registered. Mirrors Go
     /// `RemoveWorkspacePath`.
+    ///
+    /// # Errors
+    /// Returns an error if the path was not registered or the config cannot be persisted.
     pub fn remove_workspace(&mut self, abs_path: &str) -> Result<(), ConfigError> {
         let before = self.workspaces.len();
         self.workspaces.retain(|w| w != abs_path);
@@ -278,6 +299,7 @@ impl Config {
     }
 
     /// `list_workspaces` returns a copy of the registered workspace paths.
+    #[must_use]
     pub fn list_workspaces(&self) -> Vec<String> {
         self.workspaces.clone()
     }
@@ -286,6 +308,10 @@ impl Config {
 
     /// `upsert_agent` adds or replaces an agent by ID and persists. Mirrors Go
     /// `UpsertAgent`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if persistence fails.
     pub fn upsert_agent(&mut self, agent: AgentInfo) -> Result<(), ConfigError> {
         if let Some(slot) = self.agents.iter_mut().find(|a| a.id == agent.id) {
             *slot = agent;
@@ -297,6 +323,10 @@ impl Config {
 
     /// `delete_agent` removes an agent by ID and persists. No error if the ID
     /// is not present (mirrors Go `DeleteAgent`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if persistence fails.
     pub fn delete_agent(&mut self, id: &str) -> Result<(), ConfigError> {
         self.agents.retain(|a| a.id != id);
         self.save()

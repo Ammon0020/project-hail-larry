@@ -1,4 +1,4 @@
-//! SQLite event store (Go `internal/events/`).
+//! `SQLite` event store (Go `internal/events/`).
 //!
 //! WAL-mode, append-only event log with retention pruning, query, and replay.
 //! Uses `rusqlite` (bundled) behind a blocking boundary: a single connection is

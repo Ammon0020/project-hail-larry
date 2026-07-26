@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 
 /// Return whether `pid` still identifies a live process.
+#[must_use]
 pub fn is_running(pid: u32) -> bool {
     platform::is_running(pid)
 }
@@ -14,6 +15,11 @@ pub fn is_running(pid: u32) -> bool {
 /// Unix sends SIGTERM so the daemon's signal handler can drain its listeners.
 /// Windows uses `taskkill` without `/F` first for the equivalent graceful
 /// console-control path.
+///
+/// # Errors
+///
+/// Returns an error if the stop signal cannot be sent or the process does not
+/// exit within the grace period.
 pub fn stop(pid: u32) -> Result<()> {
     if !is_running(pid) {
         return Ok(());
@@ -31,7 +37,7 @@ pub fn stop(pid: u32) -> Result<()> {
 
 #[cfg(unix)]
 mod platform {
-    use super::*;
+    use super::{Context, Result};
 
     pub(super) fn is_running(pid: u32) -> bool {
         let Ok(pid) = i32::try_from(pid) else {

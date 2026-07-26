@@ -25,6 +25,8 @@ use crate::search::{glob_to_regex, path_to_slash, SearchError, IGNORE_DIRS, MAX_
 ///
 /// The `cancel` token is checked per-file and per-line so a long search can be
 /// aborted promptly (mirrors Go's `ctx.Err()` checks in `searchWithGo`).
+// `results.len()` ≤ `max` (i32 cap), so usize→i32 cannot truncate/wrap.
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 pub(crate) async fn search_with_walker(
     root: &Path,
     opts: &SearchOptions,
@@ -96,9 +98,8 @@ pub(crate) async fn search_with_walker(
             if files_scanned >= MAX_SEARCH_FILES {
                 break;
             }
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue, // skip unreadable entries
+            let Ok(entry) = entry else {
+                continue; // skip unreadable entries
             };
             let ft = entry.file_type();
             // Skip directories (the walker recurses for us) and symlinks.
@@ -124,9 +125,8 @@ pub(crate) async fn search_with_walker(
             }
 
             // Relativize against root.
-            let rel_path = match path.strip_prefix(&root_buf) {
-                Ok(p) => p,
-                Err(_) => continue,
+            let Ok(rel_path) = path.strip_prefix(&root_buf) else {
+                continue;
             };
             let rel_str = path_to_slash(rel_path);
 
@@ -134,11 +134,10 @@ pub(crate) async fn search_with_walker(
             if remaining <= 0 {
                 break;
             }
-            let file_results =
-                match search_file(path, &rel_str, &re_owned, remaining, &cancel_clone) {
-                    Ok(rs) => rs,
-                    Err(_) => continue, // skip files we can't read (permission, vanished, …)
-                };
+            let Ok(file_results) = search_file(path, &rel_str, &re_owned, remaining, &cancel_clone)
+            else {
+                continue; // skip files we can't read (permission, vanished, …)
+            };
             results.extend(file_results);
             if results.len() as i32 >= max {
                 break;
@@ -156,6 +155,8 @@ pub(crate) async fn search_with_walker(
 /// Binary files (detected via null bytes in the first 512 bytes) are skipped
 /// without erroring — matches Go's `searchFile`. The `cancel` token is checked
 /// per-line so a long file scan can be aborted.
+// Match offsets fit in one line; `results.len()` ≤ `remaining` (i32), so usize→i32 cannot truncate/wrap.
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 fn search_file(
     abs_path: &Path,
     rel_path: &str,

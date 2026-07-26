@@ -1,7 +1,7 @@
 //! Validate non-config state artifacts created by the Go daemon.
 //!
 //! Rust modules for pairing/uploads/MCP/ACP are not fully ported yet. S-MIGRATE
-//! validates structural readability (JSON parse / SQLite open / directory layout)
+//! validates structural readability (JSON parse / `SQLite` open / directory layout)
 //! so we know those files survive the binary switch. Semantic load of each
 //! artifact lands in the respective port stories.
 
@@ -52,6 +52,7 @@ pub struct ArtifactStatus {
 
 impl StateValidation {
     /// True when nothing failed hard.
+    #[must_use]
     pub fn is_ok(&self) -> bool {
         self.failed.is_empty()
     }
@@ -62,6 +63,7 @@ impl StateValidation {
 #[serde(rename_all = "camelCase")]
 struct StoredDevice {
     id: String,
+    // Parsed to validate the field is present and well-formed; not read after decode.
     #[allow(dead_code)]
     name: String,
     secret_hash: String,
@@ -73,6 +75,7 @@ struct StoredDevice {
 #[serde(rename_all = "camelCase")]
 struct ConversationRecord {
     id: String,
+    // Parsed to validate the field decodes; not read after structural validation.
     #[allow(dead_code)]
     name: Option<String>,
     #[serde(default)]
@@ -126,7 +129,7 @@ pub fn validate_state_tree(state_dir: &Path) -> Result<StateValidation, MigrateE
     Ok(report)
 }
 
-/// Open a Go-created SQLite event DB with the Rust event store and query a page.
+/// Open a Go-created `SQLite` event DB with the Rust event store and query a page.
 fn validate_event_db(state_dir: &Path, report: &mut StateValidation) -> Result<(), MigrateError> {
     let db_path = state_dir.join(EVENT_DB_FILE);
     if !db_path.is_file() {
@@ -263,7 +266,7 @@ fn validate_mcp(state_dir: &Path, report: &mut StateValidation) {
     match fs::read_to_string(&path) {
         Ok(s) => match serde_json::from_str::<McpFile>(&s) {
             Ok(file) => {
-                let n = file.mcp_servers.as_ref().map_or(0, |m| m.len());
+                let n = file.mcp_servers.as_ref().map_or(0, serde_json::Map::len);
                 report.deferred.push(ArtifactStatus {
                     name: MCP_FILE.into(),
                     detail: format!(
@@ -343,6 +346,10 @@ fn validate_tls(state_dir: &Path, report: &mut StateValidation) {
 ///
 /// Used by tests that already have a tokio runtime to prove payload round-trip
 /// beyond the sync schema probe.
+///
+/// # Errors
+///
+/// Returns an error if the event store cannot be opened or the query fails.
 pub async fn validate_event_db_async(db_path: &Path) -> Result<usize, MigrateError> {
     let store =
         EventStore::open(db_path).map_err(|e| MigrateError::EventStore(format!("open: {e}")))?;

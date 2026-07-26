@@ -1026,7 +1026,7 @@ async fn default_options_when_unspecified() {
 // ---------------------------------------------------------------------------
 
 /// Verifies the production sink persists + publishes a `PermissionRequested`
-/// event through a real (tempfile-backed) EventBus. A subscriber should receive
+/// event through a real (tempfile-backed) `EventBus`. A subscriber should receive
 /// the event with the request's fields populated.
 #[tokio::test]
 async fn event_bus_sink_publishes_permission_requested() {

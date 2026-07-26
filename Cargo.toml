@@ -249,11 +249,15 @@ panic = "deny"            # no `panic!()` — return `Result` instead
 unwrap_used = "deny"      # no `.unwrap()` — can panic; use `?` or `let Ok(..) = ..`
 expect_used = "deny"      # no `.expect()` — same rationale as `unwrap_used`
 
-# Aspirational pedantic lints (missing_errors_doc, must_use_candidate,
-# doc_markdown) are NOT denied yet: the lib target is clean (6 findings fixed
-# 2026-07-25) but `--all-targets` surfaces ~187 more in test code. Deny them
-# once the test-code findings are fixed too. Adding them as `warn` here would
-# be escalated to errors by CI's blanket `-D warnings`.
+# Pedantic lints — enforced across lib AND test targets.
+# All 434 pedantic findings were resolved on 2026-07-25 (auto-fix pass +
+# per-file subagent passes: doc_markdown, missing_errors_doc, must_use,
+# assigning_clones, manual_let_else, needless_pass_by_value, casts, etc.).
+# The handful of judgment-call lints (too_many_lines on actor state machines,
+# needless_pass_by_value where call sites live in other files, serde
+# skip_serializing_if contracts) carry scoped `#[allow]` with comments.
+# Re-run to verify: `cargo clippy --all-targets -- -W clippy::pedantic`
+pedantic = "deny"
 
 # Release binaries: strip symbols for smaller single-binary distribution
 # (S-BUILD). Debug builds keep symbols for local development.

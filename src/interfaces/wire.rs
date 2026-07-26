@@ -14,6 +14,7 @@ use super::types::{go_zero_time, Event, EventMeta, EventPayload, EventType, Type
 ///
 /// Fields not set by the payload remain empty / default and are dropped by
 /// `omitempty` on serialization (except `execute_at`, which Go always emits).
+#[must_use]
 pub fn typed_event_to_wire(typed: &TypedEvent) -> Event {
     let mut event = Event {
         id: typed.meta.id,
@@ -47,6 +48,8 @@ pub fn typed_event_to_wire(typed: &TypedEvent) -> Event {
 }
 
 /// Populate flat event fields from a typed payload.
+// Single linear payload adapter — splitting would obscure the variant mapping.
+#[allow(clippy::too_many_lines)]
 fn apply_payload(event: &mut Event, payload: &EventPayload) {
     match payload {
         EventPayload::PromptSubmitted {
@@ -55,13 +58,13 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             attachments,
             injected_context,
         } => {
-            event.role = role.clone();
-            event.content = content.clone();
-            event.attachments = attachments.clone();
-            event.injected_context = injected_context.clone();
+            event.role.clone_from(role);
+            event.content.clone_from(content);
+            event.attachments.clone_from(attachments);
+            event.injected_context.clone_from(injected_context);
         }
         EventPayload::ResponseStarted { role } => {
-            event.role = role.clone();
+            event.role.clone_from(role);
         }
         EventPayload::StreamUpdate {
             role,
@@ -70,11 +73,11 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             thought,
             stop_reason,
         } => {
-            event.role = role.clone();
-            event.content = content.clone();
+            event.role.clone_from(role);
+            event.content.clone_from(content);
             event.streaming = *streaming;
             event.thought = *thought;
-            event.stop_reason = stop_reason.clone();
+            event.stop_reason.clone_from(stop_reason);
         }
         EventPayload::ToolStarted {
             tool,
@@ -84,12 +87,12 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             command,
             summary,
         } => {
-            event.tool = tool.clone();
-            event.tool_kind = tool_kind.clone();
-            event.tool_call_id = tool_call_id.clone();
-            event.target = target.clone();
-            event.command = command.clone();
-            event.summary = summary.clone();
+            event.tool.clone_from(tool);
+            event.tool_kind.clone_from(tool_kind);
+            event.tool_call_id.clone_from(tool_call_id);
+            event.target.clone_from(target);
+            event.command.clone_from(command);
+            event.summary.clone_from(summary);
         }
         EventPayload::ToolCompleted {
             tool,
@@ -100,16 +103,13 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             content,
             exit_code,
         } => {
-            event.tool = tool.clone();
-            event.tool_kind = tool_kind.clone();
-            event.tool_call_id = tool_call_id.clone();
-            event.target = target.clone();
-            event.summary = summary.clone();
-            event.content = content.clone();
+            event.tool.clone_from(tool);
+            event.tool_kind.clone_from(tool_kind);
+            event.tool_call_id.clone_from(tool_call_id);
+            event.target.clone_from(target);
+            event.summary.clone_from(summary);
+            event.content.clone_from(content);
             event.exit_code = *exit_code;
-        }
-        EventPayload::PlanUpdated { content } => {
-            event.content = content.clone();
         }
         EventPayload::PermissionRequested {
             request_id,
@@ -119,33 +119,33 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             command,
             options,
         } => {
-            event.request_id = request_id.clone();
-            event.tool = tool.clone();
-            event.tool_kind = tool_kind.clone();
-            event.target = target.clone();
-            event.command = command.clone();
-            event.options = options.clone();
+            event.request_id.clone_from(request_id);
+            event.tool.clone_from(tool);
+            event.tool_kind.clone_from(tool_kind);
+            event.target.clone_from(target);
+            event.command.clone_from(command);
+            event.options.clone_from(options);
         }
         EventPayload::PermissionGranted { request_id, tool }
         | EventPayload::PermissionDenied { request_id, tool } => {
-            event.request_id = request_id.clone();
-            event.tool = tool.clone();
+            event.request_id.clone_from(request_id);
+            event.tool.clone_from(tool);
         }
         EventPayload::ShellCommandStarted {
             command,
             cwd,
             tool_call_id,
         } => {
-            event.command = command.clone();
-            event.cwd = cwd.clone();
-            event.tool_call_id = tool_call_id.clone();
+            event.command.clone_from(command);
+            event.cwd.clone_from(cwd);
+            event.tool_call_id.clone_from(tool_call_id);
         }
         EventPayload::ShellOutputStreamed {
             content,
             tool_call_id,
         } => {
-            event.content = content.clone();
-            event.tool_call_id = tool_call_id.clone();
+            event.content.clone_from(content);
+            event.tool_call_id.clone_from(tool_call_id);
         }
         EventPayload::ShellCommandCompleted {
             command,
@@ -153,10 +153,10 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             exit_code,
             tool_call_id,
         } => {
-            event.command = command.clone();
-            event.cwd = cwd.clone();
+            event.command.clone_from(command);
+            event.cwd.clone_from(cwd);
             event.exit_code = *exit_code;
-            event.tool_call_id = tool_call_id.clone();
+            event.tool_call_id.clone_from(tool_call_id);
         }
         EventPayload::FileRevisionUpdated {
             workspace_id,
@@ -170,15 +170,16 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             workspace_id,
             target,
         } => {
-            event.workspace_id = workspace_id.clone();
-            event.target = target.clone();
+            event.workspace_id.clone_from(workspace_id);
+            event.target.clone_from(target);
         }
         EventPayload::SessionInterrupted | EventPayload::SessionCancelled => {}
-        EventPayload::AgentExited { content }
+        EventPayload::PlanUpdated { content }
+        | EventPayload::AgentExited { content }
         | EventPayload::ConnectionRestarted { content }
         | EventPayload::SessionResumed { content }
         | EventPayload::ModelChanged { content } => {
-            event.content = content.clone();
+            event.content.clone_from(content);
         }
         EventPayload::DeviceRevocationPending {
             execute_at,
@@ -186,20 +187,20 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             content,
         } => {
             event.execute_at = *execute_at;
-            event.device_name = device_name.clone();
-            event.content = content.clone();
+            event.device_name.clone_from(device_name);
+            event.content.clone_from(content);
         }
         EventPayload::DeviceRevocationCancelled { device_name }
         | EventPayload::DeviceRevocationExecuted { device_name } => {
-            event.device_name = device_name.clone();
+            event.device_name.clone_from(device_name);
         }
         EventPayload::WorkspaceRegistrationPending { execute_at, target } => {
             event.execute_at = *execute_at;
-            event.target = target.clone();
+            event.target.clone_from(target);
         }
         EventPayload::WorkspaceRegistrationCancelled { target }
         | EventPayload::WorkspaceRegistrationExecuted { target } => {
-            event.target = target.clone();
+            event.target.clone_from(target);
         }
     }
 }
@@ -208,6 +209,9 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
 ///
 /// Used when replaying stored flat events into typed handlers. Fields the flat
 /// form carries that the payload variant does not use are ignored.
+// Single linear payload adapter — splitting would obscure the variant mapping.
+#[allow(clippy::too_many_lines)]
+#[must_use]
 pub fn wire_to_typed_event(event: &Event) -> TypedEvent {
     let meta = EventMeta {
         id: event.id,

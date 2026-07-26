@@ -15,6 +15,9 @@
 //!
 //! See `docs/plans/rust-port/complete-S-CONFIG-config-med.md`.
 
+#[cfg(test)]
+use std::sync::PoisonError;
+
 mod error;
 mod model;
 mod store;
@@ -39,7 +42,7 @@ pub const STATE_DIR_ENV_VAR: &str = "LOCAL_AGENT_STATE_DIR";
 #[cfg(test)]
 pub fn lock_state_dir_env() -> std::sync::MutexGuard<'static, ()> {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    ENV_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// On-disk config file name (TOML in the Rust port).

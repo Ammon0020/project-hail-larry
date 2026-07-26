@@ -29,7 +29,7 @@ pub enum MigrateError {
     #[error("config error during migration: {0}")]
     Config(#[from] crate::config::ConfigError),
 
-    /// Event store open/query failure against a Go-created SQLite DB.
+    /// Event store open/query failure against a Go-created `SQLite` DB.
     #[error("event store validation failed: {0}")]
     EventStore(String),
 

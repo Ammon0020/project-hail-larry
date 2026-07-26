@@ -53,7 +53,7 @@ pub enum PathError {
 ///
 /// Port of `pathutil.SafeJoin`. Performs lexical checks only — callers that
 /// need to defend against symlink-based escapes must layer
-/// [`resolve_symlink`]` on top.
+/// [`resolve_symlink`] on top.
 ///
 /// A path is rejected if:
 /// - the cleaned input is absolute, or
@@ -176,11 +176,10 @@ pub fn resolve_symlink(workspace_root: &Path, path: &Path) -> Result<PathBuf, Pa
         }
     }
 
-    let resolved_parent = match fs::canonicalize(parent) {
-        Ok(p) => p,
-        // Neither path nor parent resolves — fall back to lexical path; the
-        // lexical containment check in clean_path remains the safeguard.
-        Err(_) => return Ok(path.to_path_buf()),
+    // Neither path nor parent resolves — fall back to lexical path; the
+    // lexical containment check in clean_path remains the safeguard.
+    let Ok(resolved_parent) = fs::canonicalize(parent) else {
+        return Ok(path.to_path_buf());
     };
 
     if !is_within_root(workspace_root, &resolved_parent) {

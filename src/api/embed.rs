@@ -16,6 +16,8 @@ use rust_embed::{EmbeddedFile, RustEmbed};
 struct Frontend;
 
 /// Serve a static asset or fall back to the SPA entry point.
+#[allow(clippy::unused_async)]
+// kept async for caller await: `api::mod` and tests await this handler.
 pub async fn serve(path: String) -> Response {
     let requested = path.trim_start_matches('/');
     let asset = if requested.is_empty() {
@@ -56,11 +58,11 @@ fn embedded_response(requested: &str, asset: EmbeddedFile) -> Response {
 fn mime_for(path: &str) -> &'static str {
     match path.rsplit_once('.').map(|(_, ext)| ext) {
         Some("css") => "text/css; charset=utf-8",
-        Some("js") | Some("mjs") => "text/javascript; charset=utf-8",
-        Some("json") | Some("map") => "application/json; charset=utf-8",
+        Some("js" | "mjs") => "text/javascript; charset=utf-8",
+        Some("json" | "map") => "application/json; charset=utf-8",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("jpg" | "jpeg") => "image/jpeg",
         Some("webp") => "image/webp",
         Some("ico") => "image/x-icon",
         Some("woff2") => "font/woff2",

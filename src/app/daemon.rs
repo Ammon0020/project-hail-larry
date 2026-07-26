@@ -75,12 +75,18 @@ pub struct Daemon {
 
 impl Daemon {
     /// Load configuration and construct every manager in dependency order.
+    ///
+    /// # Errors
+    /// Returns an error if configuration cannot be loaded or daemon construction fails.
     pub async fn load() -> Result<Self> {
         let config = Config::load().context("load local-agent configuration")?;
         Self::new(config).await
     }
 
     /// Construct a daemon from a validated configuration.
+    ///
+    /// # Errors
+    /// Returns an error if the state directory cannot be created or any subsystem (events, workspaces, pairing, etc.) fails to initialize.
     pub async fn new(config: Config) -> Result<Self> {
         crate::fsutil::create_dir_all(std::path::Path::new(&config.data_dir))
             .with_context(|| format!("create state directory {}", config.data_dir))?;
@@ -188,6 +194,9 @@ impl Daemon {
     }
 
     /// Serve until `cancellation` is triggered, draining HTTP before storage.
+    ///
+    /// # Errors
+    /// Returns an error if the listeners cannot be bound, the PID file cannot be written, or the HTTP/HTTPS serve loop fails.
     pub async fn run(self, cancellation: CancellationToken) -> Result<()> {
         let listeners = listen::bind(&self.config).await?;
         let addresses = listeners.addresses();
@@ -207,8 +216,7 @@ impl Daemon {
             if let Some(https) = addresses.https {
                 let _ = writeln!(
                     out,
-                    "Local Agent listening on https://{} (self-signed)",
-                    https
+                    "Local Agent listening on https://{https} (self-signed)"
                 );
             }
             let _ = out.flush();
@@ -222,8 +230,8 @@ impl Daemon {
             let local = self.cancel.clone();
             tokio::spawn(async move {
                 tokio::select! {
-                    _ = external.cancelled() => {}
-                    _ = local.cancelled() => {}
+                    () = external.cancelled() => {}
+                    () = local.cancelled() => {}
                 }
                 root_cancel.cancel();
             })
@@ -231,7 +239,7 @@ impl Daemon {
         let serve_result = listen::serve(listeners, router, root_cancel.clone()).await;
         root_cancel.cancel();
         cancellation_forwarder.abort();
-        self.shutdown().await;
+        self.shutdown();
         remove_pid(&self.config.data_dir);
         serve_result
     }
@@ -242,7 +250,7 @@ impl Daemon {
     }
 
     /// Execute shutdown in dependency-safe order.
-    async fn shutdown(&self) {
+    fn shutdown(&self) {
         // Listener drain is complete when `listen::serve` returns. Stop event
         // producers before dropping the SQLite-backed EventBus.
         if let Some(watcher) = &self.fs_watcher {
@@ -271,6 +279,9 @@ impl Daemon {
 }
 
 /// Return PID-backed daemon status without contacting the HTTP listener.
+///
+/// # Errors
+/// Returns an error if the PID file cannot be read or the configured HTTP/HTTPS addresses cannot be resolved.
 pub fn status(config: &Config) -> Result<DaemonStatus> {
     let pid = read_live_pid(&config.data_dir)?;
     let http = configured_address(config.host.as_str(), config.port)?;
@@ -297,6 +308,9 @@ pub fn status(config: &Config) -> Result<DaemonStatus> {
 /// file was lost (different binary, interrupted cleanup, or a stale file that
 /// named a dead process). On platforms without port-to-PID introspection the
 /// fallback is a no-op and the caller sees the original "not running" error.
+///
+/// # Errors
+/// Returns an error if the PID file cannot be read, the process cannot be stopped, or no running daemon is found.
 pub fn stop(config: &Config) -> Result<()> {
     if let Some(pid) = read_live_pid(&config.data_dir)? {
         process::stop(pid)?;
@@ -325,6 +339,10 @@ pub fn stop(config: &Config) -> Result<()> {
 }
 
 /// Resolve the configured HTTPS port, defaulting to HTTP + 1.
+///
+/// # Errors
+///
+/// Returns an error if the resolved HTTPS port overflows `i64`.
 pub fn resolved_https_port(config: &Config) -> Result<i64> {
     let port = if config.https_port == 0 {
         config
@@ -340,12 +358,14 @@ pub fn resolved_https_port(config: &Config) -> Result<i64> {
 
 fn configure_pairing(pairing: &PairingManager, config: &Config) {
     if config.pairing_ttl_seconds > 0 {
-        pairing.set_session_ttl(Duration::from_secs(config.pairing_ttl_seconds as u64));
+        // Guard above ensures positivity; try_from is infallible here but
+        // avoids the bare `as` sign-loss cast.
+        let ttl = u64::try_from(config.pairing_ttl_seconds).unwrap_or(0);
+        pairing.set_session_ttl(Duration::from_secs(ttl));
     }
     if config.credential_inactivity_ttl_seconds > 0 {
-        pairing.set_inactivity_ttl(Duration::from_secs(
-            config.credential_inactivity_ttl_seconds as u64,
-        ));
+        let ttl = u64::try_from(config.credential_inactivity_ttl_seconds).unwrap_or(0);
+        pairing.set_inactivity_ttl(Duration::from_secs(ttl));
     }
 }
 

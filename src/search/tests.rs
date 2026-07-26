@@ -214,7 +214,7 @@ async fn native_fallback_skips_binary_files() {
     assert_eq!(results[0].path, "plain.txt");
 }
 
-/// Ignore dirs (node_modules, .git, …) are skipped by the native walker.
+/// Ignore dirs (`node_modules`, .git, …) are skipped by the native walker.
 #[tokio::test]
 async fn native_fallback_skips_ignore_dirs() {
     let dir = TempDir::new().expect("tempdir");
@@ -246,7 +246,7 @@ async fn native_fallback_skips_ignore_dirs() {
     assert_eq!(results[0].path, "top.txt");
 }
 
-/// MaxResults caps the number of matches returned.
+/// `MaxResults` caps the number of matches returned.
 #[tokio::test]
 async fn native_fallback_max_results() {
     let dir = TempDir::new().expect("tempdir");
@@ -299,7 +299,7 @@ async fn native_fallback_regex() {
 async fn search_rejects_empty_pattern() {
     let dir = make_fixture();
     let opts = SearchOptions {
-        pattern: "".into(),
+        pattern: String::new(),
         ..Default::default()
     };
     let err = search(dir.path(), &opts, no_cancel())
@@ -336,7 +336,7 @@ async fn search_rejects_invalid_regex() {
     assert!(matches!(err, SearchError::InvalidPattern(_)), "got {err:?}");
 }
 
-/// The default max-results cap (200) applies when max_results <= 0.
+/// The default max-results cap (200) applies when `max_results` <= 0.
 #[tokio::test]
 async fn search_default_max_results() {
     // This is exercised indirectly: a search with max_results=0 should not
@@ -412,7 +412,7 @@ async fn rg_primary_search_when_available() {
     assert!(find_result(&results, "sub/c.go").is_some());
 }
 
-/// rg honors IgnoreCase.
+/// rg honors `IgnoreCase`.
 #[tokio::test]
 #[allow(clippy::print_stderr)] // skip notice — `tracing` is overkill in tests
 async fn rg_primary_ignore_case_when_available() {
@@ -462,7 +462,7 @@ async fn rg_primary_file_pattern_when_available() {
     assert_eq!(results[0].path, "sub/c.go");
 }
 
-/// rg skips the configured ignore dirs (node_modules, etc.).
+/// rg skips the configured ignore dirs (`node_modules`, etc.).
 #[tokio::test]
 #[allow(clippy::print_stderr)] // skip notice — `tracing` is overkill in tests
 async fn rg_primary_skips_ignore_dirs_when_available() {
@@ -515,7 +515,7 @@ async fn rg_primary_max_results_when_available() {
 }
 
 /// Synthetic rg JSON parse test — guards against the regression where the
-/// parser put the file path into LineContent instead of the matched line text.
+/// parser put the file path into `LineContent` instead of the matched line text.
 /// Mirrors Go's `TestParseRgJSON_LineContentNotPath`. Runs everywhere (no rg
 /// needed) because it feeds a synthetic JSON line directly to the parser.
 #[tokio::test]

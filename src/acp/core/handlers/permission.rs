@@ -20,8 +20,8 @@ pub(in crate::acp::core) async fn request_permission(
         .tool_call
         .fields
         .kind
-        .as_ref()
-        .map_or_else(String::new, tool_kind_name);
+        .map(tool_kind_name)
+        .unwrap_or_default();
     let command = request
         .tool_call
         .fields
@@ -40,7 +40,7 @@ pub(in crate::acp::core) async fn request_permission(
     let options = request
         .options
         .iter()
-        .filter_map(|option| permission_decision(&option.kind))
+        .filter_map(|option| permission_decision(option.kind))
         .collect();
     let option_details = request
         .options
@@ -48,7 +48,7 @@ pub(in crate::acp::core) async fn request_permission(
         .map(|option| crate::interfaces::PermissionOptionInfo {
             id: option.option_id.to_string(),
             name: option.name.clone(),
-            kind: permission_kind_name(&option.kind).to_string(),
+            kind: permission_kind_name(option.kind).to_string(),
         })
         .collect();
     let permission = crate::interfaces::PermissionRequest {
@@ -68,7 +68,7 @@ pub(in crate::acp::core) async fn request_permission(
         Ok(decision) => request
             .options
             .iter()
-            .find(|option| permission_decision(&option.kind) == Some(decision))
+            .find(|option| permission_decision(option.kind) == Some(decision))
             .map_or_else(
                 || RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
                 |option| {
@@ -84,7 +84,7 @@ pub(in crate::acp::core) async fn request_permission(
     }
 }
 
-fn tool_kind_name(kind: &agent_client_protocol::schema::v1::ToolKind) -> String {
+fn tool_kind_name(kind: agent_client_protocol::schema::v1::ToolKind) -> String {
     use agent_client_protocol::schema::v1::ToolKind;
 
     match kind {
@@ -97,14 +97,13 @@ fn tool_kind_name(kind: &agent_client_protocol::schema::v1::ToolKind) -> String 
         ToolKind::Think => "think",
         ToolKind::Fetch => "fetch",
         ToolKind::SwitchMode => "switch_mode",
-        ToolKind::Other => "other",
         _ => "other",
     }
     .to_string()
 }
 
 fn permission_kind_name(
-    kind: &agent_client_protocol::schema::v1::PermissionOptionKind,
+    kind: agent_client_protocol::schema::v1::PermissionOptionKind,
 ) -> &'static str {
     use agent_client_protocol::schema::v1::PermissionOptionKind;
 
@@ -118,7 +117,7 @@ fn permission_kind_name(
 }
 
 fn permission_decision(
-    kind: &agent_client_protocol::schema::v1::PermissionOptionKind,
+    kind: agent_client_protocol::schema::v1::PermissionOptionKind,
 ) -> Option<crate::interfaces::PermissionDecision> {
     use crate::interfaces::PermissionDecision;
     use agent_client_protocol::schema::v1::PermissionOptionKind;

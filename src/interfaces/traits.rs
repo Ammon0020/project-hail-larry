@@ -151,10 +151,19 @@ pub trait ACPClient: Send + Sync {
     ) -> Result<SessionInfo, AppError>;
 
     /// Metadata for a single session by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session is unknown or metadata cannot be read.
     fn get_session_info(&self, session_id: &str) -> Result<SessionInfo, AppError>;
 
     /// Live `initialize` session-history caps (list/load/resume). Auth consumers
     /// use this for BROWSE/OPEN/FALLBACK gates. Does not cold-start agents.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session is unknown or capabilities cannot be
+    /// resolved.
     fn session_history_capabilities(
         &self,
         session_id: &str,
@@ -172,6 +181,10 @@ pub trait ACPClient: Send + Sync {
     ) -> Result<(), AppError>;
 
     /// Change a conversation's display name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session is unknown or the rename cannot persist.
     fn rename_session(&self, session_id: &str, name: &str) -> Result<(), AppError>;
 
     /// Switch agent/model while preserving session id and history.

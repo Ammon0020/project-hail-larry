@@ -19,6 +19,7 @@ use atomic_write_file::AtomicWriteFile;
 /// Uses the `dirs` crate so resolution is correct when `$HOME` is unset
 /// (passwd DB on Unix, Known Folder API on Windows). Returns `None` only when
 /// the platform cannot determine a home directory at all.
+#[must_use]
 pub fn home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }
@@ -94,6 +95,11 @@ pub fn atomic_write(path: &Path, data: &[u8], mode: Option<u32>) -> io::Result<(
 /// Create `dir` and any missing parents with mode `0700` on Unix (default
 /// `create_dir_all` semantics on non-Unix). Use for security-sensitive state
 /// directories that may hold secrets (config, MCP, TLS keys, logs, uploads).
+///
+/// # Errors
+///
+/// Returns the underlying `io::Error` if directory creation fails (e.g. the path
+/// is invalid, permissions are insufficient, or a non-directory file exists).
 pub fn create_dir_all(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -146,7 +152,7 @@ mod tests {
 
         let temps: Vec<_> = fs::read_dir(tmp.path())
             .expect("read dir")
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| {
                 let name = e.file_name();
                 let s = name.to_string_lossy();

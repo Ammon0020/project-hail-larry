@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use crate::events::SharedEventBus;
 use crate::interfaces::{AppError, EventStore, EventType};
 
-/// Enough events for a useful transfer while bounding one SQLite query.
+/// Enough events for a useful transfer while bounding one `SQLite` query.
 const EXPORT_EVENT_LIMIT: i32 = 10_000;
 
 /// Context queued for the first prompt after a successful rebind.
@@ -65,6 +65,10 @@ impl TransferQueue {
 /// Stream chunks are coalesced into assistant turns and internal thoughts are
 /// omitted. `max_bytes <= 0` leaves the output unbounded; otherwise the result
 /// is UTF-8-safe and includes a truncation marker when required.
+///
+/// # Errors
+///
+/// Returns an error if the event bus query fails.
 pub async fn export_conversation(
     event_bus: &SharedEventBus,
     session_id: &str,

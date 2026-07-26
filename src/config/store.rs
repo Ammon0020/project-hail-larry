@@ -16,7 +16,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::error::ConfigError;
 use super::model::Config;
@@ -28,6 +28,9 @@ impl Config {
     /// `<state_dir>` is `LOCAL_AGENT_STATE_DIR` when set, otherwise
     /// `~/.local-agent`. Returns the default config when the file does not
     /// exist. Mirrors Go `Load`.
+    ///
+    /// # Errors
+    /// Returns an error if the state directory cannot be resolved, the file cannot be read (other than not-found), or parsing/validation fails.
     pub fn load() -> Result<Self, ConfigError> {
         let state_dir = Self::resolved_state_dir()?;
         let config_path = state_dir.join(CONFIG_FILE_NAME);
@@ -108,6 +111,9 @@ impl Config {
     /// points under the process temp directory while the active state dir does
     /// not, this refuses to write — otherwise a daemon/unit-test config with
     /// ephemeral paths can poison the real user config (see known-issues).
+    ///
+    /// # Errors
+    /// Returns an error if the state directory cannot be resolved, the state-dir mismatch guard trips, serialization fails, or the atomic write fails.
     pub fn save(&self) -> Result<(), ConfigError> {
         let state_dir = Self::resolved_state_dir()?;
         if let Some(data_dir) = non_empty_path(&self.data_dir) {
@@ -162,9 +168,7 @@ fn absolute_approx(path: &Path) -> PathBuf {
     if path.is_absolute() {
         return path.to_path_buf();
     }
-    std::env::current_dir()
-        .map(|cwd| cwd.join(path))
-        .unwrap_or_else(|_| path.to_path_buf())
+    std::env::current_dir().map_or_else(|_| path.to_path_buf(), |cwd| cwd.join(path))
 }
 
 /// `ConfigStore` wraps a `Config` in an `RwLock` for thread-safe shared access
@@ -180,6 +184,7 @@ pub struct ConfigStore {
 
 impl ConfigStore {
     /// `new` wraps an existing `Config`.
+    #[must_use]
     pub fn new(cfg: Config) -> Self {
         Self {
             cfg: Arc::new(RwLock::new(cfg)),
@@ -188,6 +193,10 @@ impl ConfigStore {
 
     /// `load` reads the config from disk and wraps it. Convenience for
     /// `ConfigStore::new(Config::load()?)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the config cannot be loaded from disk.
     pub fn load() -> Result<Self, ConfigError> {
         Ok(Self::new(Config::load()?))
     }
@@ -197,13 +206,13 @@ impl ConfigStore {
     /// rather than propagated as a panic, preserving the daemon's no-panic
     /// guarantee.
     pub fn read(&self) -> RwLockReadGuard<'_, Config> {
-        self.cfg.read().unwrap_or_else(|e| e.into_inner())
+        self.cfg.read().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// `write` returns a write guard on the wrapped config. Same poison
     /// recovery as `read`.
     pub fn write(&self) -> RwLockWriteGuard<'_, Config> {
-        self.cfg.write().unwrap_or_else(|e| e.into_inner())
+        self.cfg.write().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// `save` persists the current config while holding its read lock.
@@ -212,6 +221,10 @@ impl ConfigStore {
     /// caller can mutate and save through [`Self::write`], so releasing the
     /// read lock before persistence could let an older snapshot overwrite that
     /// later direct save.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization or the atomic write fails.
     pub fn save(&self) -> Result<(), ConfigError> {
         self.read().save()
     }
@@ -219,12 +232,13 @@ impl ConfigStore {
     /// `into_inner` unwraps the store, returning the inner `Config`. Clones
     /// are dropped; the underlying `Arc` is consumed only if this is the last
     /// reference (otherwise returns a clone).
+    #[must_use]
     pub fn into_inner(self) -> Config {
         // `Arc::try_unwrap` fails when shared; fall back to cloning so callers
         // always get a value without panicking.
         match Arc::try_unwrap(self.cfg) {
-            Ok(lock) => lock.into_inner().unwrap_or_else(|e| e.into_inner()),
-            Err(arc) => arc.read().unwrap_or_else(|e| e.into_inner()).clone(),
+            Ok(lock) => lock.into_inner().unwrap_or_else(PoisonError::into_inner),
+            Err(arc) => arc.read().unwrap_or_else(PoisonError::into_inner).clone(),
         }
     }
 }

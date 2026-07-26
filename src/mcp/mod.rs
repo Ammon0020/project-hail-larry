@@ -117,11 +117,18 @@ impl File {
     }
 
     /// Returns the state-dir MCP config path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the default state directory cannot be resolved.
     pub fn path() -> Result<PathBuf, McpError> {
         Ok(Config::resolved_state_dir()?.join(CONFIG_FILE_NAME))
     }
 
     /// Loads a config; a missing file is an empty valid envelope.
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be read (other than not-found) or parsing fails.
     pub fn load(path: &Path) -> Result<Self, McpError> {
         match fs::read(path) {
             Ok(raw) => Self::parse(&raw),
@@ -131,6 +138,10 @@ impl File {
     }
 
     /// Parses a raw JSON document, normalizing an omitted version.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the document cannot be deserialized.
     pub fn parse(raw: &[u8]) -> Result<Self, McpError> {
         let mut file: Self = serde_json::from_slice(raw)?;
         if file.version == 0 {
@@ -140,6 +151,10 @@ impl File {
     }
 
     /// Loads exact raw bytes, returning a valid empty JSON envelope if missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read (other than not-found).
     pub fn load_raw(path: &Path) -> Result<Vec<u8>, McpError> {
         match fs::read(path) {
             Ok(raw) => Ok(raw),
@@ -151,6 +166,10 @@ impl File {
     }
 
     /// Saves this typed config atomically with owner-only permissions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization or the atomic write fails.
     pub fn save(&mut self, path: &Path) -> Result<(), McpError> {
         if self.version == 0 {
             self.version = CURRENT_VERSION;
@@ -164,6 +183,9 @@ impl File {
     }
 
     /// Validates and atomically saves raw JSON without changing its formatting.
+    ///
+    /// # Errors
+    /// Returns an error if the version is unsupported, validation fails, or the atomic write fails.
     pub fn save_raw(path: &Path, raw: &[u8]) -> Result<(), McpError> {
         let file = Self::parse(raw)?;
         if file.version != CURRENT_VERSION {
@@ -178,6 +200,9 @@ impl File {
 
     /// Validates server names, stdio commands, and env var names so a paired
     /// device cannot inject dangerous or secret-leaking MCP server configs.
+    ///
+    /// # Errors
+    /// Returns an error if a server name, command, or env var name is invalid or unsafe.
     pub fn validate(&self) -> Result<(), McpError> {
         for (name, config) in &self.mcp_servers {
             validate_server_name(name)?;
@@ -203,10 +228,10 @@ impl File {
         let mut redacted = self.clone();
         for config in redacted.mcp_servers.values_mut() {
             for value in config.headers.values_mut() {
-                *value = "***".to_owned();
+                value.clone_from(&"***".to_owned());
             }
             for value in config.env.values_mut() {
-                *value = "***".to_owned();
+                value.clone_from(&"***".to_owned());
             }
         }
         redacted
@@ -218,6 +243,10 @@ impl File {
     }
 
     /// Removes a server, returning an error when it is absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no server with the given name exists.
     pub fn remove(&mut self, name: &str) -> Result<ServerConfig, McpError> {
         self.mcp_servers
             .remove(name)
@@ -235,6 +264,9 @@ impl File {
     }
 
     /// Converts enabled, capability-supported servers to exact ACP SDK types.
+    ///
+    /// # Errors
+    /// Returns an error if a server's transport cannot be resolved or its ACP conversion fails.
     pub fn to_acp(&self, capabilities: &McpCapabilities) -> Result<Vec<McpServer>, McpError> {
         let mut servers = Vec::new();
         for (name, config) in self.enabled() {
@@ -261,6 +293,10 @@ pub enum Transport {
 
 impl ServerConfig {
     /// Determines transport, inferring HTTP from a URL-only server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the configured transport string is unrecognized.
     pub fn effective_transport(&self) -> Result<Transport, McpError> {
         match self.transport.to_ascii_lowercase().as_str() {
             "" if !self.url.is_empty() && self.command.is_empty() => Ok(Transport::Http),
@@ -272,6 +308,10 @@ impl ServerConfig {
     }
 
     /// Converts this server to its SDK schema representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the effective transport cannot be resolved.
     pub fn to_acp(&self, name: &str) -> Result<McpServer, McpError> {
         match self.effective_transport()? {
             Transport::Stdio => Ok(McpServer::Stdio(

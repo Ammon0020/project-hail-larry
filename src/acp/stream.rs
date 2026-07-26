@@ -50,10 +50,10 @@ fn text_chunk(content: &ContentBlock, thought: bool) -> Option<EventPayload> {
         }),
         // A future ContentBlock variant is deliberately handled by the
         // non-exhaustive fallback so protocol upgrades cannot lose data silently.
-        ContentBlock::Image(_) => unmapped_update("non_text_stream_chunk"),
-        ContentBlock::Audio(_) => unmapped_update("non_text_stream_chunk"),
-        ContentBlock::ResourceLink(_) => unmapped_update("non_text_stream_chunk"),
-        ContentBlock::Resource(_) => unmapped_update("non_text_stream_chunk"),
+        ContentBlock::Image(_)
+        | ContentBlock::Audio(_)
+        | ContentBlock::ResourceLink(_)
+        | ContentBlock::Resource(_) => unmapped_update("non_text_stream_chunk"),
         _ => unmapped_update("unrecognized_stream_chunk"),
     }
 }
@@ -162,8 +162,7 @@ fn tool_kind_name(kind: ToolKind) -> &'static str {
         ToolKind::Think => "think",
         ToolKind::Fetch => "fetch",
         ToolKind::SwitchMode => "switch_mode",
-        ToolKind::Other => "other",
-        _ => "other",
+        ToolKind::Other | _ => "other",
     }
 }
 

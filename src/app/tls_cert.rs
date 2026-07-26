@@ -32,6 +32,12 @@ pub struct CertificatePaths {
 /// The certificate is valid for localhost, `127.0.0.1`, and a configured
 /// non-wildcard bind host. Both PEM files are atomically written with
 /// owner-only permissions so a crash never leaves a truncated private key.
+///
+/// # Errors
+///
+/// Returns an error if the certificate directory cannot be created, SANs
+/// cannot be built, the certificate cannot be generated, or the PEM files
+/// cannot be written.
 pub fn ensure_self_signed(cert_dir: &Path, host: &str) -> Result<CertificatePaths> {
     let paths = CertificatePaths {
         cert: cert_dir.join(CERT_FILE_NAME),

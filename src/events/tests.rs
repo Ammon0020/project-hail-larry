@@ -11,7 +11,9 @@ use super::store::Store;
 use crate::interfaces::types::{go_zero_time, Attachment, Event, EventType};
 use crate::interfaces::{AppError, EventPublisher, EventStore};
 
-/// Temp SQLite store cleaned up when the TempDir drops.
+/// Temp `SQLite` store cleaned up when the `TempDir` drops.
+#[allow(clippy::unused_async)]
+// kept async for caller await: many tests await this helper for symmetry with async store APIs.
 async fn new_test_store() -> (Store, TempDir) {
     let dir = TempDir::new().expect("tempdir");
     let path = dir.path().join("test_events.db");
@@ -298,9 +300,10 @@ async fn start_prune_ticker() {
         if store.count().await.unwrap() <= 2 {
             break;
         }
-        if tokio::time::Instant::now() > deadline {
-            panic!("expected prune ticker to reduce to 2 events");
-        }
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "expected prune ticker to reduce to 2 events"
+        );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     assert_eq!(store.count().await.unwrap(), 2);
@@ -375,7 +378,10 @@ async fn concurrent_appends_monotone_ids() {
     ids.dedup();
     assert_eq!(ids.len(), n, "IDs must be unique");
     assert_eq!(ids[0], 1);
-    assert_eq!(ids[n - 1], n as i64);
+    // `n` is the small constant 50, so the wrap cast is impossible.
+    #[allow(clippy::cast_possible_wrap)]
+    let last_id = n as i64;
+    assert_eq!(ids[n - 1], last_id);
 
     let events = store.query_all(0, 1000).await.unwrap();
     assert_eq!(events.len(), n);

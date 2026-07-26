@@ -205,7 +205,7 @@ async fn startup_failure_before_publication_is_not_registered() {
 }
 
 /// Unexpected post-startup exit (agent crashes after initialize + new)
-/// must transition the session to Failed and append an AgentExited event.
+/// must transition the session to Failed and append an `AgentExited` event.
 #[tokio::test]
 async fn unexpected_post_startup_exit_marks_session_failed() {
     let tempdir = TempDir::new().expect("temporary workspace");
@@ -538,7 +538,7 @@ async fn list_sessions_includes_stored_without_live_actors() {
     );
 }
 
-/// Prompting a stored-only id starts an actor and must not wipe EventBus history.
+/// Prompting a stored-only id starts an actor and must not wipe `EventBus` history.
 #[tokio::test]
 async fn prompt_on_stored_session_starts_actor_without_wiping_history() {
     let store_dir = TempDir::new().expect("store dir");

@@ -48,17 +48,6 @@ mainstream agent advertises (`mcp_capabilities.acp`) yet.
 
 Fix path / unblock signal + full drop-in design: `docs/plans/acp-spec-compliance.md` § 4.10.
 
-## Mistral Vibe auth does not persist across daemon restarts (Medium)
-
-Investigated 2026-07-12. The user reports Mistral Vibe asks for login every
-server restart. Auth is browser-PKCE per-session in `internal/acp/acp.go`
-(`startTransportLocked`, ~lines 478-493). The ACP SDK
-(`coder/acp-go-sdk` v0.13.5) `AuthenticateResponse` only exposes
-`Meta map[string]any` — no tokens, cookies, or auth state — so the auth state
-is opaque inside the SDK's `ClientSideConnection` and is destroyed when the
-daemon process restarts. `~/.vibe/.env` exists but is empty (no persisted
-key); Mistral Vibe does not persist its own auth locally in a form the daemon
-can reuse.
 
 **Severity:** Medium — user-facing annoyance on every restart, no security
 risk (auth still required each time).
@@ -98,23 +87,41 @@ process-global `set_var` race without touching `AgentInfo`.
 The capability-present branch remains covered by
 `mockagent_initial_profile_sent_over_acp_when_capability_advertised`.
 
-## Clippy pedantic — lib clean, ~187 test-code findings to ratchet to deny (Low)
+## Clippy pedantic — resolved 2026-07-25 (was Low)
 
-Investigated 2026-07-25. The `[lints.clippy]` table in `Cargo.toml` denies
-`clippy::all` plus a curated set of restriction lints (no panics, no
-`unwrap`/`expect`, no `dbg!`/`println!`/`eprintln!`, no `todo!`/`unimplemented!`)
-in non-test code. The tree is clean under that policy.
+Resolved 2026-07-25. The `[lints.clippy]` table in `Cargo.toml` now denies
+`clippy::pedantic` across lib AND test targets. All 434 pedantic findings
+surfaced by `cargo clippy --all-targets -- -W clippy::pedantic` were cleared
+in a single pass:
 
-The lib target is now clean under `clippy::pedantic` for `doc_markdown`,
-`missing_errors_doc`, and `must_use_candidate` (6 findings fixed 2026-07-25:
-`src/lib.rs`, `src/app/logging.rs`, `src/app/tls.rs`, `src/app/rate_limit.rs`).
-However `--all-targets` surfaces ~187 more in test code (68 `doc_markdown`,
-84 `missing_errors_doc`, 35 `must_use_candidate`). These are NOT denied yet
-(denying them as `warn` would be escalated to errors by CI's blanket
-`-D warnings`). Fix the test-code findings, then add the three lints to
-`[lints.clippy]` as `"deny"`.
+- 174 auto-fixed by `cargo clippy --fix` (redundant_closure_for_method_calls,
+  map_unwrap_or, unnested_or_patterns, semicolon_if_nothing_returned,
+  needless_raw_string_hashes, simple assigning_clones, etc.).
+- 59 `assigning_clones` applied by hand in `src/interfaces/wire.rs`,
+  `src/api/mod.rs`, `src/permissions/*` (`x = y.clone()` →
+  `x.clone_from(&y)`); `--fix` could not rewrite these cross-statement
+  cases safely.
+- 84 `missing_errors_doc` — `# Errors` sections added to all non-test
+  public `Result`-returning fns (test modules had no findings).
+- 40 Tier 4 fixes: `manual_let_else`, `items_after_statements`,
+  `unused_async`, `trivially_copy_pass_by_ref`, `match_same_arms`,
+  `format_push_string`, `format_collect`, `needless_pass_by_value`,
+  `unused_self`, `needless_continue`.
+- 40 Tier 5 judgment calls: scoped `#[allow]` with explanatory comments
+  for `cast_*` (with safety invariants), `too_many_lines` (actor state
+  machines / linear test sequences), `struct_excessive_bools` (independent
+  config knobs), `similar_names` (intentional pid/ppid, http/https pairs),
+  `missing_fields_in_debug` (secrets intentionally omitted),
+  `match_wild_err_arm` (timeout paths).
+- 37 stragglers in files not covered by the first pass (fswatch, pathutil,
+  acp/stream, events/publisher, search/*, mcp, pairing).
 
-Run to verify: `cargo clippy --all-targets -- -A clippy::all -W clippy::pedantic`
+Scoped `#[allow]` attributes remain in-tree, each with a comment
+explaining why the lint does not apply (serde `skip_serializing_if`
+contracts, cross-file call sites, actor state-machine flow clarity). These
+are intentional and documented; future pedantic findings will fail CI.
+
+Run to verify: `cargo clippy --all-targets -- -D warnings` (clean).
 
 ## Daemon port-orphan recovery — non-Linux PID-from-port deferred
 

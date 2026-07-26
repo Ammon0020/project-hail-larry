@@ -25,6 +25,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 /// daemon accepts on every interface including 127.0.0.1. Any connect error
 /// (refused, timeout, name resolution) is reported as "not listening" so the
 /// caller can fall through to the real `bind` error path.
+#[must_use]
 pub fn is_port_listening(host: &str, port: u16) -> bool {
     let probe_host = if host.is_empty() || host == "0.0.0.0" || host == "::" {
         "127.0.0.1"
@@ -48,6 +49,10 @@ pub fn is_port_listening(host: &str, port: u16) -> bool {
 /// (non-Linux). On Linux, parses `/proc/net/tcp` and `/proc/net/tcp6` for
 /// LISTEN sockets on the port and resolves the owning PID via `/proc/<pid>/fd`.
 /// If multiple processes match, the first one encountered is returned.
+///
+/// # Errors
+///
+/// Returns an error if `/proc` cannot be read or parsed on Linux.
 pub fn find_pid_listening_on(port: u16) -> Result<Option<u32>> {
     #[cfg(target_os = "linux")]
     {
@@ -69,7 +74,7 @@ fn find_pid_listening_on_linux(port: u16) -> Result<Option<u32>> {
     //   0 sl  1 local_address  2 rem_address  3 st  4 tx:rx  5 tr:tm
     //   6 retrnsmt  7 uid  8 timeout  9 inode ...
     // local_address is "HEXIP:HEXPORT"; st == "0A" means LISTEN.
-    let port_hex = format!("{:04X}", port);
+    let port_hex = format!("{port:04X}");
     let listen_state = "0A";
     let mut inodes: Vec<u64> = Vec::new();
     for path in ["/proc/net/tcp", "/proc/net/tcp6"] {

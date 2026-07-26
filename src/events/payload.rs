@@ -1,4 +1,4 @@
-//! SQLite payload JSON shape matching Go `events.eventPayload`.
+//! `SQLite` payload JSON shape matching Go `events.eventPayload`.
 //!
 //! Variable event fields are stored in the `payload` TEXT column as JSON with
 //! camelCase keys and `omitempty` semantics. Top-level columns hold only

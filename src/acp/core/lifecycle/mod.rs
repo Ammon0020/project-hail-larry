@@ -163,6 +163,8 @@ impl Client {
         });
     }
 
+    // Single linear rebind sequence — splitting would obscure the transfer flow.
+    #[allow(clippy::too_many_lines)]
     pub(super) async fn rebind_session_inner(
         &self,
         session_id: &str,

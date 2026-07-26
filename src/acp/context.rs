@@ -109,16 +109,28 @@ impl OpenFilesTracker {
     }
 
     /// Replaces the active editor file paths for a session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tracker lock is poisoned.
     pub fn set_open_files(&self, session_id: &str, paths: Vec<String>) -> Result<(), AppError> {
         self.with_entry_mut(session_id, |entry| entry.open_files = paths)
     }
 
     /// Replaces recently edited paths for a session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tracker lock is poisoned.
     pub fn set_recent_edits(&self, session_id: &str, paths: Vec<String>) -> Result<(), AppError> {
         self.with_entry_mut(session_id, |entry| entry.recent_edits = paths)
     }
 
     /// Replaces the selected editor range for a session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tracker lock is poisoned.
     pub fn set_selection(
         &self,
         session_id: &str,
@@ -275,8 +287,12 @@ impl PromptPipeline {
             path_limit.saturating_sub(open_files.len()),
             &mut seen_paths,
         );
-        append_paths(&mut text_sections, "## Open Files", open_files);
-        append_paths(&mut text_sections, "## Recently Edited Files", recent_edits);
+        append_paths(&mut text_sections, "## Open Files", &open_files);
+        append_paths(
+            &mut text_sections,
+            "## Recently Edited Files",
+            &recent_edits,
+        );
 
         if include_profile {
             let profile = self.profiles.instructions(session_id)?;
@@ -333,7 +349,7 @@ async fn first_prompt_resources(
             }
         }
         Err(error) => {
-            tracing::warn!(workspace_id, error = %error, "workspace context file tree unavailable")
+            tracing::warn!(workspace_id, error = %error, "workspace context file tree unavailable");
         }
     }
     match workspace.read_file(workspace_id, "AGENTS.md").await {
@@ -349,7 +365,7 @@ async fn first_prompt_resources(
         }
         Ok(_) => {}
         Err(error) => {
-            tracing::debug!(workspace_id, error = %error, "AGENTS.md context unavailable")
+            tracing::debug!(workspace_id, error = %error, "AGENTS.md context unavailable");
         }
     }
     resources
@@ -376,7 +392,7 @@ fn bounded_relative_paths(
         .collect()
 }
 
-fn append_paths(sections: &mut Vec<String>, heading: &str, paths: Vec<String>) {
+fn append_paths(sections: &mut Vec<String>, heading: &str, paths: &[String]) {
     if !paths.is_empty() {
         sections.push(format!("{heading}\n\n- {}", paths.join("\n- ")));
     }

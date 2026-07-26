@@ -10,7 +10,7 @@ use crate::interfaces::{wire::typed_event_to_wire, AppError, EventMeta, EventPay
 /// Translate, persist, and publish an inbound ACP update in receive order.
 ///
 /// The SDK dispatches notifications in stream order. Awaiting the durable
-/// append here keeps that order through SQLite before subscribers observe it.
+/// append here keeps that order through `SQLite` before subscribers observe it.
 pub(super) async fn handle_session_notification(
     deps: &HandlerDeps,
     notification: SessionNotification,
@@ -22,7 +22,7 @@ pub(super) async fn handle_session_notification(
 }
 
 /// Project a typed event through the only public wire adapter, then persist it
-/// before broadcasting to live listeners. An ID of zero requests SQLite's
+/// before broadcasting to live listeners. An ID of zero requests `SQLite`'s
 /// autoincrement assignment and is replaced before publication.
 pub(super) async fn append_payload(
     event_bus: &SharedEventBus,

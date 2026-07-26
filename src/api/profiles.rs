@@ -47,11 +47,11 @@ pub async fn put_profiles(
         )));
     }
 
-    let config = ProfileConfig::parse(&body).map_err(profile_config_error)?;
+    let config = ProfileConfig::parse(&body).map_err(|e| profile_config_error(&e))?;
     validate_profile_mcp_servers(&config, state.mcp_config_path.as_deref())?;
 
     // Persist first; only swap memory after a durable write succeeds.
-    config.save().map_err(profile_config_error)?;
+    config.save().map_err(|e| profile_config_error(&e))?;
 
     state
         .acp
@@ -73,8 +73,8 @@ pub async fn put_profiles(
 }
 
 /// Maps loader/save validation errors to stable client-facing HTTP statuses.
-fn profile_config_error(error: ProfileConfigError) -> ApiResponseError {
-    match &error {
+fn profile_config_error(error: &ProfileConfigError) -> ApiResponseError {
+    match error {
         ProfileConfigError::Json(inner) => {
             ApiResponseError::bad_request(format!("invalid profile config JSON: {inner}"))
         }
@@ -117,7 +117,7 @@ fn validate_profile_mcp_servers(
     })?;
     config
         .validate_mcp_servers_against(file.mcp_servers.keys().map(String::as_str))
-        .map_err(profile_config_error)
+        .map_err(|e| profile_config_error(&e))
 }
 
 #[cfg(test)]
@@ -359,6 +359,8 @@ mod tests {
         let before = std::fs::read(&path).expect("before");
 
         let state = state_in(&dir);
+        // MAX_FILE_BYTES is 256 KiB, well within usize on all supported targets.
+        #[allow(clippy::cast_possible_truncation)]
         let oversized = vec![b'a'; (MAX_FILE_BYTES as usize) + 1];
         let response = oneshot(
             state,

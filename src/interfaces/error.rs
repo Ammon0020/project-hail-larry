@@ -87,11 +87,13 @@ impl AppError {
     }
 
     /// `"{kind} not found"` (no id) — matches Go when the id is unavailable.
+    #[must_use]
     pub fn not_found_kind(kind: &str) -> Self {
         Self::not_found(format!("{kind} not found"))
     }
 
     /// `"{kind} not found: {id}"` — matches Go `fmt.Errorf("%s not found: %s", …)`.
+    #[must_use]
     pub fn not_found_id(kind: &str, id: &str) -> Self {
         Self::not_found(format!("{kind} not found: {id}"))
     }
@@ -181,6 +183,7 @@ impl ApiError {
 /// - rate limited → 429
 /// - unsupported → 501
 /// - internal / config / other → 500
+#[must_use]
 pub fn map_api_error(err: &AppError) -> ApiError {
     match err {
         AppError::NotFound { resource, .. } => {

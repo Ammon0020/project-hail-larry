@@ -1,7 +1,7 @@
 //! Thread-safe, deterministic registry for configured ACP harnesses.
 
 use std::collections::BTreeMap;
-use std::sync::RwLock;
+use std::sync::{PoisonError, RwLock};
 
 use crate::config::AgentInfo;
 
@@ -25,29 +25,20 @@ impl AgentRegistry {
 
     /// Adds or replaces an agent descriptor.
     pub fn register(&self, agent: AgentInfo) {
-        let mut agents = self
-            .agents
-            .write()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let mut agents = self.agents.write().unwrap_or_else(PoisonError::into_inner);
         agents.insert(agent.id.clone(), verify_agent_executable(agent));
     }
 
     /// Removes an agent. Missing IDs are intentionally a no-op.
     pub fn remove(&self, id: &str) {
-        let mut agents = self
-            .agents
-            .write()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let mut agents = self.agents.write().unwrap_or_else(PoisonError::into_inner);
         agents.remove(id);
     }
 
     /// Lists public agent data without leaking executable paths or argv.
     #[must_use]
     pub fn list(&self) -> Vec<AgentInfo> {
-        let agents = self
-            .agents
-            .read()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let agents = self.agents.read().unwrap_or_else(PoisonError::into_inner);
         agents
             .values()
             .map(|agent| AgentInfo {
@@ -64,10 +55,7 @@ impl AgentRegistry {
     /// Returns a complete independent descriptor snapshot.
     #[must_use]
     pub fn get(&self, id: &str) -> Option<AgentInfo> {
-        let agents = self
-            .agents
-            .read()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let agents = self.agents.read().unwrap_or_else(PoisonError::into_inner);
         agents.get(id).cloned()
     }
 

@@ -57,11 +57,19 @@ impl Client {
     }
 
     /// Snapshot of the loaded profile config (`GET /api/profiles`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the profile config cannot be loaded.
     pub fn profile_config(&self) -> Result<super::super::profile_config::ProfileConfig, AppError> {
         self.pipeline.profiles.config()
     }
 
     /// Replaces in-memory profile config after a validated REST write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the replacement is rejected by the config store.
     pub fn replace_profile_config(
         &self,
         config: super::super::profile_config::ProfileConfig,
@@ -70,6 +78,10 @@ impl Client {
     }
 
     /// Replaces the live bounded path-context settings after a durable config write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the new settings cannot be applied to the pipeline.
     pub fn replace_prompt_context_settings(
         &self,
         settings: PromptContextSettings,
@@ -78,6 +90,10 @@ impl Client {
     }
 
     /// Creates a session with an optional profile bound before actor startup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session or its profile cannot be created.
     pub async fn create_session_with_profile(
         &self,
         agent_id: &str,
@@ -90,16 +106,28 @@ impl Client {
     }
 
     /// Return the retained, bounded stderr tail for a session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session is unknown or the tail cannot be read.
     pub fn stderr_tail(&self, session_id: &str) -> Result<String, AppError> {
         self.sessions.stderr_tail(session_id)
     }
 
     /// Read durable metadata without starting any actors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if durable metadata cannot be read.
     pub fn load_conversation_metadata(&self) -> Result<Vec<SessionInfo>, AppError> {
         self.load_conversation_metadata_inner()
     }
 
     /// Restore durable metadata into the dormant registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if durable metadata cannot be loaded.
     pub fn load_conversations(&self) -> Result<(), AppError> {
         self.load_conversations_inner()
     }

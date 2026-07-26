@@ -50,6 +50,7 @@ pub struct EventBusPermissionSink {
 
 impl EventBusPermissionSink {
     /// Wrap a shared event bus.
+    #[must_use]
     pub fn new(bus: SharedEventBus) -> Self {
         Self { bus }
     }
@@ -65,11 +66,11 @@ impl PermissionSink for EventBusPermissionSink {
             req.session_id.clone(),
             Utc::now(),
         );
-        event.tool = req.tool.clone();
-        event.tool_kind = req.tool_kind.clone();
-        event.target = req.target.clone();
-        event.command = req.command.clone();
-        event.request_id = req.id.clone();
+        event.tool.clone_from(&req.tool);
+        event.tool_kind.clone_from(&req.tool_kind);
+        event.target.clone_from(&req.target);
+        event.command.clone_from(&req.command);
+        event.request_id.clone_from(&req.id);
         event.options = req.options.iter().map(|d| d.as_str().to_string()).collect();
 
         // Persist-before-publish; a store failure is logged but does not
@@ -82,6 +83,7 @@ impl PermissionSink for EventBusPermissionSink {
 }
 
 /// Convenience: a sink that does nothing, boxed for the manager constructor.
+#[must_use]
 pub fn null_sink() -> Arc<dyn PermissionSink> {
     Arc::new(NullSink)
 }

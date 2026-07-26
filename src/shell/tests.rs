@@ -283,6 +283,23 @@ async fn cancellation_kills_long_running_command() {
 #[cfg(unix)]
 #[tokio::test]
 async fn dropping_run_future_kills_process_group_grandchild() {
+    fn process_is_gone_or_zombie(pid: i32) -> bool {
+        if unsafe { libc::kill(pid, 0) } == -1 {
+            return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        }
+
+        // Linux reports process state immediately after the final `)` in
+        // `/proc/<pid>/stat`. Treat Z as exited even if it is not reaped yet.
+        let stat_path = format!("/proc/{pid}/stat");
+        std::fs::read_to_string(stat_path)
+            .ok()
+            .and_then(|stat| {
+                stat.rsplit_once(") ")
+                    .map(|(_, rest)| rest.starts_with('Z'))
+            })
+            .unwrap_or(false)
+    }
+
     let dir = TempDir::new().unwrap();
     let exec = Executor::new(dir.path());
     let pid_file = dir.path().join("grandchild.pid");
@@ -327,23 +344,6 @@ async fn dropping_run_future_kills_process_group_grandchild() {
         exited,
         "grandchild process {pid} survived a dropped run future"
     );
-
-    fn process_is_gone_or_zombie(pid: i32) -> bool {
-        if unsafe { libc::kill(pid, 0) } == -1 {
-            return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
-        }
-
-        // Linux reports process state immediately after the final `)` in
-        // `/proc/<pid>/stat`. Treat Z as exited even if it is not reaped yet.
-        let stat_path = format!("/proc/{pid}/stat");
-        std::fs::read_to_string(stat_path)
-            .ok()
-            .and_then(|stat| {
-                stat.rsplit_once(") ")
-                    .map(|(_, rest)| rest.starts_with('Z'))
-            })
-            .unwrap_or(false)
-    }
 }
 
 /// Cancellation kills the *process group*, not just the immediate child —
@@ -356,6 +356,19 @@ async fn dropping_run_future_kills_process_group_grandchild() {
 #[tokio::test]
 async fn cancellation_kills_process_group_not_just_child() {
     use std::process::Command as StdCommand;
+
+    fn count_processes(name: &str) -> usize {
+        // `pgrep -x` matches exact process names. Fall back to 0 if pgrep
+        // isn't available (CI without procps).
+        let out = StdCommand::new("pgrep").args(["-c", "-x", name]).output();
+        match out {
+            Ok(o) if o.status.success() => {
+                let s = String::from_utf8_lossy(&o.stdout);
+                s.trim().parse::<usize>().unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
 
     let dir = TempDir::new().unwrap();
     let exec = Executor::new(dir.path());
@@ -394,19 +407,6 @@ async fn cancellation_kills_process_group_not_just_child() {
         after, 0,
         "orphaned `sleep` process survived cancellation (process group not killed)"
     );
-
-    fn count_processes(name: &str) -> usize {
-        // `pgrep -x` matches exact process names. Fall back to 0 if pgrep
-        // isn't available (CI without procps).
-        let out = StdCommand::new("pgrep").args(["-c", "-x", name]).output();
-        match out {
-            Ok(o) if o.status.success() => {
-                let s = String::from_utf8_lossy(&o.stdout);
-                s.trim().parse::<usize>().unwrap_or(0)
-            }
-            _ => 0,
-        }
-    }
 }
 
 /// A timeout (token fired after a deadline) cancels the command.

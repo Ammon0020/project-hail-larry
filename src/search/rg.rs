@@ -176,6 +176,8 @@ pub(crate) async fn search_with_rg(
 /// so each result is a real hit. Match offsets are recomputed via the compiled
 /// regex (rg provides `submatches`, but recomputing keeps offsets consistent
 /// with the native fallback — matches Go).
+// Match offsets fit in one line; `results.len()` ≤ `max` (i32), so usize→i32 cannot truncate/wrap.
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 async fn parse_rg_output(
     stdout: tokio::process::ChildStdout,
     root: PathBuf,
@@ -205,9 +207,8 @@ async fn parse_rg_output(
         // Relativize against root. rg returns paths under root, so strip_prefix
         // suffices (matches Go's filepath.Rel for the under-root case; we never
         // produce `../` components).
-        let rel_path = match Path::new(path_str).strip_prefix(&root) {
-            Ok(p) => p,
-            Err(_) => continue,
+        let Ok(rel_path) = Path::new(path_str).strip_prefix(&root) else {
+            continue;
         };
         // Never surface absolute paths; use forward slashes for cross-platform.
         let rel_str = path_to_slash(rel_path);

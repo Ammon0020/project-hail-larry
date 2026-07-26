@@ -2,7 +2,7 @@
 //!
 //! [`EventBus`] owns an [`Store`] and a broadcast channel. Callers that need
 //! durable publication use [`EventBus::append_and_publish`]: the event is written
-//! to SQLite and only then sent to live subscribers. That guarantees
+//! to `SQLite` and only then sent to live subscribers. That guarantees
 //! persist-before-publish ordering.
 //!
 //! Live WebSocket delivery uses an optional [`LiveFanout`] bridge (Go
@@ -53,6 +53,7 @@ pub struct EventBus {
 
 impl EventBus {
     /// Create a bus wrapping an existing store.
+    #[must_use]
     pub fn new(store: Store) -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         Self {
@@ -63,11 +64,17 @@ impl EventBus {
     }
 
     /// Open a store at `db_path` and wrap it in a bus.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying [`Store::open`] fails (e.g. the path is
+    /// not writable or the `SQLite` file is corrupt).
     pub fn open(db_path: impl AsRef<std::path::Path>) -> Result<Self, AppError> {
         Ok(Self::new(Store::open(db_path)?))
     }
 
     /// Borrow the underlying durable store (prune, count, pragmas, …).
+    #[must_use]
     pub fn store(&self) -> &Store {
         &self.store
     }
@@ -90,8 +97,7 @@ impl EventBus {
     /// the event. This is the preferred write path for production callers.
     ///
     /// # Errors
-    /// Propagates store append failures. Publish is best-effort after a durable
-    /// write (no live subscribers is not an error).
+    /// Propagates store append failures; publish is best-effort after a durable write (no live subscribers is not an error).
     pub async fn append_and_publish(&self, event: Event) -> Result<Event, AppError> {
         let stored = self.store.append(event).await?;
         // Persist-before-publish: only notify after the durable write returned.
@@ -103,13 +109,10 @@ impl EventBus {
     ///
     /// No-op (Ok) when there are zero receivers — matches typical hub semantics.
     fn publish_live(&self, event: &Event) {
-        match self.tx.send(event.clone()) {
-            Ok(n) => {
-                tracing::trace!(id = event.id, receivers = n, "event published live");
-            }
-            Err(_) => {
-                // Zero in-process receivers: still durable; WS fan-out may still run.
-            }
+        if let Ok(n) = self.tx.send(event.clone()) {
+            tracing::trace!(id = event.id, receivers = n, "event published live");
+        } else {
+            // Zero in-process receivers: still durable; WS fan-out may still run.
         }
         // Go parity: every durable event reaches connected `/ws` clients.
         let fanout = match self.fanout.read() {
@@ -130,6 +133,9 @@ impl EventBus {
     ///
     /// Returns a receiver handle that yields events in order. Dropping the
     /// handle unsubscribes.
+    ///
+    /// # Errors
+    /// Returns an error if the durable replay query fails.
     pub async fn subscribe(&self, after_id: i64) -> Result<EventSubscription, AppError> {
         // Register for live delivery first so we cannot miss events that land
         // between replay and subscription.
@@ -198,7 +204,6 @@ impl EventSubscription {
                     // Strict consumers (sync hub) must use `recv_or_lag` and
                     // re-subscribe from `last_seen_id` instead.
                     warn!(skipped, "event subscription lagged; skipping to latest");
-                    continue;
                 }
                 SubRecv::Closed => return None,
             }
@@ -246,6 +251,7 @@ impl EventSubscription {
     }
 
     /// Highest durable ID delivered so far (for reconnect cursors).
+    #[must_use]
     pub fn last_seen_id(&self) -> i64 {
         self.last_seen_id
     }

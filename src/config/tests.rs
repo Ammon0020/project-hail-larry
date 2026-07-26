@@ -88,7 +88,7 @@ fn save_uses_active_state_dir_when_data_dir_differs() {
 }
 
 /// Regression for 2026-07-18 host config poison: `Daemon::new` tests built a
-/// Config with `/tmp/.tmp…` data_dir and called `save` while
+/// Config with `/tmp/.tmp…` `data_dir` and called `save` while
 /// `LOCAL_AGENT_STATE_DIR` was unset, so `resolved_state_dir` was the real
 /// `~/.local-agent`. Refuse that write when the active state dir is outside
 /// the process temp directory.
@@ -215,7 +215,7 @@ fn atomic_write_leaves_no_temp_and_ignores_stale_temps() {
         // No leftover temp files after a successful save.
         let temps: Vec<_> = fs::read_dir(tmp.path())
             .expect("read dir")
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
             .collect();
         assert!(temps.is_empty(), "leftover temp files: {temps:?}");
@@ -325,7 +325,7 @@ futureInt = 42
             "unknown string field must be captured"
         );
         assert_eq!(
-            cfg.extra.get("futureInt").and_then(|v| v.as_integer()),
+            cfg.extra.get("futureInt").and_then(toml::Value::as_integer),
             Some(42),
             "unknown int field must be captured"
         );
@@ -339,7 +339,10 @@ futureInt = 42
             "unknown string field must survive round-trip"
         );
         assert_eq!(
-            reloaded.extra.get("futureInt").and_then(|v| v.as_integer()),
+            reloaded
+                .extra
+                .get("futureInt")
+                .and_then(toml::Value::as_integer),
             Some(42),
             "unknown int field must survive round-trip"
         );

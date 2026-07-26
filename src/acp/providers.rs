@@ -43,6 +43,8 @@ live model switch requires session/set_config_option (rebind fallback deferred t
 /// Provider RPCs gate on `providers_supported`. Context injection gates on
 /// `embedded_context`. Session-history stories (BROWSE/OPEN/FALLBACK) gate on
 /// the `can_*` fields — live-only until epic Q8 (cold-start probe) locks.
+// Flags are independent config knobs; a state enum would conflate them.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SessionCaps {
     /// `agentCapabilities.providers != null` from Initialize.

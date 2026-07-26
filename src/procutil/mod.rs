@@ -177,6 +177,8 @@ pub fn kill_process_tree(root_pid: i32) {
 /// Walk `/proc/*/stat` to collect every descendant of `root_pid` (BFS by
 /// PPID relationship). Returns only descendants, not `root_pid` itself.
 #[cfg(target_os = "linux")]
+// pid/ppid pair is intentional — parent vs child process ids read from /proc.
+#[allow(clippy::similar_names)]
 fn collect_descendants(root_pid: i32) -> Vec<i32> {
     use std::collections::{HashMap, VecDeque};
 
@@ -188,15 +190,13 @@ fn collect_descendants(root_pid: i32) -> Vec<i32> {
                 Some(p) => p,
                 None => continue,
             };
-            let stat = match std::fs::read_to_string(entry.path().join("stat")) {
-                Ok(s) => s,
-                Err(_) => continue,
+            let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+                continue;
             };
             // Format: "pid (comm) state ppid ..." — comm may contain spaces
             // and parens, so split at the LAST ")".
-            let (_, rest) = match stat.rsplit_once(") ") {
-                Some(t) => t,
-                None => continue,
+            let Some((_, rest)) = stat.rsplit_once(") ") else {
+                continue;
             };
             let ppid: i32 = rest
                 .split_whitespace()

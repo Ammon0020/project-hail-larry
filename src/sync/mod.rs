@@ -3,7 +3,7 @@
 //! Blueprint references: Sec 12 (Multi-Client Synchronization).
 //!
 //! The server is authoritative. Connected devices are thin clients rendering
-//! from the event stream via WebSockets. This module ports Go's `Hub`:
+//! from the event stream via `WebSockets`. This module ports Go's `Hub`:
 //!
 //! - Per-client send queues ([`CLIENT_SEND_CAPACITY`] = 64) in a [`DashMap`]
 //! - Auth-gated handshake (`deviceId` + `secret` query params) with loopback bypass
@@ -156,7 +156,7 @@ impl Hub {
     /// Uses non-blocking `try_send` so a slow client cannot stall the hub.
     /// Events already delivered via reconnect replay (ID ≤ `last_seen_id`) are
     /// skipped to avoid duplicates. Unlike Go (which silently skips full
-    /// buffers), a full buffer triggers a durable EventBus resync when a bus is
+    /// buffers), a full buffer triggers a durable `EventBus` resync when a bus is
     /// configured; without a bus the slow client is dropped so loss is loud.
     pub fn broadcast(&self, event: &Event) {
         let data = match serde_json::to_vec(event) {
@@ -262,7 +262,7 @@ impl Hub {
         }
     }
 
-    /// Update the durable cursor for a registered client (EventBus feed path).
+    /// Update the durable cursor for a registered client (`EventBus` feed path).
     fn note_delivered(&self, client_id: u64, event_id: i64) {
         if let Some(entry) = self.clients.get(&client_id) {
             entry.last_seen_id.fetch_max(event_id, Ordering::Relaxed);
@@ -320,11 +320,15 @@ pub struct WsQuery {
 
 /// Auth + Origin gate matching Go `Hub.HandleWS` order exactly.
 ///
-/// 1. Non-loopback + AuthChecker set → require valid `deviceId`/`secret` (401)
+/// 1. Non-loopback + `AuthChecker` set → require valid `deviceId`/`secret` (401)
 /// 2. Origin empty or host ≠ Host header → 403
 ///
 /// Loopback bypasses auth but still requires a valid Origin (CSRF defense
 /// against malicious pages opening `ws://localhost/...`).
+///
+/// # Errors
+///
+/// Returns a `(StatusCode, reason)` pair when auth or Origin checks fail.
 pub fn authorize_handshake(
     auth: Option<&AuthChecker>,
     remote_addr: &str,
@@ -463,7 +467,7 @@ async fn handle_ws(
         .on_upgrade(move |socket| run_client_pumps(hub, socket, after, device_id))
 }
 
-/// Unified read / write / keepalive / optional EventBus feed for one client.
+/// Unified read / write / keepalive / optional `EventBus` feed for one client.
 async fn run_client_pumps(hub: Arc<Hub>, socket: WebSocket, after: Option<i64>, device_id: String) {
     let (sink, stream) = socket.split();
     let (tx, rx) = mpsc::channel::<Vec<u8>>(CLIENT_SEND_CAPACITY);
@@ -513,7 +517,7 @@ async fn run_client_pumps(hub: Arc<Hub>, socket: WebSocket, after: Option<i64>, 
     };
 
     tokio::select! {
-        _ = cancel.cancelled() => {}
+        () = cancel.cancelled() => {}
         _ = &mut write_task => {}
         _ = &mut read_task => {}
     }
@@ -542,28 +546,25 @@ async fn write_pump(
 
     loop {
         tokio::select! {
-            _ = cancel.cancelled() => {
+            () = cancel.cancelled() => {
                 let _ = sink.send(Message::Close(None)).await;
                 return;
             }
             msg = rx.recv() => {
-                match msg {
-                    Some(data) => {
-                        let text = match String::from_utf8(data) {
-                            Ok(s) => s,
-                            Err(err) => {
-                                error!(client_id, %err, "sync: non-utf8 event payload");
-                                continue;
-                            }
-                        };
-                        if sink.send(Message::Text(text.into())).await.is_err() {
-                            return;
+                if let Some(data) = msg {
+                    let text = match String::from_utf8(data) {
+                        Ok(s) => s,
+                        Err(err) => {
+                            error!(client_id, %err, "sync: non-utf8 event payload");
+                            continue;
                         }
-                    }
-                    None => {
-                        let _ = sink.send(Message::Close(None)).await;
+                    };
+                    if sink.send(Message::Text(text.into())).await.is_err() {
                         return;
                     }
+                } else {
+                    let _ = sink.send(Message::Close(None)).await;
+                    return;
                 }
             }
             _ = interval.tick() => {
@@ -595,6 +596,10 @@ async fn write_pump(
 }
 
 /// Inbound pump: update liveness on frames; app messages ignored (Phase 1).
+// Top-level or-pattern arms are more readable than deeply nested inner
+// patterns here; the `_` binding on `cancel.cancelled()` is idiomatic for
+// `tokio::select!`.
+#[allow(clippy::unnested_or_patterns, clippy::ignored_unit_patterns)]
 async fn read_pump(
     mut stream: futures_util::stream::SplitStream<WebSocket>,
     cancel: CancellationToken,

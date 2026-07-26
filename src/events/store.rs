@@ -3,14 +3,14 @@
 //! A single `rusqlite::Connection` is owned behind a blocking boundary
 //! (`std::sync::Mutex`). Async callers enter via `spawn_blocking` and never hold
 //! the DB lock across `.await`. This mirrors Go's `MaxOpenConns(1)`: one
-//! connection serializes writes and eliminates SQLITE_BUSY contention between
+//! connection serializes writes and eliminates `SQLITE_BUSY` contention between
 //! pooled connections.
 //!
 //! Schema, indexes, PRAGMAs, and payload encoding match
 //! `internal/events/events.go` exactly for S-MIGRATE compatibility.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -22,7 +22,7 @@ use super::payload::{decode_payload, encode_payload};
 use crate::interfaces::types::{go_zero_time, Event, EventType};
 use crate::interfaces::{AppError, EventStore};
 
-/// How long a contended SQLite write waits before failing (milliseconds).
+/// How long a contended `SQLite` write waits before failing (milliseconds).
 /// Matches Go `sqliteBusyTimeout`.
 const SQLITE_BUSY_TIMEOUT_MS: i32 = 5000;
 
@@ -50,13 +50,13 @@ CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_session_id_id ON events(session_id, id);
 ";
 
-/// Append-only SQLite event store.
+/// Append-only `SQLite` event store.
 ///
 /// Cheap to clone: the connection is shared via `Arc`. All clones serialize
 /// through the same mutex-owned connection.
 #[derive(Clone)]
 pub struct Store {
-    /// Single SQLite connection. Locked only inside blocking tasks.
+    /// Single `SQLite` connection. Locked only inside blocking tasks.
     conn: Arc<Mutex<Connection>>,
 }
 
@@ -129,7 +129,7 @@ impl Store {
     {
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || {
-            let guard = conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = conn.lock().unwrap_or_else(PoisonError::into_inner);
             f(&guard)
         })
         .await
@@ -233,6 +233,9 @@ impl Store {
     ///
     /// Returns the number of rows deleted. Non-positive `max_rows` is an error
     /// (never silently truncate the whole table). Matches Go `Store.Prune`.
+    ///
+    /// # Errors
+    /// Returns an error if `max_rows` is non-positive or the delete query fails.
     pub async fn prune(&self, max_rows: i64) -> Result<i64, AppError> {
         if max_rows <= 0 {
             return Err(AppError::internal(format!(
@@ -253,6 +256,9 @@ impl Store {
     /// Delete events older than `max_age` measured from now (UTC).
     ///
     /// Matches Go `Store.PruneOlderThan`.
+    ///
+    /// # Errors
+    /// Returns an error if `max_age` is zero, out of range, or the delete query fails.
     pub async fn prune_older_than(&self, max_age: Duration) -> Result<i64, AppError> {
         if max_age.is_zero() {
             return Err(AppError::internal(
@@ -276,6 +282,11 @@ impl Store {
     }
 
     /// Count rows in the events table (test / diagnostic helper).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the count query fails (e.g. the connection is lost or
+    /// the table is missing).
     pub async fn count(&self) -> Result<i64, AppError> {
         self.with_conn(|conn| {
             conn.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
@@ -284,10 +295,15 @@ impl Store {
         .await
     }
 
-    /// Read a PRAGMA value as a string (tests: journal_mode / busy_timeout).
+    /// Read a PRAGMA value as a string (tests: `journal_mode` / `busy_timeout`).
     ///
-    /// Some PRAGMAs (e.g. `busy_timeout`) are returned as integers by SQLite;
+    /// Some PRAGMAs (e.g. `busy_timeout`) are returned as integers by `SQLite`;
     /// those are stringified so callers get a uniform `String`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the PRAGMA query fails or the value is neither a string
+    /// nor an integer.
     pub async fn pragma(&self, name: &str) -> Result<String, AppError> {
         let name = name.to_string();
         self.with_conn(move |conn| {
@@ -307,9 +323,10 @@ impl Store {
     /// Launch a background task that calls [`Self::prune`] every `interval`.
     ///
     /// Returns a stop handle that cancels the ticker and is safe to call multiple
-    /// times. Non-positive interval / max_rows fall back to defaults
+    /// times. Non-positive interval / `max_rows` fall back to defaults
     /// (`DEFAULT_PRUNE_INTERVAL` / `DEFAULT_PRUNE_MAX_ROWS`). Matches Go
     /// `StartPruneTicker`.
+    #[must_use]
     pub fn start_prune_ticker(
         &self,
         interval: Duration,
@@ -376,7 +393,7 @@ impl EventStore for Store {
     }
 }
 
-/// Convert mapped SQLite rows into `Event` values.
+/// Convert mapped `SQLite` rows into `Event` values.
 fn scan_event_rows(
     rows: impl Iterator<Item = Result<(i64, String, String, String, String), rusqlite::Error>>,
 ) -> Result<Vec<Event>, AppError> {
@@ -407,7 +424,7 @@ fn parse_event_type(s: &str) -> Result<EventType, AppError> {
 
 /// Parse a stored timestamp string.
 ///
-/// Accepts SQLite datetime, RFC3339, and Go `time.Time.String()` forms written
+/// Accepts `SQLite` datetime, RFC3339, and Go `time.Time.String()` forms written
 /// by the legacy Go driver (`2006-01-02 15:04:05.999999999 -0700 MST`). An
 /// unparseable timestamp is a hard error so we never invent `now()` and corrupt
 /// replay order.
@@ -445,6 +462,8 @@ fn prune_with_query(
     query: &str,
     params: &[&dyn rusqlite::ToSql],
 ) -> Result<i64, AppError> {
+    // SQLite row-count ≪ i64::MAX, so usize→i64 cannot wrap.
+    #[allow(clippy::cast_possible_wrap)]
     let deleted = conn
         .execute(query, params)
         .map_err(|e| AppError::internal(format!("events: {label}: {e}")))? as i64;

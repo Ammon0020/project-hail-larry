@@ -28,7 +28,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use thiserror::Error;
@@ -140,6 +140,7 @@ impl Executor {
     /// `WithEnv`). Callers should normally build it as
     /// `merge_env(std::env::vars(), agent_vars)` so PATH etc. are preserved.
     /// Pass an empty `Vec` to clear the inherited environment.
+    #[must_use]
     pub fn with_env<I, K, V>(self, env: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -156,6 +157,7 @@ impl Executor {
     /// `bytes == 0` drops all captured output (matching `RetainedOutput`'s
     /// `limit == 0` "discard" convention); use a non-zero value to retain
     /// output up to the cap.
+    #[must_use]
     pub fn with_max_output_bytes(self, bytes: usize) -> Self {
         Self {
             max_output_bytes: bytes,
@@ -166,6 +168,7 @@ impl Executor {
     /// Return a copy of the executor with a custom per-command timeout.
     /// Pass `None` to disable the timeout entirely (commands run until
     /// cancelled or exited). The default is [`DEFAULT_COMMAND_TIMEOUT`].
+    #[must_use]
     pub fn with_command_timeout(self, timeout: Option<Duration>) -> Self {
         Self {
             command_timeout: timeout,
@@ -241,6 +244,8 @@ impl Executor {
     /// `cmd /C`. `on_stdout`/`on_stderr` `None` ⇒ capture-only (no per-line
     /// callback). Returns `(CommandResult, Option<ShellError>)` so callers
     /// always receive the partial output even on cancellation.
+    // Single linear spawn/pump/wait sequence — splitting would obscure the flow.
+    #[allow(clippy::too_many_lines)]
     async fn run_inner<Fout, Ferr>(
         &self,
         token: CancellationToken,
@@ -391,11 +396,11 @@ impl Executor {
 
         let stdout = out_buf
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let stderr = err_buf
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
 
         let mut result = CommandResult {
@@ -480,11 +485,7 @@ async fn command_deadline(timeout: Option<Duration>) {
 /// `args` non-empty ⇒ direct exec of `command args...` (no shell wrapping).
 /// `args` empty ⇒ `sh -c command` (Unix) / `cmd /C command` (Windows).
 fn build_command(command: &str, args: &[&str]) -> Command {
-    if !args.is_empty() {
-        let mut cmd = Command::new(command);
-        cmd.args(args);
-        cmd
-    } else {
+    if args.is_empty() {
         #[cfg(windows)]
         {
             let mut cmd = Command::new("cmd");
@@ -497,6 +498,10 @@ fn build_command(command: &str, args: &[&str]) -> Command {
             cmd.arg("-c").arg(command);
             cmd
         }
+    } else {
+        let mut cmd = Command::new(command);
+        cmd.args(args);
+        cmd
     }
 }
 
@@ -530,7 +535,8 @@ async fn read_stream<R, F>(
         };
 
         match read {
-            Ok(0) => break, // EOF
+            // EOF (0 bytes) or pipe closed / EIO — stop reading either way.
+            Ok(0) | Err(_) => break,
             Ok(_n) => {
                 // Strip the trailing newline for the callback; keep it in buf.
                 let trimmed = line.trim_end_matches(['\r', '\n']);
@@ -540,7 +546,6 @@ async fn read_stream<R, F>(
                 append_capped(buf, cap, &line);
                 line.clear();
             }
-            Err(_) => break, // pipe closed / EIO — stop reading
         }
     }
 
@@ -562,7 +567,7 @@ fn append_capped(buf: &Arc<Mutex<String>>, cap: usize, chunk: &str) {
     if cap == 0 || chunk.is_empty() {
         return;
     }
-    let mut guard = buf.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = buf.lock().unwrap_or_else(PoisonError::into_inner);
     if guard.len() < cap {
         let remaining = cap.saturating_sub(guard.len());
         if remaining >= chunk.len() {
@@ -609,7 +614,7 @@ const BLOCKED_AGENT_ENV_KEYS: &[&str] = &[
 fn is_blocked_agent_env_key(key: &str) -> bool {
     BLOCKED_AGENT_ENV_KEYS
         .iter()
-        .any(|blocked| key == *blocked || key.starts_with(&format!("{}_", blocked)))
+        .any(|blocked| key == *blocked || key.starts_with(&format!("{blocked}_")))
 }
 
 /// Filter the daemon's own environment down to a minimal allowlist before it is

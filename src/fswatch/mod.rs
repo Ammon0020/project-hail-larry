@@ -34,7 +34,7 @@ use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -179,7 +179,7 @@ impl Watcher {
     pub fn add_workspace(&self, id: &str, abs_path: &str) {
         let path = PathBuf::from(abs_path);
         let old_path = {
-            let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             if s.closed {
                 return;
             }
@@ -192,7 +192,10 @@ impl Watcher {
             s.roots.insert(id.to_string(), path.clone());
             old
         };
-        let tx = self.command_tx.lock().unwrap_or_else(|p| p.into_inner());
+        let tx = self
+            .command_tx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if let Some(old) = old_path {
             let _ = tx.send(Command::RemoveWorkspace(old));
         }
@@ -203,7 +206,7 @@ impl Watcher {
     /// watcher is closed or `id` is not registered.
     pub fn remove_workspace(&self, id: &str) {
         let path = {
-            let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             if s.closed {
                 return;
             }
@@ -213,7 +216,7 @@ impl Watcher {
             let _ = self
                 .command_tx
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(PoisonError::into_inner)
                 .send(Command::RemoveWorkspace(path));
         }
     }
@@ -224,7 +227,7 @@ impl Watcher {
     /// don't leak entries into the suppression set.
     pub fn note_app_write(&self, abs_path: &str) {
         let path = PathBuf::from(abs_path);
-        let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if s.closed {
             return;
         }
@@ -236,9 +239,13 @@ impl Watcher {
     /// Idempotent: calling it more than once returns `Ok(())` without
     /// re-joining. Thread panics during join are logged and swallowed (cleanup
     /// is best-effort).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a background thread fails to join within the timeout.
     pub fn close(&self) -> Result<(), AppError> {
         {
-            let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             if s.closed {
                 return Ok(());
             }
@@ -248,17 +255,27 @@ impl Watcher {
         let _ = self
             .command_tx
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .send(Command::Close);
         // Join the worker: it stops the debouncer (joining the debouncer
         // thread, which drops the callback and the emit sender), which in turn
         // stops the emit thread.
-        if let Some(handle) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
+        if let Some(handle) = self
+            .worker
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
             if let Err(e) = handle.join() {
                 warn!("fswatch worker thread panicked: {e:?}");
             }
         }
-        if let Some(handle) = self.emit.lock().unwrap_or_else(|p| p.into_inner()).take() {
+        if let Some(handle) = self
+            .emit
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
             if let Err(e) = handle.join() {
                 warn!("fswatch emit thread panicked: {e:?}");
             }
@@ -292,7 +309,7 @@ struct SharedState {
     last_emit: LruCache<PathBuf, Instant>,
     /// When the last opportunistic cleanup pass ran.
     last_cleanup: Instant,
-    /// True once close() has run; further public-API calls become no-ops.
+    /// True once `close()` has run; further public-API calls become no-ops.
     closed: bool,
 }
 
@@ -353,6 +370,8 @@ enum Command {
 /// Worker loop: owns the debouncer and the watched-path set. Exits on
 /// `Command::Close` or when all command senders drop, then stops the debouncer
 /// (joining its internal thread so the callback fully stops before exit).
+// Worker entry point owns the receiver for its lifetime; borrowing would force lifetime plumbing.
+#[allow(clippy::needless_pass_by_value)]
 fn worker_loop(
     mut debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
     command_rx: Receiver<Command>,
@@ -360,9 +379,10 @@ fn worker_loop(
     let mut watched: HashSet<PathBuf> = HashSet::new();
     loop {
         match command_rx.recv() {
-            Ok(Command::AddWorkspace(p)) => add_tree(&mut debouncer, &p, &mut watched),
+            Ok(Command::AddWorkspace(p) | Command::WatchNewDir(p)) => {
+                add_tree(&mut debouncer, &p, &mut watched);
+            }
             Ok(Command::RemoveWorkspace(p)) => remove_tree(&mut debouncer, &p, &mut watched),
-            Ok(Command::WatchNewDir(p)) => add_tree(&mut debouncer, &p, &mut watched),
             Ok(Command::Close) | Err(_) => break,
         }
     }
@@ -372,7 +392,7 @@ fn worker_loop(
     debouncer.stop();
 }
 
-/// Walk `root` and add every non-ignored, non-hidden directory (NonRecursive
+/// Walk `root` and add every non-ignored, non-hidden directory (`NonRecursive`
 /// per dir, matching Go's fsnotify usage). Idempotent via the `watched` set.
 fn add_tree(
     debouncer: &mut Debouncer<RecommendedWatcher, RecommendedCache>,
@@ -450,6 +470,8 @@ fn remove_tree(
 // Emit thread: drains the bounded channel and invokes the user callback
 // ---------------------------------------------------------------------------
 
+// Worker entry point owns the receiver and callback for its lifetime; borrowing would force lifetime plumbing.
+#[allow(clippy::needless_pass_by_value)]
 fn emit_loop(emit_rx: Receiver<Event>, emit_callback: Arc<dyn Fn(Event) + Send + Sync>) {
     while let Ok(event) = emit_rx.recv() {
         emit_callback(event);
@@ -527,7 +549,7 @@ fn handle_event(
 
         // Resolve owning workspace + suppression + throttle under one lock.
         let (ws_id, root) = {
-            let mut s = state.lock().unwrap_or_else(|p| p.into_inner());
+            let mut s = state.lock().unwrap_or_else(PoisonError::into_inner);
             if s.closed {
                 return;
             }
@@ -537,7 +559,7 @@ fn handle_event(
             }
             // Resolve the owning workspace root.
             let mut found: Option<(String, PathBuf)> = None;
-            for (id, r) in s.roots.iter() {
+            for (id, r) in &s.roots {
                 if path_under_root(path, r) {
                     found = Some((id.clone(), r.clone()));
                     break;
@@ -563,9 +585,8 @@ fn handle_event(
         };
 
         // Compute the workspace-relative path (forward slashes, like Go).
-        let rel = match path.strip_prefix(&root) {
-            Ok(r) => r,
-            Err(_) => continue,
+        let Ok(rel) = path.strip_prefix(&root) else {
+            continue;
         };
         let rel_str = rel.to_string_lossy().replace('\\', "/");
 
