@@ -67,41 +67,6 @@ local_agent logs                   Show daemon logs
 local_agent help                   Show help
 ```
 
-## Project Layout
-
-```
-src/                Rust daemon + CLI (`local_agent`)
-  main.rs            Binary entry point
-  lib.rs             Crate root
-  cli/               clap command parsing + per-OS service installers
-  app/               Daemon lifecycle, wires all subsystems together
-  api/               REST API handlers
-  server/            HTTP server, rust-embed frontend, WebSocket
-  config/            Config storage in ~/.local-agent/
-  events/            SQLite event store (WAL, append-only)
-  pairing/           QR + mnemonic pairing, device credentials
-  workspace/         Workspace registration, file tree, git info
-  acp/               ACP (Agent Client Protocol) JSON-RPC client
-  permissions/       Permission request/response, approval policies
-  sync/              WebSocket hub, broadcast, reconnection
-  files/             Revision tracking, three-way merge
-  fswatch/           Filesystem watcher
-  shell/             Workspace-scoped subprocess runner
-  search/            Code search
-  mcp/               MCP server config
-  uploads/           Upload handling
-  interfaces/        Shared Rust traits
-  fsutil/ pathutil/ procutil/   Shared low-level utilities
-  migrate/           State migration helpers
-  bin/mockagent.rs   Rust mock ACP agent for tests (src/bin/mockagent.rs)
-web/                React 19 + Vite 8 + Tailwind v4 + shadcn/ui
-  src/components/   UI components
-  src/hooks/        useBackend, useMockBackend
-  src/lib/          api.ts (REST client), utils.ts
-  src/types/        TypeScript types
-docs/               Plans, specs, references, reviews, status
-```
-
 ## Architecture
 
 - **ACP is the only agent integration path** — no per-agent code. The daemon speaks ACP to any compatible agent CLI.
@@ -111,12 +76,17 @@ docs/               Plans, specs, references, reviews, status
 
 ## Security
 
-- TLS on by default; self-signed cert auto-generated on first run
-- All routes require device authentication (pairing + mnemonic)
-- Path traversal and symlink containment enforced on every file operation
-- Shell commands require explicit per-action or per-session user approval
-- Rate limiting and request size caps on all endpoints
-- Permission requests expire after 5 minutes if not answered
+**Agent security** — agents are untrusted subprocesses:
+
+- **Process isolation** — agents run as separate processes over ACP; they can't touch your filesystem or shell on their own
+- **Workspace-scoped** — shell and file access are confined to the registered workspace; path traversal and symlink escapes are rejected
+- **Auditable** — every permission decision and meaningful action is recorded (in-memory audit log + SQLite event store)
+
+**Access security** — the daemon is a local network service with single-user, multi-device auth for use on local networks and tailscale:
+
+- **Single User Auth** — Authenticate devices via QR code or four-word mnemonic. 
+- **TLS on by default** with auto-generated self-signed cert
+- **Rate limits, request size caps, and WS Origin/CSRF checks** on every endpoint
 
 ## Key Docs
 
