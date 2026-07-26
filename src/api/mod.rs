@@ -856,14 +856,41 @@ async fn preview_file(
             // BrowsePreview iframe's `sandbox="allow-scripts"` combines into
             // "scripts run, opaque origin" — script-driven static-site previews
             // work while staying contained. `frame-ancestors 'self'` restricts
-            // who can embed the response to the IDE. The shared
+            // who can embed the response to the IDE.
+            //
+            // `default-src 'none'` + per-type `'self'` allows closes the
+            // third-party exfiltration residual: workspace JS can no longer
+            // `fetch()`/`sendBeacon()`/WebSocket outbound (`connect-src
+            // 'none'`), nor load cross-origin `<img>`/`<script>`/`<link>`/
+            // `<video>`/`<iframe>`/`<object>`/`<font>` resources that could
+            // smuggle data in URL query strings. `'self'` matches the
+            // response URL's origin (CSP3 §2.2.2), not the sandboxed opaque
+            // origin, so relative subresources from `/preview/{id}/` still
+            // load. `script-src`/`style-src` grant `'unsafe-inline'` because
+            // inline scripts/styles already run under `sandbox allow-scripts`
+            // and the exfil channels are blocked by the other directives.
+            // `form-action 'none'` blocks form submissions; `base-uri 'none'
+            // blocks `<base>` hijacking of relative URLs. The shared
             // `serve_workspace_file` CSP (`sandbox allow-same-origin`, no
             // allow-scripts) is overridden here because it would combine with
             // the iframe sandbox to block scripts entirely (union of
             // restrictions), breaking BrowsePreview.
             response.headers_mut().insert(
                 header::CONTENT_SECURITY_POLICY,
-                HeaderValue::from_static("frame-ancestors 'self'; sandbox allow-scripts"),
+                HeaderValue::from_static(
+                    "frame-ancestors 'self'; sandbox allow-scripts; \
+                     default-src 'none'; \
+                     script-src 'self' 'unsafe-inline'; \
+                     style-src 'self' 'unsafe-inline'; \
+                     img-src 'self' data: blob:; \
+                     font-src 'self' data:; \
+                     media-src 'self' blob:; \
+                     connect-src 'none'; \
+                     frame-src 'none'; \
+                     object-src 'none'; \
+                     form-action 'none'; \
+                     base-uri 'none'",
+                ),
             );
             response
         })
@@ -2425,7 +2452,20 @@ mod tests {
                 .headers()
                 .get(header::CONTENT_SECURITY_POLICY)
                 .and_then(|v| v.to_str().ok()),
-            Some("frame-ancestors 'self'; sandbox allow-scripts")
+            Some(concat!(
+                "frame-ancestors 'self'; sandbox allow-scripts; ",
+                "default-src 'none'; ",
+                "script-src 'self' 'unsafe-inline'; ",
+                "style-src 'self' 'unsafe-inline'; ",
+                "img-src 'self' data: blob:; ",
+                "font-src 'self' data:; ",
+                "media-src 'self' blob:; ",
+                "connect-src 'none'; ",
+                "frame-src 'none'; ",
+                "object-src 'none'; ",
+                "form-action 'none'; ",
+                "base-uri 'none'",
+            ))
         );
         let bytes = to_bytes(response.into_body(), usize::MAX)
             .await
