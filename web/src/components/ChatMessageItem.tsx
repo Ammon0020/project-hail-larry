@@ -1,6 +1,5 @@
 import {
   Wrench,
-  ShieldAlert,
   ListChecks,
   Terminal,
   FilePen,
@@ -15,6 +14,8 @@ import type { PendingPermission } from '@/lib/api'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { ToolExecutionBlock } from './chat/ToolExecutionBlock'
 import { ContextInjectionBlock } from './chat/ContextInjectionBlock'
+import { PermissionCard } from './chat/PermissionCard'
+import { SystemRow } from './chat/SystemRow'
 
 /**
  * Shared Tailwind prose classes for markdown-rendered chat content (code
@@ -40,54 +41,6 @@ function toolKindIcon(kind?: string) {
     default:
       return <Wrench className="w-3.5 h-3.5 text-purple-400" />
   }
-}
-
-/** Human label + button style for a permission option kind. */
-function optionStyle(kind: string): string {
-  if (kind.startsWith('reject') || kind === 'deny') {
-    return 'bg-destructive hover:bg-destructive/90'
-  }
-  return 'bg-primary hover:bg-primary/90'
-}
-
-/**
- * Derives a human-readable action label for a permission prompt from the tool
- * kind, used as a fallback when the backend tool field is missing.
- *
- * The backend (internal/acp/transport.go#RequestPermission) authoritatively
- * sanitizes the tool title before emitting the event: it replaces any opaque
- * tool-call ID (e.g. "toolu_01H…", "call_abc123", UUIDs, "muNNhDHjd") with a
- * kind-derived label, so the frontend can trust `event.tool` and does not need
- * to re-run the raw-ID heuristic. This fallback only covers a missing/empty
- * tool field.
- */
-function permissionLabelFromKind(kind?: string): string {
-  switch (kind) {
-    case 'execute':
-      return 'Run command'
-    case 'edit':
-      return 'Edit file'
-    case 'read':
-      return 'Read file'
-    case 'search':
-      return 'Search'
-    case 'delete':
-      return 'Delete file'
-    case 'move':
-      return 'Move file'
-    default:
-      return 'Tool call'
-  }
-}
-
-/**
- * Resolves the display label for a permission request event. Prefers the
- * backend-supplied tool title (already sanitized of raw IDs by the backend);
- * falls back to a kind-derived label only when the tool field is missing.
- */
-function permissionToolLabel(tool?: string, toolKind?: string): string {
-  if (tool) return tool
-  return permissionLabelFromKind(toolKind)
 }
 
 /**
@@ -195,21 +148,13 @@ export function ChatMessageItem({
     case 'ResponseStarted':
       // System-level indicator — compact, centered, muted metadata row
       // rather than a full chat bubble (Feature 3).
-      return (
-        <div className="text-xs text-muted-foreground text-center py-1">
-          · {event.content || 'Agent is thinking…'}
-        </div>
-      )
+      return <SystemRow content={event.content} fallback="Agent is thinking…" />
 
     case 'ModelChanged':
       // System-level indicator — compact, centered, muted metadata row
       // (same style as ResponseStarted). Shows the model switch without
       // implying history was reset (unlike ConnectionRestarted).
-      return (
-        <div className="text-xs text-muted-foreground text-center py-1">
-          · {event.content || 'Model switched'}
-        </div>
-      )
+      return <SystemRow content={event.content} fallback="Model switched" />
 
     case 'ToolStarted':
       return (
@@ -285,55 +230,18 @@ export function ChatMessageItem({
 
     case 'PermissionRequested': {
       const requestId = event.requestId || ''
-      // Display label — prefers the backend tool title, falling back to a
-      // kind-derived label when the tool field is missing or is a raw ID.
-      const toolLabel = permissionToolLabel(event.tool, event.toolKind)
-      // Resolved (answered here or on another device): show the outcome.
-      if (resolution) {
-        return (
-          <div className="flex justify-start">
-            <p className="text-xs text-muted-foreground pt-1.5">
-              Permission {resolution === 'denied' ? 'denied' : 'granted'} — {toolLabel}
-            </p>
-          </div>
-        )
-      }
-      // Still pending: render one button per backend-provided option.
-      const options = pending?.optionDetails ?? (event.options ?? []).map((id) => ({ id, name: id, kind: id }))
       return (
-        <div className="flex justify-start">
-          <div className="mt-1 bg-primary/10 border border-primary/30 rounded-lg p-2.5">
-            <div className="flex items-center gap-2 text-xs text-primary font-semibold mb-2">
-              <ShieldAlert className="w-3.5 h-3.5" /> Permission Required
-            </div>
-            <p className="text-xs text-foreground mb-2.5">
-              <span className="font-medium">{toolLabel}</span>
-              {event.target && <span className="text-muted-foreground"> · {event.target}</span>}
-            </p>
-            {event.command && (
-              <pre className="text-xs font-mono text-muted-foreground bg-background px-1.5 py-1 rounded mb-2.5 whitespace-pre-wrap">{event.command}</pre>
-            )}
-            {!pending && (
-              <p className="text-[11px] text-muted-foreground mb-2">This request is no longer active.</p>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              {options.map((o) => (
-                <button
-                  key={o.id}
-                  disabled={!pending}
-                  onClick={() => {
-                    let decision = o.kind;
-                    if (decision === 'reject_once') decision = 'deny';
-                    onPermissionResponse?.(requestId, decision);
-                  }}
-                  className={`text-primary-foreground text-xs font-medium py-1.5 rounded transition disabled:opacity-50 disabled:cursor-not-allowed ${optionStyle(o.kind)}`}
-                >
-                  {o.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <PermissionCard
+          requestId={requestId}
+          tool={event.tool}
+          toolKind={event.toolKind}
+          target={event.target}
+          command={event.command}
+          options={event.options}
+          pending={pending}
+          resolution={resolution}
+          onPermissionResponse={onPermissionResponse}
+        />
       )
     }
 
@@ -375,36 +283,27 @@ export function ChatMessageItem({
       // System-level failure — compact centered row, but slightly more
       // prominent via text-destructive so failures are noticeable (Feature 3).
       return (
-        <div className="text-xs text-destructive text-center py-1">
-          · Agent exited: {event.summary || event.content || 'unknown error'}
-        </div>
+        <SystemRow
+          content={event.summary || event.content}
+          fallback="unknown error"
+          prefix="Agent exited: "
+          variant="destructive"
+        />
       )
 
     case 'ConnectionRestarted':
     case 'SessionResumed':
       // System-level metadata — compact centered muted row (Feature 3).
-      return (
-        <div className="text-xs text-muted-foreground text-center py-1">
-          · {event.content || 'Session restarted'}
-        </div>
-      )
+      return <SystemRow content={event.content} fallback="Session restarted" />
 
     case 'SessionCancelled':
     case 'SessionInterrupted':
       // System-level metadata — compact centered muted row (Feature 3).
-      return (
-        <div className="text-xs text-muted-foreground text-center py-1">
-          · Stopped
-        </div>
-      )
+      return <SystemRow fallback="Stopped" />
 
     case 'FileRevisionUpdated':
       // System-level metadata — compact centered muted row (Feature 3).
-      return (
-        <div className="text-xs text-muted-foreground text-center py-1">
-          · edited {event.content}
-        </div>
-      )
+      return <SystemRow content={event.content} fallback="" prefix="edited " />
 
     case 'FileWritten':
       // File-write notifications are handled by the file-tree refresh logic
