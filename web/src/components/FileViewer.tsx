@@ -28,6 +28,7 @@ import DOMPurify from 'dompurify'
 import { FileX, Download, Loader2, Box, Code } from 'lucide-react'
 import { api, previewFileUrl } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { TrustPrompt } from '@/components/preview/TrustPrompt'
 import type { Tab } from '@/types'
 
 // ---------------------------------------------------------------------------
@@ -81,7 +82,7 @@ function viewerKind(name: string): ViewerKind {
 // Main dispatcher
 // ---------------------------------------------------------------------------
 
-export function FileViewer({ tab, active, onToggleViewMode }: { tab: Tab; active: boolean; onToggleViewMode?: (id: string) => void }) {
+export function FileViewer({ tab, active, onToggleViewMode, trusted }: { tab: Tab; active: boolean; onToggleViewMode?: (id: string) => void; trusted?: boolean | null }) {
   const kind = viewerKind(tab.name)
   const ext = tab.name.split('.').pop()?.toLowerCase() || ''
   const workspaceId = tab.workspaceId ?? ''
@@ -115,7 +116,7 @@ export function FileViewer({ tab, active, onToggleViewMode }: { tab: Tab; active
       {url && kind === 'xlsx' && <XlsxViewer url={url} name={tab.name} />}
       {url && kind === 'epub' && <EpubViewer url={url} />}
       {url && kind === 'csv' && <CsvViewer url={url} name={tab.name} />}
-      {url && kind === 'html' && <HtmlViewer url={url} />}
+      {url && kind === 'html' && <HtmlViewer url={url} workspaceId={workspaceId} trusted={trusted} />}
       {url && kind === 'model' && <ModelViewer url={url} name={tab.name} />}
       {url && kind === 'fallback' && <FallbackViewer url={url} name={tab.name} />}
       {/* View Raw button — shown for text-preview files (SVG, CSV, HTML, OBJ)
@@ -580,7 +581,22 @@ function parseCsv(text: string): string[][] {
   return rows
 }
 
-function HtmlViewer({ url }: { url: string }) {
+function HtmlViewer({ url, workspaceId, trusted }: { url: string; workspaceId: string; trusted?: boolean | null }) {
+  // Local override once the user answers the trust prompt — avoids waiting for
+  // a parent re-render before showing the iframe.
+  const [resolvedTrust, setResolvedTrust] = useState<boolean | null | undefined>(undefined)
+  const effectiveTrust = resolvedTrust ?? trusted
+  const trustUnknown = effectiveTrust == null
+
+  if (trustUnknown) {
+    return (
+      <TrustPrompt
+        workspaceId={workspaceId}
+        onResolve={setResolvedTrust}
+        className="w-full h-full text-destructive"
+      />
+    )
+  }
   return (
     <iframe
       src={url}

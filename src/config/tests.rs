@@ -6,6 +6,7 @@
 //! `ENV_LOCK` because `std::env::set_var` mutates process-global state and
 //! would race with parallel test threads.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -292,6 +293,7 @@ fn default_config_matches_golden_dto() {
         allow_remote_workspace_registration: false, // omitted (omitempty)
         revocation_grace_period_seconds: 300,
         prompt_context: PromptContextSettings::default(),
+        workspace_trust: HashMap::new(),
         extra: toml::Table::new(),
     };
 
@@ -566,5 +568,119 @@ fn config_store_thread_safe_access() {
         store.save().expect("store save");
         let reloaded = Config::load().expect("reload");
         assert_eq!(reloaded.port, 5555);
+    });
+}
+
+// ---- Workspace preview trust ----------------------------------------------
+
+/// A fresh config has no trust entries, so any unknown workspace ID reports
+/// `None` (unknown → prompt on first HTML preview).
+#[test]
+fn workspace_trust_defaults_to_none_for_unknown_id() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    with_state_dir(tmp.path(), || {
+        let cfg = Config::default_or_error().expect("default");
+        assert_eq!(
+            cfg.workspace_trust("any-id"),
+            None,
+            "unknown workspace should have no trust state"
+        );
+    });
+}
+
+/// `set_workspace_trust` stores and `workspace_trust` reads back the value for
+/// all three states: `Some(true)`, `Some(false)`, and `None` (reset to unknown).
+#[test]
+fn set_workspace_trust_persists_and_reads() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    with_state_dir(tmp.path(), || {
+        let mut cfg = Config::default_or_error().expect("default");
+        cfg.data_dir = tmp.path().to_string_lossy().to_string();
+        cfg.db_path = tmp
+            .path()
+            .join("local-agent.db")
+            .to_string_lossy()
+            .to_string();
+        cfg.tls_cert_dir = tmp.path().join("tls").to_string_lossy().to_string();
+
+        cfg.set_workspace_trust("ws-1", Some(true))
+            .expect("set trusted");
+        assert_eq!(
+            cfg.workspace_trust("ws-1"),
+            Some(true),
+            "trusted should read back Some(true)"
+        );
+
+        cfg.set_workspace_trust("ws-1", Some(false))
+            .expect("set untrusted");
+        assert_eq!(
+            cfg.workspace_trust("ws-1"),
+            Some(false),
+            "untrusted should read back Some(false)"
+        );
+
+        cfg.set_workspace_trust("ws-1", None).expect("reset trust");
+        assert_eq!(
+            cfg.workspace_trust("ws-1"),
+            None,
+            "reset should read back None"
+        );
+    });
+}
+
+/// Trust state survives a `save()` → `load()` round-trip, proving it is
+/// persisted to disk (not just in-memory). Uses the same state-dir override
+/// pattern as the other round-trip tests.
+#[test]
+fn set_workspace_trust_survives_save_reload() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    with_state_dir(tmp.path(), || {
+        let mut cfg = Config::default_or_error().expect("default");
+        cfg.data_dir = tmp.path().to_string_lossy().to_string();
+        cfg.db_path = tmp
+            .path()
+            .join("local-agent.db")
+            .to_string_lossy()
+            .to_string();
+        cfg.tls_cert_dir = tmp.path().join("tls").to_string_lossy().to_string();
+
+        cfg.set_workspace_trust("ws-persist", Some(true))
+            .expect("set trusted");
+        assert_eq!(
+            cfg.workspace_trust("ws-persist"),
+            Some(true),
+            "trusted should read back before reload"
+        );
+
+        // `set_workspace_trust` already calls `save()` internally, but exercise
+        // the explicit reload path to confirm the value is on disk.
+        let reloaded = Config::load().expect("reload");
+        assert_eq!(
+            reloaded.workspace_trust("ws-persist"),
+            Some(true),
+            "trusted should survive save/reload"
+        );
+
+        // Also verify a `Some(false)` value round-trips.
+        let mut cfg2 = reloaded;
+        cfg2.set_workspace_trust("ws-persist", Some(false))
+            .expect("set untrusted");
+        let reloaded2 = Config::load().expect("reload 2");
+        assert_eq!(
+            reloaded2.workspace_trust("ws-persist"),
+            Some(false),
+            "untrusted should survive save/reload"
+        );
+
+        // And a reset to `None` removes the entry from disk.
+        let mut cfg3 = reloaded2;
+        cfg3.set_workspace_trust("ws-persist", None)
+            .expect("reset trust");
+        let reloaded3 = Config::load().expect("reload 3");
+        assert_eq!(
+            reloaded3.workspace_trust("ws-persist"),
+            None,
+            "reset should remove the entry from disk"
+        );
     });
 }

@@ -13,6 +13,7 @@
 //! unknown field does not silently lose it on the next round-trip — matching
 //! the Go `pelletier/go-toml` decoder behavior of preserving unknown keys.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -188,6 +189,13 @@ pub struct Config {
     /// Bounded workspace/editor path summaries sent with agent prompts.
     #[serde(default, skip_serializing_if = "PromptContextSettings::is_default")]
     pub prompt_context: PromptContextSettings,
+    /// Per-workspace preview trust state, keyed by workspace ID (hash of the
+    /// workspace path). `Some(true)` = trusted (permissive preview CSP,
+    /// cross-origin resources allowed); `Some(false)` = untrusted (restrictive
+    /// CSP, exfil channels blocked); absent = unknown (prompt on first HTML
+    /// preview, restrictive CSP as safe default until the user chooses).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub workspace_trust: HashMap<String, bool>,
     /// Forward-compatible unknown TOML keys, preserved across round-trips.
     #[serde(flatten)]
     #[serde(default)]
@@ -238,6 +246,7 @@ impl Config {
             allow_remote_workspace_registration: false,
             revocation_grace_period_seconds: DEFAULT_REVOCATION_GRACE_PERIOD_SECONDS,
             prompt_context: PromptContextSettings::default(),
+            workspace_trust: HashMap::new(),
             extra: toml::Table::new(),
         })
     }
@@ -302,6 +311,35 @@ impl Config {
     #[must_use]
     pub fn list_workspaces(&self) -> Vec<String> {
         self.workspaces.clone()
+    }
+
+    // ---- Workspace preview trust -------------------------------------------
+
+    /// Returns the preview trust state for a workspace ID. `None` = unknown
+    /// (prompt on first HTML preview); `Some(true)` = trusted (permissive
+    /// CSP); `Some(false)` = untrusted (restrictive CSP).
+    #[must_use]
+    pub fn workspace_trust(&self, id: &str) -> Option<bool> {
+        self.workspace_trust.get(id).copied()
+    }
+
+    /// Sets the preview trust state for a workspace ID and persists. Passing
+    /// `None` removes the entry (back to unknown/prompt). Errors if persistence
+    /// fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the config cannot be persisted.
+    pub fn set_workspace_trust(
+        &mut self,
+        id: &str,
+        trusted: Option<bool>,
+    ) -> Result<(), ConfigError> {
+        match trusted {
+            Some(value) => self.workspace_trust.insert(id.to_string(), value),
+            None => self.workspace_trust.remove(id),
+        };
+        self.save()
     }
 
     // ---- Agent mutation methods --------------------------------------------
@@ -370,6 +408,7 @@ impl std::default::Default for Config {
                     allow_remote_workspace_registration: false,
                     revocation_grace_period_seconds: DEFAULT_REVOCATION_GRACE_PERIOD_SECONDS,
                     prompt_context: PromptContextSettings::default(),
+                    workspace_trust: HashMap::new(),
                     extra: toml::Table::new(),
                 }
             }

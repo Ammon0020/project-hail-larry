@@ -230,6 +230,7 @@ pub fn router(state: AppState) -> Router {
             get(list_workspaces).post(register_workspace),
         )
         .route("/api/workspaces/{id}", delete(remove_workspace))
+        .route("/api/workspaces/{id}/trust", put(set_workspace_trust))
         .route(
             "/api/workspaces/cancel-registration",
             post(cancel_workspace_registration),
@@ -597,7 +598,14 @@ async fn list_pending_actions(
 async fn list_workspaces(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<crate::interfaces::WorkspaceInfo>>, ApiResponseError> {
-    state.workspaces.list().await.map(Json).map_err(app_error)
+    let mut workspaces = state.workspaces.list().await.map_err(app_error)?;
+    // Join preview trust state from config so the frontend knows whether to
+    // prompt (None), allow (Some(true)), or restrict (Some(false)).
+    let trust = state.config.read().clone();
+    for ws in &mut workspaces {
+        ws.trusted = trust.workspace_trust(&ws.id);
+    }
+    Ok(Json(workspaces))
 }
 
 #[derive(Deserialize)]
@@ -697,6 +705,38 @@ async fn remove_workspace(
         );
     }
     Ok(Json(json!({ "status": "removed", "id": id })))
+}
+
+#[derive(Deserialize)]
+struct SetWorkspaceTrustRequest {
+    trusted: Option<bool>,
+}
+
+/// `PUT /api/workspaces/{id}/trust` — sets the preview trust state for a
+/// workspace. Body `{"trusted": true}` → trusted (permissive CSP),
+/// `{"trusted": false}` → untrusted (restrictive CSP), `{"trusted": null}`
+/// → reset to unknown (prompt on next HTML preview). Any paired device can
+/// set this — it's a UI preference, not a security boundary (the CSP
+/// enforcement is server-side and authoritative).
+async fn set_workspace_trust(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<SetWorkspaceTrustRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let Json(payload) = decode_json_body(body)?;
+    // Verify the workspace exists before persisting trust for a phantom ID.
+    let workspaces = state.workspaces.list().await.map_err(app_error)?;
+    if !workspaces.iter().any(|ws| ws.id == id) {
+        return Err(ApiResponseError::not_found(format!(
+            "workspace {id} not found"
+        )));
+    }
+    state
+        .config
+        .write()
+        .set_workspace_trust(&id, payload.trusted)
+        .map_err(|error| ApiResponseError::internal(format!("persist workspace trust: {error}")))?;
+    Ok(Json(json!({ "id": id, "trusted": payload.trusted })))
 }
 
 /// Peer address for loopback checks. Missing `ConnectInfo` (unit tests) is
@@ -842,6 +882,11 @@ async fn preview_file(
     if rel.is_empty() {
         return Err(ApiResponseError::not_found("preview path required"));
     }
+    // Select the CSP based on workspace trust state. Trusted = permissive
+    // (cross-origin resources allowed for legit local dev previews); untrusted
+    // or unknown = restrictive (exfil channels blocked). The opaque origin from
+    // `sandbox` without `allow-same-origin` protects IDE storage in both cases.
+    let trusted = state.config.read().workspace_trust(&id).unwrap_or(false);
     serve_workspace_file(&state, &id, rel)
         .await
         .map(|mut response| {
@@ -858,25 +903,22 @@ async fn preview_file(
             // work while staying contained. `frame-ancestors 'self'` restricts
             // who can embed the response to the IDE.
             //
-            // `default-src 'none'` + per-type `'self'` allows closes the
-            // third-party exfiltration residual: workspace JS can no longer
-            // `fetch()`/`sendBeacon()`/WebSocket outbound (`connect-src
-            // 'none'`), nor load cross-origin `<img>`/`<script>`/`<link>`/
-            // `<video>`/`<iframe>`/`<object>`/`<font>` resources that could
-            // smuggle data in URL query strings. `'self'` matches the
-            // response URL's origin (CSP3 §2.2.2), not the sandboxed opaque
-            // origin, so relative subresources from `/preview/{id}/` still
-            // load. `script-src`/`style-src` grant `'unsafe-inline'` because
-            // inline scripts/styles already run under `sandbox allow-scripts`
-            // and the exfil channels are blocked by the other directives.
-            // `form-action 'none'` blocks form submissions; `base-uri 'none'
-            // blocks `<base>` hijacking of relative URLs. The shared
-            // `serve_workspace_file` CSP (`sandbox allow-same-origin`, no
-            // allow-scripts) is overridden here because it would combine with
-            // the iframe sandbox to block scripts entirely (union of
-            // restrictions), breaking BrowsePreview.
-            response.headers_mut().insert(
-                header::CONTENT_SECURITY_POLICY,
+            // Trusted workspaces get the permissive CSP (cross-origin CDNs,
+            // APIs, WebSockets all work — the developer chose to trust the
+            // workspace). Untrusted/unknown workspaces get `default-src 'none'
+            // + per-type 'self' allows, which blocks all cross-origin resource
+            // loading and exfil channels (`connect-src 'none'`, `form-action
+            // 'none'`, etc.) while allowing relative subresources from
+            // `/preview/{id}/` (`'self'` matches the response URL's origin per
+            // CSP3 §2.2.2, not the sandboxed opaque origin).
+            //
+            // The shared `serve_workspace_file` CSP (`sandbox
+            // allow-same-origin`, no allow-scripts) is overridden here because
+            // it would combine with the iframe sandbox to block scripts
+            // entirely (union of restrictions), breaking BrowsePreview.
+            let csp = if trusted {
+                HeaderValue::from_static("frame-ancestors 'self'; sandbox allow-scripts")
+            } else {
                 HeaderValue::from_static(
                     "frame-ancestors 'self'; sandbox allow-scripts; \
                      default-src 'none'; \
@@ -890,8 +932,11 @@ async fn preview_file(
                      object-src 'none'; \
                      form-action 'none'; \
                      base-uri 'none'",
-                ),
-            );
+                )
+            };
+            response
+                .headers_mut()
+                .insert(header::CONTENT_SECURITY_POLICY, csp);
             response
         })
 }
@@ -2044,6 +2089,36 @@ mod tests {
         (dir, state)
     }
 
+    /// RAII guard that pins `LOCAL_AGENT_STATE_DIR` to the given dir for the
+    /// duration of a test, restoring the prior value (or unsetting it) on drop.
+    /// Required by API tests whose handler calls `Config::save()` — without
+    /// this, `resolved_state_dir` resolves to `~/.local-agent` and the
+    /// temp-data-dir mismatch guard refuses the write (500). Holds the
+    /// process-wide `lock_state_dir_env` mutex so concurrent env-touching
+    /// tests cannot race.
+    struct StateDirEnvGuard {
+        prior: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl StateDirEnvGuard {
+        fn pin(dir: &std::path::Path) -> Self {
+            let lock = crate::config::lock_state_dir_env();
+            let prior = std::env::var_os(crate::config::STATE_DIR_ENV_VAR);
+            std::env::set_var(crate::config::STATE_DIR_ENV_VAR, dir);
+            Self { prior, _lock: lock }
+        }
+    }
+
+    impl Drop for StateDirEnvGuard {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(v) => std::env::set_var(crate::config::STATE_DIR_ENV_VAR, v),
+                None => std::env::remove_var(crate::config::STATE_DIR_ENV_VAR),
+            }
+        }
+    }
+
     /// Pair a device and optionally set grace / remote-registration flags.
     fn pending_actions_state(
         grace_seconds: i64,
@@ -2878,5 +2953,178 @@ mod tests {
         // 404 (missing session), not 400 — proves the body parsed fine and the
         // profile field was silently dropped by serde.
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // --- Workspace preview trust endpoint -----------------------------------
+
+    /// `PUT /api/workspaces/{id}/trust` returns 404 for a workspace that does
+    /// not exist, so trust state cannot be persisted for a phantom ID.
+    #[tokio::test]
+    async fn set_workspace_trust_returns_404_for_unknown_workspace() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/workspaces/nonexistent-id/trust")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"trusted":true}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Setting trust via `PUT /api/workspaces/{id}/trust` persists to config
+    /// and is reflected in the `GET /api/workspaces` list response.
+    #[tokio::test]
+    async fn set_workspace_trust_persists_and_reflects_in_list() {
+        let (dir, state) = state();
+        // Pin `LOCAL_AGENT_STATE_DIR` to the temp dir so `Config::save()`
+        // (called by `set_workspace_trust`) writes inside the temp dir instead
+        // of tripping the temp-data-dir mismatch guard.
+        let _env = StateDirEnvGuard::pin(dir.path());
+        let (_site, ws) = preview_fixture_workspace(&state).await;
+
+        // Before setting trust, the workspace lists with no trust state (None).
+        let list = oneshot(
+            state.clone(),
+            Request::builder()
+                .uri("/api/workspaces")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        let entries = json_body(list).await;
+        let entry = entries
+            .as_array()
+            .expect("workspaces list")
+            .iter()
+            .find(|e| e["id"] == ws.id)
+            .expect("workspace in list");
+        assert!(
+            entry.get("trusted").is_none() || entry["trusted"].is_null(),
+            "untrusted workspace should have no trusted field, got: {entry}"
+        );
+
+        // PUT trust=true.
+        let put = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/api/workspaces/{}/trust", ws.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"trusted":true}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(put.status(), StatusCode::OK);
+        let put_body = json_body(put).await;
+        assert_eq!(put_body["trusted"], true);
+
+        // GET list now reflects Some(true).
+        let list = oneshot(
+            state,
+            Request::builder()
+                .uri("/api/workspaces")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        let entries = json_body(list).await;
+        let entry = entries
+            .as_array()
+            .expect("workspaces list")
+            .iter()
+            .find(|e| e["id"] == ws.id)
+            .expect("workspace in list");
+        assert_eq!(
+            entry["trusted"], true,
+            "trusted workspace should list trusted=true, got: {entry}"
+        );
+    }
+
+    /// The preview CSP reflects the workspace trust state: unknown/untrusted →
+    /// restrictive (`default-src 'none'`), trusted → permissive
+    /// (`frame-ancestors 'self'; sandbox allow-scripts`).
+    #[tokio::test]
+    async fn preview_csp_reflects_trust_state() {
+        let (dir, state) = state();
+        // Pin `LOCAL_AGENT_STATE_DIR` so `set_workspace_trust`'s `save()` call
+        // writes inside the temp dir (otherwise the mismatch guard 500s).
+        let _env = StateDirEnvGuard::pin(dir.path());
+        let (_site, ws) = preview_fixture_workspace(&state).await;
+
+        // Helper: fetch the preview CSP for this workspace.
+        let ws_id = ws.id.clone();
+        let csp = move |st: AppState| {
+            let id = ws_id.clone();
+            async move {
+                let resp = oneshot(
+                    st,
+                    Request::builder()
+                        .uri(format!("/preview/{id}/index.html"))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await;
+                assert_eq!(resp.status(), StatusCode::OK);
+                resp.headers()
+                    .get(header::CONTENT_SECURITY_POLICY)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string()
+            }
+        };
+
+        // Unknown trust (no entry) → restrictive CSP (contains default-src 'none').
+        let restrictive = csp(state.clone()).await;
+        assert!(
+            restrictive.contains("default-src 'none'"),
+            "unknown trust should get restrictive CSP, got: {restrictive}"
+        );
+
+        // PUT trust=true → permissive CSP (no default-src 'none').
+        let put = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/api/workspaces/{}/trust", ws.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"trusted":true}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(put.status(), StatusCode::OK);
+
+        let permissive = csp(state.clone()).await;
+        assert_eq!(
+            permissive, "frame-ancestors 'self'; sandbox allow-scripts",
+            "trusted workspace should get permissive CSP, got: {permissive}"
+        );
+        assert!(
+            !permissive.contains("default-src 'none'"),
+            "trusted CSP must not contain default-src 'none', got: {permissive}"
+        );
+
+        // PUT trust=false → restrictive CSP again.
+        let put = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/api/workspaces/{}/trust", ws.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"trusted":false}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(put.status(), StatusCode::OK);
+
+        let restrictive_again = csp(state).await;
+        assert!(
+            restrictive_again.contains("default-src 'none'"),
+            "untrusted workspace should get restrictive CSP, got: {restrictive_again}"
+        );
     }
 }

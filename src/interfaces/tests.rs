@@ -324,6 +324,7 @@ fn golden_workspace_info() {
         name: "seed-workspace".into(),
         available: true,
         error: String::new(),
+        trusted: None,
     };
     assert_matches_golden("workspace_info", &to_value(&info));
 }

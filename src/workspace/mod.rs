@@ -58,6 +58,10 @@ impl WorkspaceEntry {
                 .map_or_else(String::new, |part| part.to_string_lossy().into_owned()),
             available: self.is_available(),
             error: self.error.clone(),
+            // The workspace manager does not know about trust; the API layer
+            // joins this from Config.workspace_trust before returning to the
+            // client.
+            trusted: None,
         }
     }
 }

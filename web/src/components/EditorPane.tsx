@@ -54,6 +54,7 @@ export function EditorPane({
   events,
   isDesktop,
   workspaceName,
+  trusted,
   onCloseOthers,
   onCloseSaved,
   onCloseToRight,
@@ -94,6 +95,12 @@ export function EditorPane({
     /** Controlled settings section — Agents / MCP / General / Profiles. */
     activeSection?: 'agents' | 'mcp' | 'general' | 'profiles'
     onSectionChange?: (section: 'agents' | 'mcp' | 'general' | 'profiles') => void
+    /** Id of the active workspace, for the Preview trust section. */
+    workspaceId?: string
+    /** Current per-workspace preview trust state. */
+    workspaceTrusted?: boolean | null
+    /** Updates the active workspace's preview trust state. */
+    onSetWorkspaceTrust?: (workspaceId: string, trusted: boolean | null) => Promise<void>
   }
   hideTabBar?: boolean
   wrap?: boolean
@@ -112,6 +119,10 @@ export function EditorPane({
   /** Display name of the active workspace, shown as the first breadcrumb
    *  segment. Passed through from App.tsx via backend.activeWorkspace?.name. */
   workspaceName?: string
+  /** Per-workspace HTML preview trust state. `null`/undefined = unknown
+   *  (prompt), `true` = trusted, `false` = untrusted. Forwarded to
+   *  BrowsePreview and FileViewer so HTML iframes apply the right CSP. */
+  trusted?: boolean | null
   /** Tab context-menu actions — passed through to TabBar. */
   onCloseOthers?: (id: string) => void
   onCloseSaved?: (id: string) => void
@@ -522,6 +533,7 @@ export function EditorPane({
               workspaceId={tab.workspaceId ?? ''}
               entryPath={tab.path}
               events={events}
+              trusted={trusted}
             />
           </div>
         ))}
@@ -532,7 +544,7 @@ export function EditorPane({
           // toggled to preview mode; otherwise they edit in CodeMirror.
           const showPreview = tab.isBinary || (tab.previewable && tab.viewMode === 'preview')
           if (showPreview) {
-            return <FileViewer key={tab.id} tab={tab} active={activeTabId === tab.id} onToggleViewMode={onToggleViewMode} />
+            return <FileViewer key={tab.id} tab={tab} active={activeTabId === tab.id} onToggleViewMode={onToggleViewMode} trusted={trusted} />
           }
           return (
           <div key={tab.id} className={cn("absolute inset-0", activeTabId === tab.id ? 'block' : 'hidden')}>

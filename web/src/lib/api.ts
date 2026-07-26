@@ -134,6 +134,11 @@ export interface WorkspaceInfo {
   id: string
   path: string
   name: string
+  /** Per-workspace HTML preview trust state.
+   *  - `null`/undefined = unknown (prompt on first HTML preview)
+   *  - `true` = trusted (permissive CSP, cross-origin resources allowed)
+   *  - `false` = untrusted (restrictive CSP, exfil blocked) */
+  trusted?: boolean | null
 }
 
 /** Live agent-session history support. `available: false` means not warm. */
@@ -216,6 +221,13 @@ export const api = {
       `/workspaces/${workspaceId}/preview-session`,
       { method: 'POST' },
     ),
+  /** PUT /api/workspaces/{id}/trust — sets the per-workspace HTML preview trust
+   *  state. `null` = unknown (prompt), `true` = trusted, `false` = untrusted. */
+  setWorkspaceTrust: (workspaceId: string, trusted: boolean | null | undefined) =>
+    apiFetch<{ status: string }>(`/workspaces/${workspaceId}/trust`, {
+      method: 'PUT',
+      body: JSON.stringify({ trusted: trusted ?? null }),
+    }),
   getSessionHistoryCapabilities: (sessionId: string) =>
     apiFetch<SessionHistoryCapabilities>(`/sessions/${sessionId}/capabilities`),
   readFile: (workspaceId: string, path: string) =>

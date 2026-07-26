@@ -525,6 +525,12 @@ pub struct WorkspaceInfo {
     /// Human-readable load failure; empty when available.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub error: String,
+    /// Preview trust state: `None` = unknown (prompt on first HTML preview),
+    /// `Some(true)` = trusted (permissive CSP), `Some(false)` = untrusted
+    /// (restrictive CSP). Joined from `Config.workspace_trust` by the API
+    /// layer; the workspace manager itself does not know about trust.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trusted: Option<bool>,
 }
 
 // ============================================================================

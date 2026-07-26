@@ -1083,6 +1083,9 @@ export default function App() {
           activeSessionId,
           activeSection: settingsSection,
           onSectionChange: setSettingsSection,
+          workspaceId: backend.activeWorkspace?.id,
+          workspaceTrusted: backend.activeWorkspace?.trusted,
+          onSetWorkspaceTrust: backend.setWorkspaceTrust,
         }}
         hideTabBar={isDesktop}
         wrap={wrap}
@@ -1092,6 +1095,7 @@ export default function App() {
         events={backend.events as AppEvent[]}
         isDesktop={isDesktop}
         workspaceName={backend.activeWorkspace?.name}
+        trusted={backend.activeWorkspace?.trusted}
         onCloseOthers={handleCloseOthers}
         onCloseSaved={handleCloseSaved}
         onCloseToRight={handleCloseToRight}

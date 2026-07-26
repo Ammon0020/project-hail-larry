@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { api, previewFileUrl } from '@/lib/api'
+import { TrustPrompt } from '@/components/preview/TrustPrompt'
 import type { AppEvent } from '@/types'
 
 /** Coalesce bursty FileWritten / FileChangedOnDisk into one iframe remount. */
@@ -20,18 +21,31 @@ export function BrowsePreview({
   workspaceId,
   entryPath,
   events = [],
+  trusted,
 }: {
   workspaceId: string
   entryPath: string
   /** Shared backend event list (same WS stream as useBackend) — no extra socket. */
   events?: AppEvent[]
+  /** Per-workspace HTML preview trust state. Unknown (`null`/`undefined`)
+   *  shows a trust prompt before rendering the iframe; `true`/`false` skip
+   *  it and render immediately with the backend's CSP. */
+  trusted?: boolean | null
 }) {
   // A fresh session remounts the sandboxed iframe for manual and live reloads.
   const [previewSessionVersion, setPreviewSessionVersion] = useState(0)
   const reloadPreview = () => setPreviewSessionVersion((version) => version + 1)
   const [previewToken, setPreviewToken] = useState<string>()
   const [sessionError, setSessionError] = useState<string>()
+  // Local override once the user answers the trust prompt — avoids waiting for
+  // a parent re-render before showing the iframe.
+  const [resolvedTrust, setResolvedTrust] = useState<boolean | null | undefined>(undefined)
   const src = previewToken ? previewFileUrl(workspaceId, entryPath, previewToken) : ''
+  // Effective trust: a local override (from answering the prompt) takes
+  // precedence over the prop so the iframe renders without waiting for the
+  // parent to re-render after setWorkspaceTrust updates backend state.
+  const effectiveTrust = resolvedTrust ?? trusted
+  const trustUnknown = effectiveTrust == null
 
   // Reset stale token/error when the workspace or session version changes,
   // during render (React's "adjust state on prop change" pattern) so the
@@ -42,6 +56,7 @@ export function BrowsePreview({
     setPrevResetKey(resetKey)
     setPreviewToken(undefined)
     setSessionError(undefined)
+    setResolvedTrust(undefined)
   }
 
   useEffect(() => {
@@ -139,6 +154,12 @@ export function BrowsePreview({
             Retry preview
           </button>
         </div>
+      ) : trustUnknown ? (
+        <TrustPrompt
+          workspaceId={workspaceId}
+          onResolve={setResolvedTrust}
+          className="flex-1 text-destructive"
+        />
       ) : previewToken ? (
         <iframe
           src={src}

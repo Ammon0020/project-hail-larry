@@ -273,6 +273,17 @@ export function useBackend() {
     return ws
   }, [selectWorkspace])
 
+  /** PUT /api/workspaces/{id}/trust — updates the per-workspace preview trust
+   *  state on the backend and locally patches both the workspaces list and the
+   *  activeWorkspace so the UI (preview components, settings) reflect the new
+   *  value without a full reload. */
+  const setWorkspaceTrust = useCallback(async (workspaceId: string, trusted: boolean | null | undefined) => {
+    await api.setWorkspaceTrust(workspaceId, trusted)
+    const next = trusted ?? null
+    setWorkspaces((prev) => prev.map((w) => w.id === workspaceId ? { ...w, trusted: next } : w))
+    setActiveWorkspace((prev) => prev && prev.id === workspaceId ? { ...prev, trusted: next } : prev)
+  }, [])
+
   // ---- Data loading methods ----
   const loadWorkspaces = useCallback(async () => {
     try {
@@ -711,6 +722,7 @@ export function useBackend() {
     // Actions
     selectWorkspace,
     registerWorkspace,
+    setWorkspaceTrust,
     readFile,
     saveFile,
     deleteFile,

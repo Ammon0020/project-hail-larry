@@ -63,6 +63,9 @@ export function SettingsPanel({
   activeSessionId,
   activeSection,
   onSectionChange,
+  workspaceId,
+  workspaceTrusted,
+  onSetWorkspaceTrust,
 }: {
   agents: Agent[]
   onAddAgent: (a: Agent) => Promise<void>
@@ -80,6 +83,12 @@ export function SettingsPanel({
   activeSection?: 'agents' | 'mcp' | 'general' | 'profiles'
   /** Called when the user picks a different settings section. */
   onSectionChange?: (section: 'agents' | 'mcp' | 'general' | 'profiles') => void
+  /** Id of the active workspace, for the Preview trust section. */
+  workspaceId?: string
+  /** Current per-workspace preview trust state. */
+  workspaceTrusted?: boolean | null
+  /** Updates the active workspace's preview trust state. */
+  onSetWorkspaceTrust?: (workspaceId: string, trusted: boolean | null) => Promise<void>
 }) {
   // Prefer controlled section from App when provided; otherwise local state
   // (keeps the panel usable in isolation / Storybook).
@@ -123,6 +132,10 @@ export function SettingsPanel({
   >('idle')
   const [providersError, setProvidersError] = useState<string | null>(null)
   const [providerBusy, setProviderBusy] = useState<string | null>(null)
+
+  // Preview trust state — per-workspace HTML preview CSP policy.
+  const [trustBusy, setTrustBusy] = useState(false)
+  const [trustError, setTrustError] = useState<string | null>(null)
 
   const handleAutodetect = async () => {
     setIsDetecting(true)
@@ -353,6 +366,23 @@ export function SettingsPanel({
       setProvidersError(e instanceof Error ? e.message : String(e))
     } finally {
       setProviderBusy(null)
+    }
+  }
+
+  /** Updates the active workspace's preview trust state via the backend and
+   *  surfaces errors inline. The optimistic local patch is applied by
+   *  useBackend.setWorkspaceTrust, which updates the workspaces list and
+   *  activeWorkspace so the preview components re-render immediately. */
+  async function handleSetTrust(value: boolean | null) {
+    if (!workspaceId || !onSetWorkspaceTrust) return
+    setTrustBusy(true)
+    setTrustError(null)
+    try {
+      await onSetWorkspaceTrust(workspaceId, value)
+    } catch (e) {
+      setTrustError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setTrustBusy(false)
     }
   }
 
@@ -749,6 +779,73 @@ export function SettingsPanel({
                 ))}
               </div>
             </div>
+
+            {/* Preview trust — per-workspace HTML preview CSP policy.
+                Controls whether cross-origin resources (CDNs, APIs, WebSockets)
+                are allowed in sandboxed HTML preview iframes. */}
+            {workspaceId && onSetWorkspaceTrust && (
+              <div className="p-4 bg-panel border border-border rounded-lg space-y-3">
+                <div>
+                  <h4 className="font-semibold text-sm text-foreground">Preview trust</h4>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Controls how HTML previews from this workspace handle cross-origin resources.
+                  </p>
+                </div>
+                {trustError && (
+                  <div className="flex items-start gap-2 p-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
+                    <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>{trustError}</span>
+                  </div>
+                )}
+                <div className="flex flex-col gap-3 mt-1">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="preview-trust"
+                      value="ask"
+                      checked={workspaceTrusted == null}
+                      onChange={() => void handleSetTrust(null)}
+                      disabled={trustBusy}
+                      className="text-primary focus:ring-primary h-4 w-4 border-input accent-primary cursor-pointer mt-0.5"
+                    />
+                    <div className="space-y-0.5">
+                      <span className="block text-sm text-foreground">Ask on first preview</span>
+                      <span className="block text-xs text-muted-foreground">Prompt before rendering HTML previews from this workspace.</span>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="preview-trust"
+                      value="trusted"
+                      checked={workspaceTrusted === true}
+                      onChange={() => void handleSetTrust(true)}
+                      disabled={trustBusy}
+                      className="text-primary focus:ring-primary h-4 w-4 border-input accent-primary cursor-pointer mt-0.5"
+                    />
+                    <div className="space-y-0.5">
+                      <span className="block text-sm text-foreground">Trusted</span>
+                      <span className="block text-xs text-muted-foreground">Allow cross-origin resources (CDNs, APIs, WebSockets) in HTML previews.</span>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="preview-trust"
+                      value="untrusted"
+                      checked={workspaceTrusted === false}
+                      onChange={() => void handleSetTrust(false)}
+                      disabled={trustBusy}
+                      className="text-primary focus:ring-primary h-4 w-4 border-input accent-primary cursor-pointer mt-0.5"
+                    />
+                    <div className="space-y-0.5">
+                      <span className="block text-sm text-foreground">Untrusted</span>
+                      <span className="block text-xs text-muted-foreground">Block cross-origin resources and exfiltration channels in HTML previews.</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            )}
 
             <div className="p-4 bg-panel border border-border rounded-lg space-y-3">
               <div>
