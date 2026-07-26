@@ -48,16 +48,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build mockagent (Rust)
-        run: |
-          cargo build --bin mockagent --locked
-          cp target/debug/mockagent /tmp/mockagent
       - name: Ensure SPA embed marker
         run: |
           mkdir -p web/dist
           if [ ! -f web/dist/index.html ]; then
             printf '%s\n' '<!doctype html><title>Local Agent</title>' > web/dist/index.html
           fi
+      - name: Build mockagent (Rust)
+        run: |
+          cargo build --bin mockagent --locked
+          cp target/debug/mockagent /tmp/mockagent
       - name: cargo test
         run: cargo test --all-targets --locked
 
@@ -106,13 +106,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build mockagent (Rust)
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path C:\tmp | Out-Null
-          cargo build --bin mockagent --locked
-          Copy-Item target\debug\mockagent.exe C:\tmp\mockagent.exe -Force
-          "LOCAL_AGENT_MOCKAGENT_BIN=C:\tmp\mockagent.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Ensure SPA embed marker
         shell: pwsh
         run: |
@@ -120,6 +113,13 @@ jobs:
           if (-not (Test-Path web\dist\index.html)) {
             Set-Content -Path web\dist\index.html -Value "<!doctype html><title>Local Agent</title>"
           }
+      - name: Build mockagent (Rust)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\tmp | Out-Null
+          cargo build --bin mockagent --locked
+          Copy-Item target\debug\mockagent.exe C:\tmp\mockagent.exe -Force
+          "LOCAL_AGENT_MOCKAGENT_BIN=C:\tmp\mockagent.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: cargo build
         run: cargo build --locked
       - name: cargo test
