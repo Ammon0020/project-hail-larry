@@ -10,7 +10,8 @@
 This is the **critical dependency** — the entire `internal/acp/` package
 (5,066 lines) is built on the Go SDK (`coder/acp-go-sdk`). The official Rust
 SDK makes the port feasible. The API surface below is **verified** by
-`tests/spike_acp.rs` (S-ACP-SPIKE) against the Go `cmd/mockagent` fixture;
+`tests/spike_acp.rs` (S-ACP-SPIKE) against the Rust `src/bin/mockagent.rs`
+fixture;
 earlier "conceptual mapping notes" have been replaced with the real shapes.
 
 ## What the Go SDK Provides (current usage)
@@ -94,7 +95,9 @@ tokio's. Two verified stdio paths:
    termination contract).
    ```rust
    use std::str::FromStr;
-   let agent = AcpAgent::from_str("/tmp/mockagent")?;  // implements ConnectTo<Client>
+   // `/tmp/mockagent` is where CI copies the Rust binary built from
+   // `src/bin/mockagent.rs`; implements ConnectTo<Client>.
+   let agent = AcpAgent::from_str("/tmp/mockagent")?;
    Client.builder().connect_with(agent, |cx| async { ... }).await?;
    ```
 
@@ -226,4 +229,6 @@ Useful queries: "client side connection", "session prompt streaming",
 initialize, session/new, prompt streaming, file/shell callback type
 reachability, permission response shape, cancellation + child teardown, MCP
 relay type support, and auth flow shape. Run with:
-`go build -o /tmp/mockagent ./cmd/mockagent/ && cargo test --test spike_acp -- --nocapture`
+`cargo build --bin mockagent && cp target/debug/mockagent /tmp/mockagent && cargo test --test spike_acp -- --nocapture`
+(CI copies the Rust binary built from `src/bin/mockagent.rs` to `/tmp/mockagent`,
+which is the spawn path used by the tests above.)

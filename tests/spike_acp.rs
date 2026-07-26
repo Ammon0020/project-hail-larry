@@ -122,7 +122,7 @@ fn mockagent_transport() -> AcpAgent {
     let bin = mockagent_bin();
     assert!(
         std::path::Path::new(&bin).exists(),
-        "mockagent binary missing at {bin}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/` or set LOCAL_AGENT_MOCKAGENT_BIN"
+        "mockagent binary missing at {bin}; build it with `cargo build --bin mockagent && cp target/debug/mockagent /tmp/mockagent` or set LOCAL_AGENT_MOCKAGENT_BIN"
     );
     AcpAgent::from_str(&bin).expect("valid mockagent command")
 }

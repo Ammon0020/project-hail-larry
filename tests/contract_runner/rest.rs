@@ -1,14 +1,14 @@
 //! REST differential tests.
 //!
-//! Each test case mirrors a case from the Go fixture harness
-//! (`tests/contract/go-fixtures/rest.go` → `buildRESTCases`). The runner:
+//! Each test case mirrors a case from the original Go fixture harness
+//! (removed at the Rust cutover). The runner:
 //!
 //! 1. Reads the golden fixture (`golden/rest/<name>.json`) to get the expected
 //!    response envelope (method, path, status, contentType, body).
 //! 2. Substitutes `<REDACTED_WORKSPACE_ID>` in the path with the real workspace
 //!    ID discovered at runtime.
 //! 3. Makes the HTTP request to the running backend.
-//! 4. Redacts the response (same redaction rules as the Go harness).
+//! 4. Redacts the response (redaction rules ported from the original Go harness).
 //! 5. Compares the redacted response against the golden fixture:
 //!    - Envelope fields (method, path, status, contentType): exact.
 //!    - Body: semantic JSON for objects/arrays, exact bytes for text/errors.
@@ -28,7 +28,7 @@ use crate::compare;
 use crate::harness::BackendHarness;
 use crate::redactor::Redactor;
 
-/// A single REST test case. Mirrors `restCase` in go-fixtures/rest.go.
+/// A single REST test case.
 struct RestCase {
     /// The golden fixture name (without extension).
     name: &'static str,
@@ -40,8 +40,7 @@ struct RestCase {
     body: &'static str,
 }
 
-/// The full list of REST cases. This mirrors `buildRESTCases` in
-/// go-fixtures/rest.go, excluding the `_unauth` cases (which require
+/// The full list of REST cases, excluding the `_unauth` cases (which require
 /// non-loopback connections and can't be tested black-box).
 const REST_CASES: &[RestCase] = &[
     // Health

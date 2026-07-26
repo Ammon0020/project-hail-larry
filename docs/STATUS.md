@@ -22,7 +22,8 @@
   CodeMirror, search, uploads, themes, offline shell, and binary previews.
 - **Security** — authenticated routes, WS Origin/CSRF checks, rate/body caps,
   workspace containment, and a 2026-07-07 audit (one deferred finding).
-- **Rust port** — Go daemon removed; `cmd/mockagent` remains for tests.
+- **Rust port** — Go daemon and Go mockagent both removed; mockagent is now a
+  Rust binary at `src/bin/mockagent.rs`.
 
 ## Active TODO
 
@@ -96,7 +97,8 @@
 - **Compaction** — simpler ACP lock/workspace helpers, pairing paths, error
   construction, and session-capability initialization.
 - **Rust cutover** — Go daemon removed, contract harness uses Rust, and the
-  Rust server/ACP/file stories are complete.
+  Rust server/ACP/file stories are complete; Go mockagent replaced by
+  `src/bin/mockagent.rs`.
 - **Security/runtime** — temp-config poison guard, dual listeners, request caps,
   process-group cleanup, and workspace registration gate.
 

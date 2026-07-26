@@ -93,7 +93,7 @@ src/                Rust daemon + CLI (`local_agent`)
   interfaces/        Shared Rust traits
   fsutil/ pathutil/ procutil/   Shared low-level utilities
   migrate/           State migration helpers
-cmd/mockagent/      Go mock ACP agent for tests (only remaining Go binary)
+  bin/mockagent.rs   Rust mock ACP agent for tests (src/bin/mockagent.rs)
 web/                React 19 + Vite 8 + Tailwind v4 + shadcn/ui
   src/components/   UI components
   src/hooks/        useBackend, useMockBackend

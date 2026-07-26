@@ -3,45 +3,34 @@
 //! **Gated behind the `contract` feature** — run via
 //! `cargo test --test contract_runner --features contract`.
 //! Without the feature, this test binary compiles to nothing, keeping
-//! `cargo test --all-targets` fast and free of Go subprocess dependencies.
+//! `cargo test --all-targets` fast and free of subprocess dependencies.
 //!
-//! Boots a backend binary (Go `app` or Rust `local_agent`) as a subprocess,
-//!
-//! Boots a backend binary (Go `app` or Rust `local_agent`) as a subprocess,
-//! replays the same HTTP/WS/CLI request sequences captured by the Go fixture
-//! harness (`tests/contract/go-fixtures/`), applies the same redactions, and
-//! compares responses against the checked-in golden fixtures
-//! (`tests/contract/golden/`).
+//! Boots the Rust `local_agent` binary as a subprocess, replays HTTP/WS/CLI
+//! request sequences, applies redactions, and compares responses against the
+//! checked-in golden fixtures (`tests/contract/golden/`).
 //!
 //! The runner is completely independent of the backend implementation — it
-//! only interacts via the external API (HTTP, WebSocket, CLI subprocess). This
-//! makes it suitable for TDD against the Rust port while also verifying the Go
-//! backend during maintenance.
+//! only interacts via the external API (HTTP, WebSocket, CLI subprocess).
 //!
 //! # Usage
 //!
 //! ```sh
-//! # Test against the Go backend (default):
-//! cargo test --test contract_runner -- --nocapture
-//!
-//! # Test against the Rust backend:
-//! CONTRACT_BACKEND=rust cargo test --test contract_runner -- --nocapture
+//! # Test against the Rust backend (default):
+//! cargo test --test contract_runner --features contract -- --nocapture
 //!
 //! # Specify a pre-built binary path:
-//! CONTRACT_BINARY=/path/to/binary cargo test --test contract_runner
+//! CONTRACT_BINARY=/path/to/binary cargo test --test contract_runner --features contract
 //!
 //! # Keep the state dir for debugging:
-//! CONTRACT_KEEP_STATE=1 cargo test --test contract_runner
+//! CONTRACT_KEEP_STATE=1 cargo test --test contract_runner --features contract
 //! ```
 //!
 //! # Backend selection
 //!
-//! - `CONTRACT_BACKEND=go` (default): builds `go build -o /tmp/contract-local-agent ./cmd/app`
-//!   and runs `local-agent start`.
-//! - `CONTRACT_BACKEND=rust`: uses `target/debug/local_agent` (or
+//! - `CONTRACT_BACKEND=rust` (default): uses `target/debug/local_agent` (or
 //!   `CONTRACT_BINARY` override) and runs `local_agent start`.
-//! - `CONTRACT_BINARY=/path/to/binary`: overrides the binary path for either
-//!   backend. The runner uses this directly without building.
+//! - `CONTRACT_BINARY=/path/to/binary`: overrides the binary path. The runner
+//!   uses this directly without building.
 //!
 //! # What is tested
 //!

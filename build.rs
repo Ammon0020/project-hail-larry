@@ -24,7 +24,6 @@ fn main() {
             "\nerror: web/dist/index.html is missing.\n\
              \n\
              The Rust binary embeds the frontend from web/dist/ (rust-embed).\n\
-             Go's internal/server/dist/ is not used by the Rust build.\n\
              \n\
              Build the frontend first, then rebuild:\n\
                cd web && npm run build\n\

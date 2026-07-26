@@ -3,14 +3,13 @@
 ## When to use
 
 Run these tests when:
-- You've changed the Go backend's REST API, WebSocket behavior, or DTO shapes
-- You're working on the Rust port and want to verify API equivalence
-- You've regenerated the golden fixtures (`go test ./tests/contract/go-fixtures/ -run TestGenerateFixtures`)
-- Before committing changes to `internal/server/`, `internal/acp/`, `internal/config/`, `internal/interfaces/`, or any API-facing code
+- You've changed the Rust backend's REST API, WebSocket behavior, or DTO shapes
+- Before committing changes to API-facing code (`src/server/`, `src/acp/`, `src/config/`, `src/interfaces/`, etc.)
+- The golden fixtures are checked in and static; there is no live regeneration step (the original Go harness has been removed)
 
 ## What it does
 
-The contract runner (`tests/contract_runner/`) is a Rust `cargo test` integration test that boots a backend binary (Go or Rust) as a subprocess, replays HTTP/WS request sequences from the golden fixtures, applies the same redactions as the Go harness, and compares responses. It tests the **external API contract** — not internal implementation details.
+The contract runner (`tests/contract_runner/`) is a Rust `cargo test` integration test that boots the Rust backend binary as a subprocess, replays HTTP/WS request sequences from the golden fixtures, applies the same redactions originally used by the (now-removed) Go harness, and compares responses. It tests the **external API contract** — not internal implementation details.
 
 ## How to run
 
@@ -20,9 +19,6 @@ make test-contract
 
 # Or directly (note the --features contract flag — the runner is feature-gated):
 cargo test --test contract_runner --features contract -- --nocapture
-
-# Against the Go backend (legacy oracle):
-CONTRACT_BACKEND=go cargo test --test contract_runner --features contract -- --nocapture
 
 # Use a pre-built binary:
 CONTRACT_BINARY=/path/to/local_agent cargo test --test contract_runner --features contract
@@ -48,14 +44,14 @@ cargo test --test contract_runner --features contract dto_ -- --nocapture
 
 ## What is NOT tested
 
-- **CLI commands** — the CLI is a thin client over the REST API. Its output formatting (box-drawing, tables, help text) is presentation, not contract. The Go harness still captures CLI fixtures for documentation.
+- **CLI commands** — the CLI is a thin client over the REST API. Its output formatting (box-drawing, tables, help text) is presentation, not contract. The checked-in `golden/cli/` fixtures are historical documentation captured by the original Go harness; the runner doesn't test them.
 - **`rest_agents_autodetect_ok`** — `#[ignore]` because autodetect results are machine-specific. The runner neutralizes autodetect (`PATH=/dev/null`, `HOME=/dev/null`) for reproducibility.
-- **`rest_mcp_put_bad_body`** — `#[ignore]`; Go `encoding/json` vs Rust `serde_json` parse-error text differs.
+- **`rest_mcp_put_bad_body`** — `#[ignore]`; the original Go `encoding/json` vs Rust `serde_json` parse-error text differed.
 - **WS slow-client recovery** — black-box infeasible; unit-tested in `src/sync/tests.rs`.
 
 ## Important: gated behind `contract` feature
 
-The contract runner is feature-gated (`#![cfg(feature = "contract")]`). Without `--features contract`, the test binary compiles to nothing — no tests, no dependencies pulled in, no Go subprocess. This keeps `cargo test --all-targets` (and the main CI `test` job) fast and dependency-free.
+The contract runner is feature-gated (`#![cfg(feature = "contract")]`). Without `--features contract`, the test binary compiles to nothing — no tests, no dependencies pulled in, no backend subprocess. This keeps `cargo test --all-targets` (and the main CI `test` job) fast and dependency-free.
 
 Always run it explicitly via `make test-contract` or `cargo test --test contract_runner --features contract`.
 
@@ -64,23 +60,20 @@ Always run it explicitly via `make test-contract` or `cargo test --test contract
 
 ## Regenerating golden fixtures
 
-If you've intentionally changed the API and the contract tests fail, regenerate the golden fixtures:
-
-```sh
-go test ./tests/contract/go-fixtures/ -run TestGenerateFixtures
-```
-
-Then commit the updated `tests/contract/golden/` files. The contract runner will compare against the new fixtures.
+The golden fixtures are checked in and static — they are the contract surface.
+The original Go harness that captured them has been removed, so there is no
+live regeneration step. If an intentional API change requires new fixtures,
+re-adding a Go capture harness is out of scope; update the goldens by hand or
+reintroduce a capture tool deliberately.
 
 ## Files
 
 - `tests/contract_runner/main.rs` — test entry point, all `#[tokio::test]` functions
 - `tests/contract_runner/harness.rs` — backend process management (build, start, health check, shutdown)
-- `tests/contract_runner/redactor.rs` — redaction logic (ports Go's `go-fixtures/redact.go`)
+- `tests/contract_runner/redactor.rs` — redaction logic (Rust port of the original `go-fixtures/redact.go`)
 - `tests/contract_runner/compare.rs` — JSON comparison utilities (semantic + exact)
 - `tests/contract_runner/rest.rs` — REST test cases and runner
 - `tests/contract_runner/ws.rs` — WebSocket tests
 - `tests/contract_runner/dto.rs` — DTO shape comparison tests
 - `tests/contract/golden/` — checked-in golden fixtures (the contract surface)
-- `tests/contract/go-fixtures/` — Go harness that generates the golden fixtures
 - `tests/contract/README.md` — full documentation

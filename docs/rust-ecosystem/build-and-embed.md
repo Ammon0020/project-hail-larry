@@ -19,10 +19,8 @@ match FrontendAsset::get("index.html") {
 }
 ```
 
-`rust-embed` embeds files at compile time, same as `go:embed`. Vite writes the
-production SPA to **`web/dist/`**; that directory is the Rust embed root. Go
-still copies into `internal/server/dist/` for `go:embed` — the Rust build does
-**not** read that path.
+`rust-embed` embeds files at compile time. Vite writes the production SPA to
+**`web/dist/`**; that directory is the Rust embed root.
 
 ### Build script coordination
 

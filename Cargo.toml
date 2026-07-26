@@ -7,8 +7,8 @@ rust-version = "1.92.0"
 description = "Self-hosted web code editor with AI built in (Rust port of the Go daemon)."
 license = "AGPL-3.0"
 publish = false
-# Default binary is `local_agent` (mirrors Go `cmd/app`). The library target
-# enables integration tests and contract fixtures to import internal modules.
+# Default binary is `local_agent`. The library target enables integration
+# tests and contract fixtures to import internal modules.
 default-run = "local_agent"
 
 [lib]
@@ -18,6 +18,12 @@ path = "src/lib.rs"
 [[bin]]
 name = "local_agent"
 path = "src/main.rs"
+
+# Mock ACP agent for tests (Rust port of `cmd/mockagent/main.go`). Not gated
+# behind a feature so `cargo build` and `cargo test --all-targets` produce it.
+[[bin]]
+name = "mockagent"
+path = "src/bin/mockagent.rs"
 
 [dependencies]
 # --- Async runtime ---
@@ -212,8 +218,7 @@ tempfile = "3.27.0"
 # tokio test macro for async unit tests. Verified 2026-07-15.
 tokio-test = "0.4"
 # regex: redaction patterns for the contract differential runner
-# (tests/contract_runner/). Mirrors the Go redactor in go-fixtures/redact.go.
-# Verified 2026-07-16.
+# (tests/contract_runner/). Verified 2026-07-16.
 regex = "1.11"
 # tokio-tungstenite: async WebSocket client for the contract runner's WS tests
 # (origin rejection, auth success, event broadcast). Replaces nhooyr.io/websocket

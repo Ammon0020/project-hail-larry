@@ -43,10 +43,11 @@ enum Commands {
 }
 ```
 
-The `cmd/app/` Go code (cobra commands) maps to clap subcommands. Platform-
-specific service install (`service_linux.go`, `service_darwin.go`,
-`service_windows.go`) uses `#[cfg(target_os = "...")]` conditional
-compilation instead of Go's build tags.
+These subcommands mirror the former Go CLI's cobra command set. Platform-
+specific service install (formerly `service_linux.go` /
+`service_darwin.go` / `service_windows.go` in the removed Go toolchain)
+now uses `#[cfg(target_os = "...")]` conditional compilation instead of
+Go's build tags.
 
 ## Config — `toml` + `serde` (replaces `pelletier/go-toml/v2`)
 

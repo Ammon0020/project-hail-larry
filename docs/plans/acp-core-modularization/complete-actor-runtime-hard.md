@@ -54,7 +54,7 @@ turn machine behind a narrow temporary call boundary.
 - `src/acp/core/actor/mod.rs`
 - `src/acp/core.rs`
 - `src/procutil/mod.rs`
-- `cmd/mockagent/main.go`
+- `src/bin/mockagent.rs`
 - `tests/spike_acp.rs`
 
 ## Out of scope

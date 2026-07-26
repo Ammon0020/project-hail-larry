@@ -1,12 +1,12 @@
 //! Redaction logic for the contract differential runner.
 //!
-//! Ports the Go redactor (`tests/contract/go-fixtures/redact.go`) so the
-//! runner applies the SAME redactions to its own output before comparing
-//! against the golden fixtures. Redaction is comparison-neutral: both the Go
-//! fixture generator and this runner redact with the same rules, so the
-//! comparison is stable.
+//! Ports the redaction rules from the original Go fixture harness (removed at
+//! the Rust cutover) so the runner applies the SAME redactions to its own
+//! output before comparing against the golden fixtures. Redaction is
+//! comparison-neutral: the golden fixtures were generated with these same
+//! rules, so the comparison is stable.
 //!
-//! Redaction order (matching the Go implementation):
+//! Redaction order (matching the original Go implementation):
 //! 1. Registered secrets (pairing tokens, passcodes, device IDs, workspace IDs)
 //! 2. Registered absolute path prefixes (longest first)
 //! 3. Non-deterministic timestamps (ISO-8601 → <REDACTED_TIMESTAMP>)
@@ -18,7 +18,7 @@
 use regex::Regex;
 use std::collections::HashMap;
 
-/// Stable placeholder strings. These must match the Go redactor exactly.
+/// Stable placeholder strings. These must match the original Go redactor exactly.
 /// Some are not referenced directly (they're produced by regex replacement)
 /// but are exported for documentation and potential future use.
 #[allow(dead_code)]
@@ -115,11 +115,12 @@ impl Redactor {
         //    these fields first, the token value is replaced with
         //    <REDACTED_TOKEN> before hex_id_re can touch it.
         //
-        //    The Go in-process harness registers the token as a secret during
-        //    capture (registerPairingSecrets), so its ScrubUnregisteredTokens
-        //    runs after hex_id_re as a defense-in-depth backstop. The black-box
-        //    runner can't register the token (it doesn't parse the response
-        //    before redacting), so it must scrub these fields first.
+        //    The original Go in-process harness registered the token as a
+        //    secret during capture (registerPairingSecrets), so its
+        //    ScrubUnregisteredTokens ran after hex_id_re as a
+        //    defense-in-depth backstop. The black-box runner can't register
+        //    the token (it doesn't parse the response before redacting), so
+        //    it must scrub these fields first.
         result = self.scrub_secret_fields(&result);
 
         // 4. Timestamps.

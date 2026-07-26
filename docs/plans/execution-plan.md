@@ -1,5 +1,12 @@
 # Execution Plan — Finish the Codebase
 
+> **Historical document.** This plan was written and executed against the
+> since-removed Go daemon/toolchain (`internal/`, `cmd/app/`). The project is
+> now Rust-only (`src/`). References to `internal/...`, `cmd/app/main.go`,
+> `go test`, `.\build.ps1`, etc. below describe the Go implementation as it
+> existed at the time and are retained as a design reference only — they are
+> not valid paths or commands in the current codebase.
+
 > Single source of truth for the remaining work. Subagents work from their stream's section.
 > Reconciled against the actual codebase on 2026-06-27. Where this doc conflicts with older
 > planning docs (`docs/archive/agent-context.md`, `docs/archive/acp-stability.md`), this wins.

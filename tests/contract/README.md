@@ -1,17 +1,15 @@
 # Contract Fixtures (S-CONTRACT)
 
-Golden fixtures captured **from the current Go daemon** so the future Rust port
-can prove external equivalence via a differential test. The Go daemon is treated
-as the compatibility oracle: every fixture here is the byte-stable, redacted
-shape the Rust implementation must reproduce.
-
-Story: `docs/plans/rust-port/active-S-CONTRACT-compatibility-med.md`
+Golden fixtures that pin the external API contract for the Rust daemon. The
+fixtures were originally captured from the Go daemon (now removed) and are
+checked in as the byte-stable, redacted shape the Rust backend must reproduce.
+They are the contract surface — the runner replays each one against the running
+Rust daemon and compares responses.
 
 ## Layout
 
 ```
 tests/contract/
-  go-fixtures/            Go harness that captures the fixtures (see below)
   fixtures/seed-workspace/ Deterministic workspace the harness registers before
                            capture (README.md, src/greet.txt)
   golden/                 Checked-in fixtures — the contract surface
@@ -22,26 +20,9 @@ tests/contract/
   scripts/                Helper scripts
 ```
 
-The harness resets `golden/{rest,ws,dto,cli}/` on every run so removed or renamed
-routes do not leave stale fixtures.
-
-## Regenerating fixtures
-
-The harness is exposed both as a `main` and as a test, so it works in
-sandboxes where `go run` is blocked but `go test` is allowed.
-
-```sh
-# Preferred (works in sandboxed CI):
-go test ./tests/contract/go-fixtures/ -run TestGenerateFixtures
-
-# Equivalent when go run is allowed:
-go run ./tests/contract/go-fixtures/
-go run ./tests/contract/go-fixtures/ -keep-state   # leave temp state dir for debugging
-```
-
-`TestGenerateFixtures` regenerates the golden tree in place and asserts each
-subdirectory is non-empty. The checked-in fixtures are the contract surface;
-regenerate after any intentional API/DTO/CLI change and commit the diff.
+The golden fixtures are static and checked in; the runner compares against them
+as-is. There is no live regeneration step — the Go harness that originally
+captured them has been removed.
 
 ## What is captured
 
@@ -63,8 +44,8 @@ cross-origin mutating → 403, not-found → 404). The envelope is:
 }
 ```
 
-The body is the **raw** response body (redacted), kept as text so the future
-Rust runner can choose semantic or exact comparison per route.
+The body is the **raw** response body (redacted), kept as text so the runner
+can choose semantic or exact comparison per route.
 
 ### WebSocket (`golden/ws/`)
 
@@ -89,17 +70,20 @@ optional, `pairing.PairingSession`, `DeviceCredential`, `DeviceInfo`,
 disabled, `Attachment`) marshaled with `json.MarshalIndent`. Values are
 constructed to exercise `omitempty` so the Rust side can see which fields are
 dropped when empty. A fixed timestamp (`2026-07-13T12:00:00Z`) keeps time
-fields byte-stable.
+fields byte-stable. (DTO type names refer to the original Go packages; the
+Rust backend reproduces the same JSON shapes.)
 
 ### CLI (`golden/cli/<command>.txt`)
 
-Each CLI command is run as a subprocess of the real `app` binary built from
-`cmd/app`, with `LOCAL_AGENT_STATE_DIR` pointing at the harness's isolated
-state dir. The httptest server is left running and the harness rewrites
-`config.json` with the server's port and writes a `daemon.pid` file pointing at
-the harness process, so commands that talk to the daemon (`pair`, `devices`,
-`revoke`, `logs`) hit the in-process server. A device is paired through the
-live server first so `devices` and `revoke` have a real target.
+Each CLI command was originally captured as a subprocess of the real `app`
+binary built from the (now-removed) `cmd/app`, with `LOCAL_AGENT_STATE_DIR`
+pointing at the harness's isolated state dir. The httptest server was left
+running and the harness rewrote `config.json` with the server's port and wrote
+a `daemon.pid` file pointing at the harness process, so commands that talk to
+the daemon (`pair`, `devices`, `revoke`, `logs`) hit the in-process server. A
+device was paired through the live server first so `devices` and `revoke` had
+a real target. These fixtures are now static documentation of the CLI envelope
+shape; the runner does not exercise them.
 
 Envelope format:
 
@@ -113,16 +97,17 @@ exit: <code>
 ```
 
 Commands that would block (`start`) or modify the host system
-(`install-service`, `uninstall-service`) are captured as their `--help` output,
-which is itself a stable contract surface. `stop` is captured against a missing
+(`install-service`, `uninstall-service`) were captured as their `--help` output,
+which is itself a stable contract surface. `stop` was captured against a missing
 PID file so it produces the not-running error instead of SIGTERMing the
 harness.
 
 ## Redaction policy
 
-All captured text passes through `Redactor` (`go-fixtures/redact.go`) before it
-is written. Redaction is **comparison-neutral**: the future Rust runner applies
-the same redactions to its own output before comparing.
+All captured text passes through `Redactor` (originally `go-fixtures/redact.go`,
+now ported to `tests/contract_runner/redactor.rs`) before it is written.
+Redaction is **comparison-neutral**: the runner applies the same redactions to
+its own output before comparing.
 
 1. **Registered secrets** — pairing tokens, passcodes, device secrets collected
    during the run (e.g. the token returned by `/api/pair/initiate`) are
@@ -141,7 +126,7 @@ the same redactions to its own output before comparing.
    `<REDACTED_TOKEN>`, in case a secret slips through without being
    registered.
 
-## JSON comparison rules (for the future Rust differential runner)
+## JSON comparison rules (for the Rust differential runner)
 
 The runner reads each golden fixture, starts the Rust daemon with the same
 isolated state dir + seed config, replays the same request sequence, applies
@@ -165,28 +150,27 @@ the same redactions, and compares:
 ## `LOCAL_AGENT_STATE_DIR`
 
 The single override point consulted by `config.DefaultOrError` and
-`config.Load` (`internal/config/config.go`). The harness sets it to a temp dir
-before constructing the daemon and before spawning CLI subprocesses, so every
-manager and every CLI invocation reads/writes inside that dir. This is what
-makes the harness self-contained and is what the future Rust runner will use to
-isolate the Rust daemon against the same seed config.
+`config.Load` (originally `internal/config/config.go`; the Rust backend
+respects the same env var). The harness sets it to a temp dir before
+constructing the daemon and before spawning CLI subprocesses, so every manager
+and every CLI invocation reads/writes inside that dir. This is what makes the
+harness self-contained and is what the runner uses to isolate the Rust daemon
+against the same seed config.
 
 ## Rust black-box differential runner (`tests/contract_runner/`)
 
-The Rust runner is a `cargo test` integration test that boots a backend binary
-(Go or Rust) as a subprocess, replays the same request sequences captured by
-the Go harness, applies the same redactions, and compares responses against the
-checked-in golden fixtures. It is completely backend-agnostic — it only
-interacts via the external API (HTTP, WebSocket, CLI subprocess).
+The Rust runner is a `cargo test` integration test that boots the Rust backend
+binary as a subprocess, replays the same request sequences captured by the
+(original, now-removed Go) harness, applies the same redactions, and compares
+responses against the checked-in golden fixtures. It is completely
+backend-agnostic — it only interacts via the external API (HTTP, WebSocket, CLI
+subprocess).
 
 ### Running
 
 ```sh
-# Test against the Rust backend (default — builds local_agent, boots it, runs all tests):
+# Default — builds local_agent, boots it, runs all tests:
 cargo test --test contract_runner --features contract -- --nocapture
-
-# Test against the legacy Go oracle:
-CONTRACT_BACKEND=go cargo test --test contract_runner --features contract -- --nocapture
 
 # Use a pre-built binary instead of building:
 CONTRACT_BINARY=/path/to/local_agent cargo test --test contract_runner --features contract
@@ -216,7 +200,7 @@ CONTRACT_KEEP_STATE=1 cargo test --test contract_runner --features contract
 CLI tests are intentionally excluded. The CLI is a thin client over the REST
 API, and its output formatting (box-drawing, table layouts, help text) is
 presentation, not contract. The REST + WS + DTO tests cover the actual API
-contract surface that the Rust port must replicate.
+contract surface that the Rust backend must replicate.
 
 ### Known limitations
 
@@ -224,12 +208,13 @@ contract surface that the Rust port must replicate.
   captures machine-specific autodetected agents (Claude Code, Codex, Cursor,
   etc.) from the generation machine. The runner deliberately neutralizes
   autodetect (`PATH=/dev/null`, `HOME=/dev/null`) for reproducibility, so
-  `/api/agents/autodetect` returns an empty list. This test can only be run via
-  the Go in-process harness.
-- **`rest_mcp_put_bad_body` is ignored** (`#[ignore]`). Go `encoding/json` and
-  Rust `serde_json` disagree on the parse-error suffix for `{not json` while
-  both return 400 + `invalid mcp config JSON: …`. Other bad-body cases cover
-  the envelope contract.
+  `/api/agents/autodetect` returns an empty list. This fixture is historical —
+  it was captured by the original Go in-process harness, which is no longer
+  present.
+- **`rest_mcp_put_bad_body` is ignored** (`#[ignore]`). The original Go
+  `encoding/json` and Rust `serde_json` disagreed on the parse-error suffix for
+  `{not json` while both returned 400 + `invalid mcp config JSON: …`. Other
+  bad-body cases cover the envelope contract.
 - **WebSocket slow-client recovery is not tested black-box.** Filling the
   64-deep send buffer and observing durable resync requires hub-internal
   control. Unit coverage: `src/sync/tests.rs`
@@ -237,9 +222,9 @@ contract surface that the Rust port must replicate.
   `golden/ws/ws_after_replay.jsonl`.
 - **CLI tests are not included**. The CLI is a thin client over the REST API.
   Its output formatting (box-drawing, table layouts, help text) is
-  presentation, not contract. The Go in-process harness still captures CLI
-  fixtures (`golden/cli/`) for documentation, but the runner doesn't test
-  them.
+  presentation, not contract. The checked-in `golden/cli/` fixtures are
+  historical documentation captured by the original Go harness; the runner
+  doesn't test them.
 
 ### CI
 
@@ -251,22 +236,24 @@ CONTRACT_BACKEND=rust CONTRACT_BINARY=./target/debug/local_agent \
   cargo test -q --test contract_runner --features contract -- --test-threads=1
 ```
 
-SPA embed stub matches other jobs. Goldens are checked in; regenerate manually
-via `go test ./tests/contract/go-fixtures/ -run TestGenerateFixtures`.
+SPA embed stub matches other jobs. Goldens are checked in and treated as the
+contract surface; there is no live regeneration step (the original Go harness
+has been removed).
 
 
 ### Backend selection
 
 - `CONTRACT_BACKEND=rust` (default): builds `target/debug/local_agent` (or
   `CONTRACT_BINARY` override) and runs `local_agent start`.
-- `CONTRACT_BACKEND=go`: builds `go build -o /tmp/contract-local-agent
-  ./cmd/app` and runs that binary's `start` command (legacy oracle).
-- `CONTRACT_BINARY=/path/to/binary`: overrides the binary path for either
-  backend. The runner uses this directly without building.
+- `CONTRACT_BINARY=/path/to/binary`: overrides the binary path. The runner uses
+  this directly without building.
 
-The runner sets `LOCAL_AGENT_STATE_DIR` to an isolated temp dir, writes seed
-`config.json` (Go) and `config.toml` (Rust — same camelCase fields), and starts
-the backend with `<binary> start`. It also sets `PATH=/dev/null` and
+(`CONTRACT_BACKEND=go` is no longer supported — the Go toolchain, `cmd/app`,
+and `internal/` have been removed; the runner panics if it is set.)
+
+The runner sets `LOCAL_AGENT_STATE_DIR` to an isolated temp dir, writes a seed
+`config.toml` (same camelCase fields as the original Go `config.json`), and
+starts the backend with `<binary> start`. It also sets `PATH=/dev/null` and
 `HOME=/dev/null` so autodetect cannot pick up host agents. It polls `/health`
 until the backend is ready (up to 30s), then runs the tests. On shutdown it
 kills the subprocess and cleans up the temp dir (unless `CONTRACT_KEEP_STATE`

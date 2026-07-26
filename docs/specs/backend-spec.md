@@ -236,7 +236,7 @@ stored as JSON).
 
 ## 12. Testing Requirements ⏳
 
-- Extend `cmd/mockagent` to exercise: capabilities echo, a tool call with
+- Extend `src/bin/mockagent.rs` to exercise: capabilities echo, a tool call with
   kind+locations, a permission request, a terminal create+output+wait, and a
   thought + plan update.
 - Unit tests:
@@ -244,7 +244,9 @@ stored as JSON).
   - terminals: create→output→wait→release happy path + kill.
   - conversations: create/list/rename/delete/persist-reload; model re-bind keeps id.
   - session update translation: each ACP update → expected event fields.
-- Integration (`internal/acp/integration_test.go`): full flow with the updated
-  mock agent including a permission round-trip and a terminal command.
+- Integration (`tests/acp_core_lifecycle.rs`, `tests/spike_acp.rs`): full flow
+  with the Rust mock agent (`src/bin/mockagent.rs`) including a permission
+  round-trip and a terminal command.
 - Keep real-agent tests skip-by-default (`ACP_TEST_REAL=1`).
-- `go test ./...`, `go vet ./...`, `golangci-lint`, `npm run build`, `npm run lint`, `.\build.ps1` all green.
+- `cargo test -q --all-targets`, `cargo clippy -q --all-targets -- -D warnings`,
+  `cargo fmt --check -q`, `npm run build`, `npm run lint`, `.\build.ps1` all green.

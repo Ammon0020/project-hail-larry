@@ -5,9 +5,9 @@
 //! the HTTP server to become ready (polls /health), and provides the base URL
 //! + state dir path to the test modules. On shutdown it kills the subprocess.
 //!
-//! This mirrors the go-fixtures harness (`tests/contract/go-fixtures/daemon.go`)
-//! but operates entirely black-box: the backend is a subprocess, not an
-//! in-process daemon. This is what makes it backend-agnostic (Go or Rust).
+//! This supersedes the original Go in-process fixture harness (removed at the
+//! Rust cutover) and operates entirely black-box: the backend is a subprocess,
+//! not an in-process daemon. Only the Rust backend is supported now.
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ use tempfile::TempDir;
 use tokio::process::{Child, Command};
 
 /// The seed agent JSON written into config.json so /api/agents returns a
-/// populated entry. Mirrors `seedAgentJSON` in go-fixtures/seed.go.
+/// populated entry.
 const SEED_AGENT_JSON: &str = r#"[
   {
     "id": "fixture-agent",
@@ -200,12 +200,12 @@ pub fn first_non_loopback_ipv4() -> Option<String> {
     }
 }
 
-/// Find the repo root by walking up from CWD looking for Cargo.toml + go.mod.
+/// Find the repo root by walking up from CWD looking for Cargo.toml.
 fn find_repo_root() -> PathBuf {
     let cwd = std::env::current_dir().expect("get cwd");
     let mut dir = cwd.as_path();
     for _ in 0..10 {
-        if dir.join("Cargo.toml").exists() && dir.join("go.mod").exists() {
+        if dir.join("Cargo.toml").exists() {
             return dir.to_path_buf();
         }
         if let Some(parent) = dir.parent() {
@@ -215,7 +215,7 @@ fn find_repo_root() -> PathBuf {
         }
     }
     panic!(
-        "could not find repo root (Cargo.toml + go.mod) from {}",
+        "could not find repo root (Cargo.toml) from {}",
         cwd.display()
     );
 }
@@ -249,12 +249,11 @@ fn find_free_port() -> u16 {
     port
 }
 
-/// Write seed config into the state dir. Mirrors `writeSeedConfig` in
-/// go-fixtures/seed.go but with the dynamically-allocated port.
+/// Write seed config into the state dir with the dynamically-allocated port.
 ///
-/// Writes both formats: `config.json` for the Go backend and `config.toml`
-/// for the Rust backend (`Config::load` only reads TOML). Writing both is
-/// harmless — each backend ignores the format it does not use.
+/// Writes `config.toml` (read by the Rust backend's `Config::load`) plus a
+/// leftover `config.json` from the removed Go backend. Writing both is
+/// harmless — the Rust backend ignores `config.json`.
 fn write_seed_config(state_dir: &Path, repo_root: &Path, port: u16) -> Result<()> {
     let seed_ws_path = repo_root.join(SEED_WORKSPACE_REL);
     if !seed_ws_path.is_dir() {

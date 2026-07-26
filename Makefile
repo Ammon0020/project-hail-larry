@@ -24,9 +24,11 @@ test-contract:
 lint-rust:
 	cargo clippy --all-targets -- -D warnings
 
-# Build the Go mock ACP agent used by Rust spike/ACP tests.
+# Build the Rust mock ACP agent used by Rust spike/ACP tests.
 mockagent:
-	go build -o bin/mockagent ./cmd/mockagent
+	cargo build --bin mockagent
+	mkdir -p bin
+	cp -f target/debug/mockagent bin/mockagent
 
 # Clean build artifacts.
 clean:

@@ -73,7 +73,7 @@ async fn mock_client_empty(
     let mockagent_bin = mockagent_bin();
     assert!(
             Path::new(&mockagent_bin).exists(),
-            "mockagent binary missing at {mockagent_bin}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/` or set LOCAL_AGENT_MOCKAGENT_BIN"
+            "mockagent binary missing at {mockagent_bin}; build it with `cargo build --bin mockagent && cp target/debug/mockagent /tmp/mockagent` or set LOCAL_AGENT_MOCKAGENT_BIN"
         );
     let tempdir = TempDir::new().expect("temporary workspace");
     let workspaces = Arc::new(WorkspaceRegistry::new());

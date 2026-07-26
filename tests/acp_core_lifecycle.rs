@@ -34,7 +34,7 @@ async fn client_with_workspace() -> (Arc<Client>, TempDir, String, Arc<EventBus>
     let mockagent_bin = mockagent_bin();
     assert!(
         std::path::Path::new(&mockagent_bin).exists(),
-        "mockagent binary missing at {mockagent_bin}; build it with `go build -o /tmp/mockagent ./cmd/mockagent/` or set LOCAL_AGENT_MOCKAGENT_BIN"
+        "mockagent binary missing at {mockagent_bin}; build it with `cargo build --bin mockagent && cp target/debug/mockagent /tmp/mockagent` or set LOCAL_AGENT_MOCKAGENT_BIN"
     );
 
     let directory = tempfile::tempdir().expect("create scratch workspace");

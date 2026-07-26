@@ -21,7 +21,7 @@ Self-hosted, cross-platform web IDE with built-in AI. A Rust daemon serves thin 
 
 ```
 src/            Rust daemon + CLI (`local_agent`)
-cmd/mockagent/  Go mock ACP agent for tests (only remaining Go binary)
+src/bin/mockagent.rs  Rust mock ACP agent for tests
 web/            React/Vite/Tailwind frontend
 docs/           plans, specs, references, reviews, status, known issues
 ```

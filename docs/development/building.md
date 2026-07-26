@@ -11,13 +11,6 @@ Primary binary:
 
 - `bin/local_agent` / `bin/local_agent.exe` — Rust daemon (`local_agent start`)
 
-Optional legacy Go binary (oracle / rollback):
-
-```bash
-BUILD_GO=1 ./build.sh          # also builds bin/app
-$env:BUILD_GO=1; .\build.ps1   # Windows
-```
-
 Frontend-only then Rust:
 
 ```bash
@@ -25,8 +18,7 @@ cd web && npm run build   # writes web/dist/
 cargo build --release     # embeds web/dist/ via rust-embed → target/release/local_agent
 ```
 
-`build.rs` fails the Rust build if `web/dist/index.html` is missing. Go’s
-`internal/server/dist/` is only used when `BUILD_GO=1`.
+`build.rs` fails the Rust build if `web/dist/index.html` is missing.
 
 ## C compiler (SQLite)
 
