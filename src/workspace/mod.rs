@@ -13,7 +13,7 @@ use crate::interfaces::{
     AppError, FileNode, ReadFileResult, SearchOptions, SearchResult, WorkspaceInfo,
     WorkspaceManager, FILE_NODE_TYPE_FILE, FILE_NODE_TYPE_FOLDER,
 };
-use crate::pathutil::{clean_path, resolve_symlink};
+use crate::pathutil::{clean_path, resolve_symlink, strip_verbatim_prefix};
 
 const MAX_READ_FILE_SIZE: u64 = 50 * 1024 * 1024;
 const BINARY_SNIFF_SIZE: usize = 512;
@@ -248,7 +248,10 @@ impl WorkspaceManager for Manager {
                     metadata.len()
                 )));
             }
-            Ok(path.to_string_lossy().into_owned())
+            // Strip the Windows verbatim prefix so the returned path is a
+            // plain drive-letter path suitable for HTTP file serving and for
+            // equality checks in tests/callers.
+            Ok(strip_verbatim_prefix(&path).to_string_lossy().into_owned())
         })
         .await
         .map_err(|err| AppError::internal(format!("file path task failed: {err}")))?
@@ -415,6 +418,9 @@ fn open_dir_no_symlink(path: &Path) -> Result<PathBuf, AppError> {
 
 fn workspace_id(root: &Path) -> String {
     use std::fmt::Write as _;
+    // Strip the Windows verbatim prefix so the ID is stable whether the root
+    // was canonicalised (\\?\C:\...) or passed as a plain path (C:\...).
+    let root = strip_verbatim_prefix(root);
     let mut hasher = Sha256::new();
     hasher.update(root.to_string_lossy().as_bytes());
     let digest = hasher.finalize();

@@ -30,8 +30,9 @@
 - [x] Missing-workspace warning, mobile editor, profile mode, and MCP settings.
 - [ ] **QR/pair scheme** — choose HTTPS-only, both URLs, or a device picker.
 - [ ] **Multi-user** — multi-device/single-user is decided; multi-user is future.
-- [ ] **ACP futures** — workers, session lifecycle, elicitation, NES, audio,
-  and ACP inspector.
+- [ ] **ACP futures** — multi-client gateway, workers, session lifecycle,
+  elicitation, NES, audio, and ACP inspector. See
+  `docs/plans/pending-multi-client-acp-gateway-med.md`.
 - [x] **ACP core modularization** — callbacks, actor runtime, turn state,
   session registry, lifecycle, operations, and the thin client facade are
   extracted (`S-ACP-MOD-CALLBACKS` through `S-ACP-MOD-FACADE`). See

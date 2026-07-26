@@ -66,11 +66,13 @@ async fn run_working_directory() {
     let (result, err) = exec.run(CancellationToken::new(), command, None).await;
     assert!(err.is_none(), "run: {err:?}");
     let out = result.stdout.trim().to_lowercase();
+    // `fs::canonicalize` on Windows returns a `\\?\` verbatim prefix that
+    // `cd` does not echo, so strip it before comparing.
+    let root_str = root.to_string_lossy();
+    let root_str = root_str.trim_start_matches(r"\\?\");
     assert!(
-        out.contains(&root.to_string_lossy().to_lowercase()),
-        "expected output to contain {}, got {}",
-        root.display(),
-        out
+        out.contains(&root_str.to_lowercase()),
+        "expected output to contain {root_str}, got {out}"
     );
 }
 
@@ -87,8 +89,15 @@ async fn run_with_relative_cwd() {
         .await;
     assert!(err.is_none(), "run: {err:?}");
     let out = result.stdout.trim().to_lowercase();
+    // `fs::canonicalize` on Windows returns a `\\?\` verbatim prefix that
+    // `cd` does not echo, so strip it before comparing.
+    let subdir_str = root
+        .join("subdir")
+        .to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .to_string();
     assert!(
-        out.contains(&root.join("subdir").to_string_lossy().to_lowercase()),
+        out.contains(&subdir_str.to_lowercase()),
         "expected output to contain subdir, got {out}"
     );
 }
@@ -147,7 +156,11 @@ async fn run_async_streams_stdout_and_stderr() {
     let exec = Executor::new(dir.path());
     let (out_lines, out_cb) = line_collector();
     let (err_lines, err_cb) = line_collector();
-    let command = "echo to-stdout; echo to-stderr 1>&2";
+    let command = if cfg!(windows) {
+        "echo to-stdout& echo to-stderr 1>&2"
+    } else {
+        "echo to-stdout; echo to-stderr 1>&2"
+    };
     let (result, err) = exec
         .run_async(CancellationToken::new(), command, None, out_cb, err_cb)
         .await;
@@ -157,11 +170,15 @@ async fn run_async_streams_stdout_and_stderr() {
     let out = out_lines.lock().unwrap();
     let errl = err_lines.lock().unwrap();
     assert!(out.iter().any(|s| s == "to-stdout"), "stdout: {out:?}");
-    assert!(errl.iter().any(|s| s == "to-stderr"), "stderr: {errl:?}");
+    assert!(
+        errl.iter().any(|s| s.trim() == "to-stderr"),
+        "stderr: {errl:?}"
+    );
 }
 
 /// `run_async_args` passes the structured arg list verbatim (no shell
 /// re-parsing), so args with spaces/metachars survive intact.
+#[cfg(unix)]
 #[tokio::test]
 async fn run_async_args_preserves_arg_quoting() {
     let dir = TempDir::new().unwrap();
@@ -512,6 +529,7 @@ async fn spawn_failure_returns_error() {
 
 /// A command writing a final line without a trailing newline is still
 /// captured and streamed.
+#[cfg(unix)]
 #[tokio::test]
 async fn trailing_line_without_newline_is_captured() {
     let dir = TempDir::new().unwrap();

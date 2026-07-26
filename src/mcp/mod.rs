@@ -737,8 +737,9 @@ mod tests {
 
     #[test]
     fn health_reports_healthy_disabled_unhealthy_and_unknown() {
+        let healthy_cmd = if cfg!(windows) { "where.exe" } else { "sh" };
         let mut file = File::new();
-        file.upsert("a-healthy", config("sh"));
+        file.upsert("a-healthy", config(healthy_cmd));
         file.upsert(
             "b-disabled",
             ServerConfig {

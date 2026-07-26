@@ -86,6 +86,19 @@ async fn mock_client_empty(
         Store::open(tempdir.path().join("events.db")).expect("open test event store"),
     ));
     let mock_model = AgentModel::new("mock-model".to_string(), "Mock model".to_string());
+    #[cfg(unix)]
+    let (nocap_cmd, nocap_args): (String, Vec<String>) = (
+        "env".to_string(),
+        vec!["MOCKAGENT_NO_MODE_CAP=1".to_string(), mockagent_bin.clone()],
+    );
+    #[cfg(windows)]
+    let (nocap_cmd, nocap_args): (String, Vec<String>) = (
+        "cmd".to_string(),
+        vec![
+            "/C".to_string(),
+            format!("set MOCKAGENT_NO_MODE_CAP=1&&{}", mockagent_bin),
+        ],
+    );
     let registry = Arc::new(AgentRegistry::from_agents([
         AgentInfo {
             id: "mock".to_string(),
@@ -99,8 +112,8 @@ async fn mock_client_empty(
         AgentInfo {
             id: "mock-nocap".to_string(),
             name: "Mock agent without mode cap".to_string(),
-            command: "env".to_string(),
-            args: vec!["MOCKAGENT_NO_MODE_CAP=1".to_string(), mockagent_bin.clone()],
+            command: nocap_cmd,
+            args: nocap_args,
             models: vec![mock_model],
             warning: String::new(),
         },

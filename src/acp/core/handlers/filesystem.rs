@@ -76,7 +76,11 @@ mod tests {
 
     #[test]
     fn workspace_relative_path_rejects_absolute_path_escapes() {
-        let error = workspace_relative_path(Path::new("/workspace"), Path::new("/outside/file"))
+        #[cfg(unix)]
+        let (root, outside) = (Path::new("/workspace"), Path::new("/outside/file"));
+        #[cfg(windows)]
+        let (root, outside) = (Path::new(r"C:\workspace"), Path::new(r"D:\outside\file"));
+        let error = workspace_relative_path(root, outside)
             .expect_err("outside workspace path must be rejected");
         assert!(error.to_string().contains("outside the workspace"));
     }

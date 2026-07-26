@@ -124,7 +124,23 @@ fn mockagent_transport() -> AcpAgent {
         std::path::Path::new(&bin).exists(),
         "mockagent binary missing at {bin}; build it with `cargo build --bin mockagent && cp target/debug/mockagent /tmp/mockagent` or set LOCAL_AGENT_MOCKAGENT_BIN"
     );
-    AcpAgent::from_str(&bin).expect("valid mockagent command")
+    // `AcpAgent::from_str` parses a bare command string with `shell_words::split`,
+    // which treats backslashes as escapes. Windows paths (e.g. `C:\tmp\mockagent.exe`)
+    // get mangled by that parser, so use the JSON form on Windows to pass the
+    // command verbatim. On Unix the bare-string form is fine and preserves the
+    // existing behaviour.
+    #[cfg(windows)]
+    {
+        let json = format!(
+            r#"{{"type":"stdio","name":"mockagent","command":{},"args":[],"env":[]}}"#,
+            serde_json::to_string(&bin).expect("serialize mockagent path")
+        );
+        AcpAgent::from_str(&json).expect("valid mockagent command")
+    }
+    #[cfg(not(windows))]
+    {
+        AcpAgent::from_str(&bin).expect("valid mockagent command")
+    }
 }
 
 /// Shared state collected by the notification handler during a prompt turn.

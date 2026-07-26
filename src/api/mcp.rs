@@ -192,14 +192,18 @@ mod tests {
     #[tokio::test]
     async fn put_and_patch_mcp_round_trip() {
         let dir = tempfile::tempdir().expect("temp");
-        let raw = br#"{"version":1,"mcpServers":{"github":{"command":"echo","enabled":true}}}"#;
+        let raw: &[u8] = if cfg!(windows) {
+            br#"{"version":1,"mcpServers":{"github":{"command":"where.exe","args":["."],"enabled":true}}}"#.as_slice()
+        } else {
+            br#"{"version":1,"mcpServers":{"github":{"command":"echo","enabled":true}}}"#.as_slice()
+        };
         let put = crate::api::router(state_with_mcp(&dir))
             .oneshot(
                 Request::builder()
                     .method("PUT")
                     .uri("/api/mcp")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(raw.as_slice()))
+                    .body(Body::from(raw))
                     .expect("request"),
             )
             .await

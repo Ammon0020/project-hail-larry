@@ -203,19 +203,44 @@ pub fn resolve_symlink(workspace_root: &Path, path: &Path) -> Result<PathBuf, Pa
     Ok(resolved_path)
 }
 
+/// Strip the Windows verbatim path prefix (`\\?\`) so paths returned by
+/// `fs::canonicalize` can be compared against non-verbatim paths. On non-Windows
+/// this is a no-op.
+///
+/// `fs::canonicalize` on Windows returns `\\?\C:\...` (verbatim DOS path), but
+/// callers often pass non-canonicalised roots (`C:\...`). Without stripping, the
+/// prefix mismatch breaks `starts_with`/`strip_prefix` containment checks and
+/// produces different hashes for the same logical path. The stripped path is
+/// safe for comparison and hashing; filesystem operations that need long-path
+/// support should use the original verbatim path.
+pub(crate) fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 /// Report whether `path` is equal to `root` or lives beneath it.
 ///
 /// Both arguments are expected to be absolute and normalised (canonical or
 /// lexically cleaned). Port of `internal/workspace.isWithinRoot`.
+///
+/// On Windows, `fs::canonicalize` returns verbatim `\\?\`-prefixed paths. Both
+/// arguments are normalised via [`strip_verbatim_prefix`] before comparison so a
+/// canonicalised path checks correctly against a non-canonicalised root.
 fn is_within_root(root: &Path, path: &Path) -> bool {
+    let root = strip_verbatim_prefix(root);
+    let path = strip_verbatim_prefix(path);
     if path == root {
         return true;
     }
     // path must start with root + separator. Using `strip_prefix` is the
     // std-idiomatic equivalent of Go's `strings.HasPrefix(path, root+sep)`.
-    path.starts_with(root)
+    path.starts_with(&root)
         && path
-            .strip_prefix(root)
+            .strip_prefix(&root)
             .is_ok_and(|tail| !tail.as_os_str().is_empty())
 }
 

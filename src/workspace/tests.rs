@@ -95,7 +95,10 @@ async fn file_tree_sorts_and_filters_entries() {
         .find(|node| node.name == "routes")
         .unwrap();
     assert_eq!(routes.node_type, FILE_NODE_TYPE_FOLDER);
-    assert_eq!(routes.children[0].path, "src/routes/index.js");
+    assert_eq!(
+        routes.children[0].path.replace('\\', "/"),
+        "src/routes/index.js"
+    );
 }
 
 #[tokio::test]
