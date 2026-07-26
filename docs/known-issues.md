@@ -48,6 +48,11 @@ mainstream agent advertises (`mcp_capabilities.acp`) yet.
 
 Fix path / unblock signal + full drop-in design: `docs/plans/acp-spec-compliance.md` § 4.10.
 
+## ACP auth persistence across daemon restarts — deferred
+
+The ACP `authenticate` handshake is re-run on every daemon restart, so users
+re-authenticate to each agent after a restart. No persistable auth state
+(tokens/cookies) is exposed by the SDK today.
 
 **Severity:** Medium — user-facing annoyance on every restart, no security
 risk (auth still required each time).
@@ -59,78 +64,12 @@ handshake when valid, or (c) a daemon-side approach that keeps auth alive
 across restarts (not possible while tokens are opaque). Track upstream SDK
 releases for (a).
 
-## Profile-over-ACP fallback branch — tested 2026-07-25 (was Medium)
-
-Resolved 2026-07-25. The prompt-injection fallback in
-`src/acp/providers.rs` (`find_profile_config_id == None` path, triggered when
-an agent does NOT advertise the `mode`-category `profile` config option) is now
-covered by two tests:
-
-- `profile_is_injected_when_the_agent_lacks_profile_configuration` in
-  `src/acp/context.rs` — unit-level: asserts profile instructions are injected
-  as a `Profile Instructions` resource (embedded path) and as a
-  `## Active Profile:` text section (text-fallback path) when
-  `include_profile=true`.
-- `prompt_injection_fallback_skips_set_config_option` in
-  `src/acp/core/lifecycle/tests.rs` — end-to-end: uses the `mock-nocap` agent
-  (registered in `mock_client_empty` via the `env MOCKAGENT_NO_MODE_CAP=1`
-  wrapper), sends a prompt, and asserts the streamed reply contains no
-  `[profile:` marker (proving `session/set_config_option` was skipped) while
-  `session_for_profile_switch` reports `None`.
-
-No `AgentInfo` schema change was needed: `mock_client_empty` already works
-around the per-test env-var limitation by using `env` as the agent command and
-passing `MOCKAGENT_NO_MODE_CAP=1` as an arg. The earlier note about a schema
-change being required was incorrect — the `env` wrapper avoids the
-process-global `set_var` race without touching `AgentInfo`.
-
-The capability-present branch remains covered by
-`mockagent_initial_profile_sent_over_acp_when_capability_advertised`.
-
-## Clippy pedantic — resolved 2026-07-25 (was Low)
-
-Resolved 2026-07-25. The `[lints.clippy]` table in `Cargo.toml` now denies
-`clippy::pedantic` across lib AND test targets. All 434 pedantic findings
-surfaced by `cargo clippy --all-targets -- -W clippy::pedantic` were cleared
-in a single pass:
-
-- 174 auto-fixed by `cargo clippy --fix` (redundant_closure_for_method_calls,
-  map_unwrap_or, unnested_or_patterns, semicolon_if_nothing_returned,
-  needless_raw_string_hashes, simple assigning_clones, etc.).
-- 59 `assigning_clones` applied by hand in `src/interfaces/wire.rs`,
-  `src/api/mod.rs`, `src/permissions/*` (`x = y.clone()` →
-  `x.clone_from(&y)`); `--fix` could not rewrite these cross-statement
-  cases safely.
-- 84 `missing_errors_doc` — `# Errors` sections added to all non-test
-  public `Result`-returning fns (test modules had no findings).
-- 40 Tier 4 fixes: `manual_let_else`, `items_after_statements`,
-  `unused_async`, `trivially_copy_pass_by_ref`, `match_same_arms`,
-  `format_push_string`, `format_collect`, `needless_pass_by_value`,
-  `unused_self`, `needless_continue`.
-- 40 Tier 5 judgment calls: scoped `#[allow]` with explanatory comments
-  for `cast_*` (with safety invariants), `too_many_lines` (actor state
-  machines / linear test sequences), `struct_excessive_bools` (independent
-  config knobs), `similar_names` (intentional pid/ppid, http/https pairs),
-  `missing_fields_in_debug` (secrets intentionally omitted),
-  `match_wild_err_arm` (timeout paths).
-- 37 stragglers in files not covered by the first pass (fswatch, pathutil,
-  acp/stream, events/publisher, search/*, mcp, pairing).
-
-Scoped `#[allow]` attributes remain in-tree, each with a comment
-explaining why the lint does not apply (serde `skip_serializing_if`
-contracts, cross-file call sites, actor state-machine flow clarity). These
-are intentional and documented; future pedantic findings will fail CI.
-
-Run to verify: `cargo clippy --all-targets -- -D warnings` (clean).
-
 ## Daemon port-orphan recovery — non-Linux PID-from-port deferred
 
-Fixed 2026-07-18 on Linux. `start` now probes the configured HTTP port before
-binding and fails fast with the holding PID when an orphan holds it; `stop`
-falls back to finding a process listening on the port when no live PID file
-exists. macOS/Windows `find_pid_listening_on` return `Ok(None)` (no cheap
-kernel introspection path is wired yet); on those platforms an orphaned daemon
-without a PID file still requires a manual `kill`/`taskkill`. See
+Linux is wired (`src/app/port.rs` parses `/proc/net/tcp`); macOS/Windows
+`find_pid_listening_on` return `Ok(None)` (no cheap kernel introspection path
+is wired yet). On those platforms an orphaned daemon without a PID file still
+requires a manual `kill`/`taskkill`. See
 `docs/plans/other_tasks/active-daemon-port-orphan-recovery-small-high.md`.
 
 ## Security audit — deferred findings (from 2026-07-07 audit)
@@ -143,35 +82,22 @@ without a PID file still requires a manual `kill`/`taskkill`. See
   front. Same pattern on `/raw` and `/preview` iframe URLs; preview responses
   send `Referrer-Policy: no-referrer` to limit Referer leakage.
 
-- **sec-preview-same-origin-scripts (Medium — mitigated 2026-07-18):** Browse
-  preview iframe no longer uses `allow-same-origin` (opaque origin; scripts
-  run but cannot read IDE `localStorage`). Preview responses add
-  `frame-ancestors 'self'`. Relative assets resolve correctly on loopback,
-  where auth is bypassed, but a LAN browser does not propagate the entry
-  URL's query credentials to relative subresource requests; preview now uses
-  a 30-minute workspace-scoped in-memory ticket exchanged for an HttpOnly,
-  path-scoped cookie. The residual risk is exposure of that short-lived ticket
-  in the entry URL/server logs; `Referrer-Policy: no-referrer` limits onward
-  Referer leakage. Workspace JS can still exfiltrate via third-party requests.
-
-## Rust port — story checkbox drift
-
-Many `docs/plans/rust-port/*.md` ACs remain unchecked while modules and
-tests already ship. Prefer mass check-off + a short “Remaining Rust gaps”
-list over treating unchecked boxes as open work. Real open items live in
-`docs/STATUS.md` Known Gaps.
-
-## Contract harness — real `~/.local-agent/config.toml` overwrite risk
-
-**Fixed 2026-07-18.** Root cause: `Daemon::new` unit tests in `src/app/daemon.rs`
-built a `Config` with tempfile `data_dir` / `events.db` / `port=0` and called
-`refresh_agents_on_startup` → `Config::save` **without** `LOCAL_AGENT_STATE_DIR`.
-`save` writes to `resolved_state_dir()` (real `~/.local-agent`), not `data_dir`,
-so autodetected agents + temp layout overwrote the host config (matched
-`config.toml.*.bak`: `port=0`, `/tmp/.tmp…/events.db`, empty workspaces, real
-agents). Mitigations: (1) `Config::save` refuses temp `data_dir` when the
-active state dir is not under temp; (2) daemon tests set `LOCAL_AGENT_STATE_DIR`;
-(3) contract harness uses a process-scoped fake `HOME` under the isolated state
-dir instead of `HOME=/dev/null` (dirs passwd fallback). Regression:
-`save_refuses_temp_data_dir_when_state_dir_is_not_temp`. Backups retained at
-`~/.local-agent/config.toml.*.bak`.
+- **sec-preview-same-origin-scripts (Medium — mitigated 2026-07-18, CSP
+  reconciled 2026-07-26):** Browse preview iframe uses `sandbox="allow-scripts"`
+  (no `allow-same-origin`) so workspace JS runs with an opaque origin and cannot
+  read IDE `localStorage`/cookies or call authenticated `/api/*` as the IDE.
+  `/preview` responses set `frame-ancestors 'self'; sandbox allow-scripts` —
+  `allow-scripts` (not `allow-same-origin`) is chosen so the iframe sandbox and
+  CSP sandbox combine into "scripts run, opaque origin" (union of restrictions),
+  which both keeps script-driven static-site previews working AND blocks
+  direct-navigation XSS (a user clicking a `/preview/{id}/evil.html` link
+  outside any iframe still gets an opaque origin). `/raw` (direct-access only,
+  no frontend iframe) keeps the stricter `sandbox allow-same-origin` (no
+  `allow-scripts`) so agent-written HTML opened via `/raw` cannot execute
+  scripts at all. Relative assets resolve correctly on loopback, where auth is
+  bypassed, but a LAN browser does not propagate the entry URL's query
+  credentials to relative subresource requests; preview now uses a 30-minute
+  workspace-scoped in-memory ticket exchanged for an HttpOnly, path-scoped
+  cookie. The residual risk is exposure of that short-lived ticket in the entry
+  URL/server logs; `Referrer-Policy: no-referrer` limits onward Referer leakage.
+  Workspace JS can still exfiltrate via third-party requests.

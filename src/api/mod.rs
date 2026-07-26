@@ -363,7 +363,7 @@ pub fn router(state: AppState) -> Router {
 /// A restrictive CSP is applied to the SPA shell and API responses as
 /// defense-in-depth against XSS. It is only inserted when the handler has not
 /// already set its own CSP (e.g. the preview handler uses `sandbox
-/// allow-same-origin` for agent-written HTML). `style-src 'unsafe-inline'` is
+/// allow-scripts` for agent-written HTML). `style-src 'unsafe-inline'` is
 /// required because `CodeMirror` injects inline styles; no `'unsafe-inline'` is
 /// granted to `script-src`.
 async fn security_headers(request: Request<Body>, next: Next) -> Response {
@@ -385,7 +385,7 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
         );
     }
     // Only set the SPA CSP when the handler hasn't already attached one
-    // (e.g. the preview endpoint sets `sandbox allow-same-origin`).
+    // (e.g. the preview endpoint sets `sandbox allow-scripts`).
     if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
         headers.insert(
             header::CONTENT_SECURITY_POLICY,
@@ -845,15 +845,25 @@ async fn preview_file(
     serve_workspace_file(&state, &id, rel)
         .await
         .map(|mut response| {
-            // Preview HTML may run scripts in a sandboxed iframe; confine who
-            // can embed these responses (IDE only, same origin) and neutralize
-            // scripts so agent-written content cannot execute with IDE-origin
-            // authority (same-origin XSS). `sandbox` without `allow-scripts`
-            // blocks script execution; `allow-same-origin` preserves relative
-            // subresource loading for legitimate static previews.
+            // Preview HTML is loaded inside a frontend iframe (BrowsePreview or
+            // FileViewer) whose own `sandbox` attribute is the primary script
+            // authority. The CSP here guards the direct-navigation case (a user
+            // clicking a `/preview/{id}/evil.html` link outside any iframe):
+            // `sandbox allow-scripts` without `allow-same-origin` forces an
+            // opaque origin, so agent-written scripts that run cannot read IDE
+            // cookies/localStorage or call authenticated `/api/*` as the IDE.
+            // `allow-scripts` (not `allow-same-origin`) is chosen so the
+            // BrowsePreview iframe's `sandbox="allow-scripts"` combines into
+            // "scripts run, opaque origin" — script-driven static-site previews
+            // work while staying contained. `frame-ancestors 'self'` restricts
+            // who can embed the response to the IDE. The shared
+            // `serve_workspace_file` CSP (`sandbox allow-same-origin`, no
+            // allow-scripts) is overridden here because it would combine with
+            // the iframe sandbox to block scripts entirely (union of
+            // restrictions), breaking BrowsePreview.
             response.headers_mut().insert(
                 header::CONTENT_SECURITY_POLICY,
-                HeaderValue::from_static("frame-ancestors 'self'; sandbox allow-same-origin"),
+                HeaderValue::from_static("frame-ancestors 'self'; sandbox allow-scripts"),
             );
             response
         })
@@ -888,11 +898,16 @@ async fn serve_workspace_file(
         HeaderValue::from_static("no-referrer"),
     );
     // Neutralize scripts in agent-written HTML served same-origin with the IDE:
-    // without this, a workspace `evil.html` could call authenticated `/api/*`
-    // endpoints and read IDE cookies/localStorage. `sandbox` without
-    // `allow-scripts` blocks script execution; `allow-same-origin` preserves
-    // relative subresource loading for legitimate static previews. The preview
-    // handler extends this with `frame-ancestors 'self'`.
+    // without this, a workspace `evil.html` opened via `/raw` could call
+    // authenticated `/api/*` endpoints and read IDE cookies/localStorage.
+    // `sandbox` without `allow-scripts` blocks script execution; the
+    // `allow-same-origin` flag is retained so relative subresource loading for
+    // legitimate static previews still resolves against the IDE origin. The
+    // `/preview` handler overrides this CSP with `frame-ancestors 'self';
+    // sandbox allow-scripts` (opaque origin, scripts permitted) because preview
+    // is always loaded inside a frontend iframe whose own `sandbox` attribute
+    // is the primary script authority; `/raw` is direct-access only and keeps
+    // this stricter CSP.
     response.headers_mut().insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static("sandbox allow-same-origin"),
@@ -2410,7 +2425,7 @@ mod tests {
                 .headers()
                 .get(header::CONTENT_SECURITY_POLICY)
                 .and_then(|v| v.to_str().ok()),
-            Some("frame-ancestors 'self'; sandbox allow-same-origin")
+            Some("frame-ancestors 'self'; sandbox allow-scripts")
         );
         let bytes = to_bytes(response.into_body(), usize::MAX)
             .await
