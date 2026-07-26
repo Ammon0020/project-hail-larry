@@ -670,6 +670,7 @@ export function ChatPanel({
             onSelectSession(openTabIds[openTabIds.length - 1])
           }
         }}
+        onExportSession={onExportSession}
       >
         <ChatHistory
           sessions={sessions}

@@ -90,6 +90,9 @@ interface ChatTabBarProps {
   showNewChatTab?: boolean
   /** Closes the transient "New chat" placeholder tab. */
   onCloseNewChatTab?: () => void
+  /** Exports the active session as a markdown transcript download. The menu
+   *  item is disabled when no session is active. */
+  onExportSession?: (sessionId: string) => void
   /** Slot for the ChatHistory popout — rendered inside the relative container
    *  so it can absolute-position below the bar. */
   children?: React.ReactNode
@@ -117,6 +120,7 @@ export function ChatTabBar({
   isDesktop,
   showNewChatTab = false,
   onCloseNewChatTab,
+  onExportSession,
   children,
 }: ChatTabBarProps) {
   const tabListRef = useRef<HTMLDivElement>(null)
@@ -247,7 +251,11 @@ export function ChatTabBar({
             ariaExpanded={historyOpen}
           />
 
-          {/* Overflow menu — a disabled "Export conversation" placeholder. */}
+          {/* Overflow menu — export the active conversation. Disabled when no
+              session is active (e.g. transient "New chat" placeholder). The
+              importable-format option is deferred until the JSON schema is
+              decided; we avoid disabled placeholders to prevent the
+              "why can't I export?" confusion that prompted this wiring. */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -260,7 +268,16 @@ export function ChatTabBar({
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Chat options</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled>Export conversation</DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!activeSessionId || !onExportSession}
+                onSelect={() => {
+                  if (activeSessionId && onExportSession) {
+                    onExportSession(activeSessionId)
+                  }
+                }}
+              >
+                Export as Markdown
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
