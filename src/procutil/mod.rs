@@ -71,6 +71,11 @@ impl ProcessGroupCleanup {
     /// back to `child.kill()` (immediate child only).
     #[must_use]
     pub fn new(pid: Option<u32>) -> Self {
+        // Open the child process to assign it to the job. Only
+        // PROCESS_SET_QUOTA (required by AssignProcessToJobObject) and
+        // PROCESS_TERMINATE are requested.
+        const PROCESS_SET_QUOTA: u32 = 0x0100;
+        const PROCESS_TERMINATE: u32 = 0x0001;
         let Some(pid) = pid else {
             return Self { job: None };
         };
@@ -78,11 +83,6 @@ impl ProcessGroupCleanup {
         if job.is_null() {
             return Self { job: None };
         }
-        // Open the child process to assign it to the job. Only
-        // PROCESS_SET_QUOTA (required by AssignProcessToJobObject) and
-        // PROCESS_TERMINATE are requested.
-        const PROCESS_SET_QUOTA: u32 = 0x0100;
-        const PROCESS_TERMINATE: u32 = 0x0001;
         unsafe {
             let process = winapi::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
             if !process.is_null() {
@@ -280,6 +280,9 @@ mod winapi {
     }
 
     #[repr(C)]
+    // Field names mirror the Windows API `IO_COUNTERS` struct
+    // (ReadOperationCount, etc.) — keep the faithful snake_case translation.
+    #[allow(clippy::struct_field_names)]
     pub struct IoCounters {
         pub read_operation_count: u64,
         pub write_operation_count: u64,
@@ -322,7 +325,11 @@ mod winapi {
 /// failure.
 #[cfg(windows)]
 unsafe fn create_kill_on_close_job() -> *mut std::ffi::c_void {
-    use winapi::*;
+    use winapi::{
+        CloseHandle, CreateJobObjectW, IoCounters, JobObjectBasicLimitInformation,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
+        JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
     let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
     if job.is_null() {
         return std::ptr::null_mut();
@@ -352,11 +359,15 @@ unsafe fn create_kill_on_close_job() -> *mut std::ffi::c_void {
         peak_process_memory_used: 0,
         peak_job_memory_used: 0,
     };
+    // `size_of` on a `repr(C)` Windows struct is a compile-time constant that
+    // always fits in `u32` on the platforms we target.
+    #[allow(clippy::cast_possible_truncation)]
+    let info_len = std::mem::size_of::<JobObjectExtendedLimitInformation>() as u32;
     if SetInformationJobObject(
         job,
         JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
-        &mut info as *mut _ as *mut std::ffi::c_void,
-        std::mem::size_of::<JobObjectExtendedLimitInformation>() as u32,
+        std::ptr::from_mut(&mut info).cast::<std::ffi::c_void>(),
+        info_len,
     ) == 0
     {
         CloseHandle(job);

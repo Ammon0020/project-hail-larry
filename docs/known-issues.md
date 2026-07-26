@@ -3,16 +3,6 @@
 Gaps and deferred work tracked from review passes. Each entry is a one-line
 note so the next agent can pick it up without re-reading the full review file.
 
-## Windows clippy — pre-existing `#[cfg(windows)]` lints in procutil/app
-
-`cargo clippy --all-targets -- -D warnings` on Windows reports 8 errors in
-`src/procutil/mod.rs` and `src/app/process.rs` (wildcard imports, raw-pointer
-casts, `usize as u32` truncation, etc.). These are in Windows-only code paths
-that the Linux CI clippy job never compiles, so they don't fail CI today. They
-pre-date the 2026-07-26 Windows test fix and are unrelated to it. Fix by adding
-targeted `#[allow(...)]` attributes or refactoring the Windows process-group
-helpers when next touching `procutil`.
-
 ## Agent-owned history migration — explicitly deferred
 
 Deferred by Product on 2026-07-18. Local `conversations.json` metadata and

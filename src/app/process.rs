@@ -62,7 +62,7 @@ mod platform {
 
 #[cfg(windows)]
 mod platform {
-    use super::*;
+    use super::{bail, Context, Result};
     use std::process::Command;
 
     pub(super) fn is_running(pid: u32) -> bool {
@@ -102,7 +102,7 @@ mod platform {
 
 #[cfg(not(any(unix, windows)))]
 mod platform {
-    use super::*;
+    use super::{bail, Result};
 
     pub(super) fn is_running(_pid: u32) -> bool {
         false
