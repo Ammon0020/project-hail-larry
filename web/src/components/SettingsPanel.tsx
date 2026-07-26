@@ -94,6 +94,31 @@ const NAV_GROUPS: { label: string; sections: SettingsSection[] }[] = [
   { label: 'Server & Network', sections: ['connection', 'pairing', 'security'] },
 ]
 
+/** Server & Network placeholder subsections — all three render the same
+ *  "coming soon" shell, so they are data-driven to avoid triplicated JSX. */
+const SERVER_NETWORK_PLACEHOLDERS: ReadonlyArray<readonly [id: SettingsSection, label: string, desc: string]> = [
+  ['connection', 'Connection', 'Server configuration'],
+  ['pairing', 'Pairing', 'Device pairing configuration'],
+  ['security', 'Security', 'Security and TLS configuration'],
+]
+
+/** Wraps an async operation with loading/error state setters. Sets loading
+ *  true and clears the error before awaiting; on failure surfaces a string
+ *  error; always clears loading in `finally`. Returns the result or
+ *  `undefined` on failure so callers can guard the success path. */
+async function withAsyncState<T>(setLoading: (b: boolean) => void,
+  setError: (e: string | null) => void, fn: () => Promise<T>): Promise<T | undefined> {
+  setLoading(true)
+  setError(null)
+  try {
+    return await fn()
+  } catch (e) {
+    setError(e instanceof Error ? e.message : String(e))
+  } finally {
+    setLoading(false)
+  }
+}
+
 export function SettingsPanel({
   agents,
   onAddAgent,
@@ -174,9 +199,7 @@ export function SettingsPanel({
   // the section can render the right muted note without conflating a 501
   // (agent lacks provider support) with a transport failure.
   const [providers, setProviders] = useState<ProviderInfo[]>([])
-  const [providersStatus, setProvidersStatus] = useState<
-    'idle' | 'loading' | 'unsupported' | 'loaded' | 'error'
-  >('idle')
+  const [providersStatus, setProvidersStatus] = useState<'idle' | 'loading' | 'unsupported' | 'loaded' | 'error'>('idle')
   const [providersError, setProvidersError] = useState<string | null>(null)
   const [providerBusy, setProviderBusy] = useState<string | null>(null)
 
@@ -228,46 +251,29 @@ export function SettingsPanel({
   }, [])
 
   async function loadMcp() {
-    setMcpLoading(true)
-    try {
-      const text = await getMcpConfig()
-      setMcpText(text)
-      setMcpOriginal(text)
-      setMcpError(null)
-    } catch (e) {
-      setMcpError(String(e))
-    } finally {
-      setMcpLoading(false)
-    }
+    const text = await withAsyncState(setMcpLoading, setMcpError, getMcpConfig)
+    if (!text) return
+    setMcpText(text)
+    setMcpOriginal(text)
   }
 
   async function loadPromptContext() {
-    setPromptContextLoading(true)
-    try {
-      const settings = await getPromptContextSettings()
-      setPromptContext(settings)
-      setPromptContextOriginal(settings)
-      setPromptContextError(null)
-    } catch (error) {
-      setPromptContextError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setPromptContextLoading(false)
-    }
+    const settings = await withAsyncState(setPromptContextLoading, setPromptContextError, getPromptContextSettings)
+    if (!settings) return
+    setPromptContext(settings)
+    setPromptContextOriginal(settings)
   }
 
   async function savePromptContext() {
     if (!promptContext) return
-    setPromptContextSaving(true)
-    try {
-      const settings = await putPromptContextSettings(promptContext)
-      setPromptContext(settings)
-      setPromptContextOriginal(settings)
-      setPromptContextError(null)
-    } catch (error) {
-      setPromptContextError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setPromptContextSaving(false)
-    }
+    const settings = await withAsyncState(
+      setPromptContextSaving,
+      setPromptContextError,
+      () => putPromptContextSettings(promptContext),
+    )
+    if (!settings) return
+    setPromptContext(settings)
+    setPromptContextOriginal(settings)
   }
 
   function updatePromptContext(key: keyof PromptContextSettings, value: string) {
@@ -292,18 +298,11 @@ export function SettingsPanel({
   const disabledCount = servers.filter(s => !s.enabled).length
 
   async function handleSave() {
-    setMcpSaving(true)
-    setMcpError(null)
-    try {
-      await putMcpConfig(mcpText)
-      setMcpOriginal(mcpText)
-      setMcpSaved(true)
-      setTimeout(() => setMcpSaved(false), 2000)
-    } catch (e: unknown) {
-      setMcpError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setMcpSaving(false)
-    }
+    const ok = await withAsyncState(setMcpSaving, setMcpError, () => putMcpConfig(mcpText))
+    if (ok === undefined) return
+    setMcpOriginal(mcpText)
+    setMcpSaved(true)
+    setTimeout(() => setMcpSaved(false), 2000)
   }
 
   async function handleRevert() {
@@ -378,37 +377,32 @@ export function SettingsPanel({
     return out
   }
 
-  async function handleSetProvider(
+  /** Set or disable a provider for the active session. The two actions share
+   *  the same busy/error lifecycle, so they are merged into one handler that
+   *  branches on `action`. `apiType`/`baseUrl`/`headersText` are only used for
+   *  the 'set' action. */
+  async function handleProviderAction(
     providerId: string,
-    apiType: string,
-    baseUrl: string,
-    headersText: string,
+    action: 'set' | 'disable',
+    apiType?: string,
+    baseUrl?: string,
+    headersText?: string,
   ) {
     if (!activeSessionId) return
     setProviderBusy(providerId)
     setProvidersError(null)
     try {
-      await setProvider(
-        activeSessionId,
-        providerId,
-        apiType,
-        baseUrl,
-        parseHeaders(headersText),
-      )
-      await loadProviders(activeSessionId)
-    } catch (e) {
-      setProvidersError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setProviderBusy(null)
-    }
-  }
-
-  async function handleDisableProvider(providerId: string) {
-    if (!activeSessionId) return
-    setProviderBusy(providerId)
-    setProvidersError(null)
-    try {
-      await disableProvider(activeSessionId, providerId)
+      if (action === 'set' && apiType && baseUrl) {
+        await setProvider(
+          activeSessionId,
+          providerId,
+          apiType,
+          baseUrl,
+          parseHeaders(headersText ?? ''),
+        )
+      } else {
+        await disableProvider(activeSessionId, providerId)
+      }
       await loadProviders(activeSessionId)
     } catch (e) {
       setProvidersError(e instanceof Error ? e.message : String(e))
@@ -423,15 +417,7 @@ export function SettingsPanel({
    *  activeWorkspace so the preview components re-render immediately. */
   async function handleSetTrust(value: boolean | null) {
     if (!workspaceId || !onSetWorkspaceTrust) return
-    setTrustBusy(true)
-    setTrustError(null)
-    try {
-      await onSetWorkspaceTrust(workspaceId, value)
-    } catch (e) {
-      setTrustError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setTrustBusy(false)
-    }
+    await withAsyncState(setTrustBusy, setTrustError, () => onSetWorkspaceTrust(workspaceId, value))
   }
 
   /** Scrolls the main content to a section anchor (nav clicks + deep-links). */
@@ -494,12 +480,8 @@ export function SettingsPanel({
       {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between p-3 border-b border-border bg-panel shrink-0">
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowMobileNav(!showMobileNav)}
-            className="p-1.5 hover:bg-accent rounded-md transition"
-            aria-label="Toggle navigation menu"
-            aria-expanded={showMobileNav}
-          >
+          <button onClick={() => setShowMobileNav(!showMobileNav)} aria-label="Toggle navigation menu"
+            aria-expanded={showMobileNav} className="p-1.5 hover:bg-accent rounded-md transition">
             <Menu className="w-5 h-5 text-foreground" />
           </button>
           <span className="font-semibold text-sm">
@@ -525,272 +507,6 @@ export function SettingsPanel({
 
       {/* Content — single scrollable page; each section is an anchor target. */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-5 bg-background">
-        <section id="harnesses" className="scroll-mt-4 space-y-6">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-semibold text-foreground">Configured Agents</h3>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleAutodetect}
-                  disabled={isDetecting}
-                  className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-foreground bg-secondary hover:bg-accent rounded-md border border-input transition disabled:opacity-50"
-                >
-                  <Search className="w-3.5 h-3.5" />
-                  {isDetecting ? 'Detecting...' : 'Auto-detect'}
-                </button>
-                <button
-                  onClick={() => setShowAddForm(!showAddForm)}
-                  className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add Custom
-                </button>
-              </div>
-            </div>
-
-            {showAddForm && (
-              <div className="p-4 bg-panel border border-primary/30 rounded-lg space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="agent-id-input" className="block text-xs text-muted-foreground mb-1">ID (e.g., custom-agent)</label>
-                    <input
-                      id="agent-id-input"
-                      type="text"
-                      value={newAgent.id || ''}
-                      onChange={e => setNewAgent({ ...newAgent, id: e.target.value })}
-                      className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="agent-name-input" className="block text-xs text-muted-foreground mb-1">Name (e.g., Custom CLI)</label>
-                    <input
-                      id="agent-name-input"
-                      type="text"
-                      value={newAgent.name || ''}
-                      onChange={e => setNewAgent({ ...newAgent, name: e.target.value })}
-                      className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <label htmlFor="agent-command-input" className="block text-xs text-muted-foreground mb-1">Command executable</label>
-                    <input
-                      id="agent-command-input"
-                      type="text"
-                      value={newAgent.command || ''}
-                      onChange={e => setNewAgent({ ...newAgent, command: e.target.value })}
-                      placeholder="e.g. claude, codex, or /absolute/path/to/bin"
-                      className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div className="border-t border-border pt-3">
-                  <label htmlFor="model-id-input" className="block text-xs text-muted-foreground mb-2">Models</label>
-                  <div className="space-y-2 mb-2">
-                    {newAgent.models?.map((m, i) => (
-                      <div key={i} className="flex items-center gap-2 text-xs bg-background p-2 rounded border border-border">
-                        <Monitor className="w-3 h-3 text-muted-foreground" />
-                        <span className="font-mono text-primary">{m.id}</span>
-                        <span className="text-muted-foreground">({m.name})</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      id="model-id-input"
-                      type="text"
-                      placeholder="Model ID"
-                      value={newModel.id}
-                      onChange={e => setNewModel({ ...newModel, id: e.target.value })}
-                      className="flex-1 bg-background border border-input rounded-md px-3 py-1.5 text-sm"
-                    />
-                    <label htmlFor="model-name-input" className="sr-only">Model name</label>
-                    <input
-                      id="model-name-input"
-                      type="text"
-                      placeholder="Model Name"
-                      value={newModel.name}
-                      onChange={e => setNewModel({ ...newModel, name: e.target.value })}
-                      className="flex-1 bg-background border border-input rounded-md px-3 py-1.5 text-sm"
-                    />
-                    <button onClick={handleAddModel} className="px-3 py-1.5 bg-secondary hover:bg-accent rounded-md text-xs">Add Model</button>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button onClick={handleAddAgent} className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm rounded-md font-medium">Save Agent</button>
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-3">
-              {agents.map(agent => (
-                <div key={agent.id} className="p-4 bg-panel border border-border rounded-lg flex flex-col gap-3 group">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h4 className="font-semibold text-foreground">{agent.name}</h4>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded border border-border">{agent.command}</span>
-                        {agent.warning && (
-                          <span className="flex items-center gap-1 text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
-                            <AlertTriangle className="w-3 h-3" />
-                            {agent.warning}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => onDeleteAgent(agent.id)}
-                      className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition opacity-0 group-hover:opacity-100"
-                      title="Delete Agent"
-                      aria-label={`Delete agent ${agent.name}`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {agent.models.map(m => (
-                      <span key={m.id} className="text-xs px-2 py-1 bg-background border border-border text-muted-foreground rounded-md">
-                        {m.name}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-              {agents.length === 0 && (
-                <div className="text-center p-8 border border-dashed border-input rounded-lg text-muted-foreground text-sm">
-                  No agents configured. Click Auto-detect to search for installed agents.
-                </div>
-              )}
-            </div>
-        </section>
-        <section id="mcp-servers" className="scroll-mt-4 flex flex-col gap-4">
-            {/* Header row */}
-            <div className="flex items-center justify-between shrink-0">
-              <h3 className="text-base font-semibold text-foreground">MCP Servers</h3>
-              <button
-                type="button"
-                title="See docs/reference/mcp/"
-                className="p-1 text-muted-foreground hover:text-foreground rounded-md transition"
-                aria-label="MCP documentation"
-              >
-                <HelpCircle className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Quick-toggle chips */}
-            <div className="flex flex-wrap gap-2 shrink-0">
-              {servers.length === 0 && !mcpLoading && (
-                <span className="text-xs text-muted-foreground">No servers configured.</span>
-              )}
-              {servers.map(s => (
-                <button
-                  key={s.name}
-                  onClick={() => handleToggle(s.name, !s.enabled)}
-                  disabled={togglingServer === s.name}
-                  className={cn(
-                    'flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition',
-                    s.enabled
-                      ? 'bg-primary/10 border-primary/30 text-primary'
-                      : 'bg-muted border-border text-muted-foreground',
-                    togglingServer === s.name && 'opacity-50',
-                  )}
-                  title={s.enabled ? 'Disable' : 'Enable'}
-                >
-                  <span className="font-mono">{s.name}</span>
-                  {togglingServer === s.name ? (
-                    <span className="w-3 h-3 inline-block" />
-                  ) : s.enabled ? (
-                    <Check className="w-3 h-3" />
-                  ) : (
-                    <span className="w-3 h-3 leading-none text-center">×</span>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            {/* Status line */}
-            <div className="text-xs text-muted-foreground shrink-0">
-              {servers.length} server{servers.length === 1 ? '' : 's'}
-              {disabledCount > 0 && `, ${disabledCount} disabled`}
-            </div>
-
-            {mcpError && (
-              <div className="flex items-start gap-2 p-3 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md shrink-0">
-                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                <span className="font-mono whitespace-pre-wrap break-all">{mcpError}</span>
-              </div>
-            )}
-
-            {/* CodeMirror JSON editor */}
-            <div className="flex-1 min-h-0 overflow-hidden border border-border rounded-md">
-              <CodeMirror
-                value={mcpText}
-                onChange={setMcpText}
-                extensions={[json()]}
-                theme={oneDark}
-                height="100%"
-                className="h-full text-[13px]"
-                basicSetup={{
-                  lineNumbers: true,
-                  foldGutter: true,
-                  highlightActiveLine: true,
-                  bracketMatching: true,
-                  closeBrackets: true,
-                  indentOnInput: true,
-                }}
-              />
-            </div>
-
-            {/* Save / Revert buttons */}
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={handleSave}
-                disabled={mcpSaving || mcpText === mcpOriginal}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition disabled:opacity-50"
-              >
-                <Save className="w-3.5 h-3.5" />
-                {mcpSaving ? 'Saving...' : 'Save'}
-              </button>
-              <button
-                onClick={handleRevert}
-                disabled={mcpText === mcpOriginal}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-foreground bg-secondary hover:bg-accent rounded-md border border-input transition disabled:opacity-50"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Revert
-              </button>
-              {mcpSaved && (
-                <span className="flex items-center gap-1 text-xs text-green-500">
-                  <Check className="w-3.5 h-3.5" />
-                  Saved
-                </span>
-              )}
-            </div>
-
-            {/* Quick reference (collapsible) */}
-            <div className="shrink-0 border border-border rounded-md">
-              <button
-                onClick={() => setShowQuickRef(!showQuickRef)}
-                className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-foreground bg-panel hover:bg-accent rounded-md transition"
-              >
-                {showQuickRef ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                Quick reference
-              </button>
-              {showQuickRef && (
-                <div className="p-3 space-y-3 border-t border-border">
-                  <CopyableExample label="stdio" text={STDIO_EXAMPLE} />
-                  <CopyableExample label="http" text={HTTP_EXAMPLE} />
-                  <p className="text-xs text-muted-foreground">
-                    Environment variables use <code className="font-mono bg-muted px-1 rounded">{'${VAR}'}</code> syntax and are expanded by the backend.
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Compatible with Claude Desktop, Cursor, and Windsurf config files — paste directly into the editor above.
-                  </p>
-                </div>
-              )}
-            </div>
-        </section>
         <section id="theme" className="scroll-mt-4 space-y-6">
             <div className="flex items-center gap-2">
               <Settings className="w-4 h-4 text-muted-foreground" />
@@ -831,80 +547,103 @@ export function SettingsPanel({
             </div>
           )}
         </section>
-        <section id="preview" className="scroll-mt-4 space-y-6">
-            {/* Preview trust — per-workspace HTML preview CSP policy.
-                Controls whether cross-origin resources (CDNs, APIs, WebSockets)
-                are allowed in sandboxed HTML preview iframes. */}
-            {workspaceId && onSetWorkspaceTrust && (
-              <div className="p-4 bg-panel border border-border rounded-lg space-y-3">
-                <div>
-                  <h4 className="font-semibold text-sm text-foreground">Preview trust</h4>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Controls how HTML previews from this workspace handle cross-origin resources.
-                  </p>
+        <section id="harnesses" className="scroll-mt-4 space-y-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-foreground">Configured Agents</h3>
+              <div className="flex gap-2">
+                <button onClick={handleAutodetect} disabled={isDetecting}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-foreground bg-secondary hover:bg-accent rounded-md border border-input transition disabled:opacity-50">
+                  <Search className="w-3.5 h-3.5" />
+                  {isDetecting ? 'Detecting...' : 'Auto-detect'}
+                </button>
+                <button onClick={() => setShowAddForm(!showAddForm)}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition">
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Custom
+                </button>
+              </div>
+            </div>
+
+            {showAddForm && (
+              <div className="p-4 bg-panel border border-primary/30 rounded-lg space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <LabeledInput id="agent-id-input" label="ID (e.g., custom-agent)"
+                    value={newAgent.id || ''} onChange={v => setNewAgent({ ...newAgent, id: v })} />
+                  <LabeledInput id="agent-name-input" label="Name (e.g., Custom CLI)"
+                    value={newAgent.name || ''} onChange={v => setNewAgent({ ...newAgent, name: v })} />
+                  <LabeledInput id="agent-command-input" label="Command executable" wrapperClass="col-span-2"
+                    value={newAgent.command || ''} onChange={v => setNewAgent({ ...newAgent, command: v })}
+                    placeholder="e.g. claude, codex, or /absolute/path/to/bin" />
                 </div>
-                {trustError && (
-                  <div className="flex items-start gap-2 p-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
-                    <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                    <span>{trustError}</span>
+
+                <div className="border-t border-border pt-3">
+                  <label htmlFor="model-id-input" className="block text-xs text-muted-foreground mb-2">Models</label>
+                  <div className="space-y-2 mb-2">
+                    {newAgent.models?.map((m, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs bg-background p-2 rounded border border-border">
+                        <Monitor className="w-3 h-3 text-muted-foreground" />
+                        <span className="font-mono text-primary">{m.id}</span>
+                        <span className="text-muted-foreground">({m.name})</span>
+                      </div>
+                    ))}
                   </div>
-                )}
-                <div className="flex flex-col gap-3 mt-1">
-                  <label className="flex items-start gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="preview-trust"
-                      value="ask"
-                      checked={workspaceTrusted == null}
-                      onChange={() => void handleSetTrust(null)}
-                      disabled={trustBusy}
-                      className="text-primary focus:ring-primary h-4 w-4 border-input accent-primary cursor-pointer mt-0.5"
-                    />
-                    <div className="space-y-0.5">
-                      <span className="block text-sm text-foreground">Ask on first preview</span>
-                      <span className="block text-xs text-muted-foreground">Prompt before rendering HTML previews from this workspace.</span>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="preview-trust"
-                      value="trusted"
-                      checked={workspaceTrusted === true}
-                      onChange={() => void handleSetTrust(true)}
-                      disabled={trustBusy}
-                      className="text-primary focus:ring-primary h-4 w-4 border-input accent-primary cursor-pointer mt-0.5"
-                    />
-                    <div className="space-y-0.5">
-                      <span className="block text-sm text-foreground">Trusted</span>
-                      <span className="block text-xs text-muted-foreground">Allow cross-origin resources (CDNs, APIs, WebSockets) in HTML previews.</span>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="preview-trust"
-                      value="untrusted"
-                      checked={workspaceTrusted === false}
-                      onChange={() => void handleSetTrust(false)}
-                      disabled={trustBusy}
-                      className="text-primary focus:ring-primary h-4 w-4 border-input accent-primary cursor-pointer mt-0.5"
-                    />
-                    <div className="space-y-0.5">
-                      <span className="block text-sm text-foreground">Untrusted</span>
-                      <span className="block text-xs text-muted-foreground">Block cross-origin resources and exfiltration channels in HTML previews.</span>
-                    </div>
-                  </label>
+                  <div className="flex gap-2">
+                    <input id="model-id-input" type="text" placeholder="Model ID" value={newModel.id}
+                      onChange={e => setNewModel({ ...newModel, id: e.target.value })}
+                      className="flex-1 bg-background border border-input rounded-md px-3 py-1.5 text-sm" />
+                    <label htmlFor="model-name-input" className="sr-only">Model name</label>
+                    <input id="model-name-input" type="text" placeholder="Model Name" value={newModel.name}
+                      onChange={e => setNewModel({ ...newModel, name: e.target.value })}
+                      className="flex-1 bg-background border border-input rounded-md px-3 py-1.5 text-sm" />
+                    <button onClick={handleAddModel} className="px-3 py-1.5 bg-secondary hover:bg-accent rounded-md text-xs">Add Model</button>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button onClick={handleAddAgent} className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm rounded-md font-medium">Save Agent</button>
                 </div>
               </div>
             )}
-            {(!workspaceId || !onSetWorkspaceTrust) && (
-              <p className="text-sm text-muted-foreground">Open a workspace to configure its preview trust policy.</p>
-            )}
+
+            <div className="space-y-3">
+              {agents.map(agent => (
+                <div key={agent.id} className="p-4 bg-panel border border-border rounded-lg flex flex-col gap-3 group">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h4 className="font-semibold text-foreground">{agent.name}</h4>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded border border-border">{agent.command}</span>
+                        {agent.warning && (
+                          <span className="flex items-center gap-1 text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                            <AlertTriangle className="w-3 h-3" />
+                            {agent.warning}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button onClick={() => onDeleteAgent(agent.id)} title="Delete Agent"
+                      aria-label={`Delete agent ${agent.name}`}
+                      className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition opacity-0 group-hover:opacity-100">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {agent.models.map(m => (
+                      <span key={m.id} className="text-xs px-2 py-1 bg-background border border-border text-muted-foreground rounded-md">{m.name}</span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {agents.length === 0 && (
+                <div className="text-center p-8 border border-dashed border-input rounded-lg text-muted-foreground text-sm">
+                  No agents configured. Click Auto-detect to search for installed agents.
+                </div>
+              )}
+            </div>
         </section>
-        <section id="permissions" className="scroll-mt-4 p-6 text-sm text-muted-foreground space-y-2">
-          <h3 className="text-base font-semibold text-foreground">Permissions</h3>
-          <p>Coming soon — per-workspace permission policies for file writes, shell commands, and network access will be configured here.</p>
+        <section id="profiles" className="scroll-mt-4">
+          <ProfilesSettings />
         </section>
         <section id="prompt-context" className="scroll-mt-4 space-y-6">
             <div className="flex items-center gap-2">
@@ -918,47 +657,25 @@ export function SettingsPanel({
                   Only relative paths are added automatically. File contents are never added from open tabs; explicit editor selections remain separate context.
                 </p>
               </div>
-              {promptContextError && (
-                <div className="flex items-start gap-2 p-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
-                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>{promptContextError}</span>
-                </div>
-              )}
+              {promptContextError && <ErrorNote message={promptContextError} />}
               {promptContextLoading || !promptContext ? (
                 <p className="text-xs text-muted-foreground">Loading context settings…</p>
               ) : (
                 <>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <label className="space-y-1">
-                      <span className="block text-xs text-foreground">Open and recently edited paths</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={promptContext.openFileLimit}
-                        onChange={(event) => updatePromptContext('openFileLimit', event.target.value)}
-                        className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm"
-                      />
-                    </label>
-                    <label className="space-y-1">
-                      <span className="block text-xs text-foreground">Top-level workspace entries</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={promptContext.workspaceFileListLimit}
-                        onChange={(event) => updatePromptContext('workspaceFileListLimit', event.target.value)}
-                        className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm"
-                      />
-                    </label>
+                    <LabeledInput label="Open and recently edited paths" type="number" min={0} max={100}
+                      wrapperClass="space-y-1" labelClass="block text-xs text-foreground"
+                      value={promptContext.openFileLimit}
+                      onChange={v => updatePromptContext('openFileLimit', v)} />
+                    <LabeledInput label="Top-level workspace entries" type="number" min={0} max={100}
+                      wrapperClass="space-y-1" labelClass="block text-xs text-foreground"
+                      value={promptContext.workspaceFileListLimit}
+                      onChange={v => updatePromptContext('workspaceFileListLimit', v)} />
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={savePromptContext}
+                    <button type="button" onClick={savePromptContext}
                       disabled={promptContextSaving || JSON.stringify(promptContext) === JSON.stringify(promptContextOriginal)}
-                      className="px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition disabled:opacity-50"
-                    >
+                      className="px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition disabled:opacity-50">
                       {promptContextSaving ? 'Saving…' : 'Save context limits'}
                     </button>
                     <span className="text-[11px] text-muted-foreground">0 disables a list; maximum 100.</span>
@@ -988,28 +705,19 @@ export function SettingsPanel({
               </p>
 
               {!activeSessionId && (
-                <p className="text-xs text-muted-foreground italic">
-                  Open a chat session to configure providers.
-                </p>
+                <p className="text-xs text-muted-foreground italic">Open a chat session to configure providers.</p>
               )}
 
               {activeSessionId && providersStatus === 'unsupported' && (
-                <p className="text-xs text-muted-foreground italic">
-                  The current agent does not support runtime provider configuration.
-                </p>
+                <p className="text-xs text-muted-foreground italic">The current agent does not support runtime provider configuration.</p>
               )}
 
               {activeSessionId && providersStatus === 'error' && providersError && (
-                <div className="flex items-start gap-2 p-3 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
-                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                  <span className="font-mono whitespace-pre-wrap break-all">{providersError}</span>
-                </div>
+                <ErrorNote message={providersError} mono className="p-3" />
               )}
 
               {activeSessionId && providersStatus === 'loaded' && providers.length === 0 && (
-                <p className="text-xs text-muted-foreground italic">
-                  No configurable providers for this agent.
-                </p>
+                <p className="text-xs text-muted-foreground italic">No configurable providers for this agent.</p>
               )}
 
               {activeSessionId && (providersStatus === 'loaded' || providersStatus === 'loading') && providers.length > 0 && (
@@ -1020,39 +728,202 @@ export function SettingsPanel({
                       provider={p}
                       busy={providerBusy === p.id}
                       error={providerBusy === p.id ? providersError : null}
-                      onSet={(apiType, baseUrl, headersText) =>
-                        handleSetProvider(p.id, apiType, baseUrl, headersText)
-                      }
-                      onDisable={() => handleDisableProvider(p.id)}
+                      onSet={(apiType, baseUrl, headersText) => handleProviderAction(p.id, 'set', apiType, baseUrl, headersText)}
+                      onDisable={() => handleProviderAction(p.id, 'disable')}
                     />
                   ))}
                 </div>
               )}
             </div>
         </section>
-        <section id="connection" className="scroll-mt-4 p-6 text-sm text-muted-foreground space-y-2">
-          {/* ServerSettings display goes here — fetch from GET /api/settings/server */}
-          <h3 className="text-base font-semibold text-foreground">Connection</h3>
-          <p>Server configuration — coming soon.</p>
-          <p className="text-xs">These settings require editing config.toml and restarting the daemon.</p>
+        <section id="mcp-servers" className="scroll-mt-4 flex flex-col gap-4">
+            {/* Header row */}
+            <div className="flex items-center justify-between shrink-0">
+              <h3 className="text-base font-semibold text-foreground">MCP Servers</h3>
+              <button type="button" title="See docs/reference/mcp/" aria-label="MCP documentation"
+                className="p-1 text-muted-foreground hover:text-foreground rounded-md transition">
+                <HelpCircle className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Quick-toggle chips */}
+            <div className="flex flex-wrap gap-2 shrink-0">
+              {servers.length === 0 && !mcpLoading && (
+                <span className="text-xs text-muted-foreground">No servers configured.</span>
+              )}
+              {servers.map(s => (
+                <button key={s.name} onClick={() => handleToggle(s.name, !s.enabled)}
+                  disabled={togglingServer === s.name} title={s.enabled ? 'Disable' : 'Enable'}
+                  className={cn(
+                    'flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition',
+                    s.enabled
+                      ? 'bg-primary/10 border-primary/30 text-primary'
+                      : 'bg-muted border-border text-muted-foreground',
+                    togglingServer === s.name && 'opacity-50',
+                  )}>
+                  <span className="font-mono">{s.name}</span>
+                  {togglingServer === s.name ? (
+                    <span className="w-3 h-3 inline-block" />
+                  ) : s.enabled ? (
+                    <Check className="w-3 h-3" />
+                  ) : (
+                    <span className="w-3 h-3 leading-none text-center">×</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Status line */}
+            <div className="text-xs text-muted-foreground shrink-0">
+              {servers.length} server{servers.length === 1 ? '' : 's'}
+              {disabledCount > 0 && `, ${disabledCount} disabled`}
+            </div>
+
+            {mcpError && <ErrorNote message={mcpError} mono className="p-3 shrink-0" />}
+
+            {/* CodeMirror JSON editor */}
+            <div className="flex-1 min-h-0 overflow-hidden border border-border rounded-md">
+              <CodeMirror value={mcpText} onChange={setMcpText} extensions={[json()]} theme={oneDark}
+                height="100%" className="h-full text-[13px]"
+                basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true,
+                  bracketMatching: true, closeBrackets: true, indentOnInput: true }} />
+            </div>
+
+            {/* Save / Revert buttons */}
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={handleSave} disabled={mcpSaving || mcpText === mcpOriginal}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition disabled:opacity-50">
+                <Save className="w-3.5 h-3.5" />
+                {mcpSaving ? 'Saving...' : 'Save'}
+              </button>
+              <button onClick={handleRevert} disabled={mcpText === mcpOriginal}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-foreground bg-secondary hover:bg-accent rounded-md border border-input transition disabled:opacity-50">
+                <RotateCcw className="w-3.5 h-3.5" />
+                Revert
+              </button>
+              {mcpSaved && (
+                <span className="flex items-center gap-1 text-xs text-green-500">
+                  <Check className="w-3.5 h-3.5" />
+                  Saved
+                </span>
+              )}
+            </div>
+
+            {/* Quick reference (collapsible) */}
+            <div className="shrink-0 border border-border rounded-md">
+              <button onClick={() => setShowQuickRef(!showQuickRef)}
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-foreground bg-panel hover:bg-accent rounded-md transition">
+                {showQuickRef ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                Quick reference
+              </button>
+              {showQuickRef && (
+                <div className="p-3 space-y-3 border-t border-border">
+                  <CopyableExample label="stdio" text={STDIO_EXAMPLE} />
+                  <CopyableExample label="http" text={HTTP_EXAMPLE} />
+                  <p className="text-xs text-muted-foreground">
+                    Environment variables use <code className="font-mono bg-muted px-1 rounded">{'${VAR}'}</code> syntax and are expanded by the backend.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Compatible with Claude Desktop, Cursor, and Windsurf config files — paste directly into the editor above.
+                  </p>
+                </div>
+              )}
+            </div>
         </section>
-        <section id="pairing" className="scroll-mt-4 p-6 text-sm text-muted-foreground space-y-2">
-          {/* PairingSettings display goes here */}
-          <h3 className="text-base font-semibold text-foreground">Pairing</h3>
-          <p>Device pairing configuration — coming soon.</p>
-          <p className="text-xs">These settings require editing config.toml and restarting the daemon.</p>
+        <section id="preview" className="scroll-mt-4 space-y-6">
+            {/* Preview trust — per-workspace HTML preview CSP policy.
+                Controls whether cross-origin resources (CDNs, APIs, WebSockets)
+                are allowed in sandboxed HTML preview iframes. */}
+            {workspaceId && onSetWorkspaceTrust && (
+              <div className="p-4 bg-panel border border-border rounded-lg space-y-3">
+                <div>
+                  <h4 className="font-semibold text-sm text-foreground">Preview trust</h4>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Controls how HTML previews from this workspace handle cross-origin resources.
+                  </p>
+                </div>
+                {trustError && <ErrorNote message={trustError} />}
+                <div className="flex flex-col gap-3 mt-1">
+                  {([
+                    ['ask', workspaceTrusted == null, null, 'Ask on first preview', 'Prompt before rendering HTML previews from this workspace.'],
+                    ['trusted', workspaceTrusted === true, true, 'Trusted', 'Allow cross-origin resources (CDNs, APIs, WebSockets) in HTML previews.'],
+                    ['untrusted', workspaceTrusted === false, false, 'Untrusted', 'Block cross-origin resources and exfiltration channels in HTML previews.'],
+                  ] as const).map(([value, checked, trustValue, title, desc]) => (
+                    <label key={value} className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="preview-trust"
+                        value={value}
+                        checked={checked}
+                        onChange={() => void handleSetTrust(trustValue)}
+                        disabled={trustBusy}
+                        className="text-primary focus:ring-primary h-4 w-4 border-input accent-primary cursor-pointer mt-0.5"
+                      />
+                      <div className="space-y-0.5">
+                        <span className="block text-sm text-foreground">{title}</span>
+                        <span className="block text-xs text-muted-foreground">{desc}</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(!workspaceId || !onSetWorkspaceTrust) && (
+              <p className="text-sm text-muted-foreground">Open a workspace to configure its preview trust policy.</p>
+            )}
         </section>
-        <section id="security" className="scroll-mt-4 p-6 text-sm text-muted-foreground space-y-2">
-          {/* SecuritySettings display goes here */}
-          <h3 className="text-base font-semibold text-foreground">Security</h3>
-          <p>Security and TLS configuration — coming soon.</p>
-          <p className="text-xs">These settings require editing config.toml and restarting the daemon.</p>
+        <section id="permissions" className="scroll-mt-4 p-6 text-sm text-muted-foreground space-y-2">
+          <h3 className="text-base font-semibold text-foreground">Permissions</h3>
+          <p>Coming soon — per-workspace permission policies for file writes, shell commands, and network access will be configured here.</p>
         </section>
-        <section id="profiles" className="scroll-mt-4">
-          <ProfilesSettings />
-        </section>
+        {SERVER_NETWORK_PLACEHOLDERS.map(([id, label, desc]) => (
+          <section key={id} id={id} className="scroll-mt-4 p-6 text-sm text-muted-foreground space-y-2">
+            <h3 className="text-base font-semibold text-foreground">{label}</h3>
+            <p>{desc} — coming soon.</p>
+            <p className="text-xs">These settings require editing config.toml and restarting the daemon.</p>
+          </section>
+        ))}
       </div>
     </div>
+  )
+}
+
+/** Inline error banner with an AlertTriangle icon. `mono` renders the
+ *  message in a monospaced, word-breaking span (used for raw API errors). */
+function ErrorNote({ message, mono, className }: { message: string; mono?: boolean; className?: string }) {
+  return (
+    <div className={cn('flex items-start gap-2 p-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md', className)}>
+      <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+      <span className={mono ? 'font-mono whitespace-pre-wrap break-all' : undefined}>{message}</span>
+    </div>
+  )
+}
+
+/** A labeled input wrapped in a <label> with the standard panel styling.
+ *  Used by the new-agent form and the prompt-context limits. */
+function LabeledInput({
+  id, label, value, onChange, placeholder, type = 'text', min, max,
+  wrapperClass = 'block', labelClass = 'block text-xs text-muted-foreground mb-1', inputClass = 'w-full',
+}: {
+  id?: string
+  label: string
+  value: string | number
+  onChange: (v: string) => void
+  placeholder?: string
+  type?: string
+  min?: number
+  max?: number
+  wrapperClass?: string
+  labelClass?: string
+  inputClass?: string
+}) {
+  return (
+    <label className={wrapperClass}>
+      <span className={labelClass}>{label}</span>
+      <input id={id} type={type} min={min} max={max} value={value}
+        onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        className={cn('bg-background border border-input rounded-md px-3 py-1.5 text-sm', inputClass)} />
+    </label>
   )
 }
 
@@ -1073,17 +944,13 @@ function CopyableExample({ label, text }: { label: string; text: string }) {
     <div>
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs font-mono text-muted-foreground">{label}</span>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground bg-secondary hover:bg-accent rounded border border-border transition"
-        >
+        <button onClick={handleCopy}
+          className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground bg-secondary hover:bg-accent rounded border border-border transition">
           {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
           {copied ? 'Copied!' : 'Copy'}
         </button>
       </div>
-      <pre className="text-[11px] font-mono bg-muted p-2 rounded border border-border overflow-x-auto text-foreground">
-        {text}
-      </pre>
+      <pre className="text-[11px] font-mono bg-muted p-2 rounded border border-border overflow-x-auto text-foreground">{text}</pre>
     </div>
   )
 }
@@ -1098,20 +965,14 @@ function CopyableExample({ label, text }: { label: string; text: string }) {
  *
  * Headers may contain auth tokens, so the textarea value is never logged.
  */
-function ProviderRow({
-  provider,
-  busy,
-  error,
-  onSet,
-  onDisable,
-}: {
+function ProviderRow({ provider, busy, error, onSet, onDisable }: {
   provider: ProviderInfo
   busy: boolean
   error: string | null
   onSet: (apiType: string, baseUrl: string, headersText: string) => void
   onDisable: () => void
 }) {
-  const supported = provider.supported.length > 0 ? provider.supported : []
+  const supported = provider.supported
   const initialApiType = provider.current?.apiType ?? supported[0] ?? ''
   const [apiType, setApiType] = useState(initialApiType)
   const [baseUrl, setBaseUrl] = useState(provider.current?.baseUrl ?? '')
@@ -1148,64 +1009,35 @@ function ProviderRow({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-[120px_1fr] gap-2">
-        <select
-          value={apiType}
-          onChange={e => setApiType(e.target.value)}
-          disabled={busy || supported.length === 0}
-          className="bg-background border border-input rounded-md px-2 py-1.5 text-sm disabled:opacity-50"
-          aria-label={`${provider.id} api type`}
-        >
+        <select value={apiType} onChange={e => setApiType(e.target.value)}
+          disabled={busy || supported.length === 0} aria-label={`${provider.id} api type`}
+          className="bg-background border border-input rounded-md px-2 py-1.5 text-sm disabled:opacity-50">
           {supported.length === 0 && <option value="">—</option>}
-          {supported.map(t => (
-            <option key={t} value={t}>{t}</option>
-          ))}
+          {supported.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
-        <input
-          type="text"
-          value={baseUrl}
-          onChange={e => setBaseUrl(e.target.value)}
-          placeholder="https://api.example.com"
-          disabled={busy}
-          className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm disabled:opacity-50"
-          aria-label={`${provider.id} base URL`}
-        />
+        <input type="text" value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
+          placeholder="https://api.example.com" disabled={busy} aria-label={`${provider.id} base URL`}
+          className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-sm disabled:opacity-50" />
       </div>
 
-      <textarea
-        value={headersText}
-        onChange={e => setHeadersText(e.target.value)}
-        placeholder={'Optional headers (one per line):\nAuthorization: Bearer ...'}
-        rows={2}
-        disabled={busy}
-        className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-xs font-mono disabled:opacity-50"
+      <textarea value={headersText} onChange={e => setHeadersText(e.target.value)} rows={2}
+        disabled={busy} placeholder={'Optional headers (one per line):\nAuthorization: Bearer ...'}
         aria-label={`${provider.id} headers`}
-      />
+        className="w-full bg-background border border-input rounded-md px-3 py-1.5 text-xs font-mono disabled:opacity-50" />
 
-      {error && (
-        <div className="flex items-start gap-2 p-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
-          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span className="font-mono whitespace-pre-wrap break-all">{error}</span>
-        </div>
-      )}
+      {error && <ErrorNote message={error} mono />}
 
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onSet(apiType, baseUrl.trim(), headersText)}
+        <button type="button" onClick={() => onSet(apiType, baseUrl.trim(), headersText)}
           disabled={!canSet}
-          className="px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition disabled:opacity-50"
-        >
+          className="px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition disabled:opacity-50">
           {busy ? 'Saving…' : 'Set'}
         </button>
         {provider.required ? (
           <span className="text-[10px] text-muted-foreground">Required providers cannot be disabled.</span>
         ) : (
-          <button
-            type="button"
-            onClick={onDisable}
-            disabled={!canDisable}
-            className="px-3 py-1.5 text-xs font-medium text-foreground bg-secondary hover:bg-accent rounded-md border border-input transition disabled:opacity-50"
-          >
+          <button type="button" onClick={onDisable} disabled={!canDisable}
+            className="px-3 py-1.5 text-xs font-medium text-foreground bg-secondary hover:bg-accent rounded-md border border-input transition disabled:opacity-50">
             Disable
           </button>
         )}
