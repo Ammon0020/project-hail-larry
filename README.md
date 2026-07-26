@@ -20,6 +20,24 @@ Agents propose; you approve. Shell commands and file writes require explicit per
 
 ## Setup
 
+Verify prerequisites and install frontend dependencies:
+
+```bash
+# Linux / macOS
+./scripts/setup.sh
+
+# Windows (PowerShell)
+.\scripts\setup.ps1
+
+# Or via Make
+make setup
+```
+
+This checks Node.js 20+, npm, the Rust toolchain (pinned in `rust-toolchain.toml`),
+and runs `npm ci` in `web/` if `node_modules` is missing. The build scripts
+delegate to this check automatically, so you can skip straight to building if
+your environment is already set up.
+
 **Build** (compiles frontend and embeds it into the Rust binary):
 
 ```bash

@@ -1,4 +1,8 @@
-.PHONY: all build-frontend build test test-contract lint lint-rust lint-frontend check clean mockagent
+.PHONY: all build-frontend build test test-contract lint lint-rust lint-frontend check clean mockagent setup
+
+# Verify/install prerequisites (tools, versions, frontend deps).
+setup:
+	./scripts/setup.sh
 
 # Build the frontend into web/dist (required by Rust build.rs / rust-embed).
 build-frontend:

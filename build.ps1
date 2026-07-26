@@ -8,11 +8,19 @@ Primary binary: bin\local_agent.exe.
 
 $ErrorActionPreference = "Stop"
 
-foreach ($tool in @("npm", "cargo")) {
-    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        Write-Host "ERROR: '$tool' is not installed or not on PATH." -ForegroundColor Red
-        exit 1
-    }
+# Verify prerequisites (tools, versions, frontend deps) before building.
+# scripts\setup.ps1 -Verify exits non-zero with a specific message if
+# anything is missing or outdated. A non-zero exit from a called script can
+# surface as a terminating error under "Stop", so relax EAP around the call
+# and check $LASTEXITCODE to fail cleanly with a setup hint.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& "$PSScriptRoot\scripts\setup.ps1" -Verify
+$verifyCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
+if ($verifyCode -ne 0) {
+    Write-Host "  Run '.\scripts\setup.ps1' to install missing prerequisites." -ForegroundColor Red
+    exit 1
 }
 
 Write-Host "1. Building frontend..." -ForegroundColor Cyan

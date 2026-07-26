@@ -18,13 +18,13 @@ else
     CYAN=""; GREEN=""; RESET=""
 fi
 
-# Fail loudly if required tooling is missing.
-for tool in npm cargo; do
-    if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "ERROR: '$tool' is not installed or not on PATH." >&2
-        exit 1
-    fi
-done
+# Verify prerequisites (tools, versions, frontend deps) before building.
+# scripts/setup.sh --verify exits non-zero with a specific message if
+# anything is missing or outdated.
+if ! "$ROOT_DIR/scripts/setup.sh" --verify; then
+    echo "  Run './scripts/setup.sh' to install missing prerequisites." >&2
+    exit 1
+fi
 
 echo "${CYAN}1. Building frontend...${RESET}"
 (cd web && npm run build)
