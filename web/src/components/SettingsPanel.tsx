@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -34,6 +34,8 @@ import {
 import { cn } from '@/lib/utils'
 import { getStoredTheme, setTheme, type Theme } from '@/lib/theme'
 import { ProfilesSettings } from './ProfilesSettings'
+import { EditorSettings } from './settings/EditorSettings'
+import type { EditorSettings as EditorSettingsState } from '@/hooks/useEditorSettings'
 
 const STDIO_EXAMPLE = `{
   "mcpServers": {
@@ -55,6 +57,43 @@ const HTTP_EXAMPLE = `{
   }
 }`
 
+/** Hierarchical settings subsection identifiers. Replaces the former flat
+ *  Agents / MCP / General / Profiles tabs with finer-grained subsections
+ *  grouped under top-level headings in the left bar. */
+export type SettingsSection =
+  | 'theme' | 'editor'
+  | 'harnesses' | 'profiles' | 'prompt-context' | 'providers'
+  | 'mcp-servers'
+  | 'preview' | 'permissions'
+  | 'connection' | 'pairing' | 'security'
+
+/** Display name for each subsection — used by the mobile header and as the
+ *  accessible label for nav buttons. */
+const SECTION_LABELS: Record<SettingsSection, string> = {
+  theme: 'Theme',
+  editor: 'Editor',
+  harnesses: 'Harnesses',
+  profiles: 'Profiles',
+  'prompt-context': 'Prompt Context',
+  providers: 'Providers',
+  'mcp-servers': 'MCP Servers',
+  preview: 'Preview',
+  permissions: 'Permissions',
+  connection: 'Connection',
+  pairing: 'Pairing',
+  security: 'Security',
+}
+
+/** Left-bar layout: top-level group headers with their clickable subsections.
+ *  Headers are non-clickable labels; subsections are indented nav items. */
+const NAV_GROUPS: { label: string; sections: SettingsSection[] }[] = [
+  { label: 'Appearance', sections: ['theme', 'editor'] },
+  { label: 'Agents & AI', sections: ['harnesses', 'profiles', 'prompt-context', 'providers'] },
+  { label: 'Tools', sections: ['mcp-servers'] },
+  { label: 'Workspace', sections: ['preview', 'permissions'] },
+  { label: 'Server & Network', sections: ['connection', 'pairing', 'security'] },
+]
+
 export function SettingsPanel({
   agents,
   onAddAgent,
@@ -66,6 +105,8 @@ export function SettingsPanel({
   workspaceId,
   workspaceTrusted,
   onSetWorkspaceTrust,
+  editorSettings,
+  onEditorSettingsChange,
 }: {
   agents: Agent[]
   onAddAgent: (a: Agent) => Promise<void>
@@ -77,27 +118,33 @@ export function SettingsPanel({
    *  section renders a muted "open a session" hint instead of fetching. */
   activeSessionId?: string | null
   /**
-   * Controlled settings section (Agents / MCP / General). Owned by App so
-   * deep-links (e.g. MCP popout Settings icon) can focus a section.
+   * Controlled settings subsection (e.g. harnesses, mcp-servers, theme).
+   * Owned by App so deep-links (e.g. MCP popout Settings icon) can focus a
+   * subsection without an event bus.
    */
-  activeSection?: 'agents' | 'mcp' | 'general' | 'profiles'
-  /** Called when the user picks a different settings section. */
-  onSectionChange?: (section: 'agents' | 'mcp' | 'general' | 'profiles') => void
+  activeSection?: SettingsSection
+  /** Called when the user picks a different settings subsection. */
+  onSectionChange?: (section: SettingsSection) => void
   /** Id of the active workspace, for the Preview trust section. */
   workspaceId?: string
   /** Current per-workspace preview trust state. */
   workspaceTrusted?: boolean | null
   /** Updates the active workspace's preview trust state. */
   onSetWorkspaceTrust?: (workspaceId: string, trusted: boolean | null) => Promise<void>
+  /** Editor preferences (font size, tab size, toggles) from useEditorSettings. */
+  editorSettings?: EditorSettingsState
+  /** Patch callback for editor preferences — merges a partial update. */
+  onEditorSettingsChange?: (patch: Partial<EditorSettingsState>) => void
 }) {
-  // Prefer controlled section from App when provided; otherwise local state
-  // (keeps the panel usable in isolation / Storybook).
-  const [localTab, setLocalTab] = useState<'agents' | 'mcp' | 'general' | 'profiles'>('agents')
-  const activeTab = activeSection ?? localTab
-  const setActiveTab = onSectionChange ?? setLocalTab
+  // Observer-tracked section in view — drives nav highlighting + mobile header.
+  const [activeView, setActiveView] = useState<SettingsSection>(activeSection ?? 'harnesses')
   const [isDetecting, setIsDetecting] = useState(false)
   const [showMobileNav, setShowMobileNav] = useState(false)
   const [localTheme, setLocalTheme] = useState<Theme>(getStoredTheme())
+  // Collapsible groups (default expanded); ephemeral section-label search.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [searchQuery, setSearchQuery] = useState('')
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   // New agent form state
   const [showAddForm, setShowAddForm] = useState(false)
@@ -300,17 +347,18 @@ export function SettingsPanel({
     }
   }
 
-  // Load providers when the General tab is opened with an active session.
-  // Re-fetches when the session changes so switching chats refreshes the list.
-  // Mirrors the loadMcp effect above: the async helper sets a 'loading' state
-  // before its first await (required for the loading indicator). The
-  // set-state-in-effect rule flags interprocedural calls with args but not
-  // the arg-less loadMcp — same pattern, so we disable it here for parity.
+  // Load providers when the Providers section scrolls into view with an active
+  // session. Re-fetches when the session changes so switching chats refreshes
+  // the list. Mirrors the loadMcp effect above: the async helper sets a
+  // 'loading' state before its first await (required for the loading
+  // indicator). The set-state-in-effect rule flags interprocedural calls with
+  // args but not the arg-less loadMcp — same pattern, so we disable it here
+  // for parity.
   useEffect(() => {
-    if (activeTab !== 'general' || !activeSessionId) return
+    if (activeView !== 'providers' || !activeSessionId) return
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadProviders(activeSessionId)
-  }, [activeTab, activeSessionId])
+  }, [activeView, activeSessionId])
 
   /** Parses a "key: value" textarea into a header record. Blank lines and
    *  lines without a colon are skipped. Values are trimmed but otherwise
@@ -386,21 +434,68 @@ export function SettingsPanel({
     }
   }
 
-  const tabButtonClass = (active: boolean) =>
-    cn(
-      'px-4 py-2 text-sm text-left transition',
-      active
-        ? 'text-primary bg-primary/10 font-medium border-r-2 border-primary'
-        : 'text-muted-foreground hover:text-foreground',
-    )
+  /** Scrolls the main content to a section anchor (nav clicks + deep-links). */
+  const scrollToSection = useCallback((section: SettingsSection) => {
+    document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
+
+  // Deep-link: scroll to the controlled `activeSection` on mount / change.
+  useEffect(() => { if (activeSection) scrollToSection(activeSection) }, [activeSection, scrollToSection])
+
+  // Highlight the <section> near the top of the scroll container in the nav.
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    const obs = new IntersectionObserver(es => {
+      for (const e of es) if (e.isIntersecting) { setActiveView(e.target.id as SettingsSection); onSectionChange?.(e.target.id as SettingsSection) }
+    }, { root: container, rootMargin: '-10% 0px -80% 0px', threshold: 0 })
+    container.querySelectorAll<HTMLElement>('section[id]').forEach(s => obs.observe(s))
+    return () => obs.disconnect()
+  }, [onSectionChange])
+
+  const toggleGroup = useCallback((label: string) => {
+    setCollapsedGroups(prev => { const n = new Set(prev); if (n.has(label)) n.delete(label); else n.add(label); return n })
+  }, [])
+  const q = searchQuery.trim().toLowerCase(), isSearching = q.length > 0
+  const subButtonClass = (active: boolean) => cn('pl-7 pr-4 py-1.5 text-sm text-left transition w-full',
+    active ? 'text-primary bg-primary/10 font-medium border-r-2 border-primary' : 'text-muted-foreground hover:text-foreground')
+
+  const renderNav = () => (
+    <div className="flex flex-col py-2">
+      <div className="px-3 pb-2 relative">
+        <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+        <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+          placeholder="Search settings" aria-label="Search settings"
+          className="w-full pl-7 pr-2 py-1.5 text-xs bg-background border border-input rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
+      </div>
+      {NAV_GROUPS.map(group => {
+        const visible = isSearching ? group.sections.filter(s => SECTION_LABELS[s].toLowerCase().includes(q)) : group.sections
+        if (isSearching && visible.length === 0) return null
+        const expanded = isSearching || !collapsedGroups.has(group.label)
+        return (
+          <div key={group.label} className="mb-1">
+            <button onClick={() => toggleGroup(group.label)} aria-expanded={expanded} aria-label={`Toggle ${group.label} group`}
+              className="flex items-center gap-1 w-full px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70 hover:text-foreground transition">
+              {expanded ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+              {group.label}
+            </button>
+            {expanded && visible.map(section => (
+              <button key={section} onClick={() => { scrollToSection(section); setShowMobileNav(false) }}
+                className={subButtonClass(activeView === section)}>{SECTION_LABELS[section]}</button>
+            ))}
+          </div>
+        )
+      })}
+    </div>
+  )
 
   return (
     <div className="h-full flex flex-col md:flex-row relative">
       {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between p-3 border-b border-border bg-panel shrink-0">
         <div className="flex items-center gap-2">
-          <button 
-            onClick={() => setShowMobileNav(!showMobileNav)} 
+          <button
+            onClick={() => setShowMobileNav(!showMobileNav)}
             className="p-1.5 hover:bg-accent rounded-md transition"
             aria-label="Toggle navigation menu"
             aria-expanded={showMobileNav}
@@ -408,76 +503,29 @@ export function SettingsPanel({
             <Menu className="w-5 h-5 text-foreground" />
           </button>
           <span className="font-semibold text-sm">
-            {activeTab === 'agents' ? 'Agents & Models' : activeTab === 'mcp' ? 'MCP Servers' : activeTab === 'profiles' ? 'Profiles' : 'General Settings'}
+            {SECTION_LABELS[activeView]}
           </span>
         </div>
       </div>
 
       {/* Mobile Nav Overlay */}
-      <div 
+      <div
         className={cn(
-          "md:hidden absolute inset-x-0 bottom-0 top-[53px] z-50 bg-background flex flex-col p-2 transition-all duration-200 ease-out origin-top",
+          "md:hidden absolute inset-x-0 bottom-0 top-[53px] z-50 bg-background flex flex-col p-2 overflow-y-auto transition-all duration-200 ease-out origin-top",
           showMobileNav ? "opacity-100 scale-y-100" : "opacity-0 scale-y-95 pointer-events-none"
         )}
       >
-        <button
-          onClick={() => { setActiveTab('agents'); setShowMobileNav(false) }}
-          className={tabButtonClass(activeTab === 'agents')}
-        >
-          Agents & Models
-        </button>
-        <button
-          onClick={() => { setActiveTab('mcp'); setShowMobileNav(false) }}
-          className={tabButtonClass(activeTab === 'mcp')}
-        >
-          MCP Servers
-        </button>
-        <button
-          onClick={() => { setActiveTab('general'); setShowMobileNav(false) }}
-          className={tabButtonClass(activeTab === 'general')}
-        >
-          General
-        </button>
-        <button
-          onClick={() => { setActiveTab('profiles'); setShowMobileNav(false) }}
-          className={tabButtonClass(activeTab === 'profiles')}
-        >
-          Profiles
-        </button>
+        {renderNav()}
       </div>
 
       {/* Sidebar - Desktop Only */}
-      <div className="hidden md:flex w-48 bg-activity-bar border-r border-border flex-col py-2 shrink-0">
-        <button
-          onClick={() => setActiveTab('agents')}
-          className={tabButtonClass(activeTab === 'agents')}
-        >
-          Agents & Models
-        </button>
-        <button
-          onClick={() => setActiveTab('mcp')}
-          className={tabButtonClass(activeTab === 'mcp')}
-        >
-          MCP Servers
-        </button>
-        <button
-          onClick={() => setActiveTab('general')}
-          className={tabButtonClass(activeTab === 'general')}
-        >
-          General
-        </button>
-        <button
-          onClick={() => setActiveTab('profiles')}
-          className={tabButtonClass(activeTab === 'profiles')}
-        >
-          Profiles
-        </button>
+      <div className="hidden md:flex w-56 bg-activity-bar border-r border-border flex-col overflow-y-auto shrink-0">
+        {renderNav()}
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-5 bg-background">
-        {activeTab === 'agents' && (
-          <div className="space-y-6">
+      {/* Content — single scrollable page; each section is an anchor target. */}
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-5 bg-background">
+        <section id="harnesses" className="scroll-mt-4 space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-semibold text-foreground">Configured Agents</h3>
               <div className="flex gap-2">
@@ -615,11 +663,8 @@ export function SettingsPanel({
                 </div>
               )}
             </div>
-          </div>
-        )}
-
-        {activeTab === 'mcp' && (
-          <div className="flex flex-col h-full gap-4">
+        </section>
+        <section id="mcp-servers" className="scroll-mt-4 flex flex-col gap-4">
             {/* Header row */}
             <div className="flex items-center justify-between shrink-0">
               <h3 className="text-base font-semibold text-foreground">MCP Servers</h3>
@@ -745,28 +790,25 @@ export function SettingsPanel({
                 </div>
               )}
             </div>
-          </div>
-        )}
-
-        {activeTab === 'general' && (
-          <div className="space-y-6">
+        </section>
+        <section id="theme" className="scroll-mt-4 space-y-6">
             <div className="flex items-center gap-2">
               <Settings className="w-4 h-4 text-muted-foreground" />
-              <h3 className="text-base font-semibold text-foreground">General Settings</h3>
+              <h3 className="text-base font-semibold text-foreground">Theme</h3>
             </div>
-            
+
             {/* Theme Section */}
             <div className="p-4 bg-panel border border-border rounded-lg space-y-3">
-              <h4 className="font-semibold text-sm text-foreground">Theme</h4>
+              <h4 className="font-semibold text-sm text-foreground">Appearance</h4>
               <p className="text-xs text-muted-foreground">Choose the visual appearance of the application.</p>
-              
+
               <div className="flex flex-col gap-2 mt-2">
                 {(['dark', 'light', 'system'] as Theme[]).map(t => (
                   <label key={t} className="flex items-center gap-2 cursor-pointer w-fit">
-                    <input 
-                      type="radio" 
-                      name="theme" 
-                      value={t} 
+                    <input
+                      type="radio"
+                      name="theme"
+                      value={t}
                       checked={localTheme === t}
                       onChange={() => {
                         setLocalTheme(t)
@@ -779,7 +821,17 @@ export function SettingsPanel({
                 ))}
               </div>
             </div>
-
+        </section>
+        <section id="editor" className="scroll-mt-4">
+          {editorSettings && onEditorSettingsChange ? (
+            <EditorSettings settings={editorSettings} onChange={onEditorSettingsChange} />
+          ) : (
+            <div className="p-6 text-sm text-muted-foreground">
+              <p>Editor settings unavailable.</p>
+            </div>
+          )}
+        </section>
+        <section id="preview" className="scroll-mt-4 space-y-6">
             {/* Preview trust — per-workspace HTML preview CSP policy.
                 Controls whether cross-origin resources (CDNs, APIs, WebSockets)
                 are allowed in sandboxed HTML preview iframes. */}
@@ -846,7 +898,19 @@ export function SettingsPanel({
                 </div>
               </div>
             )}
-
+            {(!workspaceId || !onSetWorkspaceTrust) && (
+              <p className="text-sm text-muted-foreground">Open a workspace to configure its preview trust policy.</p>
+            )}
+        </section>
+        <section id="permissions" className="scroll-mt-4 p-6 text-sm text-muted-foreground space-y-2">
+          <h3 className="text-base font-semibold text-foreground">Permissions</h3>
+          <p>Coming soon — per-workspace permission policies for file writes, shell commands, and network access will be configured here.</p>
+        </section>
+        <section id="prompt-context" className="scroll-mt-4 space-y-6">
+            <div className="flex items-center gap-2">
+              <Settings className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-base font-semibold text-foreground">Prompt Context</h3>
+            </div>
             <div className="p-4 bg-panel border border-border rounded-lg space-y-3">
               <div>
                 <h4 className="font-semibold text-sm text-foreground">Prompt context</h4>
@@ -902,7 +966,12 @@ export function SettingsPanel({
                 </>
               )}
             </div>
-
+        </section>
+        <section id="providers" className="scroll-mt-4 space-y-6">
+            <div className="flex items-center gap-2">
+              <Settings className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-base font-semibold text-foreground">Providers (advanced)</h3>
+            </div>
             {/* Providers (advanced) — per-session ACP provider configuration.
                 Capability-gated: hidden entirely when no session is open, and
                 shows a muted note when the agent returns 501 (no provider
@@ -960,10 +1029,28 @@ export function SettingsPanel({
                 </div>
               )}
             </div>
-          </div>
-        )}
-
-        {activeTab === 'profiles' && <ProfilesSettings />}
+        </section>
+        <section id="connection" className="scroll-mt-4 p-6 text-sm text-muted-foreground space-y-2">
+          {/* ServerSettings display goes here — fetch from GET /api/settings/server */}
+          <h3 className="text-base font-semibold text-foreground">Connection</h3>
+          <p>Server configuration — coming soon.</p>
+          <p className="text-xs">These settings require editing config.toml and restarting the daemon.</p>
+        </section>
+        <section id="pairing" className="scroll-mt-4 p-6 text-sm text-muted-foreground space-y-2">
+          {/* PairingSettings display goes here */}
+          <h3 className="text-base font-semibold text-foreground">Pairing</h3>
+          <p>Device pairing configuration — coming soon.</p>
+          <p className="text-xs">These settings require editing config.toml and restarting the daemon.</p>
+        </section>
+        <section id="security" className="scroll-mt-4 p-6 text-sm text-muted-foreground space-y-2">
+          {/* SecuritySettings display goes here */}
+          <h3 className="text-base font-semibold text-foreground">Security</h3>
+          <p>Security and TLS configuration — coming soon.</p>
+          <p className="text-xs">These settings require editing config.toml and restarting the daemon.</p>
+        </section>
+        <section id="profiles" className="scroll-mt-4">
+          <ProfilesSettings />
+        </section>
       </div>
     </div>
   )

@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { X, Wifi, WifiOff, Bot, Command, PanelLeft, FolderOpen, Search, Settings, Save } from 'lucide-react'
+import { useEditorSettings } from '@/hooks/useEditorSettings'
 import { LockScreen } from '@/components/LockScreen'
 import { CommandPalette, type Command as PaletteCommand } from '@/components/CommandPalette'
 import { ActivityBar } from '@/components/ActivityBar'
 import { LeftSidebar } from '@/components/LeftSidebar'
 import { EditorPane } from '@/components/EditorPane'
+import { type SettingsSection } from '@/components/SettingsPanel'
 import { TabBar } from '@/components/TabBar'
 import { editorTabPreviewState } from '@/components/tabPreviewState'
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
@@ -202,9 +204,10 @@ export default function App() {
     activeTabId !== 'settings' ? activeTabId : null
   )
 
-  // Settings panel section (Agents / MCP / General) — owned here so deep-links
-  // (MCP popout Settings icon) can focus a section without an event bus.
-  const [settingsSection, setSettingsSection] = useState<'agents' | 'mcp' | 'general' | 'profiles'>('agents')
+  // Settings panel subsection (e.g. harnesses, mcp-servers, theme) — owned
+  // here so deep-links (MCP popout Settings icon) can focus a subsection
+  // without an event bus.
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('harnesses')
 
   useEffect(() => {
     if (activeTabId && activeTabId !== 'settings') {
@@ -212,20 +215,12 @@ export default function App() {
     }
   }, [activeTabId])
 
-  const [wrap, setWrap] = useState(false)
-
-  // Editor font size — persisted to localStorage so the user's zoom preference
-  // survives reloads. Lifted from EditorPane so the StatusBar (rendered at the
-  // app level on desktop, spanning the full width) can read and adjust it.
-  // Defaults to 13px on desktop, 15px on mobile for readability on small screens.
-  const [fontSize, setFontSize] = useState<number>(() => {
-    const stored = localStorage.getItem('lai:editor-font-size')
-    if (stored) return parseInt(stored, 10) || (isDesktop ? 13 : 15)
-    return isDesktop ? 13 : 15
-  })
-  useEffect(() => {
-    localStorage.setItem('lai:editor-font-size', String(fontSize))
-  }, [fontSize])
+  // Editor preferences (font size, word wrap, tab size, line numbers, fold
+  // gutter, bracket matching, auto indent, close brackets) — persisted to
+  // localStorage via useEditorSettings. Font size and wrap are lifted here so
+  // the StatusBar (desktop, full-width) and TabBar can read/adjust them.
+  const { settings: editorSettings, update: updateEditorSettings, setFontSize, setWrap } = useEditorSettings(isDesktop)
+  const { fontSize, wrap } = editorSettings
 
   // Current editor selection, lifted from EditorPane via the
   // onSelectionChange callback so it can be reported to the backend alongside
@@ -398,7 +393,7 @@ export default function App() {
    *  activates it; otherwise creates and activates it. Optional `section`
    *  focuses Agents / MCP / General. Settings tabs are not persisted to
    *  localStorage (filtered out in the persistence effect). */
-  const openSettingsTab = useCallback((section?: 'agents' | 'mcp' | 'general' | 'profiles') => {
+  const openSettingsTab = useCallback((section?: SettingsSection) => {
     if (section) setSettingsSection(section)
     setOpenTabs((prev) => {
       if (prev.some((t) => t.id === 'settings')) return prev
@@ -1086,6 +1081,8 @@ export default function App() {
           workspaceId: backend.activeWorkspace?.id,
           workspaceTrusted: backend.activeWorkspace?.trusted,
           onSetWorkspaceTrust: backend.setWorkspaceTrust,
+          editorSettings,
+          onEditorSettingsChange: updateEditorSettings,
         }}
         hideTabBar={isDesktop}
         wrap={wrap}
@@ -1104,6 +1101,12 @@ export default function App() {
         onKeepOpen={handleKeepOpen}
         fontSize={fontSize}
         onFontSizeChange={setFontSize}
+        tabSize={editorSettings.tabSize}
+        lineNumbers={editorSettings.lineNumbers}
+        foldGutter={editorSettings.foldGutter}
+        bracketMatching={editorSettings.bracketMatching}
+        autoIndent={editorSettings.autoIndent}
+        closeBrackets={editorSettings.closeBrackets}
       />
 
       {/* Resize handle between editor and right chat panel (desktop only) */}
@@ -1170,7 +1173,7 @@ export default function App() {
         }}
         style={isDesktop ? { width: rightPanelWidth } : undefined}
         onOpenMcpSettings={() => {
-          openSettingsTab('mcp')
+          openSettingsTab('mcp-servers')
           if (!isDesktop) setMobileView('editor')
         }}
       />

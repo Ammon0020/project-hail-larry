@@ -204,17 +204,16 @@ contract surface that the Rust backend must replicate.
 
 ### Known limitations
 
-- **`rest_agents_autodetect_ok` is ignored** (`#[ignore]`). The golden fixture
-  captures machine-specific autodetected agents (Claude Code, Codex, Cursor,
-  etc.) from the generation machine. The runner deliberately neutralizes
-  autodetect (`PATH=/dev/null`, `HOME=/dev/null`) for reproducibility, so
-  `/api/agents/autodetect` returns an empty list. This fixture is historical —
-  it was captured by the original Go in-process harness, which is no longer
-  present.
-- **`rest_mcp_put_bad_body` is ignored** (`#[ignore]`). The original Go
-  `encoding/json` and Rust `serde_json` disagreed on the parse-error suffix for
-  `{not json` while both returned 400 + `invalid mcp config JSON: …`. Other
-  bad-body cases cover the envelope contract.
+- **`rest_agents_autodetect_smoke`** replaces the former `rest_agents_autodetect_ok`
+  golden-fixture test, which was machine-specific (captured agents from the
+  generation machine) and could not run in the neutralized black-box runner.
+  The smoke test validates the endpoint contract (200, JSON array) without
+  asserting on specific agent values.
+- **`rest_mcp_put_bad_body` is active.** The golden fixture reflects the Rust
+  `serde_json` parse-error suffix (`key must be a string at line 1 column 2`)
+  for the malformed body `{not json`. The Go backend that produced the earlier
+  `encoding/json` string has been removed, so the case now matches the Rust
+  backend directly.
 - **WebSocket slow-client recovery is not tested black-box.** Filling the
   64-deep send buffer and observing durable resync requires hub-internal
   control. Unit coverage: `src/sync/tests.rs`

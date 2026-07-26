@@ -172,6 +172,26 @@ struct PreviewToken {
     expires_at: Instant,
 }
 
+/// Read-only projection of server/network/pairing/security config fields
+/// exposed by `GET /api/settings/server` for the frontend settings panel.
+///
+/// These settings require a daemon restart to change (edit `config.toml` and
+/// restart), so the endpoint is read-only — the frontend displays them with
+/// "edit config.toml and restart" guidance rather than mutating them.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ServerSettings {
+    port: i64,
+    host: String,
+    tls_enabled: bool,
+    https_port: i64,
+    tls_cert_dir: String,
+    pairing_ttl_seconds: i64,
+    credential_inactivity_ttl_seconds: i64,
+    allow_remote_workspace_registration: bool,
+    revocation_grace_period_seconds: i64,
+}
+
 impl AppState {
     /// Build state from already-composed service instances.
     ///
@@ -305,6 +325,7 @@ pub fn router(state: AppState) -> Router {
             "/api/settings/prompt-context",
             get(settings::get_prompt_context).put(settings::put_prompt_context),
         )
+        .route("/api/settings/server", get(settings::get_server_settings))
         .route("/api/permissions/pending", get(pending_permissions))
         .route("/api/permissions/{id}/respond", post(respond_permission))
         .route_layer(middleware::from_fn_with_state(

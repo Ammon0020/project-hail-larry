@@ -3,5 +3,5 @@
   "path": "/api/mcp",
   "status": 400,
   "contentType": "application/json",
-  "body": "{\"error\":\"invalid mcp config JSON: invalid character 'n' looking for beginning of object key string\"}\n"
+  "body": "{\"error\":\"invalid mcp config JSON: key must be a string at line 1 column 2\"}\n"
 }

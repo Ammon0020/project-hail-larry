@@ -296,18 +296,60 @@ async fn rest_agents_delete_ok() {
     h.shutdown().await;
 }
 
-/// NOTE: rest_agents_autodetect_ok is intentionally skipped in the black-box
-/// runner. The golden fixture captures machine-specific autodetected agents
-/// (Claude Code, Codex, Cursor, etc.) from the generation machine. The black-
-/// box runner deliberately neutralizes autodetect (PATH=/dev/null, HOME=
-/// /dev/null) for reproducibility, so /api/agents/autodetect returns an empty
-/// list. This test can only be run via the Go in-process harness.
+/// Smoke test for `POST /api/agents/autodetect`.
+///
+/// The black-box runner neutralizes autodetect (PATH=/dev/null, HOME=fake
+/// dir) for reproducibility, so the endpoint returns an empty array `[]`
+/// here. This test validates the endpoint contract (status, content-type,
+/// JSON array body) without asserting on specific agent values, so it can
+/// run in any environment.
 #[tokio::test]
-#[ignore = "autodetect is machine-specific; see rest_agents_autodetect_ok docs"]
-async fn rest_agents_autodetect_ok() {
-    banner("REST: agents_autodetect_ok");
+async fn rest_agents_autodetect_smoke() {
+    banner("REST: agents_autodetect_smoke");
     let h = BackendHarness::start().await;
-    rest::run_case(&h, "agents_autodetect_ok").await;
+
+    let url = format!("{}/api/agents/autodetect", h.base_url);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("build reqwest client");
+    let resp = client
+        .post(&url)
+        .send()
+        .await
+        .expect("POST /api/agents/autodetect");
+
+    // Status must be 200 OK.
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::OK,
+        "autodetect should return 200"
+    );
+
+    // Content-Type must be application/json.
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        content_type.starts_with("application/json"),
+        "expected application/json content-type, got: {content_type}"
+    );
+
+    // Body must be valid JSON and a JSON array (empty is fine in the
+    // neutralized environment).
+    let body: serde_json::Value = resp.json().await.expect("parse autodetect JSON");
+    assert!(
+        body.is_array(),
+        "autodetect response should be a JSON array, got: {body}"
+    );
+
+    eprintln!(
+        "[contract] autodetect returned {} agents",
+        body.as_array().unwrap().len()
+    );
     h.shutdown().await;
 }
 
@@ -439,13 +481,13 @@ async fn rest_mcp_get_ok() {
     h.shutdown().await;
 }
 
-/// NOTE: rest_mcp_put_bad_body is ignored for Rust black-box runs because Go
-/// `encoding/json` and Rust `serde_json` emit different parse-error strings for
-/// the same malformed body (`{not json`). Both return 400 +
-/// `invalid mcp config JSON: …`; only the suffix differs. Envelope/status are
-/// covered by other bad-body cases. See tests/contract/README.md.
+/// `rest_mcp_put_bad_body` verifies the 400 + JSON error envelope for a
+/// malformed MCP config body (`{not json`). The golden fixture reflects the
+/// Rust `serde_json` parse-error suffix (`key must be a string at line 1
+/// column 2`); the Go backend that produced the earlier `encoding/json` string
+/// has been removed, so this case is now active. See
+/// tests/contract/README.md.
 #[tokio::test]
-#[ignore = "JSON parse error text differs Go encoding/json vs serde_json"]
 async fn rest_mcp_put_bad_body() {
     banner("REST: mcp_put_bad_body");
     let h = BackendHarness::start().await;

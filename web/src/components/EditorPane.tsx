@@ -9,14 +9,14 @@ import { languages as mdLanguages } from '@codemirror/language-data'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { search } from '@codemirror/search'
 import { autocompletion } from '@codemirror/autocomplete'
-import { LanguageDescription, bracketMatching, foldGutter, indentOnInput, indentUnit } from '@codemirror/language'
+import { LanguageDescription, bracketMatching as bracketMatchingExt, foldGutter as foldGutterExt, indentOnInput as indentOnInputExt, indentUnit } from '@codemirror/language'
 import { highlightActiveLine, highlightActiveLineGutter, keymap, EditorView, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { Prec, EditorSelection } from '@codemirror/state'
 import { TriangleAlert, FileText, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { SettingsPanel } from '@/components/SettingsPanel'
+import { SettingsPanel, type SettingsSection } from '@/components/SettingsPanel'
 import { FileViewer } from '@/components/FileViewer'
 import { BrowsePreview } from '@/components/BrowsePreview'
 import { StatusBar } from '@/components/StatusBar'
@@ -63,6 +63,12 @@ export function EditorPane({
   onKeepOpen,
   fontSize,
   onFontSizeChange,
+  tabSize = 2,
+  lineNumbers = true,
+  foldGutter = true,
+  bracketMatching = true,
+  autoIndent = true,
+  closeBrackets = true,
 }: {
   tabs: Tab[]
   activeTabId: string | null
@@ -92,15 +98,20 @@ export function EditorPane({
     /** Id of the active chat session, or null when none is open. Threaded
      *  through to the Providers (advanced) section of SettingsPanel. */
     activeSessionId?: string | null
-    /** Controlled settings section — Agents / MCP / General / Profiles. */
-    activeSection?: 'agents' | 'mcp' | 'general' | 'profiles'
-    onSectionChange?: (section: 'agents' | 'mcp' | 'general' | 'profiles') => void
+    /** Controlled settings subsection (e.g. harnesses, mcp-servers, theme). */
+    activeSection?: SettingsSection
+    onSectionChange?: (section: SettingsSection) => void
     /** Id of the active workspace, for the Preview trust section. */
     workspaceId?: string
     /** Current per-workspace preview trust state. */
     workspaceTrusted?: boolean | null
     /** Updates the active workspace's preview trust state. */
     onSetWorkspaceTrust?: (workspaceId: string, trusted: boolean | null) => Promise<void>
+    /** Editor preferences (font size, wrap, tab size, …) rendered in the
+     *  General → Editor subsection. Owned by App via useEditorSettings. */
+    editorSettings?: import('@/hooks/useEditorSettings').EditorSettings
+    /** Patches the editor settings (partial update). */
+    onEditorSettingsChange?: (patch: Partial<import('@/hooks/useEditorSettings').EditorSettings>) => void
   }
   hideTabBar?: boolean
   wrap?: boolean
@@ -137,6 +148,18 @@ export function EditorPane({
   /** Font-size updater. Receives a state-updater function so callers can do
    *  clamped increments/decrements (e.g. `s => Math.max(8, s - 1)`). */
   onFontSizeChange: (fn: (s: number) => number) => void
+  /** Spaces per indent level. Defaults to 2 (matches prior hardcoded value). */
+  tabSize?: number
+  /** Show line numbers in the gutter. Defaults to true. */
+  lineNumbers?: boolean
+  /** Show the fold gutter. Still disabled on mobile regardless of this flag. */
+  foldGutter?: boolean
+  /** Highlight the matching bracket pair around the cursor. */
+  bracketMatching?: boolean
+  /** Re-indent lines as the user types (smart indent on Enter, etc.). */
+  autoIndent?: boolean
+  /** Auto-close brackets and quotes. */
+  closeBrackets?: boolean
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
   const mobile = !(isDesktop ?? true)
@@ -300,7 +323,8 @@ export function EditorPane({
    *  3. Search panel (Ctrl+F) — @codemirror/search.
    *  4. Autocompletion — @codemirror/autocomplete.
    *  5. Language-level: bracket matching, fold gutter (desktop), indent-on-input,
-   *     2-space indent unit.
+   *     indent unit sized to the configured tab size — each conditional on its
+   *     editor-settings flag.
    *  6. View-level: active line + gutter highlight, draw selection,
    *     highlight special chars; desktop adds rectangular selection +
    *     crosshair; mobile disables text DnD and sets scrollMargins for chrome.
@@ -317,16 +341,17 @@ export function EditorPane({
   // @uiw/react-codemirror does not fight our mobile touch tweaks.
   const basicSetup = useMemo(
     () => ({
-      lineNumbers: true,
-      foldGutter: !mobile,
+      lineNumbers,
+      // Fold gutter is desktop-only regardless of the setting (tiny touch targets).
+      foldGutter: foldGutter && !mobile,
       dropCursor: !mobile,
       highlightActiveLine: true,
       autocompletion: true,
-      bracketMatching: true,
-      closeBrackets: true,
-      indentOnInput: true,
+      bracketMatching,
+      closeBrackets,
+      indentOnInput: autoIndent,
     }),
-    [mobile],
+    [mobile, lineNumbers, foldGutter, bracketMatching, closeBrackets, autoIndent],
   )
 
   const getExtensions = (lang: string, tabPath: string): Extension[] => {
@@ -373,11 +398,13 @@ export function EditorPane({
       // Autocompletion
       autocompletion(),
 
-      // Language-level features (fold gutter skipped on mobile — tiny targets)
-      bracketMatching(),
-      ...(!mobile ? [foldGutter()] : []),
-      indentOnInput(),
-      indentUnit.of('  '),
+      // Language-level features (fold gutter skipped on mobile — tiny targets).
+      // Each is conditional on its editor-settings flag so the user can disable
+      // bracket matching / auto indent / fold gutter from the Settings panel.
+      ...(bracketMatching ? [bracketMatchingExt()] : []),
+      ...(foldGutter && !mobile ? [foldGutterExt()] : []),
+      ...(autoIndent ? [indentOnInputExt()] : []),
+      indentUnit.of(' '.repeat(tabSize)),
 
       // View-level features
       highlightActiveLine(),
@@ -454,7 +481,7 @@ export function EditorPane({
     () => (activeTab ? getExtensions(activeTab.language, activeTab.path) : []),
     // getExtensions depends on `wrap` and the active tab's language/path.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeTab?.language, activeTab?.path, wrap, activeTab?.id, loadedSupports, fontSize, mobile],
+    [activeTab?.language, activeTab?.path, wrap, activeTab?.id, loadedSupports, fontSize, mobile, tabSize, bracketMatching, foldGutter, autoIndent],
   )
 
   return (
