@@ -434,12 +434,8 @@ async fn local_request(
     path: &str,
     body: Option<Value>,
 ) -> Result<Value> {
-    let port = u16::try_from(config.port).context("validate HTTP port")?;
-    let url = format!("http://127.0.0.1:{port}{path}");
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .context("create local daemon HTTP client")?;
+    let (url, client) = local_daemon_client(config)?;
+    let url = format!("{url}{path}");
     let request = client.request(method, url);
     let response = match body {
         Some(body) => request.json(&body).send().await,
@@ -459,6 +455,53 @@ async fn local_request(
         );
     }
     serde_json::from_slice(&bytes).context("decode local daemon API response")
+}
+
+/// Build the base URL and HTTP client for loopback daemon calls.
+///
+/// When TLS is enabled the daemon's cleartext listener redirects to HTTPS, so
+/// connect directly to the HTTPS port and trust the daemon's self-signed
+/// certificate (loaded from the same cert directory the daemon mints into).
+/// This avoids a redirect round-trip and the "invalid peer certificate" error
+/// that reqwest raises when it blindly follows the redirect to an untrusted
+/// self-signed endpoint. When TLS is disabled, use plain HTTP as before.
+fn local_daemon_client(config: &Config) -> Result<(String, reqwest::Client)> {
+    if !config.tls_enabled {
+        let port = u16::try_from(config.port).context("validate HTTP port")?;
+        let url = format!("http://127.0.0.1:{port}");
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .context("create local daemon HTTP client")?;
+        return Ok((url, client));
+    }
+
+    let https_port =
+        u16::try_from(daemon::resolved_https_port(config)?).context("validate HTTPS port")?;
+    let url = format!("https://127.0.0.1:{https_port}");
+
+    // Resolve the cert directory using the same logic as the listener
+    // (listen.rs): explicit `tls_cert_dir` wins, otherwise `{data_dir}/tls`.
+    let cert_dir = if config.tls_cert_dir.is_empty() {
+        std::path::Path::new(&config.data_dir).join("tls")
+    } else {
+        std::path::PathBuf::from(&config.tls_cert_dir)
+    };
+    let cert_path = cert_dir.join(crate::app::tls_cert::CERT_FILE_NAME);
+    let cert_pem = std::fs::read(&cert_path).with_context(|| {
+        format!(
+            "read daemon TLS certificate at {} (is the daemon running with TLS?)",
+            cert_path.display()
+        )
+    })?;
+    let cert = reqwest::Certificate::from_pem(&cert_pem).context("parse daemon TLS certificate")?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .add_root_certificate(cert)
+        .build()
+        .context("create local daemon HTTPS client")?;
+    Ok((url, client))
 }
 
 fn pairing_host(host: &str) -> &str {
