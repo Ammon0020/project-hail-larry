@@ -1154,8 +1154,10 @@ export default function App() {
         isDesktop={isDesktop}
         pendingPermissions={backend.pendingPermissions}
         activeSessionId={activeSessionId}
-        recentlyCreatedSessionId={backend.recentlyCreatedSessionId}
-        recentlyClosedSessionId={backend.recentlyClosedSessionId}
+        pendingCreatedSessionIds={backend.pendingCreatedSessionIds}
+        pendingClosedSessionIds={backend.pendingClosedSessionIds}
+        onConsumeSessionCreated={backend.consumeSessionCreated}
+        onConsumeSessionClosed={backend.consumeSessionClosed}
         actions={{
           onSendMessage: handleSendMessage,
           onCreateSession: handleCreateSession,

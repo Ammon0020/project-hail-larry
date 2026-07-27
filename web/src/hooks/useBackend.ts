@@ -38,17 +38,11 @@ export function useBackend() {
   // on a cold load. lastConnectedAt records the timestamp of the last successful
   // ws.onopen and gates the reconnecting flag.
   const [reconnecting, setReconnecting] = useState(false)
-  // Multi-client session-list sync signals (Blueprint Sec 12). When a
-  // SessionCreated/SessionClosed event arrives over the WebSocket, the id of
-  // the affected session is published here so consumers (App → ChatPanel →
-  // useChatTabs) can open/close the corresponding chat tab without stealing
-  // focus. null means "no event yet"; a non-null value is a fresh signal that
-  // an effect should consume. Each WS message is a separate macrotask, so
-  // back-to-back events get separate renders and effect runs (no batching
-  // loss). The creator's own SessionCreated is handled idempotently downstream
-  // (openTab is a no-op on an already-open id, and active is never changed).
-  const [recentlyCreatedSessionId, setRecentlyCreatedSessionId] = useState<string | null>(null)
-  const [recentlyClosedSessionId, setRecentlyClosedSessionId] = useState<string | null>(null)
+  // Multi-client session-list sync queues (Blueprint Sec 12). WS events append
+  // ids; ChatPanel drains them via consumeSessionCreated/Closed so back-to-back
+  // creates/closes are not last-write-wins and sticky signals cannot loop.
+  const [pendingCreatedSessionIds, setPendingCreatedSessionIds] = useState<string[]>([])
+  const [pendingClosedSessionIds, setPendingClosedSessionIds] = useState<string[]>([])
   const lastConnectedAtRef = useRef<number | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -256,12 +250,9 @@ export function useBackend() {
           }
         }
         // Multi-client session-list sync. SessionCreated is broadcast to every
-        // connected client (including the creator) so other tabs learn about a
-        // new conversation. Refresh the session list only when the id is new —
-        // the creator already inserted the Session from the create REST
-        // response, so a redundant listSessions call would pile onto the busy
-        // connection pool for no reason. Publish the id so ChatPanel can open
-        // it as a background tab (idempotent; never steals focus).
+        // connected client (including the creator). Refresh the session list
+        // only when the id is unknown — the creator already has it from REST.
+        // Queue the id for ChatPanel to open as a background tab.
         if (event.type === 'SessionCreated' && event.sessionId) {
           const id = event.sessionId
           setSessions((prev) => {
@@ -270,15 +261,13 @@ export function useBackend() {
             }
             return prev
           })
-          setRecentlyCreatedSessionId(id)
+          setPendingCreatedSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
         }
-        // SessionClosed is broadcast when any client closes/deletes a session.
-        // Remove it from the local session list immediately (no round-trip
-        // needed) and publish the id so ChatPanel can close its tab and pick a
-        // fallback active session if the closed one was active here.
+        // SessionClosed: drop from local list and queue for tab close.
         if (event.type === 'SessionClosed' && event.sessionId) {
-          setSessions((prev) => prev.filter((s) => s.id !== event.sessionId))
-          setRecentlyClosedSessionId(event.sessionId)
+          const id = event.sessionId
+          setSessions((prev) => prev.filter((s) => s.id !== id))
+          setPendingClosedSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
         }
       } catch {
         // Ignore malformed messages.
@@ -742,6 +731,13 @@ export function useBackend() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run-once-on-mount: opens the single WebSocket; must not re-run on every render.
   }, [])
 
+  const consumeSessionCreated = useCallback((id: string) => {
+    setPendingCreatedSessionIds((prev) => prev.filter((x) => x !== id))
+  }, [])
+  const consumeSessionClosed = useCallback((id: string) => {
+    setPendingClosedSessionIds((prev) => prev.filter((x) => x !== id))
+  }, [])
+
   return {
     // State
     workspaces,
@@ -754,9 +750,11 @@ export function useBackend() {
     pendingPermissions,
     connected,
     reconnecting,
-    // Multi-client session sync signals (see setState calls in onmessage).
-    recentlyCreatedSessionId,
-    recentlyClosedSessionId,
+    // Multi-client session sync queues + drain helpers.
+    pendingCreatedSessionIds,
+    pendingClosedSessionIds,
+    consumeSessionCreated,
+    consumeSessionClosed,
 
     // Actions
     selectWorkspace,

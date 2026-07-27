@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
+import { useCallback, useEffect, useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
 import { WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -70,8 +70,10 @@ export function ChatPanel({
   isDesktop,
   pendingPermissions,
   activeSessionId,
-  recentlyCreatedSessionId,
-  recentlyClosedSessionId,
+  pendingCreatedSessionIds,
+  pendingClosedSessionIds,
+  onConsumeSessionCreated,
+  onConsumeSessionClosed,
   actions,
   workspaceId,
   style,
@@ -80,8 +82,8 @@ export function ChatPanel({
   events: AppEvent[]
   /** All events across all sessions — used only to compute the running
    *  indicator for non-active open tabs. The active session's running state
-   *  is derived from `events` (already filtered to it) plus the `sending`
-   *  state. Don't use this for conversation rendering. */
+   *  is derived from `events` (already filtered to it) plus the per-session
+   *  sending latch. Don't use this for conversation rendering. */
   allEvents: AppEvent[]
   agents: Agent[]
   sessions: Session[]
@@ -91,14 +93,14 @@ export function ChatPanel({
   isDesktop: boolean
   pendingPermissions: PendingPermission[]
   activeSessionId: string | null
-  /** Id of a session another client just created (multi-client sync). When
-   *  non-null, open it as a background tab without stealing focus. null means
-   *  no fresh signal. */
-  recentlyCreatedSessionId: string | null
-  /** Id of a session another client just closed (multi-client sync). When
-   *  non-null, close its tab here and pick a fallback active if it was
-   *  active. null means no fresh signal. */
-  recentlyClosedSessionId: string | null
+  /** Queued ids of sessions another client created (multi-client sync). */
+  pendingCreatedSessionIds: string[]
+  /** Queued ids of sessions another client closed (multi-client sync). */
+  pendingClosedSessionIds: string[]
+  /** Drain one SessionCreated id after the tab has been opened (or skipped). */
+  onConsumeSessionCreated: (sessionId: string) => void
+  /** Drain one SessionClosed id after the tab has been closed. */
+  onConsumeSessionClosed: (sessionId: string) => void
   actions: ChatPanelActions
   /** Active workspace id. */
   workspaceId: string
@@ -147,7 +149,27 @@ export function ChatPanel({
     caps?: SessionHistoryCapabilities
   }>()
   const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
+  // Per-session admission latches. POST /prompt returns after the turn is
+  // admitted, so we keep each session id here until its terminal event lands.
+  // A single boolean would lock every chat's composer while any one turn runs.
+  const [sendingSessionIds, setSendingSessionIds] = useState<string[]>([])
+  // True only while creating a brand-new session (no id yet) on first send.
+  const [pendingNewChatSend, setPendingNewChatSend] = useState(false)
+  // Highest known event id at send time, keyed by session, so a prior turn's
+  // terminal StreamUpdate cannot clear the latch immediately.
+  const sendEpochBySessionRef = useRef<Map<string, number>>(new Map())
+  const clearSendingSession = useCallback((sessionId: string) => {
+    setSendingSessionIds((prev) =>
+      prev.includes(sessionId) ? prev.filter((id) => id !== sessionId) : prev,
+    )
+    sendEpochBySessionRef.current.delete(sessionId)
+  }, [])
+  const markSendingSession = useCallback((sessionId: string, epoch: number) => {
+    sendEpochBySessionRef.current.set(sessionId, epoch)
+    setSendingSessionIds((prev) =>
+      prev.includes(sessionId) ? prev : [...prev, sessionId],
+    )
+  }, [])
   const [error, setError] = useState<string | null>(null)
 
   // Transient "New chat" placeholder tab. Set true by handleNewChat so the tab
@@ -329,29 +351,27 @@ export function ChatPanel({
     onSelectSession,
   })
 
-  // Multi-client session-list sync (Blueprint Sec 12). When another browser
-  // tab creates a session, open it here as a background tab — openTab is
-  // idempotent (no-op if already open) and never changes activeSessionId, so
-  // the creator's own focus is preserved. Guarding on `sessions.some` covers
-  // the race where the SessionCreated event arrives before loadSessions()
-  // (triggered in useBackend) repopulates the list — useChatTabs' own
-  // prevSessions filter would drop a tab for an unknown id, so we wait until
-  // the session is known before opening it.
+  // Multi-client session-list sync (Blueprint Sec 12). Drain create/close
+  // queues one id at a time. openTab never steals focus; handleCloseTab picks
+  // a fallback only if the closed id was active. Unknown ids stay queued until
+  // loadSessions repopulates (creates) or are dropped after tab close (closes).
   useEffect(() => {
-    if (!recentlyCreatedSessionId) return
-    if (sessions.some((s) => s.id === recentlyCreatedSessionId)) {
-      openTab(recentlyCreatedSessionId)
+    if (pendingCreatedSessionIds.length === 0) return
+    for (const id of pendingCreatedSessionIds) {
+      if (sessions.some((s) => s.id === id)) {
+        openTab(id)
+        onConsumeSessionCreated(id)
+      }
     }
-  }, [recentlyCreatedSessionId, sessions, openTab])
+  }, [pendingCreatedSessionIds, sessions, openTab, onConsumeSessionCreated])
 
-  // When another tab closes a session, close its tab here too. handleCloseTab
-  // mirrors the user-click path: it removes the id from openTabIds and, if the
-  // closed session was active here, selects the last remaining tab (or '' for
-  // none) via onSelectSession.
   useEffect(() => {
-    if (!recentlyClosedSessionId) return
-    handleCloseTab(recentlyClosedSessionId)
-  }, [recentlyClosedSessionId, handleCloseTab])
+    if (pendingClosedSessionIds.length === 0) return
+    for (const id of pendingClosedSessionIds) {
+      handleCloseTab(id)
+      onConsumeSessionClosed(id)
+    }
+  }, [pendingClosedSessionIds, handleCloseTab, onConsumeSessionClosed])
 
   // The active conversation owns its agent/model — derive the selectors from it
   // so switching reflects that conversation. For a new chat (no active session)
@@ -385,13 +405,10 @@ export function ChatPanel({
   const effectiveModelId =
     userSelectedModel || activeSession?.modelId || currentAgent?.models[0]?.id || ''
 
-  // Determine whether a turn is currently in flight, to toggle Send/Stop.
-  // POST /prompt returns after admission (not after the full turn), so the
-  // local `sending` latch stays true until THIS turn's terminal event arrives.
-  // `sendEpochRef` records the highest event id known at send time so a prior
-  // turn's terminal StreamUpdate cannot clear the latch immediately.
+  // Per-session turn-in-flight helpers. The composer for the *active* session
+  // is locked only when that session is sending/streaming; other sessions stay
+  // free so concurrent chats can be composed independently.
   const lastEvent = events[events.length - 1]
-  const sendEpochRef = useRef(0)
   const isRunningEvent = (e: AppEvent | undefined): boolean =>
     !!e &&
     ((e.type === 'StreamUpdate' && !!e.streaming) ||
@@ -405,37 +422,54 @@ export function ChatPanel({
       e.type === 'SessionCancelled' ||
       e.type === 'SessionInterrupted' ||
       e.type === 'AgentExited')
-  const agentRunning =
-    sending || isRunningEvent(lastEvent)
 
-  // Keep `sending` true across the HTTP admission gap until a terminal event
-  // with id > send-epoch arrives (or cancel clears it via handleStop).
+  // Active session only: local admission latch OR live streaming events.
+  // Switching away does not keep the composer locked for the newly active chat.
+  const activeSending =
+    pendingNewChatSend ||
+    (!!activeSessionId && sendingSessionIds.includes(activeSessionId))
+  const agentRunning = activeSending || isRunningEvent(lastEvent)
+
+  // Clear each session's admission latch when its terminal event arrives, or
+  // when the session no longer exists (closed locally or via multi-client sync).
+  // Scans allEvents so background sessions complete without being active.
   useEffect(() => {
-    if (!sending || !activeSessionId || !lastEvent) return
-    const eventId = lastEvent.id ?? 0
-    if (eventId > sendEpochRef.current && isTerminalEvent(lastEvent)) {
-      setSending(false)
-    }
-  }, [sending, activeSessionId, lastEvent])
+    if (sendingSessionIds.length === 0) return
+    const known = new Set(sessions.map((s) => s.id))
+    let changed = false
+    const next = sendingSessionIds.filter((sessionId) => {
+      if (!known.has(sessionId)) {
+        sendEpochBySessionRef.current.delete(sessionId)
+        changed = true
+        return false
+      }
+      const epoch = sendEpochBySessionRef.current.get(sessionId) ?? 0
+      const sessionEvents = allEvents.filter((e) => e.sessionId === sessionId)
+      const last = sessionEvents[sessionEvents.length - 1]
+      if (last && (last.id ?? 0) > epoch && isTerminalEvent(last)) {
+        sendEpochBySessionRef.current.delete(sessionId)
+        changed = true
+        return false
+      }
+      return true
+    })
+    if (changed) setSendingSessionIds(next)
+  }, [allEvents, sendingSessionIds, sessions])
 
-  // Per-tab running indicator. The active session uses the local `sending`
-  // latch (admission through first terminal event) plus its last event.
-  // Non-active open tabs are derived purely from their last event in
-  // `allEvents` — `sending` is not applied to them.
+  // Per-tab running dots: admission latch and/or last event per open session.
   const runningSessionIds = useMemo(() => {
-    const ids = new Set<string>()
-    if (activeSessionId && (sending || isRunningEvent(lastEvent))) {
-      ids.add(activeSessionId)
-    }
+    const ids = new Set<string>(sendingSessionIds)
     for (const id of openTabIds) {
-      if (id === activeSessionId) continue
       const eventsForTab = allEvents.filter((e) => e.sessionId === id)
       if (isRunningEvent(eventsForTab[eventsForTab.length - 1])) {
         ids.add(id)
       }
     }
+    if (activeSessionId && isRunningEvent(lastEvent)) {
+      ids.add(activeSessionId)
+    }
     return ids
-  }, [activeSessionId, sending, lastEvent, openTabIds, allEvents])
+  }, [sendingSessionIds, lastEvent, openTabIds, allEvents, activeSessionId])
 
   // Tabs to render — sessions whose id is in openTabIds, in openTabIds order.
   const openTabs = openTabIds
@@ -493,24 +527,41 @@ export function ChatPanel({
 
   const handleSend = async () => {
     const content = input.trim()
-    if ((!content && pendingAttachments.length === 0) || sending || uploading || !effectiveAgentId || !effectiveModelId) return
+    // Only block when *this* session already has an in-flight turn. Other
+    // sessions may be streaming in the background without locking the composer.
+    if (
+      (!content && pendingAttachments.length === 0) ||
+      activeSending ||
+      uploading ||
+      !effectiveAgentId ||
+      !effectiveModelId
+    ) {
+      return
+    }
 
-    // Snapshot the latest known event id so the completion effect only clears
-    // on a terminal event that arrives AFTER this send was admitted.
-    sendEpochRef.current = events.reduce((max, e) => Math.max(max, e.id ?? 0), 0)
-    setSending(true)
     setError(null)
     setInput('')
 
+    // Snapshot max known id for this session before the turn's events arrive.
+    const epochFor = (sessionId: string | null) => {
+      const source = sessionId
+        ? allEvents.filter((e) => e.sessionId === sessionId)
+        : events
+      return source.reduce((max, e) => Math.max(max, e.id ?? 0), 0)
+    }
+
+    let sessionId = activeSessionId
+    const wasNewSession = !sessionId
+    if (wasNewSession) {
+      setPendingNewChatSend(true)
+    } else if (sessionId) {
+      markSendingSession(sessionId, epochFor(sessionId))
+    }
+
     try {
-      let sessionId = activeSessionId
-      const wasNewSession = !sessionId
       if (!sessionId) {
         sessionId = await onCreateSession(effectiveAgentId, effectiveModelId, selectedProfileId)
-        // A real session now exists — drop the transient "New chat" placeholder.
         setShowNewChatTab(false)
-        // The selected profile was supplied to session creation before actor
-        // startup, including its MCP server allowlist.
         if (profileOverride?.sessionId === '') {
           const pendingProfileId = profileOverride.profileId
           setProfileOverride({ sessionId, profileId: pendingProfileId })
@@ -520,18 +571,11 @@ export function ChatPanel({
             // Ignore write failures (quota / disabled storage).
           }
         }
+        // Promote the pending-new-chat latch onto the real session id.
+        setPendingNewChatSend(false)
+        markSendingSession(sessionId, epochFor(sessionId))
       }
-      // Always ensure the active session is opened as a tab — covers both the
-      // newly-created case above and an existing activeSessionId that hasn't
-      // been added to openTabIds yet (the auto-open effect also handles this,
-      // but calling it here makes the tab appear immediately on send).
       openTab(sessionId)
-      // Deferred model switch: handleModelChange only updates local state, so
-      // if the user picked a model that differs from an existing session's
-      // current model, apply the switch on the backend now so this prompt uses
-      // it. Skipped for newly-created sessions — profileId was supplied before
-      // the ACP actor started, so its MCP server list is already correct.
-      // the selected model, so switching again would be redundant.
       if (!wasNewSession && userSelectedModel && activeSession?.modelId !== userSelectedModel) {
         await onSwitchModel(sessionId, userSelectedModel)
       }
@@ -541,14 +585,12 @@ export function ChatPanel({
         content,
         attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
       )
-      // Successful send counts as use for the Recent dropdown section.
       if (effectiveAgentId && effectiveModelId) {
         pushRecentModel(effectiveAgentId, effectiveModelId)
       }
       setPendingAttachments([])
       setPendingPreviews([])
-      // Keep `sending` true — the effect above clears it on the terminal event.
-      // POST /prompt only admits the turn; the agent streams over WebSocket.
+      // Keep the per-session latch until a terminal event clears it.
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to send message'
       if (isSessionNotFound(message)) {
@@ -558,13 +600,18 @@ export function ChatPanel({
         setError(message)
         setInput(content)
       }
-      setSending(false)
+      setPendingNewChatSend(false)
+      if (sessionId) clearSendingSession(sessionId)
     }
   }
 
   const handleStop = () => {
-    if (activeSessionId) onCancel(activeSessionId)
-    setSending(false)
+    // Cancel only the active session — background turns keep running.
+    if (activeSessionId) {
+      onCancel(activeSessionId)
+      clearSendingSession(activeSessionId)
+    }
+    setPendingNewChatSend(false)
   }
 
   /** Opens the native file picker for image attachments. */
@@ -632,7 +679,7 @@ export function ChatPanel({
     (input.trim() || pendingAttachments.length > 0) &&
       effectiveAgentId &&
       effectiveModelId &&
-      !sending &&
+      !activeSending &&
       !uploading,
   )
 
@@ -793,7 +840,7 @@ export function ChatPanel({
         onPickFiles={handlePickFiles}
         uploading={uploading}
         uploadError={uploadError}
-        disabled={sending || agents.length === 0}
+        disabled={activeSending || agents.length === 0}
         profiles={profiles}
         selectedProfileId={selectedProfileId}
         onProfileChange={handleProfileChange}
@@ -807,7 +854,7 @@ export function ChatPanel({
         workspaceId={workspaceId}
         onSelectWorkspace={onSelectWorkspace}
         workspaceDisabled={hasConversation}
-        disabled={sending || agents.length === 0}
+        disabled={activeSending || agents.length === 0}
       />
 
       {/* Hidden file input — triggered by the attach button via ref. */}

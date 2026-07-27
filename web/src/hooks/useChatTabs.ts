@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import type { Session } from '@/types'
 
@@ -41,6 +41,17 @@ export function useChatTabs({
     const knownIds = new Set(sessions.map((session) => session.id))
     setOpenTabIds((currentIds) => {
       const filteredIds = currentIds.filter((id) => knownIds.has(id))
+      if (filteredIds.length === currentIds.length) {
+        // Nothing removed — only ensure the active id is present if known.
+        if (
+          activeSessionId &&
+          knownIds.has(activeSessionId) &&
+          !currentIds.includes(activeSessionId)
+        ) {
+          return [...currentIds, activeSessionId]
+        }
+        return currentIds
+      }
       if (
         activeSessionId &&
         knownIds.has(activeSessionId) &&
@@ -52,21 +63,25 @@ export function useChatTabs({
     })
   }
 
-  const openTab = (id: string) => {
+  // Stable callbacks: SessionCreated/Closed effects depend on these and must
+  // not re-fire every render (an unstable handleCloseTab + sticky closed id
+  // previously looped via always-new filter arrays thrashing localStorage).
+  const openTab = useCallback((id: string) => {
     setOpenTabIds((currentIds) =>
       currentIds.includes(id) ? currentIds : [...currentIds, id],
     )
-  }
+  }, [setOpenTabIds])
 
-  const handleCloseTab = (id: string) => {
+  const handleCloseTab = useCallback((id: string) => {
     setOpenTabIds((currentIds) => {
+      if (!currentIds.includes(id)) return currentIds
       const nextIds = currentIds.filter((tabId) => tabId !== id)
       if (id === activeSessionId) {
         onSelectSession(nextIds.length > 0 ? nextIds[nextIds.length - 1] : '')
       }
       return nextIds
     })
-  }
+  }, [activeSessionId, onSelectSession, setOpenTabIds])
 
   return { openTabIds, openTab, handleCloseTab }
 }
