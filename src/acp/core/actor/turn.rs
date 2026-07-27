@@ -192,6 +192,25 @@ fn stop_reason_name(reason: agent_client_protocol::schema::v1::StopReason) -> &'
     }
 }
 
+/// Safe, prompt-data-free label for an ACP SDK error, derived from its
+/// JSON-RPC [`ErrorCode`]. Used in events (persisted + synced) and the warn
+/// log so failures are diagnosable without copying agent-controlled text.
+fn error_code_label(error: &agent_client_protocol::Error) -> &'static str {
+    use agent_client_protocol::schema::v1::ErrorCode;
+    match error.code {
+        ErrorCode::ParseError => "parse_error",
+        ErrorCode::InvalidRequest => "invalid_request",
+        ErrorCode::MethodNotFound => "method_not_found",
+        ErrorCode::InvalidParams => "invalid_params",
+        ErrorCode::InternalError => "internal_error",
+        ErrorCode::RequestCancelled => "request_cancelled",
+        ErrorCode::AuthRequired => "auth_required",
+        ErrorCode::ResourceNotFound => "resource_not_found",
+        ErrorCode::Other(_) => "other",
+        _ => "unknown",
+    }
+}
+
 struct PromptTurn<'a> {
     cx: ConnectionTo<Agent>,
     agent_session_id: SessionId,
@@ -356,17 +375,31 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                             let _ = result.send(Ok(()));
                         }
                         Err(error) => {
-                            // Do not copy SDK error text into events/logs:
-                            // agents control it and it can contain prompt data.
+                            // The error code is a JSON-RPC enum (InternalError,
+                            // AuthRequired, etc.) and is safe to surface. The
+                            // error *message* is agent-controlled and may
+                            // contain prompt data, so it stays out of events
+                            // (persisted + synced to all devices) but is logged
+                            // at debug level in the daemon's local log for
+                            // operator diagnosis.
+                            let code_label = error_code_label(&error);
                             tracing::warn!(
                                 session_id = local_session_id,
+                                code = code_label,
                                 "ACP prompt request failed"
                             );
+                            tracing::debug!(
+                                session_id = local_session_id,
+                                error = %error,
+                                "ACP prompt request failed (full SDK error)"
+                            );
+                            let exit_content =
+                                format!("ACP prompt request failed ({code_label})");
                             if let Err(append_error) = append_payload(
                                 event_bus,
                                 local_session_id,
                                 EventPayload::AgentExited {
-                                    content: "ACP prompt request failed".to_string(),
+                                    content: exit_content,
                                 },
                             )
                             .await
