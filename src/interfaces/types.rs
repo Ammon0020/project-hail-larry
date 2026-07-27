@@ -23,7 +23,7 @@ pub use crate::config::{AgentInfo, AgentModel};
 // Event system (Blueprint Sec 11)
 // ============================================================================
 
-/// Event type enum — 27 variants matching Go `interfaces.EventType` string
+/// Event type enum — 29 variants matching Go `interfaces.EventType` string
 /// constants exactly. The wire form is a bare string (`"PromptSubmitted"`, …);
 /// serde renames keep the Rust variants idiomatic while preserving Go JSON.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -85,6 +85,10 @@ pub enum EventType {
     WorkspaceRegistrationCancelled,
     #[serde(rename = "WorkspaceRegistrationExecuted")]
     WorkspaceRegistrationExecuted,
+    #[serde(rename = "SessionCreated")]
+    SessionCreated,
+    #[serde(rename = "SessionClosed")]
+    SessionClosed,
 }
 
 impl EventType {
@@ -119,10 +123,12 @@ impl EventType {
             Self::WorkspaceRegistrationPending => "WorkspaceRegistrationPending",
             Self::WorkspaceRegistrationCancelled => "WorkspaceRegistrationCancelled",
             Self::WorkspaceRegistrationExecuted => "WorkspaceRegistrationExecuted",
+            Self::SessionCreated => "SessionCreated",
+            Self::SessionClosed => "SessionClosed",
         }
     }
 
-    /// All 27 event type variants in declaration order (for exhaustive tests).
+    /// All 29 event type variants in declaration order (for exhaustive tests).
     #[must_use]
     pub fn all() -> &'static [EventType] {
         &ALL_EVENT_TYPES
@@ -135,7 +141,7 @@ impl std::fmt::Display for EventType {
     }
 }
 
-const ALL_EVENT_TYPES: [EventType; 27] = [
+const ALL_EVENT_TYPES: [EventType; 29] = [
     EventType::PromptSubmitted,
     EventType::ResponseStarted,
     EventType::StreamUpdate,
@@ -163,6 +169,8 @@ const ALL_EVENT_TYPES: [EventType; 27] = [
     EventType::WorkspaceRegistrationPending,
     EventType::WorkspaceRegistrationCancelled,
     EventType::WorkspaceRegistrationExecuted,
+    EventType::SessionCreated,
+    EventType::SessionClosed,
 ];
 
 /// Flat event entry matching Go `interfaces.Event`.
@@ -447,6 +455,8 @@ pub enum EventPayload {
     WorkspaceRegistrationExecuted {
         target: String,
     },
+    SessionCreated,
+    SessionClosed,
 }
 
 impl EventPayload {
@@ -483,6 +493,8 @@ impl EventPayload {
                 EventType::WorkspaceRegistrationCancelled
             }
             Self::WorkspaceRegistrationExecuted { .. } => EventType::WorkspaceRegistrationExecuted,
+            Self::SessionCreated => EventType::SessionCreated,
+            Self::SessionClosed => EventType::SessionClosed,
         }
     }
 }

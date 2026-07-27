@@ -654,7 +654,13 @@ mod tests {
     #[test]
     fn select_daemon_endpoint_prefers_https_when_cert_and_listener_present() {
         let endpoint = select_daemon_endpoint(true, true, true, 7337, 7338);
-        assert_eq!(endpoint, DaemonEndpoint { https: true, port: 7338 });
+        assert_eq!(
+            endpoint,
+            DaemonEndpoint {
+                https: true,
+                port: 7338
+            }
+        );
     }
 
     #[test]
@@ -662,13 +668,25 @@ mod tests {
         // Stale cert on disk but daemon running without TLS (the user's bug):
         // HTTPS port isn't bound, so we must talk HTTP on the configured port.
         let endpoint = select_daemon_endpoint(true, true, false, 7337, 7338);
-        assert_eq!(endpoint, DaemonEndpoint { https: false, port: 7337 });
+        assert_eq!(
+            endpoint,
+            DaemonEndpoint {
+                https: false,
+                port: 7337
+            }
+        );
     }
 
     #[test]
     fn select_daemon_endpoint_uses_http_when_no_cert() {
         let endpoint = select_daemon_endpoint(false, true, true, 7337, 7338);
-        assert_eq!(endpoint, DaemonEndpoint { https: false, port: 7337 });
+        assert_eq!(
+            endpoint,
+            DaemonEndpoint {
+                https: false,
+                port: 7337
+            }
+        );
     }
 
     #[test]
@@ -676,12 +694,24 @@ mod tests {
         // Daemon not up: prefer the cert-driven default so the error reflects
         // the expected configuration.
         let endpoint = select_daemon_endpoint(true, false, false, 7337, 7338);
-        assert_eq!(endpoint, DaemonEndpoint { https: true, port: 7338 });
+        assert_eq!(
+            endpoint,
+            DaemonEndpoint {
+                https: true,
+                port: 7338
+            }
+        );
     }
 
     #[test]
     fn select_daemon_endpoint_defaults_to_http_when_nothing_listening_and_no_cert() {
         let endpoint = select_daemon_endpoint(false, false, false, 7337, 7338);
-        assert_eq!(endpoint, DaemonEndpoint { https: false, port: 7337 });
+        assert_eq!(
+            endpoint,
+            DaemonEndpoint {
+                https: false,
+                port: 7337
+            }
+        );
     }
 }

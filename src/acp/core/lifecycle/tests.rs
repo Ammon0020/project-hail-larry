@@ -317,6 +317,48 @@ async fn unexpected_post_startup_exit_marks_session_failed() {
     );
 }
 
+/// Session lifecycle changes must be published so other clients can reload.
+#[tokio::test]
+async fn session_creation_and_closure_append_lifecycle_events() {
+    let (client, _permissions, _workspace, workspace_id) =
+        mock_client_empty(ConversationStore::new(None)).await;
+    let session = client
+        .create_session("mock", "mock-model", &workspace_id)
+        .await
+        .expect("create mock ACP session");
+
+    let created_events = client
+        .deps
+        .event_bus
+        .query(&session.id, 0, 100)
+        .await
+        .expect("query creation events");
+    assert!(
+        created_events
+            .iter()
+            .any(|event| event.event_type == EventType::SessionCreated),
+        "creating a session must append a SessionCreated event"
+    );
+
+    client
+        .close_session(&session.id)
+        .await
+        .expect("close mock ACP session");
+
+    let events = client
+        .deps
+        .event_bus
+        .query(&session.id, 0, 100)
+        .await
+        .expect("query lifecycle events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == EventType::SessionClosed),
+        "closing a session must append a SessionClosed event"
+    );
+}
+
 /// Rebinding replaces only transport ownership: the stable local ID,
 /// display metadata, and durable transcript must survive intact.
 #[tokio::test]
@@ -326,13 +368,28 @@ async fn rebind_preserves_session_identity_and_event_history() {
     client
         .send_prompt(&session.id, "record this before rebind", &[])
         .await
-        .expect("complete first prompt");
-    let before = client
-        .deps
-        .event_bus
-        .query(&session.id, 0, 100)
-        .await
-        .expect("query event history");
+        .expect("admit first prompt");
+    // send_prompt returns after admission; wait until the turn published history.
+    let before = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let events = client
+                .deps
+                .event_bus
+                .query(&session.id, 0, 100)
+                .await
+                .expect("query event history");
+            if !events.is_empty()
+                && events
+                    .iter()
+                    .any(|event| event.event_type == EventType::StreamUpdate && !event.streaming)
+            {
+                return events;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for first prompt history");
     assert!(!before.is_empty(), "prompt should create durable history");
 
     let rebound = client
@@ -434,17 +491,31 @@ async fn prompt_injection_fallback_skips_set_config_option() {
     client
         .send_prompt(&session.id, "hello", &[])
         .await
-        .expect("complete prompt against mock-nocap");
+        .expect("admit prompt against mock-nocap");
 
     // Concatenate non-thought StreamUpdate chunks; the mock prefixes its first
     // streamed reply with `[profile: X]` only when it received the
     // `session/set_config_option` RPC, so absence proves the RPC was skipped.
-    let events = client
-        .deps
-        .event_bus
-        .query(&session.id, 0, 1000)
-        .await
-        .expect("query session events");
+    // send_prompt returns after admission — wait for the turn to finish streaming.
+    let events = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let events = client
+                .deps
+                .event_bus
+                .query(&session.id, 0, 1000)
+                .await
+                .expect("query session events");
+            if events
+                .iter()
+                .any(|event| event.event_type == EventType::StreamUpdate && !event.streaming)
+            {
+                return events;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for mock-nocap prompt stream");
     let mut streamed = String::new();
     for event in &events {
         if event.event_type == EventType::StreamUpdate && !event.thought {
@@ -634,12 +705,23 @@ async fn prompt_on_stored_session_starts_actor_without_wiping_history() {
     assert_eq!(info.name, "Prior chat");
     assert_eq!(info.id, session_id);
 
-    let after = client
-        .deps
-        .event_bus
-        .query(session_id, 0, 100)
-        .await
-        .expect("query history after restore");
+    // send_prompt returns after admission; wait for the restored turn to append.
+    let after = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let events = client
+                .deps
+                .event_bus
+                .query(session_id, 0, 100)
+                .await
+                .expect("query history after restore");
+            if events.len() > before.len() {
+                return events;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for restore prompt history");
     assert!(
         after.len() > before.len(),
         "restore prompt should append events without wiping prior history"

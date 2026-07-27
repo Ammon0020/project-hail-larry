@@ -193,6 +193,8 @@ export type EventType =
   | 'SessionResumed'
   | 'FileChangedOnDisk'
   | 'ModelChanged'
+  | 'SessionCreated'
+  | 'SessionClosed'
 
 /** A single event in the immutable event log (Blueprint Sec 11). */
 export interface AppEvent {

@@ -173,7 +173,10 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             event.workspace_id.clone_from(workspace_id);
             event.target.clone_from(target);
         }
-        EventPayload::SessionInterrupted | EventPayload::SessionCancelled => {}
+        EventPayload::SessionInterrupted
+        | EventPayload::SessionCancelled
+        | EventPayload::SessionCreated
+        | EventPayload::SessionClosed => {}
         EventPayload::PlanUpdated { content }
         | EventPayload::AgentExited { content }
         | EventPayload::ConnectionRestarted { content }
@@ -333,6 +336,8 @@ pub fn wire_to_typed_event(event: &Event) -> TypedEvent {
         EventType::WorkspaceRegistrationExecuted => EventPayload::WorkspaceRegistrationExecuted {
             target: event.target.clone(),
         },
+        EventType::SessionCreated => EventPayload::SessionCreated,
+        EventType::SessionClosed => EventPayload::SessionClosed,
     };
     TypedEvent { meta, payload }
 }

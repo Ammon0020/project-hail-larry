@@ -1154,6 +1154,8 @@ export default function App() {
         isDesktop={isDesktop}
         pendingPermissions={backend.pendingPermissions}
         activeSessionId={activeSessionId}
+        recentlyCreatedSessionId={backend.recentlyCreatedSessionId}
+        recentlyClosedSessionId={backend.recentlyClosedSessionId}
         actions={{
           onSendMessage: handleSendMessage,
           onCreateSession: handleCreateSession,

@@ -99,29 +99,24 @@ async fn create_mock_session(client: &Client, workspace_id: &str) -> Session {
 }
 
 /// A cancelled prompt remains interrupted until the session is explicitly closed.
+///
+/// `send_prompt` admits the turn and returns immediately; cancel is observed via
+/// session status / events rather than the HTTP return value.
 #[tokio::test]
 async fn mockagent_session_prompt_cancel_close_lifecycle() {
     let (client, _directory, workspace_id, _event_bus) = client_with_workspace().await;
     let session = create_mock_session(&client, &workspace_id).await;
     assert_eq!(session.status, "idle");
 
-    let prompt_client = Arc::clone(&client);
-    let prompt_session_id = session.id.clone();
-    let prompt = tokio::spawn(async move {
-        prompt_client
-            .send_prompt(&prompt_session_id, "describe the workspace", &[])
-            .await
-    });
+    client
+        .send_prompt(&session.id, "describe the workspace", &[])
+        .await
+        .expect("prompt must be admitted");
     tokio::time::sleep(Duration::from_millis(50)).await;
     client
         .cancel_session(&session.id)
         .await
         .expect("cancel mockagent session");
-    tokio::time::timeout(ACTOR_TIMEOUT, prompt)
-        .await
-        .expect("prompt did not finish")
-        .expect("prompt task panicked")
-        .expect_err("cancelled prompt must return without waiting for agent completion");
 
     assert_eq!(
         client
@@ -204,9 +199,19 @@ async fn mockagent_initial_profile_sent_over_acp_when_capability_advertised() {
     client
         .send_prompt(&session.id, "hello", &[])
         .await
-        .expect("prompt");
-
-    let text = stream_text(&event_bus, &session.id).await;
+        .expect("prompt admitted");
+    // send_prompt returns after admission; wait for streamed agent text.
+    let text = tokio::time::timeout(ACTOR_TIMEOUT, async {
+        loop {
+            let text = stream_text(&event_bus, &session.id).await;
+            if text.starts_with("[profile: code]") {
+                return text;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for profile marker stream");
     assert!(
         text.starts_with("[profile: code]"),
         "expected reply to start with `[profile: code]`, got: {text}"
@@ -234,9 +239,18 @@ async fn mockagent_set_session_profile_switches_over_acp() {
     client
         .send_prompt(&session.id, "hello", &[])
         .await
-        .expect("prompt");
-
-    let text = stream_text(&event_bus, &session.id).await;
+        .expect("prompt admitted");
+    let text = tokio::time::timeout(ACTOR_TIMEOUT, async {
+        loop {
+            let text = stream_text(&event_bus, &session.id).await;
+            if text.starts_with("[profile: ask]") {
+                return text;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for profile marker stream");
     assert!(
         text.starts_with("[profile: ask]"),
         "expected reply to start with `[profile: ask]`, got: {text}"

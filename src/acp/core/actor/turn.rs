@@ -446,7 +446,6 @@ fn take_sticky_cancel(prompt_cancel: &AtomicBool) -> bool {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
     use std::time::Duration;
 
     use agent_client_protocol::schema::v1::StopReason;
@@ -470,18 +469,18 @@ mod tests {
     }
 
     /// A prompt RPC must not monopolize the actor's control receiver.
+    ///
+    /// `send_prompt` admits the turn and returns immediately; cancel is verified
+    /// via session status rather than the HTTP return value.
     #[tokio::test]
     async fn cancel_preempts_prompt_and_rejects_second_prompt() {
         let (client, _permissions, _workspace) = mock_client().await;
         let session = client.list_sessions().pop().expect("one mock session");
         let session_id = session.id.clone();
-        let prompt_client = Arc::clone(&client);
-        let prompt_session_id = session_id.clone();
-        let prompt = tokio::spawn(async move {
-            prompt_client
-                .send_prompt(&prompt_session_id, "please stream a response slowly", &[])
-                .await
-        });
+        client
+            .send_prompt(&session_id, "please stream a response slowly", &[])
+            .await
+            .expect("admit first prompt");
         wait_until_running(&client, &session_id).await;
 
         let second = client
@@ -497,13 +496,12 @@ mod tests {
             .await
             .expect("cancel must be serviced while prompt is in flight")
             .expect("cancel session");
-        let prompt_result = tokio::time::timeout(Duration::from_secs(2), prompt)
-            .await
-            .expect("cancelled prompt task must finish")
-            .expect("cancelled prompt task must not panic");
-        assert!(
-            prompt_result.is_err(),
-            "cancelled prompt unexpectedly succeeded"
+        assert_eq!(
+            client
+                .get_session_info(&session_id)
+                .expect("session remains after cancel")
+                .status,
+            "interrupted"
         );
 
         client
@@ -518,27 +516,16 @@ mod tests {
         let (client, permissions, _workspace) = mock_client().await;
         let session = client.list_sessions().pop().expect("one mock session");
         let session_id = session.id.clone();
-        let prompt_client = Arc::clone(&client);
-        let prompt_session_id = session_id.clone();
-        let prompt = tokio::spawn(async move {
-            prompt_client
-                .send_prompt(&prompt_session_id, "please stream a response slowly", &[])
-                .await
-        });
+        client
+            .send_prompt(&session_id, "please stream a response slowly", &[])
+            .await
+            .expect("admit prompt");
         wait_until_running(&client, &session_id).await;
 
         tokio::time::timeout(Duration::from_secs(2), client.close_session(&session_id))
             .await
             .expect("close must not wait for a prompt RPC")
             .expect("close session");
-        let prompt_result = tokio::time::timeout(Duration::from_secs(2), prompt)
-            .await
-            .expect("closed prompt task must finish")
-            .expect("closed prompt task must not panic");
-        assert!(
-            prompt_result.is_err(),
-            "closed prompt unexpectedly succeeded"
-        );
         assert!(
             client.get_session_info(&session_id).is_err(),
             "closed session must not remain callable"
@@ -559,23 +546,16 @@ mod tests {
         let (client, permissions, _workspace) = mock_client().await;
         let session = client.list_sessions().pop().expect("one mock session");
         let session_id = session.id.clone();
-        let prompt_client = Arc::clone(&client);
-        let prompt_session_id = session_id.clone();
-        let prompt = tokio::spawn(async move {
-            prompt_client
-                .send_prompt(&prompt_session_id, "please stream a response slowly", &[])
-                .await
-        });
+        client
+            .send_prompt(&session_id, "please stream a response slowly", &[])
+            .await
+            .expect("admit prompt");
         wait_until_running(&client, &session_id).await;
 
         client
             .cancel_session(&session_id)
             .await
             .expect("cancel session");
-        prompt
-            .await
-            .expect("cancelled prompt task must not panic")
-            .expect_err("cancelled prompt must fail locally");
         assert_eq!(
             client
                 .get_session_info(&session_id)

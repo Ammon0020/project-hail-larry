@@ -328,6 +328,13 @@ impl Client {
             }
             self.deps.permissions.clear_session(session_id);
             self.pipeline.clear(session_id);
+            append_payload(
+                &self.deps.event_bus,
+                session_id,
+                EventPayload::SessionClosed,
+            )
+            .await
+            .ok();
             return self.persist_sessions();
         }
         let entry = self.sessions.remove_live(session_id)?;
@@ -344,6 +351,13 @@ impl Client {
             let _ = closed_rx.await;
         }
         self.pipeline.clear(session_id);
+        append_payload(
+            &self.deps.event_bus,
+            session_id,
+            EventPayload::SessionClosed,
+        )
+        .await
+        .ok();
         persist_result
     }
 

@@ -91,6 +91,12 @@ impl Client {
             let _ = self.close_session_inner(&published.id).await;
             return Err(error);
         }
+        append_payload(
+            &self.deps.event_bus,
+            &published.id,
+            EventPayload::SessionCreated,
+        )
+        .await?;
         Ok(published)
     }
 
@@ -141,16 +147,49 @@ impl Client {
                 .map_err(|error| { tracing::error!(session_id, error = %error, "failed to persist ACP prompt-dispatch failure"); error })?;
             return Err(AppError::internal("ACP session actor is unavailable"));
         }
-        let prompt_result = result_rx
-            .await
-            .map_err(|_| AppError::internal("ACP prompt actor exited"))?;
-        if prompt_result.is_err() {
-            self.sessions
-                .update_state_if(session_id, SessionState::Running, SessionState::Idle);
-        }
-        prompt_result?;
-        self.sessions
-            .update_state_if(session_id, SessionState::Running, SessionState::Idle);
+        // Return as soon as the turn is admitted. Holding the HTTP request open
+        // for the full agent turn pinches the browser's ~6 connections/origin
+        // when multiple tabs/sessions run at once, which surfaces as gateway
+        // timeouts on unrelated API calls while streams continue over WS.
+        // Completion, errors, and cancel still publish through the event bus;
+        // a background watcher restores Idle only from Running so an explicit
+        // cancel → Interrupted transition is not clobbered.
+        let sessions = self.sessions.clone();
+        let session_id = session_id.to_string();
+        tokio::spawn(async move {
+            match result_rx.await {
+                Ok(Ok(())) => {
+                    sessions.update_state_if(
+                        &session_id,
+                        SessionState::Running,
+                        SessionState::Idle,
+                    );
+                }
+                Ok(Err(error)) => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        error = %error,
+                        "ACP prompt finished with error after HTTP admitted it"
+                    );
+                    sessions.update_state_if(
+                        &session_id,
+                        SessionState::Running,
+                        SessionState::Idle,
+                    );
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        "ACP prompt actor dropped result channel"
+                    );
+                    sessions.update_state_if(
+                        &session_id,
+                        SessionState::Running,
+                        SessionState::Idle,
+                    );
+                }
+            }
+        });
         Ok(())
     }
 

@@ -38,6 +38,17 @@ export function useBackend() {
   // on a cold load. lastConnectedAt records the timestamp of the last successful
   // ws.onopen and gates the reconnecting flag.
   const [reconnecting, setReconnecting] = useState(false)
+  // Multi-client session-list sync signals (Blueprint Sec 12). When a
+  // SessionCreated/SessionClosed event arrives over the WebSocket, the id of
+  // the affected session is published here so consumers (App → ChatPanel →
+  // useChatTabs) can open/close the corresponding chat tab without stealing
+  // focus. null means "no event yet"; a non-null value is a fresh signal that
+  // an effect should consume. Each WS message is a separate macrotask, so
+  // back-to-back events get separate renders and effect runs (no batching
+  // loss). The creator's own SessionCreated is handled idempotently downstream
+  // (openTab is a no-op on an already-open id, and active is never changed).
+  const [recentlyCreatedSessionId, setRecentlyCreatedSessionId] = useState<string | null>(null)
+  const [recentlyClosedSessionId, setRecentlyClosedSessionId] = useState<string | null>(null)
   const lastConnectedAtRef = useRef<number | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -243,6 +254,31 @@ export function useBackend() {
           if (!evtWs || !active || evtWs === active.id) {
             scheduleFileTreeRefresh()
           }
+        }
+        // Multi-client session-list sync. SessionCreated is broadcast to every
+        // connected client (including the creator) so other tabs learn about a
+        // new conversation. Refresh the session list only when the id is new —
+        // the creator already inserted the Session from the create REST
+        // response, so a redundant listSessions call would pile onto the busy
+        // connection pool for no reason. Publish the id so ChatPanel can open
+        // it as a background tab (idempotent; never steals focus).
+        if (event.type === 'SessionCreated' && event.sessionId) {
+          const id = event.sessionId
+          setSessions((prev) => {
+            if (!prev.some((s) => s.id === id)) {
+              void loadSessions()
+            }
+            return prev
+          })
+          setRecentlyCreatedSessionId(id)
+        }
+        // SessionClosed is broadcast when any client closes/deletes a session.
+        // Remove it from the local session list immediately (no round-trip
+        // needed) and publish the id so ChatPanel can close its tab and pick a
+        // fallback active session if the closed one was active here.
+        if (event.type === 'SessionClosed' && event.sessionId) {
+          setSessions((prev) => prev.filter((s) => s.id !== event.sessionId))
+          setRecentlyClosedSessionId(event.sessionId)
         }
       } catch {
         // Ignore malformed messages.
@@ -718,6 +754,9 @@ export function useBackend() {
     pendingPermissions,
     connected,
     reconnecting,
+    // Multi-client session sync signals (see setState calls in onmessage).
+    recentlyCreatedSessionId,
+    recentlyClosedSessionId,
 
     // Actions
     selectWorkspace,
