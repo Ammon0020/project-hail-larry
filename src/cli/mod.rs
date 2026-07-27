@@ -459,20 +459,22 @@ async fn local_request(
 
 /// Build the base URL and HTTP client for loopback daemon calls.
 ///
-/// The daemon defaults to TLS-on (`Config::default_or_error` sets
-/// `tls_enabled: true`), but the CLI's serde default for `tls_enabled` is
-/// `false` (the field is `#[serde(default)]`). When the on-disk config omits
-/// the field, the CLI reads `false` while the daemon serves TLS — the CLI
-/// then builds a plain HTTP client, the daemon's cleartext listener redirects
-/// to HTTPS, reqwest follows the redirect to the self-signed endpoint, and
-/// raises `invalid peer certificate: UnknownIssuer`.
+/// The daemon's TLS mode is a runtime config flag (`tls_enabled`), and the
+/// on-disk cert file can outlive a switch to cleartext — so neither the flag
+/// nor the cert file's presence is a reliable signal on its own. To be robust
+/// against either kind of drift, the CLI **probes both configured ports** and
+/// talks to whichever one is actually listening:
 ///
-/// To be robust against this config drift, HTTPS + CA trust is driven by the
-/// **cert file's presence on disk** rather than the `tls_enabled` flag. If
-/// the daemon's `cert.pem` exists, connect directly to the HTTPS port with
-/// the cert loaded as a root CA. Otherwise, fall back to plain HTTP with
-/// redirects disabled (so a stale redirect doesn't produce a confusing TLS
-/// error on a client that has no CA loaded).
+/// - If the cert file exists *and* the HTTPS port answers, use HTTPS with the
+///   cert trusted as a root CA.
+/// - Otherwise, if the HTTP port answers, use plain HTTP with redirects
+///   disabled (so a stale HTTP→HTTPS redirect on a TLS daemon doesn't produce
+///   a confusing TLS error on a client that has no CA loaded).
+/// - If neither port answers, fall back to the cert-driven default so the
+///   eventual connection error reflects the daemon's expected configuration
+///   rather than a silent "no endpoint chosen".
+// http/https port pair is intentional — the names mirror the two listeners.
+#[allow(clippy::similar_names)]
 fn local_daemon_client(config: &Config) -> Result<(String, reqwest::Client)> {
     // Resolve the cert directory using the same logic as the listener
     // (listen.rs): explicit `tls_cert_dir` wins, otherwise `{data_dir}/tls`.
@@ -482,14 +484,22 @@ fn local_daemon_client(config: &Config) -> Result<(String, reqwest::Client)> {
         std::path::PathBuf::from(&config.tls_cert_dir)
     };
     let cert_path = cert_dir.join(crate::app::tls_cert::CERT_FILE_NAME);
+    let cert_exists = cert_path.is_file();
 
-    // If the cert file exists, the daemon is serving TLS (regardless of what
-    // the local config's tls_enabled flag says). Connect via HTTPS with the
-    // cert trusted as a root CA.
-    if cert_path.is_file() {
-        let https_port =
-            u16::try_from(daemon::resolved_https_port(config)?).context("validate HTTPS port")?;
-        let url = format!("https://127.0.0.1:{https_port}");
+    let http_port = u16::try_from(config.port).context("validate HTTP port")?;
+    let https_port =
+        u16::try_from(daemon::resolved_https_port(config)?).context("validate HTTPS port")?;
+
+    let endpoint = select_daemon_endpoint(
+        cert_exists,
+        port::is_port_listening(&config.host, http_port),
+        port::is_port_listening(&config.host, https_port),
+        http_port,
+        https_port,
+    );
+
+    if endpoint.https {
+        let url = format!("https://127.0.0.1:{}", endpoint.port);
         let cert_pem = std::fs::read(&cert_path).with_context(|| {
             format!(
                 "read daemon TLS certificate at {} (is the daemon running with TLS?)",
@@ -506,20 +516,69 @@ fn local_daemon_client(config: &Config) -> Result<(String, reqwest::Client)> {
         return Ok((url, client));
     }
 
-    // No cert file on disk — the daemon is either running without TLS or not
-    // running at all. Use plain HTTP. Disable redirect-following so that if
-    // the daemon IS serving TLS (and redirecting HTTP→HTTPS) but the cert
-    // file is unreadable/missing, the CLI surfaces a clear connection error
-    // instead of following the redirect to an untrusted HTTPS endpoint and
-    // raising a confusing "invalid peer certificate" message.
-    let port = u16::try_from(config.port).context("validate HTTP port")?;
-    let url = format!("http://127.0.0.1:{port}");
+    // Plain HTTP. Disable redirect-following so that if the daemon IS
+    // serving TLS (and redirecting HTTP→HTTPS) but we deliberately chose
+    // HTTP (e.g. cert missing), the CLI surfaces a clear error instead of
+    // following the redirect to an untrusted HTTPS endpoint.
+    let url = format!("http://127.0.0.1:{}", endpoint.port);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("create local daemon HTTP client")?;
     Ok((url, client))
+}
+
+/// A selected loopback daemon endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DaemonEndpoint {
+    https: bool,
+    port: u16,
+}
+
+/// Pick which loopback daemon endpoint to talk to.
+///
+/// HTTPS is preferred when the daemon's cert exists *and* the HTTPS port is
+/// listening. Otherwise HTTP is used when its port is listening. When neither
+/// port answers, fall back to the cert-driven default so the caller surfaces a
+/// meaningful connection error rather than a silent "no endpoint".
+///
+/// This is a pure function over probe results so it can be unit-tested without
+/// binding real sockets; [`local_daemon_client`] performs the actual probes.
+// http/https listening + port pairs are intentional — they mirror the two listeners.
+#[allow(clippy::similar_names)]
+fn select_daemon_endpoint(
+    cert_exists: bool,
+    http_listening: bool,
+    https_listening: bool,
+    http_port: u16,
+    https_port: u16,
+) -> DaemonEndpoint {
+    if cert_exists && https_listening {
+        return DaemonEndpoint {
+            https: true,
+            port: https_port,
+        };
+    }
+    if http_listening {
+        return DaemonEndpoint {
+            https: false,
+            port: http_port,
+        };
+    }
+    // Nothing listening — prefer the cert-driven default so the eventual
+    // error reflects the daemon's expected configuration.
+    if cert_exists {
+        DaemonEndpoint {
+            https: true,
+            port: https_port,
+        }
+    } else {
+        DaemonEndpoint {
+            https: false,
+            port: http_port,
+        }
+    }
 }
 
 fn pairing_host(host: &str) -> &str {
@@ -590,5 +649,39 @@ mod tests {
         ] {
             Cli::try_parse_from(command).expect("parse CLI command");
         }
+    }
+
+    #[test]
+    fn select_daemon_endpoint_prefers_https_when_cert_and_listener_present() {
+        let endpoint = select_daemon_endpoint(true, true, true, 7337, 7338);
+        assert_eq!(endpoint, DaemonEndpoint { https: true, port: 7338 });
+    }
+
+    #[test]
+    fn select_daemon_endpoint_falls_back_to_http_when_https_not_listening() {
+        // Stale cert on disk but daemon running without TLS (the user's bug):
+        // HTTPS port isn't bound, so we must talk HTTP on the configured port.
+        let endpoint = select_daemon_endpoint(true, true, false, 7337, 7338);
+        assert_eq!(endpoint, DaemonEndpoint { https: false, port: 7337 });
+    }
+
+    #[test]
+    fn select_daemon_endpoint_uses_http_when_no_cert() {
+        let endpoint = select_daemon_endpoint(false, true, true, 7337, 7338);
+        assert_eq!(endpoint, DaemonEndpoint { https: false, port: 7337 });
+    }
+
+    #[test]
+    fn select_daemon_endpoint_defaults_to_https_when_nothing_listening_and_cert_exists() {
+        // Daemon not up: prefer the cert-driven default so the error reflects
+        // the expected configuration.
+        let endpoint = select_daemon_endpoint(true, false, false, 7337, 7338);
+        assert_eq!(endpoint, DaemonEndpoint { https: true, port: 7338 });
+    }
+
+    #[test]
+    fn select_daemon_endpoint_defaults_to_http_when_nothing_listening_and_no_cert() {
+        let endpoint = select_daemon_endpoint(false, false, false, 7337, 7338);
+        assert_eq!(endpoint, DaemonEndpoint { https: false, port: 7337 });
     }
 }
