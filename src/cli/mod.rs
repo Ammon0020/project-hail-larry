@@ -459,27 +459,21 @@ async fn local_request(
 
 /// Build the base URL and HTTP client for loopback daemon calls.
 ///
-/// When TLS is enabled the daemon's cleartext listener redirects to HTTPS, so
-/// connect directly to the HTTPS port and trust the daemon's self-signed
-/// certificate (loaded from the same cert directory the daemon mints into).
-/// This avoids a redirect round-trip and the "invalid peer certificate" error
-/// that reqwest raises when it blindly follows the redirect to an untrusted
-/// self-signed endpoint. When TLS is disabled, use plain HTTP as before.
+/// The daemon defaults to TLS-on (`Config::default_or_error` sets
+/// `tls_enabled: true`), but the CLI's serde default for `tls_enabled` is
+/// `false` (the field is `#[serde(default)]`). When the on-disk config omits
+/// the field, the CLI reads `false` while the daemon serves TLS — the CLI
+/// then builds a plain HTTP client, the daemon's cleartext listener redirects
+/// to HTTPS, reqwest follows the redirect to the self-signed endpoint, and
+/// raises `invalid peer certificate: UnknownIssuer`.
+///
+/// To be robust against this config drift, HTTPS + CA trust is driven by the
+/// **cert file's presence on disk** rather than the `tls_enabled` flag. If
+/// the daemon's `cert.pem` exists, connect directly to the HTTPS port with
+/// the cert loaded as a root CA. Otherwise, fall back to plain HTTP with
+/// redirects disabled (so a stale redirect doesn't produce a confusing TLS
+/// error on a client that has no CA loaded).
 fn local_daemon_client(config: &Config) -> Result<(String, reqwest::Client)> {
-    if !config.tls_enabled {
-        let port = u16::try_from(config.port).context("validate HTTP port")?;
-        let url = format!("http://127.0.0.1:{port}");
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .context("create local daemon HTTP client")?;
-        return Ok((url, client));
-    }
-
-    let https_port =
-        u16::try_from(daemon::resolved_https_port(config)?).context("validate HTTPS port")?;
-    let url = format!("https://127.0.0.1:{https_port}");
-
     // Resolve the cert directory using the same logic as the listener
     // (listen.rs): explicit `tls_cert_dir` wins, otherwise `{data_dir}/tls`.
     let cert_dir = if config.tls_cert_dir.is_empty() {
@@ -488,19 +482,43 @@ fn local_daemon_client(config: &Config) -> Result<(String, reqwest::Client)> {
         std::path::PathBuf::from(&config.tls_cert_dir)
     };
     let cert_path = cert_dir.join(crate::app::tls_cert::CERT_FILE_NAME);
-    let cert_pem = std::fs::read(&cert_path).with_context(|| {
-        format!(
-            "read daemon TLS certificate at {} (is the daemon running with TLS?)",
-            cert_path.display()
-        )
-    })?;
-    let cert = reqwest::Certificate::from_pem(&cert_pem).context("parse daemon TLS certificate")?;
 
+    // If the cert file exists, the daemon is serving TLS (regardless of what
+    // the local config's tls_enabled flag says). Connect via HTTPS with the
+    // cert trusted as a root CA.
+    if cert_path.is_file() {
+        let https_port =
+            u16::try_from(daemon::resolved_https_port(config)?).context("validate HTTPS port")?;
+        let url = format!("https://127.0.0.1:{https_port}");
+        let cert_pem = std::fs::read(&cert_path).with_context(|| {
+            format!(
+                "read daemon TLS certificate at {} (is the daemon running with TLS?)",
+                cert_path.display()
+            )
+        })?;
+        let cert =
+            reqwest::Certificate::from_pem(&cert_pem).context("parse daemon TLS certificate")?;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .add_root_certificate(cert)
+            .build()
+            .context("create local daemon HTTPS client")?;
+        return Ok((url, client));
+    }
+
+    // No cert file on disk — the daemon is either running without TLS or not
+    // running at all. Use plain HTTP. Disable redirect-following so that if
+    // the daemon IS serving TLS (and redirecting HTTP→HTTPS) but the cert
+    // file is unreadable/missing, the CLI surfaces a clear connection error
+    // instead of following the redirect to an untrusted HTTPS endpoint and
+    // raising a confusing "invalid peer certificate" message.
+    let port = u16::try_from(config.port).context("validate HTTP port")?;
+    let url = format!("http://127.0.0.1:{port}");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
-        .add_root_certificate(cert)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
-        .context("create local daemon HTTPS client")?;
+        .context("create local daemon HTTP client")?;
     Ok((url, client))
 }
 
