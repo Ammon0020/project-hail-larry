@@ -99,6 +99,14 @@ pub async fn autodetect() -> Vec<AgentInfo> {
 
 /// Detects installed known ACP agents using an explicit live-probe policy.
 pub async fn autodetect_with(options: AutodetectOptions) -> Vec<AgentInfo> {
+    // Test/contract harnesses set LOCAL_AGENT_NO_AUTODETECT=1 to guarantee
+    // /api/agents reflects only the seed config. Bypassing here (rather than
+    // per-harness) covers both daemon-startup and the /api/agents/autodetect
+    // route, and avoids Windows Known Folder / %LOCALAPPDATA% leaks that
+    // PATH=/dev/null + USERPROFILE cannot neutralize.
+    if std::env::var_os("LOCAL_AGENT_NO_AUTODETECT").is_some_and(|v| !v.is_empty()) {
+        return Vec::new();
+    }
     let mut agents = Vec::new();
     for harness in HARNESSES {
         let Some(command) = find_first_command(harness.commands(), harness.search_paths()) else {

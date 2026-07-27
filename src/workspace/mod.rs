@@ -13,7 +13,7 @@ use crate::interfaces::{
     AppError, FileNode, ReadFileResult, SearchOptions, SearchResult, WorkspaceInfo,
     WorkspaceManager, FILE_NODE_TYPE_FILE, FILE_NODE_TYPE_FOLDER,
 };
-use crate::pathutil::{clean_path, resolve_symlink, strip_verbatim_prefix};
+use crate::pathutil::{clean_path, path_to_slash, resolve_symlink, strip_verbatim_prefix};
 
 const MAX_READ_FILE_SIZE: u64 = 50 * 1024 * 1024;
 const BINARY_SNIFF_SIZE: usize = 512;
@@ -51,7 +51,10 @@ impl WorkspaceEntry {
     fn to_info(&self, id: &str) -> WorkspaceInfo {
         WorkspaceInfo {
             id: id.to_string(),
-            path: self.path.to_string_lossy().into_owned(),
+            // Strip the verbatim `\\?\` prefix that `fs::canonicalize` adds on
+            // Windows before converting to the forward-slash wire form, so
+            // the API returns `C:/Users/...` not `//?/C:/Users/...`.
+            path: path_to_slash(&strip_verbatim_prefix(&self.path)),
             name: self
                 .path
                 .file_name()
@@ -639,7 +642,7 @@ fn build_tree(
                 FILE_NODE_TYPE_FILE
             }
             .to_string(),
-            path: child_rel.to_string_lossy().into_owned(),
+            path: path_to_slash(&child_rel),
             children,
         });
     }

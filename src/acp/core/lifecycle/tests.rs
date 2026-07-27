@@ -22,12 +22,32 @@ use crate::interfaces::{
 use crate::workspace::Manager as WorkspaceRegistry;
 use chrono::Utc;
 
-/// Resolve the mockagent binary path. CI builds the Go mockagent to a
-/// platform-specific location and points `LOCAL_AGENT_MOCKAGENT_BIN` at it
-/// (Windows needs a `.exe` suffix); the default `/tmp/mockagent` matches
-/// the local-dev build documented in the assertion below.
+/// Resolve the mockagent binary path.
+///
+/// Resolution order:
+/// 1. `LOCAL_AGENT_MOCKAGENT_BIN` — explicit override (CI layouts that copy
+///    the binary elsewhere).
+/// 2. `CARGO_BIN_EXE_mockagent` — set by Cargo at runtime for tests in the
+///    same package as the `mockagent` bin target (includes `.exe` on Windows).
+/// 3. `${CARGO_TARGET_DIR:-${CARGO_MANIFEST_DIR}/target}/debug/mockagent[.exe]`
+///    — fallback for unit tests where Cargo doesn't set `CARGO_BIN_EXE_*`.
 fn mockagent_bin() -> String {
-    std::env::var("LOCAL_AGENT_MOCKAGENT_BIN").unwrap_or_else(|_| "/tmp/mockagent".to_string())
+    if let Ok(path) = std::env::var("LOCAL_AGENT_MOCKAGENT_BIN") {
+        return path;
+    }
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_mockagent") {
+        return path;
+    }
+    // Unit tests inside the lib: Cargo doesn't set CARGO_BIN_EXE_*, so
+    // reconstruct the path from the manifest dir / target dir.
+    let exe = if cfg!(windows) {
+        "mockagent.exe"
+    } else {
+        "mockagent"
+    };
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .unwrap_or_else(|_| format!("{}/target", env!("CARGO_MANIFEST_DIR")));
+    format!("{target_dir}/debug/{exe}")
 }
 
 /// Records only session cleanup so the test can prove the local ID is used.
@@ -73,7 +93,7 @@ async fn mock_client_empty(
     let mockagent_bin = mockagent_bin();
     assert!(
             Path::new(&mockagent_bin).exists(),
-            "mockagent binary missing at {mockagent_bin}; build it with `cargo build --bin mockagent && cp target/debug/mockagent /tmp/mockagent` or set LOCAL_AGENT_MOCKAGENT_BIN"
+            "mockagent binary missing at {mockagent_bin}; build it with `cargo build --bin mockagent` or set LOCAL_AGENT_MOCKAGENT_BIN"
         );
     let tempdir = TempDir::new().expect("temporary workspace");
     let workspaces = Arc::new(WorkspaceRegistry::new());

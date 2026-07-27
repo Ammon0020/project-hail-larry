@@ -85,11 +85,30 @@ impl Redactor {
     /// Register an absolute path prefix to replace with <REDACTED_PATH>.
     /// Paths are matched longest-first so nested directories are scrubbed
     /// before their parents.
+    ///
+    /// On Windows, path prefixes contain backslashes. JSON response bodies
+    /// escape backslashes as `\\`, so a raw prefix `C:\Users\...` would not
+    /// match the JSON-escaped `C:\\Users\\...` in the response. To handle
+    /// both, the JSON-escaped variant is also registered. Additionally, a
+    /// forward-slash variant is registered so paths normalized to `/` by the
+    /// daemon (e.g. workspace paths via `path_to_slash`) are also redacted.
     pub fn register_path(&mut self, prefix: &str) {
         if prefix.is_empty() {
             return;
         }
         self.paths.push(prefix.to_string());
+        // JSON-escaped variant (backslashes doubled) for paths inside JSON
+        // string values on Windows.
+        let escaped = prefix.replace('\\', "\\\\");
+        // Forward-slash variant for daemon-normalized paths (path_to_slash).
+        let slashed = prefix.replace('\\', "/");
+        let has_distinct_slashed_variant = slashed != prefix && slashed != escaped;
+        if escaped != prefix {
+            self.paths.push(escaped);
+        }
+        if has_distinct_slashed_variant {
+            self.paths.push(slashed);
+        }
         // Sort longest-first so the most specific prefix wins during replacement.
         self.paths.sort_by_key(|b| std::cmp::Reverse(b.len()));
     }
@@ -103,9 +122,30 @@ impl Redactor {
             result = result.replace(raw, placeholder);
         }
 
-        // 2. Registered path prefixes (longest first).
+        // 2. Registered path prefixes (longest first). All variants
+        //    (raw backslash, JSON-escaped double-backslash, forward-slash)
+        //    are registered so matching works regardless of how the path
+        //    appears in the response.
         for prefix in &self.paths {
             result = result.replace(prefix, REDACTED_PATH);
+        }
+        // Normalize any remaining backslash separators adjacent to the
+        // redacted-path placeholder so the output matches the Unix-generated
+        // golden fixtures (which use forward slashes).
+        // JSON-escaped Windows paths leave two literal backslashes beside the
+        // placeholder. Normalize those before single raw-path separators to
+        // preserve valid JSON after prefix replacement.
+        while result.contains("\\\\<REDACTED_PATH>") {
+            result = result.replace("\\\\<REDACTED_PATH>", "/<REDACTED_PATH>");
+        }
+        while result.contains("<REDACTED_PATH>\\\\") {
+            result = result.replace("<REDACTED_PATH>\\\\", "<REDACTED_PATH>/");
+        }
+        while result.contains("\\<REDACTED_PATH>") {
+            result = result.replace("\\<REDACTED_PATH>", "/<REDACTED_PATH>");
+        }
+        while result.contains("<REDACTED_PATH>\\") {
+            result = result.replace("<REDACTED_PATH>\\", "<REDACTED_PATH>/");
         }
 
         // 3. Scrub token/secret/secretHash/passcode JSON fields BEFORE the
@@ -231,6 +271,27 @@ mod tests {
         // first, then the remaining "/home/user" (if any) is replaced.
         assert!(output.contains(REDACTED_PATH));
         assert!(!output.contains("/home/user"));
+    }
+
+    #[test]
+    fn test_json_escaped_windows_path_redaction_preserves_valid_json() {
+        let mut r = Redactor::new();
+        r.register_path(r"C:\Users\adama\AppData\Local\Temp\.tmp123");
+        let input =
+            r#"{"qrPath":"C:\\Users\\adama\\AppData\\Local\\Temp\\.tmp123\\pairing-id.png"}"#;
+        let output = r.redact(input);
+
+        assert_eq!(output, r#"{"qrPath":"<REDACTED_PATH>/pairing-id.png"}"#);
+        serde_json::from_str::<serde_json::Value>(&output).expect("redacted JSON remains valid");
+    }
+
+    #[test]
+    fn test_forward_slash_windows_path_redaction() {
+        let mut r = Redactor::new();
+        r.register_path(r"C:\Users\adama\project-hail-larry");
+        let input = "C:/Users/adama/project-hail-larry/tests/contract";
+
+        assert_eq!(r.redact(input), "<REDACTED_PATH>/tests/contract");
     }
 
     #[test]

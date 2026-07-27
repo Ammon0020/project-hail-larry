@@ -222,6 +222,21 @@ pub(crate) fn strip_verbatim_prefix(path: &Path) -> PathBuf {
     }
 }
 
+/// Convert a path to the stable forward-slash wire representation.
+///
+/// API responses (workspace paths, file-tree nodes, search results) must use
+/// forward slashes on every platform so the wire format is stable and golden
+/// fixtures match. On Unix this is a no-op; on Windows it replaces the
+/// platform separator (`\`) with `/`.
+pub(crate) fn path_to_slash(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if std::path::MAIN_SEPARATOR == '/' {
+        value.into_owned()
+    } else {
+        value.replace(std::path::MAIN_SEPARATOR, "/")
+    }
+}
+
 /// Report whether `path` is equal to `root` or lives beneath it.
 ///
 /// Both arguments are expected to be absolute and normalised (canonical or

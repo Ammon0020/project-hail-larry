@@ -14,7 +14,7 @@
 //!    - Body: semantic JSON for objects/arrays, exact bytes for text/errors.
 //!
 //! Cases that require non-loopback connections (the `_unauth` cases) are
-//! skipped — the black-box runner connects via localhost, so the server's
+//! skipped Ã¢â‚¬â€ the black-box runner connects via localhost, so the server's
 //! loopback auth bypass always applies. These cases are documented as a known
 //! limitation in the README.
 
@@ -347,7 +347,7 @@ const REST_CASES: &[RestCase] = &[
         name: "profiles_put_bad_body",
         method: "PUT",
         path: "/api/profiles",
-        // Valid JSON shape with a dangling default — stable 400 message (not serde text).
+        // Valid JSON shape with a dangling default Ã¢â‚¬â€ stable 400 message (not serde text).
         body: r#"{"profiles":{"code":{"label":"Code","instructions":"i","tools":[]}},"defaultProfileId":"missing"}"#,
     },
 ];
@@ -476,7 +476,7 @@ pub async fn run_case(harness: &BackendHarness, name: &str) {
     }
 
     eprintln!(
-        "[contract] PASS: {name} ({} {actual_path} → {status})",
+        "[contract] PASS: {name} ({} {actual_path} Ã¢â€ â€™ {status})",
         case.method
     );
 }

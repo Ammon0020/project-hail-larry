@@ -39,7 +39,9 @@ const SEED_WORKSPACE_REL: &str = "tests/contract/fixtures/seed-workspace";
 pub struct BackendHarness {
     /// The isolated state directory. Kept alive so it is not deleted until
     /// shutdown (TempDir drops on shutdown unless CONTRACT_KEEP_STATE is set).
-    _state_dir: TempDir,
+    /// `Option` so `shutdown` can `take()` it (for `CONTRACT_KEEP_STATE`)
+    /// without conflicting with the `Drop` impl that signals the child to die.
+    _state_dir: Option<TempDir>,
     /// Path to the state directory (borrowed from _state_dir for convenience).
     pub state_dir: PathBuf,
     /// The repo root (where Cargo.toml / go.mod live).
@@ -107,7 +109,7 @@ impl BackendHarness {
         let base_url = format!("http://127.0.0.1:{port}");
 
         let harness = Self {
-            _state_dir: state_dir,
+            _state_dir: Some(state_dir),
             state_dir: state_dir_path,
             repo_root,
             base_url,
@@ -155,15 +157,19 @@ impl BackendHarness {
 
     /// Shut down the backend subprocess and clean up the state dir.
     pub async fn shutdown(mut self) {
-        // Kill the subprocess. On Unix this sends SIGKILL (via tokio's kill);
-        // for test cleanup this is acceptable — the backend doesn't need
-        // graceful shutdown in tests.
+        // Kill + reap the subprocess. On Unix `kill` sends SIGKILL; on Windows
+        // `TerminateProcess`. Waiting afterward ensures the OS process is
+        // actually gone before the test binary moves on, so no daemons linger
+        // on Windows (where `TerminateProcess` is async w.r.t. handle close).
         let _ = self.child.kill().await;
+        let _ = self.child.wait().await;
 
         // If CONTRACT_KEEP_STATE is set, persist the state dir by forgetting it.
         if std::env::var("CONTRACT_KEEP_STATE").is_ok() {
-            eprintln!("[contract] keeping state dir: {}", self.state_dir.display());
-            std::mem::forget(self._state_dir);
+            if let Some(state_dir) = self._state_dir.take() {
+                eprintln!("[contract] keeping state dir: {}", self.state_dir.display());
+                std::mem::forget(state_dir);
+            }
         }
     }
 
@@ -180,6 +186,20 @@ impl BackendHarness {
             .and_then(|id| id.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| panic!("no workspace ID found in /api/workspaces response"))
+    }
+}
+
+/// Safety net so a forgotten `shutdown()` (e.g. when a test panics before
+/// reaching it) does not orphan the backend daemon. `start_kill` is the
+/// synchronous, non-async variant of `kill` — it just signals the process to
+/// exit without waiting for it. The explicit `shutdown()` path still does the
+/// full kill + wait + state-dir handling; this only guarantees the daemon is
+/// told to die.
+impl Drop for BackendHarness {
+    fn drop(&mut self) {
+        // `start_kill` is sync: signals the process to terminate without
+        // waiting. Best-effort — ignore errors (process may already be dead).
+        let _ = self.child.start_kill();
     }
 }
 
@@ -238,7 +258,12 @@ async fn build_rust_binary(repo_root: &Path) -> PathBuf {
         panic!("cargo build failed");
     }
 
-    repo_root.join("target").join("debug").join("local_agent")
+    let exe = if cfg!(windows) {
+        "local_agent.exe"
+    } else {
+        "local_agent"
+    };
+    repo_root.join("target").join("debug").join(exe)
 }
 
 /// Find a free TCP port by binding to port 0 and reading the assigned port.
@@ -323,6 +348,11 @@ async fn start_backend(binary: &Path, state_dir: &Path, backend: &str) -> Result
     let mut cmd = Command::new(binary);
     cmd.arg("start")
         .env("LOCAL_AGENT_STATE_DIR", state_dir)
+        // Disable ACP agent autodetect so /api/agents reflects only the
+        // fixture-agent from the seed config. On Windows the Known Folder API
+        // and %LOCALAPPDATA% bypass PATH=/dev/null + USERPROFILE, so this env
+        // gate is the reliable neutralization.
+        .env("LOCAL_AGENT_NO_AUTODETECT", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());

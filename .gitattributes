@@ -1,0 +1,8 @@
+# Contract seed-workspace files are read verbatim by the daemon and compared
+# byte-for-byte against golden fixtures that expect LF. Force LF on checkout
+# so Windows clones match Linux/macOS.
+tests/contract/fixtures/seed-workspace/** text eol=lf
+
+# Golden fixtures are JSON-parsed (CRLF in their own formatting is absorbed),
+# but enforcing LF keeps diffs clean across platforms.
+tests/contract/golden/** text eol=lf
