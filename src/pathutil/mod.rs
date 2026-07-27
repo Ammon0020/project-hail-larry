@@ -124,13 +124,26 @@ pub fn clean_path(workspace_root: &Path, input: &str) -> Result<PathBuf, PathErr
 ///   the lexical containment check in [`clean_path`] is the only remaining
 ///   safeguard, but no on-disk symlink chain exists to follow at that point.
 ///
-/// `workspace_root` should already be absolute and cleaned (callers typically
-/// pass the canonicalised root from [`clean_path`]).
+/// `workspace_root` is canonicalised internally (best-effort, falling back to
+/// the lexical form if the root is not yet on disk) so callers may pass either
+/// a raw absolute path or a pre-canonicalised root. This is required on Windows
+/// where `std::env::temp_dir()` and other path sources may use 8.3 short names
+/// (e.g. `RUNNER~1`) that differ from the long form `fs::canonicalize` returns.
 ///
 /// # Errors
 /// Returns [`PathError::SymlinkEscapesRoot`] for any escape or symlink-at-leaf
 /// rejection, and [`PathError::IoError`] for unexpected filesystem failures.
 pub fn resolve_symlink(workspace_root: &Path, path: &Path) -> Result<PathBuf, PathError> {
+    // Canonicalise the root once so every containment check below compares
+    // like-for-like forms. On Windows, `fs::canonicalize` resolves 8.3 short
+    // names (e.g. `C:\Users\RUNNER~1\...`) to their long form
+    // (`\\?\C:\Users\runneradmin\...`); without this step, a root passed in
+    // short-name form would never match a canonicalised child path and every
+    // resolved path would be rejected as escaping the workspace. If the root
+    // does not exist on disk, fall back to the lexical form — the caller is
+    // expected to have a real workspace.
+    let root = fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
+
     // Reject a symlink at the final component outright.
     if let Ok(meta) = fs::symlink_metadata(path) {
         if meta.file_type().is_symlink() {
@@ -144,11 +157,11 @@ pub fn resolve_symlink(workspace_root: &Path, path: &Path) -> Result<PathBuf, Pa
     // Try to fully resolve the path. canonicalize follows symlinks in every
     // component and returns the canonical absolute path.
     if let Ok(resolved) = fs::canonicalize(path) {
-        if !is_within_root(workspace_root, &resolved) {
+        if !is_within_root(&root, &resolved) {
             return Err(PathError::SymlinkEscapesRoot(format!(
                 "{} escapes workspace root {}",
                 resolved.display(),
-                workspace_root.display()
+                root.display()
             )));
         }
         return Ok(resolved);
@@ -182,22 +195,22 @@ pub fn resolve_symlink(workspace_root: &Path, path: &Path) -> Result<PathBuf, Pa
         return Ok(path.to_path_buf());
     };
 
-    if !is_within_root(workspace_root, &resolved_parent) {
+    if !is_within_root(&root, &resolved_parent) {
         return Err(PathError::SymlinkEscapesRoot(format!(
             "resolved parent {} escapes workspace root {}",
             resolved_parent.display(),
-            workspace_root.display()
+            root.display()
         )));
     }
 
     // Re-attach the (lexical) leaf. Safe because the leaf doesn't yet exist on
     // disk, so it cannot itself be a symlink.
     let resolved_path = resolved_parent.join(base);
-    if !is_within_root(workspace_root, &resolved_path) {
+    if !is_within_root(&root, &resolved_path) {
         return Err(PathError::SymlinkEscapesRoot(format!(
             "resolved path {} escapes workspace root {}",
             resolved_path.display(),
-            workspace_root.display()
+            root.display()
         )));
     }
     Ok(resolved_path)

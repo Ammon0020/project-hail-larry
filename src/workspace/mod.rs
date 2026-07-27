@@ -116,7 +116,14 @@ impl Manager {
         path: &str,
         error: impl Into<String>,
     ) -> Result<WorkspaceInfo, AppError> {
-        let path_buf = PathBuf::from(path);
+        // Best-effort canonicalise so the computed ID matches the one
+        // `register` would produce for the same on-disk path. On Windows the
+        // temp dir and other system paths may use 8.3 short names (e.g.
+        // `RUNNER~1`) that hash differently from the long form
+        // (`runneradmin`) returned by `fs::canonicalize`. If the path does not
+        // exist on disk (the typical "unavailable" case), fall back to the
+        // lexical form — there is no canonical form to derive.
+        let path_buf = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
         let id = workspace_id(&path_buf);
         let entry = WorkspaceEntry::unavailable(path_buf, error.into());
         let info = entry.to_info(&id);

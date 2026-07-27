@@ -7,6 +7,7 @@ use super::Manager;
 use crate::interfaces::{
     AppError, SearchOptions, WorkspaceManager as _, FILE_NODE_TYPE_FILE, FILE_NODE_TYPE_FOLDER,
 };
+use crate::pathutil::strip_verbatim_prefix;
 
 fn manager() -> Manager {
     Manager::new()
@@ -271,12 +272,19 @@ async fn file_path_returns_only_existing_files() {
         .register(&dir.path().to_string_lossy())
         .await
         .unwrap();
+    // `file_path` returns the canonicalised absolute path with the Windows
+    // verbatim `\\?\` prefix stripped (it resolves symlinks via `safe_path`).
+    // On Windows, `fs::canonicalize` expands 8.3 short names (e.g. `RUNNER~1`
+    // → `runneradmin`) and prepends `\\?\`, so compare against the
+    // canonicalised form with the verbatim prefix stripped to match what
+    // `file_path` returns.
+    let canon_root = strip_verbatim_prefix(&dir.path().canonicalize().unwrap());
     assert_eq!(
         manager
             .file_path(&workspace.id, "package.json")
             .await
             .unwrap(),
-        dir.path().join("package.json").to_string_lossy()
+        canon_root.join("package.json").to_string_lossy()
     );
     assert!(manager.file_path(&workspace.id, "src").await.is_err());
     assert!(manager
