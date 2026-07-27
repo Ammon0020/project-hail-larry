@@ -46,3 +46,4 @@ Items are grouped by code area so a developer can stay in one context while work
 ## Agent Chat
 - [ ] Fix Devin auto-detect models
 - [ ] Fix Cursor Agent auto-detect models
+- [ ] Chat auto-naming
