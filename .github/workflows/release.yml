@@ -1,0 +1,127 @@
+name: release
+
+# Publishes prebuilt release binaries to GitHub Releases on tag push.
+# This is the real release channel; the per-push rust-ci.yml jobs only upload
+# 14-day workflow artifacts for quick feedback.
+on:
+  push:
+    tags: ["v*"]
+
+# Least privilege at the top level; the release job escalates to contents:write.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same tag (e.g. a force-pushed tag).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Pin the toolchain via rust-toolchain.toml (channel 1.92.0).
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: build (${{ matrix.artifact }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - runner: ubuntu-latest
+            artifact: local_agent-linux-x86_64
+            smoke: bash scripts/spa-smoke.sh
+          # macOS Apple Silicon
+          - runner: macos-latest
+            artifact: local_agent-macos-arm64
+            smoke: bash scripts/spa-smoke.sh
+          # macOS Intel — macos-13 is the last Intel runner GitHub offers.
+          - runner: macos-13
+            artifact: local_agent-macos-x86_64
+            smoke: bash scripts/spa-smoke.sh
+          # Windows x86_64
+          - runner: windows-latest
+            artifact: local_agent-windows-x86_64.exe
+            smoke: pwsh -File scripts/spa-smoke.ps1
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend (real SPA)
+        working-directory: web
+        run: |
+          npm ci --quiet
+          npm run build --silent
+      - name: cargo build --release
+        run: cargo build --release --locked --bin local_agent
+      # Rename the binary to the artifact name BEFORE upload so the downloaded
+      # file has the right name (GitHub Releases preserves the uploaded name).
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        run: cp target/release/local_agent "${{ matrix.artifact }}"
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item target\release\local_agent.exe "${{ matrix.artifact }}" -Force
+      - name: Compute SHA256 (Unix)
+        if: runner.os != 'Windows'
+        run: shasum -a 256 "${{ matrix.artifact }}" | awk '{print $1}' > "${{ matrix.artifact }}.sha256"
+      - name: Compute SHA256 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: (Get-FileHash -Algorithm SHA256 "${{ matrix.artifact }}").Hash | Out-File -Encoding ascii -NoNewline "${{ matrix.artifact }}.sha256"
+      - name: SPA smoke (Unix)
+        if: runner.os != 'Windows'
+        run: ${{ matrix.smoke }} "./${{ matrix.artifact }}"
+      - name: SPA smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -File scripts/spa-smoke.ps1 -Binary ".\${{ matrix.artifact }}"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: publish GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    # Needs contents:write to create the release and upload assets.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      # No code signing or notarization (pre-1.0). macOS users must run
+      # `xattr -d com.apple.quarantine /path/to/local_agent` to bypass
+      # Gatekeeper for the unsigned binary.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/local_agent-linux-x86_64/local_agent-linux-x86_64
+            artifacts/local_agent-linux-x86_64/local_agent-linux-x86_64.sha256
+            artifacts/local_agent-macos-arm64/local_agent-macos-arm64
+            artifacts/local_agent-macos-arm64/local_agent-macos-arm64.sha256
+            artifacts/local_agent-macos-x86_64/local_agent-macos-x86_64
+            artifacts/local_agent-macos-x86_64/local_agent-macos-x86_64.sha256
+            artifacts/local_agent-windows-x86_64.exe/local_agent-windows-x86_64.exe
+            artifacts/local_agent-windows-x86_64.exe/local_agent-windows-x86_64.exe.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          draft: false
+          # v0.1.0 → release; v0.1.0-rc1 (contains '-') → prerelease.
+          prerelease: ${{ contains(github.ref_name, '-') }}

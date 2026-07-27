@@ -85,9 +85,16 @@ jobs:
           CONTRACT_BACKEND=rust CONTRACT_BINARY=./target/debug/local_agent \
             cargo test -q --test contract_runner --features contract -- --test-threads=1
 
+  # macos-latest = Apple Silicon (arm64); macos-13 = last Intel (x86_64) runner.
+  # Build-verify on both; full SPA smoke runs only on release-macos (arm64)
+  # below. Intel release binaries come from the tag-triggered release.yml.
   build-macos:
-    name: cargo build (macOS)
-    runs-on: macos-latest
+    name: cargo build (macOS ${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, macos-13]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -127,6 +134,34 @@ jobs:
 
   # Native release artifact + real SPA embed + smoke (S-BUILD ACs).
   # Independent of debug build-macos / build-test-windows so those stay fast.
+  release-linux:
+    name: release + SPA smoke (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend (real SPA)
+        working-directory: web
+        run: |
+          npm ci --quiet
+          npm run build --silent
+      - name: cargo build --release
+        run: cargo build --release --locked --bin local_agent
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: local_agent-linux
+          path: target/release/local_agent
+          if-no-files-found: error
+          retention-days: 14
+      - name: SPA smoke
+        run: bash scripts/spa-smoke.sh ./target/release/local_agent
+
   release-macos:
     name: release + SPA smoke (macOS)
     runs-on: macos-latest
