@@ -24,8 +24,14 @@ interface BannerProps
  * layout, spacing, borders, and actions.
  */
 export function Banner({ variant, className, ...props }: BannerProps) {
+  // error/warning are assertive; info/success are polite status regions.
+  const role = variant === 'error' || variant === 'warning' ? 'alert' : 'status'
+  const ariaLive = role === 'alert' ? 'assertive' : 'polite'
   return (
     <div
+      role={role}
+      aria-live={ariaLive}
+      aria-atomic="true"
       className={cn(bannerVariants({ variant }), className)}
       {...props}
     />

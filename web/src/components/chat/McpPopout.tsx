@@ -39,8 +39,8 @@ interface McpPopoutProps {
  * Outside-click and Escape close the popout.
  *
  * Status dots reflect the backend health check (`internal/mcp/health.go`):
- *   healthy   → green (with glow)
- *   unhealthy → red/destructive (with glow); `error` surfaced via native
+ *   healthy   → primary
+ *   unhealthy → destructive; `error` surfaced via native
  *               `title` tooltip on the row
  *   disabled  → gray
  *   unknown   → muted (or falls back to enabled-based color while status
@@ -101,7 +101,7 @@ export function McpPopout({
       {/* Header: enabled count + store/settings actions. While a health
           refresh is in flight, a small spinner sits next to the count so
           the user can tell dots may update shortly. */}
-      <div className="flex items-center justify-between pb-2 border-b border-white/[0.05]">
+      <div className="flex items-center justify-between pb-2 border-b border-border">
         <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           {enabledCount} MCP{enabledCount === 1 ? '' : 's'}
           {statusLoading && (
@@ -122,7 +122,7 @@ export function McpPopout({
           {/* Settings: close popout and open app Settings → MCP Servers. */}
           <button
             type="button"
-            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-white/[0.05] transition"
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition"
             title="MCP settings"
             aria-label="MCP settings"
             onClick={() => {
@@ -213,7 +213,7 @@ export function McpPopout({
                     className={cn(
                       'absolute top-[2px] left-[2px] w-3 h-3 rounded-full transition-transform',
                       server.enabled
-                        ? 'translate-x-[14px] bg-white'
+                        ? 'translate-x-[14px] bg-primary-foreground'
                         : 'bg-muted-foreground',
                     )}
                   />
@@ -236,8 +236,8 @@ export function McpPopout({
  * flashing muted.
  *
  * Colors follow the project's semantic Tailwind tokens:
- *   healthy   → bg-green-500 with a soft glow
- *   unhealthy → bg-red-500 / text-destructive family with a soft red glow
+ *   healthy   → bg-primary
+ *   unhealthy → bg-destructive
  *   disabled  → bg-muted-foreground
  *   unknown   → bg-muted-foreground (or enabled-fallback when no status yet)
  */
@@ -247,11 +247,11 @@ function resolveDotClass(
 ): string {
   switch (status) {
     case 'healthy':
-      return 'bg-green-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
+      return 'bg-primary'
     case 'unhealthy':
-      // Red dot with a soft destructive glow; the error reason is shown
-      // via the row's native `title` tooltip (set in the map above).
-      return 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.45)]'
+      // Red dot; the error reason is shown via the row's native `title`
+      // tooltip (set in the map above).
+      return 'bg-destructive'
     case 'disabled':
       return 'bg-muted-foreground'
     case 'unknown':
@@ -262,8 +262,6 @@ function resolveDotClass(
     default:
       // No status entry yet — fall back to enabled-based coloring to
       // avoid a muted flash before the first `getMcpStatus()` resolves.
-      return enabled
-        ? 'bg-green-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
-        : 'bg-muted-foreground'
+      return enabled ? 'bg-primary' : 'bg-muted-foreground'
   }
 }

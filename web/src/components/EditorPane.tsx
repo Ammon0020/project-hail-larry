@@ -15,6 +15,7 @@ import { FileViewer } from '@/components/FileViewer'
 import { BrowsePreview } from '@/components/BrowsePreview'
 import { GitDiffTab } from '@/components/git/GitDiffTab'
 import { StatusBar } from '@/components/StatusBar'
+import { useResolvedTheme } from '@/hooks/useTheme'
 import { TabBar } from './TabBar'
 import { editorTabPreviewState } from './tabPreviewState'
 import { BreadcrumbBar } from './BreadcrumbBar'
@@ -171,6 +172,8 @@ export function EditorPane({
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null
   const mobile = !(isDesktop ?? true)
+  const resolvedTheme = useResolvedTheme()
+  const cmTheme = resolvedTheme === 'dark' ? oneDark : 'light'
 
   // Preview in TabBar: HTML/HTM opens browse-preview; other previewable
   // text types toggle FileViewer viewMode (shared with desktop header TabBar).
@@ -606,7 +609,7 @@ export function EditorPane({
                 if (activeTabId === tab.id) onContentChange(val)
               }}
               extensions={extensionsByTabId[tab.id] ?? []}
-              theme={oneDark}
+              theme={cmTheme}
               height="100%"
               className="h-full"
               onCreateEditor={(view) => {

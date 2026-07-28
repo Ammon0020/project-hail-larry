@@ -39,6 +39,7 @@ export interface ChatPanelActions {
    *  switches; onRebindSession is still used for agent (harness) switches. */
   onSwitchModel: (sessionId: string, modelId: string) => Promise<void>
   onExportSession: (sessionId: string) => void
+  onLoadOlder: (sessionId: string) => Promise<void>
   /** Uploads a file to a session's upload store. Routed through useBackend so
    *  uploads share the hook's session-recovery semantics instead of bypassing
    *  it via api.uploadFile directly. */
@@ -72,6 +73,7 @@ export function ChatPanel({
   activeSessionId,
   pendingCreatedSessionIds,
   pendingClosedSessionIds,
+  hasOlderEvents,
   onConsumeSessionCreated,
   onConsumeSessionClosed,
   actions,
@@ -97,6 +99,8 @@ export function ChatPanel({
   pendingCreatedSessionIds: string[]
   /** Queued ids of sessions another client closed (multi-client sync). */
   pendingClosedSessionIds: string[]
+  /** Whether the active session has another older history page. */
+  hasOlderEvents: boolean
   /** Drain one SessionCreated id after the tab has been opened (or skipped). */
   onConsumeSessionCreated: (sessionId: string) => void
   /** Drain one SessionClosed id after the tab has been closed. */
@@ -123,6 +127,7 @@ export function ChatPanel({
     onRebindSession,
     onSwitchModel,
     onExportSession,
+    onLoadOlder,
     onUploadFile,
     onSelectWorkspace,
   } = actions
@@ -171,6 +176,7 @@ export function ChatPanel({
     )
   }, [])
   const [error, setError] = useState<string | null>(null)
+  const [loadingOlderEvents, setLoadingOlderEvents] = useState(false)
 
   // Transient "New chat" placeholder tab. Set true by handleNewChat so the tab
   // bar shows a "New chat" tab immediately (without a backend round-trip).
@@ -717,6 +723,16 @@ export function ChatPanel({
     [mergedEvents, error, pendingPermissions],
   )
 
+  const handleLoadOlder = useCallback(async () => {
+    if (!activeSessionId || loadingOlderEvents) return
+    setLoadingOlderEvents(true)
+    try {
+      await onLoadOlder(activeSessionId)
+    } finally {
+      setLoadingOlderEvents(false)
+    }
+  }, [activeSessionId, loadingOlderEvents, onLoadOlder])
+
   const handleNewChat = () => {
     // Lazy session creation: just reset transient UI state and drop into the
     // new-chat state (activeSessionId = null). The actual backend session is
@@ -833,6 +849,9 @@ export function ChatPanel({
         scrollContainerRef={scrollContainerRef}
         isAtBottom={isAtBottom}
         onJumpToBottom={scrollToBottom}
+        hasOlderEvents={hasOlderEvents}
+        loadingOlderEvents={loadingOlderEvents}
+        onLoadOlder={handleLoadOlder}
         mcpConfigChanged={mcpConfigChanged}
         onDismissMcpBanner={() => setMcpConfigChanged(false)}
         onRestartForMcp={handleRestartForMcp}

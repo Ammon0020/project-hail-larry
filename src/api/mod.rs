@@ -1188,12 +1188,22 @@ async fn events(
     State(state): State<AppState>,
     Query(query): Query<EventsQuery>,
 ) -> Result<Json<Vec<crate::interfaces::Event>>, ApiResponseError> {
-    state
-        .events
-        .query_all(query.after.unwrap_or_default(), event_limit(query.limit))
-        .await
-        .map(Json)
-        .map_err(app_error)
+    let limit = event_limit(query.limit);
+    // Negative `after` is a backwards cursor: -1 starts at the durable tail,
+    // otherwise it loads the page immediately before the absolute event ID.
+    let events = if let Some(after_id) = query.after.filter(|id| *id < 0) {
+        state
+            .events
+            .store()
+            .query_all_before((-after_id).saturating_sub(1), limit)
+            .await
+    } else {
+        state
+            .events
+            .query_all(query.after.unwrap_or_default(), limit)
+            .await
+    };
+    events.map(Json).map_err(app_error)
 }
 
 async fn session_events(
@@ -1201,16 +1211,20 @@ async fn session_events(
     Path(session_id): Path<String>,
     Query(query): Query<EventsQuery>,
 ) -> Result<Json<Vec<crate::interfaces::Event>>, ApiResponseError> {
-    state
-        .events
-        .query(
-            &session_id,
-            query.after.unwrap_or_default(),
-            event_limit(query.limit),
-        )
-        .await
-        .map(Json)
-        .map_err(app_error)
+    let limit = event_limit(query.limit);
+    let events = if let Some(after_id) = query.after.filter(|id| *id < 0) {
+        state
+            .events
+            .store()
+            .query_before(&session_id, (-after_id).saturating_sub(1), limit)
+            .await
+    } else {
+        state
+            .events
+            .query(&session_id, query.after.unwrap_or_default(), limit)
+            .await
+    };
+    events.map(Json).map_err(app_error)
 }
 
 async fn list_agents(

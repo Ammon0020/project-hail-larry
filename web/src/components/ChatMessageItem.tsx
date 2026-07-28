@@ -24,7 +24,7 @@ import { SystemRow } from './chat/SystemRow'
  * patterns are extracted rather than duplicated.
  */
 const proseClasses =
-  'prose prose-sm prose-invert max-w-none [&_pre]:bg-tool-call [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:p-2 [&_pre]:text-xs [&_pre]:overflow-x-auto [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_a]:text-primary [&_a]:hover:underline'
+  'prose prose-sm dark:prose-invert max-w-none [&_pre]:bg-tool-call [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:p-2 [&_pre]:text-xs [&_pre]:overflow-x-auto [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_a]:text-primary [&_a]:hover:underline'
 
 /** Picks an icon for a tool card based on the ACP tool kind. */
 function toolKindIcon(kind?: string) {

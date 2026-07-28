@@ -82,6 +82,36 @@ async fn query_with_cursor() {
 }
 
 #[tokio::test]
+async fn query_before_returns_the_tail_in_chronological_order() {
+    let (store, _dir) = new_test_store().await;
+    let mut ids = Vec::new();
+    for content in ["first", "second", "third"] {
+        ids.push(
+            store
+                .append(minimal_event("s1", EventType::StreamUpdate, content))
+                .await
+                .expect("append event")
+                .id,
+        );
+    }
+
+    let tail = store.query_before("s1", 0, 2).await.expect("query tail");
+    assert_eq!(
+        tail.iter().map(|event| event.id).collect::<Vec<_>>(),
+        ids[1..]
+    );
+
+    let older = store
+        .query_before("s1", tail[0].id, 2)
+        .await
+        .expect("query older page");
+    assert_eq!(
+        older.iter().map(|event| event.id).collect::<Vec<_>>(),
+        ids[..1]
+    );
+}
+
+#[tokio::test]
 async fn query_different_sessions() {
     let (store, _dir) = new_test_store().await;
 

@@ -13,6 +13,12 @@ import type { Attachment, Agent, Session } from '@/types'
  * where WebSocket events would otherwise accumulate forever.
  */
 const MAX_EVENTS = 5000
+const EVENT_PAGE_SIZE = 1000
+
+/** Durable IDs are monotonic, so sorting restores chronological rendering after a merge. */
+function byEventId(a: AppEvent, b: AppEvent) {
+  return (a.id ?? 0) - (b.id ?? 0)
+}
 
 /**
  * useBackend — real backend hook that connects to the Go daemon.
@@ -29,6 +35,7 @@ export function useBackend() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
   const [events, setEvents] = useState<AppEvent[]>([])
+  const [hasOlderSessionEvents, setHasOlderSessionEvents] = useState(false)
   const [devices, setDevices] = useState<DeviceCredential[]>([])
   const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([])
   const [connected, setConnected] = useState(false)
@@ -38,6 +45,10 @@ export function useBackend() {
   // on a cold load. lastConnectedAt records the timestamp of the last successful
   // ws.onopen and gates the reconnecting flag.
   const [reconnecting, setReconnecting] = useState(false)
+  // reconnectFailed flips to true after the socket has been down for a while
+  // (RECONNECT_GIVEUP_MS) so the banner can switch from "Reconnecting…" to a
+  // fatal "Connection lost — click to retry" state instead of pulsing forever.
+  const [reconnectFailed, setReconnectFailed] = useState(false)
   // Multi-client session-list sync queues (Blueprint Sec 12). WS events append
   // ids; ChatPanel drains them via consumeSessionCreated/Closed so back-to-back
   // creates/closes are not last-write-wins and sticky signals cannot loop.
@@ -55,6 +66,12 @@ export function useBackend() {
   const mountedRef = useRef(true)
   // Holds the pending reconnect timer so it can be cleared on unmount.
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // After this many ms of continuous reconnecting, the banner switches to the
+  // fatal "Connection lost — click to retry" state. Long enough that transient
+  // Wi-Fi blips don't trip it, short enough that a dead daemon is surfaced.
+  const RECONNECT_GIVEUP_MS = 60_000
+  // Timer that arms reconnectFailed; cleared on a successful onopen.
+  const reconnectGiveupTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   // Debounces file-tree refreshes triggered by FileWritten / FileChangedOnDisk
   // bursts (bulk agent edits, rapid on-disk saves) so we hit getFileTree once.
   const treeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -118,6 +135,8 @@ export function useBackend() {
       clearTimeout(reconnectTimerRef.current)
       reconnectTimerRef.current = undefined
     }
+    // Manual retry clears the fatal banner and re-arms the polite pulsing one.
+    setReconnectFailed(false)
     reconnectAttemptRef.current = 0
     connectWebSocket()
   }
@@ -185,6 +204,11 @@ export function useBackend() {
       // Clear the reconnecting banner once the socket is back up, and record
       // the connection time so a subsequent drop can re-arm the banner.
       setReconnecting(false)
+      setReconnectFailed(false)
+      if (reconnectGiveupTimerRef.current) {
+        clearTimeout(reconnectGiveupTimerRef.current)
+        reconnectGiveupTimerRef.current = undefined
+      }
       lastConnectedAtRef.current = Date.now()
       // Reset the backoff ramp — a successful connect means we're back to a
       // healthy state, so the next drop starts from the 1s base delay again.
@@ -214,6 +238,15 @@ export function useBackend() {
       // a "Reconnecting…" banner, but a mid-session Wi-Fi drop should.
       if (lastConnectedAtRef.current !== null) {
         setReconnecting(true)
+        // Arm the give-up timer: if we don't reconnect within the window, flip
+        // to the fatal banner so the user gets a manual retry affordance
+        // instead of indefinite pulsing.
+        if (!reconnectGiveupTimerRef.current) {
+          reconnectGiveupTimerRef.current = setTimeout(() => {
+            reconnectGiveupTimerRef.current = undefined
+            if (mountedRef.current) setReconnectFailed(true)
+          }, RECONNECT_GIVEUP_MS)
+        }
       }
       // Exponential backoff with jitter (Blueprint Sec 12 — reconnection).
       // Delay grows as 1s, 2s, 4s, … capped at 30s, with ±20% jitter so a
@@ -388,31 +421,21 @@ export function useBackend() {
 
   const loadEvents = useCallback(async () => {
     try {
-      // Cursor-based fetch: retrieve events AFTER the highest ID we already
-      // hold. On the initial mount eventsRef is empty (afterId=0 → first
-      // 1000 events), matching the previous behavior. On WebSocket reconnect
-      // this catches any events missed while the socket was down — without
-      // wiping session-specific events already delivered in real time.
-      //
-      // Merging (appending) instead of replacing is what makes this safe to
-      // call on reconnect: a global fetch that replaced the list would discard
-      // StreamUpdate events delivered via WebSocket for non-active sessions
-      // while the user was viewing another conversation (the "frozen stream"
-      // bug). Appending preserves them.
       const afterId =
         eventsRef.current.length > 0
           ? Math.max(...eventsRef.current.map((e) => e.id ?? 0))
           : 0
-      const evts = await api.getEvents(afterId, 1000)
-      if (evts.length === 0) return
-      // Dedupe by ID: a WebSocket event may have arrived between computing
-      // the cursor and the fetch returning, and the fetch would also include
-      // it (recordEvent persists before broadcasting). Keep only fetched
-      // events whose IDs we don't already have to avoid duplicates.
-      const existingIds = new Set(eventsRef.current.map((e) => e.id))
-      const fresh = evts.filter((e) => !existingIds.has(e.id))
-      if (fresh.length > 0) {
-        commitEvents([...eventsRef.current, ...fresh])
+      // First load begins at the durable tail. Reconnects then page forward,
+      // ensuring a long disconnect cannot drop a burst larger than one page.
+      let page = afterId === 0
+        ? await api.getEvents(-1, EVENT_PAGE_SIZE)
+        : await api.getEvents(afterId, EVENT_PAGE_SIZE)
+      while (page.length > 0) {
+        const existingIds = new Set(eventsRef.current.map((e) => e.id))
+        const fresh = page.filter((e) => !existingIds.has(e.id))
+        if (fresh.length > 0) commitEvents([...eventsRef.current, ...fresh].sort(byEventId))
+        if (afterId === 0 || page.length < EVENT_PAGE_SIZE) break
+        page = await api.getEvents(Math.max(...page.map((e) => e.id ?? 0)), EVENT_PAGE_SIZE)
       }
     } catch {
       // Event store may be empty.
@@ -435,24 +458,11 @@ export function useBackend() {
     }
   }, [])
 
-  /**
-   * Loads events for a specific session from the backend and merges them
-   * into the local event list so the chat panel can render them.
-   *
-   * Merges by event ID instead of blindly replacing all events for the
-   * session. This prevents a race condition where WebSocket-delivered events
-   * (e.g. PromptSubmitted) arrive between the time the fetch is initiated and
-   * the time it completes: the fetched list would be stale and overwrite the
-   * newer WebSocket events. We keep events for this session whose IDs are
-   * higher than the highest fetched ID (they arrived after the fetch started),
-   * plus the freshly fetched events.
-   */
+  /** Loads the session tail, preserving WebSocket events that raced the fetch. */
   const loadSessionEvents = useCallback(async (sessionId: string) => {
+    setHasOlderSessionEvents(false)
     try {
-      const sessionEvts = await api.getSessionEvents(sessionId, 0, 1000)
-      // Merge: keep events from other sessions, plus events for this session
-      // that arrived via WebSocket after the fetch was initiated (they have
-      // IDs higher than the fetched events).
+      const sessionEvts = await api.getSessionEvents(sessionId, -1, EVENT_PAGE_SIZE)
       const maxFetchedId = sessionEvts.length > 0
         ? Math.max(...sessionEvts.map((e) => e.id ?? 0))
         : 0
@@ -461,9 +471,26 @@ export function useBackend() {
         ...eventsRef.current.filter(
           (e) => e.sessionId !== sessionId || (e.id ?? 0) > maxFetchedId,
         ),
-      ])
+      ].sort(byEventId))
+      setHasOlderSessionEvents(sessionEvts.length === EVENT_PAGE_SIZE)
     } catch {
       // Session may not have events yet.
+    }
+  }, [commitEvents])
+
+  /** Prepends one older page; reverse queries are returned in chronological order. */
+  const loadOlderSessionEvents = useCallback(async (sessionId: string) => {
+    const sessionEvents = eventsRef.current.filter((e) => e.sessionId === sessionId)
+    const oldestId = Math.min(...sessionEvents.map((e) => e.id ?? 0))
+    if (!Number.isFinite(oldestId)) return
+    try {
+      const older = await api.getSessionEvents(sessionId, -oldestId - 1, EVENT_PAGE_SIZE)
+      const existingIds = new Set(eventsRef.current.map((e) => e.id))
+      const fresh = older.filter((e) => !existingIds.has(e.id))
+      if (fresh.length > 0) commitEvents([...eventsRef.current, ...fresh].sort(byEventId))
+      setHasOlderSessionEvents(older.length === EVENT_PAGE_SIZE)
+    } catch {
+      // The loaded history remains usable if an older-page request fails.
     }
   }, [commitEvents])
 
@@ -746,10 +773,13 @@ export function useBackend() {
     agents,
     sessions,
     events,
+    hasOlderSessionEvents,
     devices,
     pendingPermissions,
     connected,
     reconnecting,
+    reconnectFailed,
+    reconnectNow,
     // Multi-client session sync queues + drain helpers.
     pendingCreatedSessionIds,
     pendingClosedSessionIds,
@@ -788,6 +818,7 @@ export function useBackend() {
     loadDevices,
     loadSessions,
     loadSessionEvents,
+    loadOlderSessionEvents,
     loadPendingPermissions,
   }
 }

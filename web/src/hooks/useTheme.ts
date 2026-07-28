@@ -27,3 +27,31 @@ export function useTheme(): { theme: Theme; setTheme: (t: Theme) => void } {
 
   return { theme, setTheme }
 }
+
+/**
+ * useResolvedTheme — returns the concrete 'dark' | 'light' currently in effect,
+ * re-rendering when the stored preference changes (via useTheme) or when the OS
+ * preference flips while following 'system'. Used by surfaces that need a JS
+ * theme value (e.g. picking a CodeMirror syntax theme), since CSS `data-theme`/
+ * `dark:` alone cannot swap CodeMirror's highlight extensions.
+ */
+export function useResolvedTheme(): 'dark' | 'light' {
+  const { theme } = useTheme()
+  const [systemDark, setSystemDark] = useState<boolean>(
+    () =>
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches,
+  )
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = () => setSystemDark(mq.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  if (theme === 'system') return systemDark ? 'dark' : 'light'
+  return theme
+}

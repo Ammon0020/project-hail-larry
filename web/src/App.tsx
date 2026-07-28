@@ -301,9 +301,8 @@ export default function App() {
   // On a cold reload, fetch the restored conversation's history exactly once.
   // The DATA FETCH lives in a guarded effect (not a render-time side effect) so
   // it never runs during render (fixes web-app-side-effect-during-render). On a
-  // page reload localStorage restores activeSessionId, but the global
-  // loadEvents() only fetched the first slice across all sessions, so the active
-  // conversation's history may be missing — fetch it explicitly here.
+  // page reload localStorage restores activeSessionId, and the global tail is
+  // shared across sessions, so fetch the active conversation explicitly here.
   //
   // Brand-new sessions can't reach the fetch because handleCreateSession
   // pre-marks them loaded — preventing the fetch from racing the in-flight
@@ -881,9 +880,8 @@ export default function App() {
     // that arrived via WebSocket while viewing another conversation are already
     // present. However, after a daemon restart older conversations' events
     // exist only in SQLite — they were never delivered via WebSocket. The
-    // initial loadEvents() fetches only the first 1000 events globally, which
-    // may not include the selected conversation's history. So we explicitly
-    // fetch the session's events from SQLite.
+    // initial loadEvents() retains only the global tail, which may not include
+    // the selected conversation's history. So we explicitly fetch its tail.
     //
     // loadSessionEvents merges by ID: it keeps events for this session whose
     // IDs are higher than the fetched max (they arrived via WebSocket after
@@ -931,12 +929,28 @@ export default function App() {
           dot uses the animate-pulse utility; semantic tokens only. */}
       {backend.reconnecting && (
         <Banner
-          variant="info"
-          role="status"
+          variant={backend.reconnectFailed ? 'error' : 'info'}
+          role={backend.reconnectFailed ? 'alert' : 'status'}
           className="flex items-center gap-2 px-3 py-1.5 border-b shrink-0"
         >
-          <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/70 animate-pulse" />
-          Reconnecting…
+          {backend.reconnectFailed ? (
+            <>
+              <WifiOff className="w-3.5 h-3.5 shrink-0" />
+              <span>Connection lost — the backend has been unreachable for a while.</span>
+              <button
+                type="button"
+                onClick={() => backend.reconnectNow()}
+                className="shrink-0 underline hover:no-underline transition"
+              >
+                Retry now
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/70 animate-pulse" />
+              Reconnecting…
+            </>
+          )}
         </Banner>
       )}
       {/* Save error banner — transient, dismissible. Shown when a save fails
@@ -1208,6 +1222,7 @@ export default function App() {
         activeSessionId={activeSessionId}
         pendingCreatedSessionIds={backend.pendingCreatedSessionIds}
         pendingClosedSessionIds={backend.pendingClosedSessionIds}
+        hasOlderEvents={backend.hasOlderSessionEvents}
         onConsumeSessionCreated={backend.consumeSessionCreated}
         onConsumeSessionClosed={backend.consumeSessionClosed}
         actions={{
@@ -1221,6 +1236,7 @@ export default function App() {
           onRebindSession: backend.rebindSession,
           onSwitchModel: backend.switchModel,
           onExportSession: handleExportSession,
+          onLoadOlder: backend.loadOlderSessionEvents,
           onUploadFile: backend.uploadFile,
           onSelectWorkspace: (id) => {
             const workspace = backend.workspaces.find((candidate) => candidate.id === id)

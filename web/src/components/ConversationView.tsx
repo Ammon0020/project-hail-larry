@@ -15,6 +15,10 @@ interface ConversationViewProps {
   scrollContainerRef: React.RefObject<HTMLDivElement | null>
   isAtBottom: boolean
   onJumpToBottom: () => void
+  /** Whether another older event page can be loaded for this conversation. */
+  hasOlderEvents: boolean
+  loadingOlderEvents: boolean
+  onLoadOlder: () => void
   /** When true, shows a "MCP config changed — restart to apply" banner. */
   mcpConfigChanged?: boolean
   /** Dismisses the MCP config changed banner. */
@@ -39,6 +43,9 @@ export function ConversationView({
   scrollContainerRef,
   isAtBottom,
   onJumpToBottom,
+  hasOlderEvents,
+  loadingOlderEvents,
+  onLoadOlder,
   mcpConfigChanged,
   onDismissMcpBanner,
   onRestartForMcp,
@@ -66,6 +73,18 @@ export function ConversationView({
         {events.length === 0 && !error && (
           <div className="rounded-lg border border-border bg-panel/50 p-3 text-xs text-muted-foreground">
             Send a message to start a conversation.
+          </div>
+        )}
+        {hasOlderEvents && (
+          <div className="mb-3 flex justify-center">
+            <button
+              type="button"
+              onClick={onLoadOlder}
+              disabled={loadingOlderEvents}
+              className="rounded border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-accent disabled:cursor-wait disabled:opacity-60"
+            >
+              {loadingOlderEvents ? 'Loading older messages…' : 'Load older messages'}
+            </button>
           </div>
         )}
         {turns.map((turn, ti) => {

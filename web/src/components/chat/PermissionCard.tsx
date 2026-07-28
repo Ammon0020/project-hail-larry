@@ -94,7 +94,12 @@ export function PermissionCard({
   const opts = pending?.optionDetails ?? (options ?? []).map((id) => ({ id, name: id, kind: id }))
   return (
     <div className="flex justify-start">
-      <div className="mt-1 bg-primary/10 border border-primary/30 rounded-lg p-2.5">
+      <div
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+        className="mt-1 bg-primary/10 border border-primary/30 rounded-lg p-2.5"
+      >
         <div className="flex items-center gap-2 text-xs text-primary font-semibold mb-2">
           <ShieldAlert className="w-3.5 h-3.5" /> Permission Required
         </div>

@@ -6,6 +6,7 @@ import type { Extension } from '@codemirror/state'
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { languageExtensionsForPath } from '@/lib/language'
+import { useResolvedTheme } from '@/hooks/useTheme'
 
 /**
  * Structured git diff viewer (S-GIT-DIFF-VIEWER).
@@ -99,6 +100,7 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
   const viewRef = useRef<MergeView | EditorView | null>(null)
   const [userMode, setUserMode] = useState<'unified' | 'split'>(mode)
   const { effective: effectiveMode, isNarrow } = useEffectiveMode(userMode)
+  const resolvedTheme = useResolvedTheme()
 
   // (Re)build the merge view whenever the inputs or mode change. The
   // @codemirror/merge MergeView is constructed imperatively (there is no
@@ -112,16 +114,13 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
 
     const { fontSize, wrap } = readEditorPrefs()
     const langExts = languageExtensionsForPath(path)
-    // TODO: theme integration — `oneDark` is hardcoded to match EditorPane's
-    // current behavior. When EditorPane adopts the data-theme-aware theme,
-    // share that extension here so the diff view follows light/dark mode.
     const themeExts: Extension[] = [
-      oneDark,
       EditorView.theme({
         '&': { height: '100%', fontSize: `${fontSize}px` },
         '.cm-scroller': { overflow: 'auto' },
       }),
     ]
+    if (resolvedTheme === 'dark') themeExts.unshift(oneDark)
     if (wrap) themeExts.push(EditorView.lineWrapping)
 
     let view: MergeView | EditorView
@@ -159,7 +158,7 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
       view.destroy()
       if (viewRef.current === view) viewRef.current = null
     }
-  }, [base, head, path, effectiveMode])
+  }, [base, head, path, effectiveMode, resolvedTheme])
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-editor border-border">

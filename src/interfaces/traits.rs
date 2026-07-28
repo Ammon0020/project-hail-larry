@@ -39,8 +39,25 @@ pub trait EventStore: Send + Sync {
         limit: i32,
     ) -> Result<Vec<Event>, AppError>;
 
+    /// Retrieve the newest events before `before_id`, ordered chronologically.
+    /// A non-positive cursor starts at the current tail.
+    async fn query_before(
+        &self,
+        _session_id: &str,
+        _before_id: i64,
+        _limit: i32,
+    ) -> Result<Vec<Event>, AppError> {
+        Err(AppError::internal("reverse event queries are unsupported"))
+    }
+
     /// Retrieve events across all sessions (initial load / global replay).
     async fn query_all(&self, after_id: i64, limit: i32) -> Result<Vec<Event>, AppError>;
+
+    /// Retrieve the newest events before `before_id` across all sessions.
+    /// A non-positive cursor starts at the current tail.
+    async fn query_all_before(&self, _before_id: i64, _limit: i32) -> Result<Vec<Event>, AppError> {
+        Err(AppError::internal("reverse event queries are unsupported"))
+    }
 }
 
 /// Narrow dependency for durable app-event publication.

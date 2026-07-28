@@ -196,6 +196,42 @@ impl Store {
         scan_event_rows(rows)
     }
 
+    /// Query the latest events before `before_id` for a session (blocking).
+    /// Results are ascending so a client can prepend the page directly.
+    fn query_before_blocking(
+        conn: &Connection,
+        session_id: &str,
+        before_id: i64,
+        limit: i32,
+    ) -> Result<Vec<Event>, AppError> {
+        let limit = if limit <= 0 {
+            DEFAULT_QUERY_LIMIT
+        } else {
+            limit
+        };
+        let before_id = if before_id <= 0 { i64::MAX } else { before_id };
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, type, session_id, timestamp, payload FROM (\
+                 SELECT id, type, session_id, timestamp, payload \
+                 FROM events WHERE session_id = ?1 AND id < ?2 \
+                 ORDER BY id DESC LIMIT ?3) ORDER BY id ASC",
+            )
+            .map_err(|e| AppError::internal(format!("query events before: {e}")))?;
+        let rows = stmt
+            .query_map(params![session_id, before_id, limit], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|e| AppError::internal(format!("query events before: {e}")))?;
+        scan_event_rows(rows)
+    }
+
     /// Query events across all sessions after `after_id` (blocking).
     fn query_all_blocking(
         conn: &Connection,
@@ -226,6 +262,39 @@ impl Store {
             })
             .map_err(|e| AppError::internal(format!("query all events: {e}")))?;
 
+        scan_event_rows(rows)
+    }
+
+    /// Query the latest events before `before_id` across all sessions (blocking).
+    fn query_all_before_blocking(
+        conn: &Connection,
+        before_id: i64,
+        limit: i32,
+    ) -> Result<Vec<Event>, AppError> {
+        let limit = if limit <= 0 {
+            DEFAULT_QUERY_LIMIT
+        } else {
+            limit
+        };
+        let before_id = if before_id <= 0 { i64::MAX } else { before_id };
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, type, session_id, timestamp, payload FROM (\
+                 SELECT id, type, session_id, timestamp, payload \
+                 FROM events WHERE id < ?1 ORDER BY id DESC LIMIT ?2) ORDER BY id ASC",
+            )
+            .map_err(|e| AppError::internal(format!("query all events before: {e}")))?;
+        let rows = stmt
+            .query_map(params![before_id, limit], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|e| AppError::internal(format!("query all events before: {e}")))?;
         scan_event_rows(rows)
     }
 
@@ -386,9 +455,25 @@ impl EventStore for Store {
             .await
     }
 
+    async fn query_before(
+        &self,
+        session_id: &str,
+        before_id: i64,
+        limit: i32,
+    ) -> Result<Vec<Event>, AppError> {
+        let session_id = session_id.to_string();
+        self.with_conn(move |conn| Self::query_before_blocking(conn, &session_id, before_id, limit))
+            .await
+    }
+
     /// Events across all sessions with `id > after_id`.
     async fn query_all(&self, after_id: i64, limit: i32) -> Result<Vec<Event>, AppError> {
         self.with_conn(move |conn| Self::query_all_blocking(conn, after_id, limit))
+            .await
+    }
+
+    async fn query_all_before(&self, before_id: i64, limit: i32) -> Result<Vec<Event>, AppError> {
+        self.with_conn(move |conn| Self::query_all_before_blocking(conn, before_id, limit))
             .await
     }
 }
