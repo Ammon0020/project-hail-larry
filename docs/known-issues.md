@@ -125,3 +125,12 @@ The endpoint is covered by unit tests in `src/git/mod.rs`
 (`init_refuses_existing_repo`, `init_creates_repo_in_plain_dir`). A contract
 test requires either per-test workspace isolation in the harness or a
 dedicated mutating-test mode; both are out of scope for S-GIT-INIT.
+
+## `config::tests::save_refuses_temp_data_dir_when_state_dir_is_not_temp` — pre-existing flake
+
+Observed failing during an unrelated `web/src/lib/errors.ts` change on
+2026-07-27. Panics at `src/config/tests.rs:131` with `marker must survive: Os {
+code: 2, kind: NotFound, message: "No such file or directory" }` — a temp-dir
+marker-file assertion, unrelated to the frontend error helpers. Likely a
+filesystem/temp-dir cleanup race. Not caused by the errors.ts change (pure
+TypeScript); re-investigate independently.

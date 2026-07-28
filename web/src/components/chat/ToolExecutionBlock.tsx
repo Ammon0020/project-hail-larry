@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Wrench, ChevronRight } from 'lucide-react'
 import { cva } from 'class-variance-authority'
 
@@ -37,8 +37,13 @@ export function ToolExecutionBlock({
   output,
   defaultOpen,
 }: ToolExecutionBlockProps) {
+  const [open, setOpen] = useState(defaultOpen ?? false)
   return (
-    <details className="group" open={defaultOpen}>
+    <details
+      className="group"
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
       <summary
         className={`${accordionSummary()} list-none [&::-webkit-details-marker]:hidden`}
       >

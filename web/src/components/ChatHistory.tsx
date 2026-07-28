@@ -1,4 +1,4 @@
-import { useState, useEffect, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useState, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Plus, X, Pencil, Trash2, Check, Download, Search, ChevronDown, ChevronUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { SessionHistoryCapabilities } from '@/lib/api'
@@ -58,6 +58,10 @@ function SessionRow({
   onSelect,
   workspaceName,
 }: SessionRowProps) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (editing) inputRef.current?.focus()
+  }, [editing])
   return (
     <div
       className={cn(
@@ -72,7 +76,7 @@ function SessionRow({
         <div className="flex items-center gap-1.5 flex-1">
           <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', statusDotClass[s.status])} />
           <input
-            ref={(el) => el?.focus()}
+            ref={inputRef}
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={onRenameKey}
@@ -264,6 +268,8 @@ export function ChatHistory({
       e.preventDefault()
       commitRename()
     } else if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
       setEditingId(null)
     }
   }

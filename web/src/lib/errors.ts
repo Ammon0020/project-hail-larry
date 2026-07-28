@@ -20,7 +20,6 @@ export function isSessionNotFound(message: string): boolean {
   const lower = message.toLowerCase()
   return (
     lower.includes('session not found') ||
-    lower.includes('no longer available') ||
-    lower.includes('not found')
+    lower.includes('no longer available')
   )
 }
