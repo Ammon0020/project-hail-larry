@@ -417,6 +417,8 @@ export default function App() {
 
   const handleTabClose = useCallback(
     (id: string) => {
+      const tab = openTabs.find((t) => t.id === id)
+      if (tab?.unsaved && !window.confirm(`Close "${tab.name}" without saving? Unsaved edits will be lost.`)) return
       setOpenTabs((prev) => {
         const next = prev.filter((t) => t.id !== id)
         if (activeTabId === id) {
@@ -425,12 +427,14 @@ export default function App() {
         return next
       })
     },
-    [activeTabId],
+    [activeTabId, openTabs],
   )
 
   /** Close every tab except the given one (settings tabs are always kept). */
   const handleCloseOthers = useCallback(
     (id: string) => {
+      const dropping = openTabs.filter((t) => t.id !== id && t.kind !== 'settings' && t.unsaved)
+      if (dropping.length > 0 && !window.confirm(`Close ${dropping.length} unsaved tab(s) without saving? Edits will be lost.`)) return
       setOpenTabs((prev) => {
         const next = prev.filter((t) => t.id === id || t.kind === 'settings')
         if (activeTabId && !next.some((t) => t.id === activeTabId)) {
@@ -439,7 +443,7 @@ export default function App() {
         return next
       })
     },
-    [activeTabId],
+    [activeTabId, openTabs],
   )
 
   /** Close all saved (non-unsaved) tabs except the given one. Settings tabs
@@ -460,9 +464,11 @@ export default function App() {
   /** Close all tabs to the right of the given tab (settings tabs are kept). */
   const handleCloseToRight = useCallback(
     (id: string) => {
+      const idx = openTabs.findIndex((t) => t.id === id)
+      if (idx === -1) return
+      const dropping = openTabs.filter((t, i) => i > idx && t.kind !== 'settings' && t.unsaved)
+      if (dropping.length > 0 && !window.confirm(`Close ${dropping.length} unsaved tab(s) without saving? Edits will be lost.`)) return
       setOpenTabs((prev) => {
-        const idx = prev.findIndex((t) => t.id === id)
-        if (idx === -1) return prev
         const next = prev.filter((t, i) => i <= idx || t.kind === 'settings')
         if (activeTabId && !next.some((t) => t.id === activeTabId)) {
           setActiveTabId(next.length > 0 ? next[next.length - 1].id : null)
@@ -470,7 +476,7 @@ export default function App() {
         return next
       })
     },
-    [activeTabId],
+    [activeTabId, openTabs],
   )
 
   const handleCopyPath = useCallback((path: string) => {
@@ -696,13 +702,13 @@ export default function App() {
   }
 
   // ---- File operations ----
-  const handleFileSelect = async (path: string) => {
+  const handleFileSelect = async (path: string): Promise<boolean> => {
     // Check if tab already open (file tabs only — preview tabs share path)
     const existing = openTabs.find((t) => t.path === path && t.kind !== 'preview')
     if (existing) {
       setActiveTabId(existing.id)
       if (!isDesktop) setMobileView('editor')
-      return
+      return true
     }
     // Load file from backend
     try {
@@ -731,8 +737,11 @@ export default function App() {
       })
       setActiveTabId(path)
       if (!isDesktop) setMobileView('editor')
+      return true
     } catch (err) {
       console.error('Failed to open file:', err)
+      window.alert(err instanceof Error ? `Failed to open file: ${err.message}` : 'Failed to open file')
+      return false
     }
   }
 
@@ -841,7 +850,8 @@ export default function App() {
     if (existing) {
       setActiveTabId(existing.id)
     } else {
-      await handleFileSelect(path)
+      const ok = await handleFileSelect(path)
+      if (!ok) return
     }
     setSearchResultLine(lineNumber)
   }

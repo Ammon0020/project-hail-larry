@@ -47,6 +47,9 @@ const CSV_EXTS = ['csv']
 const HTML_EXTS = ['html', 'htm']
 const MODEL_EXTS = ['stl', '3mf', 'obj', 'gltf', 'glb', 'ply', 'dae', 'wrl', 'vrml']
 
+const PREVIEW_AUTH_ROUTE_UNAVAILABLE =
+  'Preview authorization needs a server restart to finish updating.'
+
 type ViewerKind =
   | 'image'
   | 'svg'
@@ -87,6 +90,8 @@ export function FileViewer({ tab, active, onToggleViewMode, trusted }: { tab: Ta
   const ext = tab.name.split('.').pop()?.toLowerCase() || ''
   const workspaceId = tab.workspaceId ?? ''
   const [previewToken, setPreviewToken] = useState<string>()
+  const [sessionError, setSessionError] = useState<string>()
+  const [sessionVersion, setSessionVersion] = useState(0)
   const url = previewToken ? previewFileUrl(workspaceId, tab.path, previewToken) : ''
 
   useEffect(() => {
@@ -94,13 +99,40 @@ export function FileViewer({ tab, active, onToggleViewMode, trusted }: { tab: Ta
     let cancelled = false
     void api.createPreviewSession(workspaceId)
       .then(({ token }) => { if (!cancelled) setPreviewToken(token) })
-      .catch(() => {})
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setSessionError(
+            error instanceof Error && error.message === 'Method Not Allowed'
+              ? PREVIEW_AUTH_ROUTE_UNAVAILABLE
+              : error instanceof Error
+                ? error.message
+                : 'Unable to authorize preview',
+          )
+        }
+      })
     return () => { cancelled = true }
-  }, [workspaceId])
+  }, [workspaceId, sessionVersion])
 
   return (
     <div className={cn('absolute inset-0 items-center justify-center bg-editor', active ? 'flex' : 'hidden')}>
-      {!url && <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />}
+      {sessionError ? (
+        <div className="flex flex-col items-center gap-3 px-6 text-center text-sm text-destructive">
+          <p>Preview authorization failed: {sessionError}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setSessionError(undefined)
+              setPreviewToken(undefined)
+              setSessionVersion((v) => v + 1)
+            }}
+            className="rounded px-2 py-1 font-medium text-foreground hover:text-primary"
+          >
+            Retry preview
+          </button>
+        </div>
+      ) : !url ? (
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      ) : null}
       {url && kind === 'image' && (
         ext === 'tiff' || ext === 'tif'
           ? <TiffViewer url={url} name={tab.name} />

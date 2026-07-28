@@ -180,6 +180,11 @@ function PathMenuItems({
         <DropdownMenuItem
           variant="destructive"
           onSelect={() => {
+            const msg =
+              kind === 'folder'
+                ? `Delete folder "${path}" and all of its contents recursively?`
+                : `Delete "${path}"?`
+            if (!window.confirm(msg)) return
             void actions.onDelete?.(path, kind)
             onClose()
           }}

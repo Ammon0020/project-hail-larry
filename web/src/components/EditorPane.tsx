@@ -501,14 +501,18 @@ export function EditorPane({
           discards local edits and fetches the on-disk version. Uses the
           warning semantic token so it adapts to the active theme. */}
       {activeTab?.changedOnDisk && activeTab.kind !== 'settings' && activeTab.kind !== 'preview' && (
-        <div className="flex items-center justify-between gap-2 bg-warning/10 border-b border-warning/40 px-3 py-1.5 text-xs text-warning shrink-0">
+        <div role="alert" className="flex items-center justify-between gap-2 bg-warning/10 border-b border-warning/40 px-3 py-1.5 text-xs text-warning shrink-0">
           <span className="flex items-center gap-1.5">
             <TriangleAlert className="w-3.5 h-3.5" />
             This file changed on disk{activeTab.unsaved ? ' and you have unsaved edits' : ''}.
           </span>
           <button
             type="button"
-            onClick={() => onReloadTab?.(activeTab.id)}
+            aria-label="Reload from disk (discards unsaved edits)"
+            onClick={() => {
+              if (activeTab.unsaved && !window.confirm('Reload from disk? This discards your unsaved edits.')) return
+              onReloadTab?.(activeTab.id)
+            }}
             className="flex items-center gap-1 font-medium text-warning bg-warning/15 hover:bg-warning/25 px-2 py-0.5 rounded transition"
           >
             <RefreshCw className="w-3 h-3" aria-hidden="true" /> Reload

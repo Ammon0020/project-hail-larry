@@ -134,3 +134,12 @@ code: 2, kind: NotFound, message: "No such file or directory" }` — a temp-dir
 marker-file assertion, unrelated to the frontend error helpers. Likely a
 filesystem/temp-dir cleanup race. Not caused by the errors.ts change (pure
 TypeScript); re-investigate independently.
+
+## `api::embed::tests::spa_entry_serves_embedded_index` — pre-existing build-ordering flake
+
+Observed failing during an unrelated `EditorPane.tsx` change on 2026-07-27.
+Panics at `src/api/embed.rs:84` with `build.rs requires web/dist/index.html;
+expected embedded SPA, not fallback` (HTTP 503 vs 200). The test expects the
+SPA HTML to be embedded at compile time via `build.rs`; when `web/dist` is
+stale or absent at `cargo test` time it serves the fallback instead. Pure
+build-ordering issue, not caused by the frontend-only EditorPane change.
