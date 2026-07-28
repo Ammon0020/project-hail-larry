@@ -23,11 +23,10 @@ import type { Extension } from '@codemirror/state'
 
 /** Lowercased file extension (without the dot), or `''` for no extension. */
 function extOf(path: string): string {
-  const dot = path.lastIndexOf('.')
-  if (dot < 0) return ''
-  // Skip dotfiles like ".gitignore" — the whole name is the extension for
-  // matching purposes (matches `@codemirror/language-data` conventions).
-  return path.slice(dot + 1).toLowerCase()
+  const filename = basenameOf(path)
+  const dot = filename.lastIndexOf('.')
+  if (dot <= 0) return ''
+  return filename.slice(dot + 1).toLowerCase()
 }
 
 /** Basename of a path (last segment after any `/` or `\`). */

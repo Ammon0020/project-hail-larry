@@ -76,24 +76,19 @@ function readEditorPrefs(): { fontSize: number; wrap: boolean } {
  * Re-evaluates on window resize.
  */
 function useEffectiveMode(requested: 'unified' | 'split'): 'unified' | 'split' {
-  const [effective, setEffective] = useState<'unified' | 'split'>(() =>
-    requested === 'split' && typeof window !== 'undefined' && window.innerWidth < SPLIT_MIN_WIDTH
-      ? 'unified'
-      : requested,
+  const [isNarrow, setIsNarrow] = useState<boolean>(() =>
+    typeof window !== 'undefined' && window.innerWidth < SPLIT_MIN_WIDTH
   )
+
   useEffect(() => {
     const onResize = () => {
-      setEffective((prev) => {
-        const collapsed = typeof window !== 'undefined' && window.innerWidth < SPLIT_MIN_WIDTH
-        if (requested === 'split' && collapsed) return 'unified'
-        if (requested === 'split' && !collapsed && prev === 'unified') return 'split'
-        return prev
-      })
+      setIsNarrow(typeof window !== 'undefined' && window.innerWidth < SPLIT_MIN_WIDTH)
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [requested])
-  return effective
+  }, [])
+
+  return requested === 'split' && isNarrow ? 'unified' : requested
 }
 
 export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }: GitDiffViewerProps) {
@@ -186,7 +181,7 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
       </div>
 
       {truncated && (
-        <div className="px-3 py-1 text-xs bg-yellow-500/10 text-yellow-600 border-b border-yellow-500/20">
+        <div role="status" aria-live="polite" className="px-3 py-1 text-xs bg-yellow-500/10 text-yellow-600 border-b border-yellow-500/20">
           Diff truncated at size cap.
         </div>
       )}
@@ -211,6 +206,7 @@ function ModeButton({
   return (
     <button
       type="button"
+      aria-pressed={active}
       onClick={onClick}
       className={cn(
         'px-2 py-0.5 rounded transition',
