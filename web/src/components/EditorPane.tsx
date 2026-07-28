@@ -1,11 +1,4 @@
 import CodeMirror from '@uiw/react-codemirror'
-import { javascript } from '@codemirror/lang-javascript'
-import { css } from '@codemirror/lang-css'
-import { html } from '@codemirror/lang-html'
-import { python } from '@codemirror/lang-python'
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { json } from '@codemirror/lang-json'
-import { languages as mdLanguages } from '@codemirror/language-data'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { search } from '@codemirror/search'
 import { autocompletion } from '@codemirror/autocomplete'
@@ -16,6 +9,7 @@ import { Prec, EditorSelection } from '@codemirror/state'
 import { TriangleAlert, FileText, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
+import { languageExtensionsForPath, languageDescriptionForPath } from '@/lib/language'
 import { SettingsPanel, type SettingsSection } from '@/components/SettingsPanel'
 import { FileViewer } from '@/components/FileViewer'
 import { BrowsePreview } from '@/components/BrowsePreview'
@@ -277,42 +271,16 @@ export function EditorPane({
     })
   }
 
-  const getLanguageExtension = (lang: string, tabPath: string): Extension[] => {
-    const normalized = lang.toLowerCase()
-    if (['javascript', 'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs'].includes(normalized)) {
-      return [
-        javascript({
-          jsx: normalized === 'jsx' || normalized === 'tsx',
-          typescript: normalized === 'ts' || normalized === 'tsx',
-        }),
-      ]
-    }
-    if (['css', 'scss', 'less'].includes(normalized)) {
-      return [css()]
-    }
-    if (['html', 'htm', 'xml', 'svg'].includes(normalized)) {
-      return [html()]
-    }
-    if (['python', 'py', 'pyw'].includes(normalized)) {
-      return [python()]
-    }
-    if (['markdown', 'md', 'mdx', 'mdown', 'markdown'].includes(normalized)) {
-      // markdown() provides syntax highlighting for markdown structure.
-      // markdownLanguage + mdLanguages enables nested code block highlighting
-      // (e.g. ```js, ```python) via lazy language loading.
-      return [markdown({ base: markdownLanguage, codeLanguages: mdLanguages })]
-    }
-    if (['json', 'jsonc'].includes(normalized)) {
-      return [json()]
-    }
-    // Default to JavaScript for unknown/no extension so the editor is never bare.
-    const filename = tabPath.split(/[\\/]/).pop() || tabPath
-    const desc = LanguageDescription.matchFilename(mdLanguages, filename)
+  const getLanguageExtension = (tabPath: string): Extension[] => {
+    const exts = languageExtensionsForPath(tabPath)
+    if (exts.length) return exts
+    // Shared helper returned [] — either an unknown language or a
+    // known-but-unloaded language-data entry. Check the lazy-load cache
+    // and trigger a load if needed.
+    const desc = languageDescriptionForPath(tabPath)
     if (desc) {
-      if (desc.support) return [desc.support]
       if (loadedSupports[desc.name]) return [loadedSupports[desc.name]]
       loadLanguage(desc)
-      return []
     }
     return []
   }
@@ -359,13 +327,13 @@ export function EditorPane({
     [mobile, lineNumbers, foldGutter, bracketMatching, closeBrackets, autoIndent],
   )
 
-  const getExtensions = (lang: string, tabPath: string): Extension[] => {
+  const getExtensions = (tabPath: string): Extension[] => {
     // ~1.9× font gives comfortable finger targets without a fixed px that
     // drifts when the user changes StatusBar font size.
     const mobileLineHeight = `${Math.round(fontSize * 1.9)}px`
 
     const exts: Extension[] = [
-      ...getLanguageExtension(lang, tabPath),
+      ...getLanguageExtension(tabPath),
 
       // Full-height theme: make the editor fill its container so clicking
       // below the last line works (places the cursor at the end). The height
@@ -483,7 +451,7 @@ export function EditorPane({
   // handler), never during render, so it is safe to reference here.
   const extensions = useMemo(
     // eslint-disable-next-line react-hooks/refs -- ref is only read in the keybinding/updateListener event handlers, not during render
-    () => (activeTab ? getExtensions(activeTab.language, activeTab.path) : []),
+    () => (activeTab ? getExtensions(activeTab.path) : []),
     // getExtensions depends on `wrap` and the active tab's language/path.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeTab?.language, activeTab?.path, wrap, activeTab?.id, loadedSupports, fontSize, mobile, tabSize, bracketMatching, foldGutter, autoIndent],

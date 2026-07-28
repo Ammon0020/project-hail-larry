@@ -1,18 +1,11 @@
 import { MergeView, unifiedMergeView } from '@codemirror/merge'
-import { javascript } from '@codemirror/lang-javascript'
-import { css } from '@codemirror/lang-css'
-import { html } from '@codemirror/lang-html'
-import { python } from '@codemirror/lang-python'
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { json } from '@codemirror/lang-json'
-import { languages as mdLanguages } from '@codemirror/language-data'
-import { LanguageDescription } from '@codemirror/language'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView } from '@codemirror/view'
 import { EditorState } from '@codemirror/state'
 import type { Extension } from '@codemirror/state'
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
+import { languageExtensionsForPath } from '@/lib/language'
 
 /**
  * Structured git diff viewer (S-GIT-DIFF-VIEWER).
@@ -56,36 +49,6 @@ const readOnlyExt: Extension[] = [EditorState.readOnly.of(true), EditorView.edit
 /** Minimum viewport width (px) below which split mode collapses to unified.
  *  Two side-by-side editors are unreadable on phone-width screens. */
 const SPLIT_MIN_WIDTH = 640
-
-/**
- * Resolve a CodeMirror language extension from a file path.
- *
- * This is a minimal replication of the mapping in `EditorPane.tsx`. It is
- * duplicated here rather than extracted because `EditorPane`'s version is
- * intertwined with its lazy-load + per-tab cache machinery, and pulling it
- * out would be a larger refactor. TODO: extract a shared `languageForPath`
- * helper once a second non-editor caller exists.
- */
-function languageForPath(path: string): Extension[] {
-  const ext = path.split('.').pop()?.toLowerCase() ?? ''
-  const name = path.split(/[\\/]/).pop() ?? path
-  if (['js', 'jsx', 'mjs', 'cjs'].includes(ext)) return [javascript({ jsx: ext === 'jsx' })]
-  if (['ts', 'tsx'].includes(ext)) return [javascript({ jsx: ext === 'tsx', typescript: true })]
-  if (['css', 'scss', 'less'].includes(ext)) return [css()]
-  if (['html', 'htm', 'xml', 'svg'].includes(ext)) return [html()]
-  if (['py', 'pyw'].includes(ext)) return [python()]
-  if (['md', 'mdx', 'mdown', 'markdown'].includes(ext)) {
-    return [markdown({ base: markdownLanguage, codeLanguages: mdLanguages })]
-  }
-  if (['json', 'jsonc'].includes(ext)) return [json()]
-  // Fall back to @codemirror/language-data's filename matching for anything
-  // not handled above (rust, go, yaml, shell, …). Synchronous when the
-  // language is already loaded; otherwise returns [] and the user sees plain
-  // text — acceptable for a diff view where highlighting is a nicety.
-  const desc = LanguageDescription.matchFilename(mdLanguages, name)
-  if (desc?.support) return [desc.support]
-  return []
-}
 
 /** Reads `lai:fontSize` / `lai:wrap` from localStorage, matching the keys
  *  used by `useEditorSettings` so the diff viewer inherits the user's editor
@@ -151,7 +114,7 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
     if (!parent) return
 
     const { fontSize, wrap } = readEditorPrefs()
-    const langExts = languageForPath(path)
+    const langExts = languageExtensionsForPath(path)
     // TODO: theme integration — `oneDark` is hardcoded to match EditorPane's
     // current behavior. When EditorPane adopts the data-theme-aware theme,
     // share that extension here so the diff view follows light/dark mode.
