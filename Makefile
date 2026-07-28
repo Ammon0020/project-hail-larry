@@ -44,6 +44,26 @@ lint: lint-rust lint-frontend
 # Slowest target (~1-2 min); use `make lint` for a fast style/correctness pass.
 check: lint build-frontend test test-contract
 
+# Auto-fix formatting and linting for Rust.
+fix-rust:
+	cargo fmt --all
+	cargo clippy --all-targets --fix --allow-dirty --allow-staged --allow-no-vcs
+
+# Auto-fix formatting and linting for the frontend.
+fix-frontend:
+	cd web && npm run lint -- --fix
+
+# Unified auto-fix: Rust + frontend.
+fix: fix-rust fix-frontend
+
+# Quiet check: Auto-fixes code, then runs tests quietly. Fails loudly on error.
+qcheck: fix
+	@echo "Running tests quietly..."
+	@cargo test -q --all-targets > /dev/null 2>&1 || (echo "Rust tests failed" && exit 1)
+	@cd web && npm run build --quiet > /dev/null 2>&1 || (echo "Frontend build failed" && exit 1)
+	@CONTRACT_BACKEND=rust cargo test -q --test contract_runner --features contract > /dev/null 2>&1 || (echo "Contract tests failed" && exit 1)
+	@echo "All tests passed successfully!"
+
 # Build the Rust mock ACP agent used by Rust spike/ACP tests.
 mockagent:
 	cargo build --bin mockagent

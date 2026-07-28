@@ -73,10 +73,11 @@ build.sh / build.ps1 / Makefile / build.rs   # build + `make check` gate
 ## Development
 
 - Use `./build.sh` on Linux/macOS or `.\build.ps1` on Windows → `bin/local_agent`.
-- Before completion, run the unified gate: `make check` (fmt + clippy + cargo
+- During active development, use `make qcheck` to automatically fix formatting/lints and quietly run the full test suite.
+- Before completion, run the verbose unified gate: `make check` (fmt + clippy + cargo
   test + frontend eslint/build + contract suite). For a fast style/correctness
   pass use `make lint` (fmt + clippy + eslint). Individual targets (`make test`,
-  `make test-contract`, `make lint-rust`, `make lint-frontend`) remain available.
+  `make test-contract`, `make lint-rust`, `make lint-frontend`, `make fix`) remain available.
 - For Rust-only changes, `cargo test -q --all-targets`,
   `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt -q --check`
   suffice; `make check` adds the frontend + contract bar for full CI parity.
