@@ -304,7 +304,10 @@ function PdfViewer({ url }: { url: string }) {
       src={url}
       title="PDF preview"
       className="w-full h-full border-0"
-      sandbox=""
+      // Firefox renders PDFs via PDF.js, which runs as scripted content inside
+      // the iframe; sandbox="" would blank it out. The preview endpoint is the
+      // daemon's own token-authed route serving a PDF, not arbitrary HTML.
+      sandbox="allow-scripts allow-same-origin"
     />
   )
 }
@@ -742,6 +745,7 @@ function ModelViewer({ url, name }: { url: string; name: string }) {
     let renderer: import('three').WebGLRenderer | null = null
     let frameId = 0
     let cancelled = false
+    let resizeObserver: ResizeObserver | null = null
 
     async function init() {
       try {
@@ -808,6 +812,21 @@ function ModelViewer({ url, name }: { url: string; name: string }) {
         }
         animate()
         setLoading(false)
+
+        // Keep the renderer/camera in sync with the container (window resize,
+        // pane drag, orientation change) — Three.js does not observe this.
+        const ro = new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            const w = entry.contentRect.width
+            const h = entry.contentRect.height
+            if (w === 0 || h === 0) return
+            renderer3.setSize(w, h)
+            camera.aspect = w / h
+            camera.updateProjectionMatrix()
+          }
+        })
+        ro.observe(container)
+        resizeObserver = ro
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load 3D model')
@@ -821,6 +840,7 @@ function ModelViewer({ url, name }: { url: string; name: string }) {
     return () => {
       cancelled = true
       cancelAnimationFrame(frameId)
+      resizeObserver?.disconnect()
       if (renderer) {
         renderer.dispose()
         if (renderer.domElement.parentNode) {

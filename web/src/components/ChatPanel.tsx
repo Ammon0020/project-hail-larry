@@ -363,11 +363,16 @@ export function ChatPanel({
   // queues one id at a time. openTab never steals focus; handleCloseTab picks
   // a fallback only if the closed id was active. Unknown ids stay queued until
   // loadSessions repopulates (creates) or are dropped after tab close (closes).
+  // If a created session was deleted before this client's loadSessions returned
+  // it, the id never appears in `sessions` — drop it once the list has loaded
+  // so the queue drains and the parent can clear its own copy.
   useEffect(() => {
     if (pendingCreatedSessionIds.length === 0) return
     for (const id of pendingCreatedSessionIds) {
       if (sessions.some((s) => s.id === id)) {
         openTab(id)
+        onConsumeSessionCreated(id)
+      } else if (sessions.length > 0) {
         onConsumeSessionCreated(id)
       }
     }
@@ -608,7 +613,9 @@ export function ChatPanel({
         onSelectSession('')
       } else {
         setError(message)
-        setInput(content)
+        // Only restore if the composer is still empty — the user may have
+        // typed new text while the in-flight send was failing.
+        setInput((current) => (current === '' ? content : current))
       }
       setPendingNewChatSend(false)
       if (sessionId) clearSendingSession(sessionId)
@@ -699,7 +706,8 @@ export function ChatPanel({
   /**
    * Merges consecutive StreamUpdate events into a single accumulated message
    * so streaming text appears as one growing response (like ChatGPT).
-   * Non-stream events are passed through individually.
+   * Also folds ShellOutputStreamed chunks into the preceding ShellCommandStarted
+   * card (and preserves that output when Completed replaces Started).
    */
   const mergedEvents: AppEvent[] = useMemo(
     () =>
@@ -716,6 +724,38 @@ export function ChatPanel({
               ...last,
               content: (last.content || '') + (event.content || ''),
               streaming: event.streaming,
+            }
+            return acc
+          }
+        }
+        // Live shell stdout/stderr: append onto the running Started card.
+        if (event.type === 'ShellOutputStreamed') {
+          const last = acc[acc.length - 1]
+          if (
+            last?.type === 'ShellCommandStarted' &&
+            (!event.toolCallId || last.toolCallId === event.toolCallId)
+          ) {
+            acc[acc.length - 1] = {
+              ...last,
+              content: (last.content || '') + (event.content || ''),
+            }
+            return acc
+          }
+          // Orphan chunk (no matching Started) — drop, matching prior UI behavior.
+          return acc
+        }
+        // Completed replaces Started so exit code + streamed output share one card.
+        if (event.type === 'ShellCommandCompleted') {
+          const last = acc[acc.length - 1]
+          if (
+            last?.type === 'ShellCommandStarted' &&
+            (!event.toolCallId ||
+              !last.toolCallId ||
+              last.toolCallId === event.toolCallId)
+          ) {
+            acc[acc.length - 1] = {
+              ...event,
+              content: last.content || event.content || event.summary,
             }
             return acc
           }

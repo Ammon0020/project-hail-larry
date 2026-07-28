@@ -155,7 +155,7 @@ export function GitPanel({
     void refreshStatus()
   }, [refreshStatus])
 
-  const runMutation = async (action: string, mutation: () => Promise<void>) => {
+  const runMutation = useCallback(async (action: string, mutation: () => Promise<void>) => {
     setBusyAction(action)
     setError(null)
     try {
@@ -167,12 +167,21 @@ export function GitPanel({
     } finally {
       setBusyAction(null)
     }
-  }
+  }, [refreshStatus])
 
   const stagedFiles = useMemo(() => status?.files.filter((file) => file.staged) ?? [], [status])
   const unstagedFiles = useMemo(() => status?.files.filter((file) => !file.staged) ?? [], [status])
   const canCommit = !!message.trim() && stagedFiles.length > 0
   const busy = busyAction !== null
+
+  const commit = useCallback(() => {
+    if (!canCommit || busy || !workspaceId) return
+    void runMutation('commit', async () => {
+      await api.gitCommit(workspaceId, message.trim(), false, status?.headOid ?? null)
+      setMessage('')
+      await onRepoChanged()
+    })
+  }, [busy, canCommit, message, onRepoChanged, runMutation, status?.headOid, workspaceId])
 
   if (!workspaceId) {
     return <div className="p-6 text-center text-sm text-muted-foreground">Select a workspace to use source control.</div>
@@ -233,16 +242,18 @@ export function GitPanel({
           id="git-commit-message"
           value={message}
           onChange={(event) => setMessage(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+              event.preventDefault()
+              commit()
+            }
+          }}
           placeholder="Message (press Ctrl+Enter to commit)"
           rows={3}
           className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-xs outline-none transition focus:border-ring"
         />
         <div className="mt-2 flex gap-2">
-          <button type="button" disabled={!canCommit || busy} onClick={() => void runMutation('commit', async () => {
-            await api.gitCommit(workspaceId, message.trim(), false, status?.headOid ?? null)
-            setMessage('')
-            await onRepoChanged()
-          })} className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-2 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="button" disabled={!canCommit || busy} onClick={commit} className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-2 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">
             {busyAction === 'commit' && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Commit
           </button>
           <button type="button" disabled={busy} onClick={() => void runMutation('push', async () => { await api.gitPush(workspaceId) })} className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50">

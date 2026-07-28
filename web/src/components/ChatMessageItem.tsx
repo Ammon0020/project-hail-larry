@@ -202,10 +202,14 @@ export function ChatMessageItem({
       return (
         <div className="flex justify-start">
           <ToolExecutionBlock
+            // Remount open when the first streamed chunk arrives (defaultOpen is mount-only).
+            key={event.content ? 'shell-out' : 'shell-run'}
             icon={<Terminal className="w-3.5 h-3.5" />}
             label={event.command ? '$ ' + event.command : 'Shell command'}
             status="[running]"
-            defaultOpen={false}
+            // Live-merged ShellOutputStreamed chunks land on content.
+            output={event.content}
+            defaultOpen={!!event.content}
           />
         </div>
       )
@@ -218,13 +222,15 @@ export function ChatMessageItem({
             label={event.command ? '$ ' + event.command : 'Shell command'}
             status={'exit ' + (event.exitCode ?? '?')}
             failed={event.exitCode !== 0}
-            output={event.summary}
+            // Prefer streamed content folded in by mergedEvents; summary fallback.
+            output={event.content || event.summary}
             // Auto-expand failed shell commands so the user sees stderr.
             defaultOpen={event.exitCode !== 0}
           />
         </div>
       )
 
+    // Folded into ShellCommandStarted by ChatPanel.mergedEvents.
     case 'ShellOutputStreamed':
       return null
 
