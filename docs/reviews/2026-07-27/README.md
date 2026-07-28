@@ -1,9 +1,9 @@
 # Review 2026-07-27
 
 Comprehensive review of the full codebase, prioritizing user-facing issues.
-**All high-urgency findings resolved.** 32 fixed across 7 commits; 56 remain open (46 med, 13 low — no high left).
+**All high-urgency findings resolved.** 41 fixed across 8 commits; 48 remain open (37 med, 13 low — no high left).
 
-## Fixed (32)
+## Fixed (41)
 
 | Finding | Difficulty | Urgency | Commit |
 |---|---|---|---|
@@ -46,32 +46,34 @@ Comprehensive review of the full codebase, prioritizing user-facing issues.
 | permission-card-and-error-banner-no-aria-live | small | med | 6a65919 |
 | reconnecting-banner-no-failure-state | small | med | 6a65919 |
 | api-error-type-not-exported (partial: export added) | small | high | 979f52e |
+| usebackend-commit-events-o-n-per-ws-event | medium | med | 9fb348d |
+| chatpanel-conversationview-unmemoized-derivations | medium | med | 9fb348d |
+| usekeyboardshortcuts-re-subscribes-when-handler-identity-changes | small | med | 9fb348d |
+| file-open-race-condition | medium | med | 9fb348d |
+| browsepreview-reloads-on-any-write-flicker | medium | med | 9fb348d |
+| mobilenav-safe-area-inset | small | med | 9fb348d |
+| popover-fixed-width-and-no-scroll | small | med | 9fb348d |
+| dropdown-subcontent-overflow-and-item-targets | small | med | 9fb348d |
 
-## Open (56)
+## Open (48)
 
 All remaining findings are med or low urgency. No high-urgency items remain.
 
-### Medium urgency (46)
+### Medium urgency (37)
 
 Grouped by cluster. Files are named `<slug>,<difficulty>,<urgency>.md`.
 
 **Performance**
-- `chatpanel-conversationview-unmemoized-derivations,medium,med.md`
-- `usebackend-commit-events-o-n-per-ws-event,medium,med.md`
 - `usechattabs-render-phase-setstate-derived-state,medium,med.md`
 
 **Mobile/touch**
 - `mobilenav-badges-always-on,small,med.md`
-- `mobilenav-safe-area-inset,small,med.md`
 - `left-sidebar-mobile-overlay,medium,med.md`
 - `settingspanel-mobile-nav-no-escape-hardcoded-offset,small,med.md`
-- `popover-fixed-width-and-no-scroll,small,med.md`
-- `dropdown-subcontent-overflow-and-item-targets,small,med.md`
 
 **Error states / silent failures**
 - `chatmessageitem-shelloutputstreamed-dropped,medium,med.md`
 - `diff-tab-error-retry-and-fetch-race,small,med.md`
-- `browsepreview-reloads-on-any-write-flicker,medium,med.md`
 - `fileviewer-pdf-sandbox-breaks-firefox,small,med.md`
 - `fileviewer-modelviewer-no-resize,small,med.md`
 - `fileviewer-csv-no-virtualization-large-files,medium,med.md`
@@ -84,10 +86,8 @@ Grouped by cluster. Files are named `<slug>,<difficulty>,<urgency>.md`.
 - `api-no-fetch-timeout,medium,med.md`
 
 **Races**
-- `file-open-race-condition,medium,med.md`
 - `search-result-line-clear-race,small,med.md`
 - `usefilechangedetection-readfile-overwrites-tab-without-revision-guard,medium,med.md`
-- `usekeyboardshortcuts-re-subscribes-when-handler-identity-changes,small,med.md`
 
 **A11y**
 - `command-palette-a11y,small,med.md`
