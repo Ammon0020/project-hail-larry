@@ -1,12 +1,19 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 /**
- * Registers one global keydown handler for the current render. The capture-phase
- * listener is refreshed with the handler and removed when the owner unmounts.
+ * Registers one global capture-phase keydown handler for the lifetime of the
+ * owner. The handler is stored in a ref so inline caller closures (which
+ * change identity every render) don't churn the listener registry or drop
+ * keypresses during the cleanup/re-subscribe window.
  */
 export function useKeyboardShortcuts(handler: (event: KeyboardEvent) => void): void {
+  const handlerRef = useRef(handler)
   useEffect(() => {
-    window.addEventListener('keydown', handler, true)
-    return () => window.removeEventListener('keydown', handler, true)
+    handlerRef.current = handler
   }, [handler])
+  useEffect(() => {
+    const fn = (e: KeyboardEvent) => handlerRef.current(e)
+    window.addEventListener('keydown', fn, true)
+    return () => window.removeEventListener('keydown', fn, true)
+  }, [])
 }

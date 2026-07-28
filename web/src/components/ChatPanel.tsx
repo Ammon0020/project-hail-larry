@@ -467,11 +467,13 @@ export function ChatPanel({
   // Per-tab running dots: admission latch and/or last event per open session.
   const runningSessionIds = useMemo(() => {
     const ids = new Set<string>(sendingSessionIds)
+    // Group allEvents' last event per session in one pass instead of filtering per tab.
+    const lastBySession = new Map<string, AppEvent>()
+    for (const e of allEvents) {
+      lastBySession.set(e.sessionId, e)
+    }
     for (const id of openTabIds) {
-      const eventsForTab = allEvents.filter((e) => e.sessionId === id)
-      if (isRunningEvent(eventsForTab[eventsForTab.length - 1])) {
-        ids.add(id)
-      }
+      if (isRunningEvent(lastBySession.get(id))) ids.add(id)
     }
     if (activeSessionId && isRunningEvent(lastEvent)) {
       ids.add(activeSessionId)
@@ -676,12 +678,15 @@ export function ChatPanel({
   }
 
   // Map permission request IDs to their resolution so resolved cards collapse.
-  const permissionResolution = new Map<string, 'granted' | 'denied'>()
-  for (const e of events) {
-    if (e.requestId && (e.type === 'PermissionGranted' || e.type === 'PermissionDenied')) {
-      permissionResolution.set(e.requestId, e.type === 'PermissionDenied' ? 'denied' : 'granted')
+  const permissionResolution = useMemo(() => {
+    const m = new Map<string, 'granted' | 'denied'>()
+    for (const e of events) {
+      if (e.requestId && (e.type === 'PermissionGranted' || e.type === 'PermissionDenied')) {
+        m.set(e.requestId, e.type === 'PermissionDenied' ? 'denied' : 'granted')
+      }
     }
-  }
+    return m
+  }, [events])
 
   const canSend = Boolean(
     (input.trim() || pendingAttachments.length > 0) &&
@@ -696,21 +701,30 @@ export function ChatPanel({
    * so streaming text appears as one growing response (like ChatGPT).
    * Non-stream events are passed through individually.
    */
-  const mergedEvents: AppEvent[] = events.reduce((acc: AppEvent[], event: AppEvent) => {
-    if (event.type === 'StreamUpdate') {
-      const last = acc[acc.length - 1]
-      if (last && last.type === 'StreamUpdate' && last.role === event.role && !!last.thought === !!event.thought) {
-        acc[acc.length - 1] = {
-          ...last,
-          content: (last.content || '') + (event.content || ''),
-          streaming: event.streaming,
+  const mergedEvents: AppEvent[] = useMemo(
+    () =>
+      events.reduce((acc: AppEvent[], event: AppEvent) => {
+        if (event.type === 'StreamUpdate') {
+          const last = acc[acc.length - 1]
+          if (
+            last &&
+            last.type === 'StreamUpdate' &&
+            last.role === event.role &&
+            !!last.thought === !!event.thought
+          ) {
+            acc[acc.length - 1] = {
+              ...last,
+              content: (last.content || '') + (event.content || ''),
+              streaming: event.streaming,
+            }
+            return acc
+          }
         }
+        acc.push(event)
         return acc
-      }
-    }
-    acc.push(event)
-    return acc
-  }, [])
+      }, []),
+    [events],
+  )
 
   // Smart autoscroll — follows new content only when the user is already
   // near the bottom; otherwise stays put and shows a jump-to-bottom button.

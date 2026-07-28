@@ -297,6 +297,9 @@ export default function App() {
   // doesn't trigger a re-render. handleCreateSession / handleSelectSession
   // pre-set it so the effect only handles the cold-reload restore path.
   const loadedSessionRef = useRef<string | null>(null)
+  // Monotonic token for handleFileSelect: a stale async resolution bails out
+  // of setState if a newer open request has superseded it (preview-slot race).
+  const fileSelectTokenRef = useRef(0)
 
   // On a cold reload, fetch the restored conversation's history exactly once.
   // The DATA FETCH lives in a guarded effect (not a render-time side effect) so
@@ -713,9 +716,13 @@ export default function App() {
       if (!isDesktop) setMobileView('editor')
       return true
     }
+    // Capture a token so a newer open request can supersede this one's
+    // post-await setState calls (shared preview slot race).
+    const token = ++fileSelectTokenRef.current
     // Load file from backend
     try {
       const file = await backend.readFile(path)
+      if (token !== fileSelectTokenRef.current) return false
       const name = path.split(/[\\/]/).pop() || path
       const ext = name.split('.').pop() || ''
       const tab: Tab = {
@@ -742,6 +749,7 @@ export default function App() {
       if (!isDesktop) setMobileView('editor')
       return true
     } catch (err) {
+      if (token !== fileSelectTokenRef.current) return false
       console.error('Failed to open file:', err)
       window.alert(err instanceof Error ? `Failed to open file: ${err.message}` : 'Failed to open file')
       return false
@@ -853,8 +861,9 @@ export default function App() {
     if (existing) {
       setActiveTabId(existing.id)
     } else {
+      const token = fileSelectTokenRef.current
       const ok = await handleFileSelect(path)
-      if (!ok) return
+      if (!ok || token !== fileSelectTokenRef.current) return
     }
     setSearchResultLine(lineNumber)
   }

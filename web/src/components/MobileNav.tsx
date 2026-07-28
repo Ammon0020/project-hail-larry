@@ -32,7 +32,7 @@ export function MobileNav({
   ]
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 w-full h-16 bg-panel border-t border-border flex items-center justify-around z-50 px-2">
+    <nav className="lg:hidden fixed bottom-0 left-0 w-full h-16 pb-[env(safe-area-inset-bottom)] bg-panel border-t border-border flex items-center justify-around z-50 px-2">
       {navItems.map(({ view, icon: Icon, label, badge }) => (
         <button
           key={view}

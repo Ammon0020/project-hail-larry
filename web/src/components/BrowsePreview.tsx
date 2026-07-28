@@ -86,7 +86,9 @@ export function BrowsePreview({
 
   useEffect(() => {
     if (!workspaceId || events.length === 0) return
-    const maxId = Math.max(...events.map((e) => e.id ?? 0))
+    // reduce instead of Math.max(...spread) — large replay lists can blow the
+    // call stack when spread into Math.max.
+    const maxId = events.reduce((m, e) => Math.max(m, e.id ?? 0), 0)
     if (processedIdRef.current === null) {
       processedIdRef.current = maxId
       return
@@ -94,14 +96,19 @@ export function BrowsePreview({
     const since = processedIdRef.current
     if (maxId <= since) return
 
-    // MVP: any file change in this workspace reloads the preview (CSS/JS/assets
-    // may live anywhere under the root). Missing workspaceId still counts —
-    // matches useBackend's tree-refresh fallback for older/partial events.
+    // Only reload when the written file is part of the previewed site: the
+    // entry's directory (root if the entry is at the workspace root) contains
+    // the target path. Falls back to "any write" when the entry path can't be
+    // resolved to a directory.
+    const entryDir = entryPath.includes('/') ? entryPath.slice(0, entryPath.lastIndexOf('/') + 1) : ''
+    const isRelevant = (e: AppEvent) =>
+      !entryDir || (e.target ?? '').startsWith(entryDir)
     const shouldReload = events.some(
       (e) =>
         (e.id ?? 0) > since &&
         (e.type === 'FileWritten' || e.type === 'FileChangedOnDisk') &&
-        (!e.workspaceId || e.workspaceId === workspaceId),
+        (!e.workspaceId || e.workspaceId === workspaceId) &&
+        isRelevant(e),
     )
     processedIdRef.current = maxId
     if (!shouldReload) return
@@ -111,7 +118,7 @@ export function BrowsePreview({
       debounceRef.current = undefined
       reloadPreview()
     }, LIVE_RELOAD_DEBOUNCE_MS)
-  }, [events, workspaceId])
+  }, [events, workspaceId, entryPath])
 
   useEffect(
     () => () => {

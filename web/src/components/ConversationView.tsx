@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { ChevronDown, X } from 'lucide-react'
 import { ChatMessageItem } from './ChatMessageItem'
 import { Banner } from './ui/Banner'
@@ -54,15 +55,18 @@ export function ConversationView({
   // subsequent agent events fold into the same agent turn until the next
   // prompt. User turns render as a single bubble; agent turns get tight
   // `space-y-1` spacing so the trace reads as one block (design §2).
-  const turns: Array<{ kind: 'user' | 'agent'; events: AppEvent[] }> = []
-  for (const ev of events) {
-    if (ev.type === 'PromptSubmitted') turns.push({ kind: 'user', events: [ev] })
-    else {
-      const last = turns[turns.length - 1]
-      if (last && last.kind === 'agent') last.events.push(ev)
-      else turns.push({ kind: 'agent', events: [ev] })
+  const turns: Array<{ kind: 'user' | 'agent'; events: AppEvent[] }> = useMemo(() => {
+    const out: Array<{ kind: 'user' | 'agent'; events: AppEvent[] }> = []
+    for (const ev of events) {
+      if (ev.type === 'PromptSubmitted') out.push({ kind: 'user', events: [ev] })
+      else {
+        const last = out[out.length - 1]
+        if (last && last.kind === 'agent') last.events.push(ev)
+        else out.push({ kind: 'agent', events: [ev] })
+      }
     }
-  }
+    return out
+  }, [events])
 
   return (
     <div className="relative flex-1 min-h-0">

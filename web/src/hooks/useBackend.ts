@@ -165,10 +165,21 @@ export function useBackend() {
    * safe: SQLite is the source of truth and loadSessionEvents re-fetches a
    * session's events on demand (see MAX_EVENTS).
    */
-  const commitEvents = useCallback((next: AppEvent[]) => {
-    const trimmed = next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next
-    eventsRef.current = trimmed
-    setEvents(trimmed)
+  const commitEvents = useCallback((next: AppEvent[] | ((prev: AppEvent[]) => AppEvent[])) => {
+    if (typeof next === 'function') {
+      // Functional path: build the new list once inside React's updater so the
+      // hot WS onmessage path doesn't spread the whole event log per token.
+      setEvents((prev) => {
+        const built = next(prev)
+        const trimmed = built.length > MAX_EVENTS ? built.slice(built.length - MAX_EVENTS) : built
+        eventsRef.current = trimmed
+        return trimmed
+      })
+    } else {
+      const trimmed = next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next
+      eventsRef.current = trimmed
+      setEvents(trimmed)
+    }
   }, [])
 
   // ---- WebSocket connection for real-time events ----
@@ -261,7 +272,11 @@ export function useBackend() {
     ws.onmessage = (msg) => {
       try {
         const event = JSON.parse(msg.data) as AppEvent
-        commitEvents([...eventsRef.current, event])
+        commitEvents((prev) => {
+          const next = prev.length >= MAX_EVENTS ? prev.slice(prev.length - MAX_EVENTS + 1) : prev.slice()
+          next.push(event)
+          return next
+        })
         // Permission lifecycle events change the pending set — refresh it.
         if (
           event.type === 'PermissionRequested' ||
