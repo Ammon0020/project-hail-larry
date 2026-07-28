@@ -629,12 +629,21 @@ function HtmlViewer({ url, workspaceId, trusted }: { url: string; workspaceId: s
       />
     )
   }
+  if (effectiveTrust === false) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
+        <p>Preview blocked — mark as trusted to view.</p>
+      </div>
+    )
+  }
+  // Trusted: allow scripts but keep the opaque origin (no allow-same-origin)
+  // so workspace HTML/JS cannot reach the IDE's storage or authed APIs.
   return (
     <iframe
       src={url}
       title="HTML preview"
       className="w-full h-full border-0 bg-white"
-      sandbox=""
+      sandbox="allow-scripts"
     />
   )
 }

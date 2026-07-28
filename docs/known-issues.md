@@ -135,6 +135,16 @@ marker-file assertion, unrelated to the frontend error helpers. Likely a
 filesystem/temp-dir cleanup race. Not caused by the errors.ts change (pure
 TypeScript); re-investigate independently.
 
+## `EditorPane.tsx` TS2552 `cursorPos` — pre-existing in WIP review tree
+
+Observed failing `npm run build` (`tsc -b`) during an unrelated
+`web/src/components/ui/dialog.tsx` change on 2026-07-27.
+`src/components/EditorPane.tsx:630:22` errors `TS2552: Cannot find name
+'cursorPos'`. Verified pre-existing by reverting the dialog.tsx change to HEAD
+and rebuilding — the error persists. The `EditorPane.tsx` file is modified in
+the working tree by other in-progress review work (not the dialog fix). Not
+caused by the dialog change; fix belongs to the EditorPane review pass.
+
 ## `api::embed::tests::spa_entry_serves_embedded_index` — pre-existing build-ordering flake
 
 Observed failing during an unrelated `EditorPane.tsx` change on 2026-07-27.

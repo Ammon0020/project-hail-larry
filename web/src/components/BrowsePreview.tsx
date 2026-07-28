@@ -160,6 +160,10 @@ export function BrowsePreview({
           onResolve={setResolvedTrust}
           className="flex-1 text-destructive"
         />
+      ) : effectiveTrust === false ? (
+        <div className="flex-1 flex flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
+          <p>Preview blocked — mark as trusted to view.</p>
+        </div>
       ) : previewToken ? (
         <iframe
           src={src}

@@ -39,6 +39,8 @@ export function EditorPane({
   onContentChange,
   onReloadTab,
   onSelectionChange,
+  onCursorChange,
+  cursorPos,
   scrollToLine,
   settingsProps,
   hideTabBar = false,
@@ -80,6 +82,13 @@ export function EditorPane({
    *  sent to the backend as a resource block (ACP spec item 1.3). Called
    *  with undefined when the selection is empty (a simple cursor). */
   onSelectionChange?: (selection: { path: string; startLine: number; endLine: number; text: string } | undefined) => void
+  /** Reports the cursor (head) position as 1-based { line, col } on every
+   *  selection/doc change and on editor creation, so the StatusBar can show a
+   *  truthful Ln/Col readout. Called with undefined when no editor is active. */
+  onCursorChange?: (pos: { line: number; col: number } | undefined) => void
+  /** Cursor position lifted to App so the desktop StatusBar (rendered outside
+   *  this pane) can display it. Forwarded to the mobile StatusBar below. */
+  cursorPos?: { line: number; col: number }
   /** When set, scrolls the editor cursor to this 1-based line and scrolls it
    *  into view. Cleared by the parent after the jump is dispatched so a
    *  subsequent click on the same line re-triggers. */
@@ -193,6 +202,20 @@ export function EditorPane({
   useEffect(() => {
     onSelectionChangeRef.current = onSelectionChange
   }, [onSelectionChange])
+
+  // Same ref-mirror pattern as onSelectionChange: the memoized updateListener
+  // reads the latest onCursorChange without reconfiguring the editor.
+  const onCursorChangeRef = useRef(onCursorChange)
+  useEffect(() => {
+    onCursorChangeRef.current = onCursorChange
+  }, [onCursorChange])
+
+  // Computes the 1-based { line, col } of the selection head for StatusBar.
+  const cursorPosOf = (view: EditorView) => {
+    const head = view.state.selection.main.head
+    const line = view.state.doc.lineAt(head)
+    return { line: line.number, col: head - line.from + 1 }
+  }
 
   // Hold the CodeMirror EditorView instances so we can imperatively dispatch
   // selection/scroll transactions (e.g. jump-to-line from search results).
@@ -407,18 +430,20 @@ export function EditorPane({
       EditorView.updateListener.of((viewUpdate) => {
         if (!viewUpdate.selectionSet && !viewUpdate.docChanged) return
         const cb = onSelectionChangeRef.current
-        if (!cb) return
-        const { state } = viewUpdate
-        const sel = state.selection.main
-        if (sel.from === sel.to) {
-          // Empty selection (just a cursor) — clear any prior selection.
-          cb(undefined)
-          return
+        if (cb) {
+          const { state } = viewUpdate
+          const sel = state.selection.main
+          if (sel.from === sel.to) {
+            // Empty selection (just a cursor) — clear any prior selection.
+            cb(undefined)
+          } else {
+            const startLine = state.doc.lineAt(sel.from).number
+            const endLine = state.doc.lineAt(sel.to).number
+            const text = state.sliceDoc(sel.from, sel.to)
+            cb({ path: tabPath, startLine, endLine, text })
+          }
         }
-        const startLine = state.doc.lineAt(sel.from).number
-        const endLine = state.doc.lineAt(sel.to).number
-        const text = state.sliceDoc(sel.from, sel.to)
-        cb({ path: tabPath, startLine, endLine, text })
+        onCursorChangeRef.current?.(cursorPosOf(viewUpdate.view))
       }),
     ]
 
@@ -576,6 +601,7 @@ export function EditorPane({
               className="h-full"
               onCreateEditor={(view) => {
                 editorViewsRef.current[tab.id] = view
+                onCursorChangeRef.current?.(cursorPosOf(view))
               }}
               basicSetup={basicSetup}
             />
@@ -602,6 +628,7 @@ export function EditorPane({
           fontSize={fontSize}
           onFontSizeChange={onFontSizeChange}
           gitBranch={gitBranch}
+          cursorPos={cursorPos}
         />
       )}
     </main>

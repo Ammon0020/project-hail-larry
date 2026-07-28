@@ -229,6 +229,10 @@ export default function App() {
   // undefined means "no active selection".
   const [editorSelection, setEditorSelection] = useState<EditorSelectionInfo | undefined>(undefined)
 
+  // Cursor (head) position lifted from EditorPane so the desktop StatusBar can
+  // show a truthful Ln/Col readout. undefined until the editor reports it.
+  const [cursorPos, setCursorPos] = useState<{ line: number; col: number } | undefined>(undefined)
+
   // Save error — shown as a transient banner so save failures aren't silent
   // (previously only console.error'd, making debugging impossible).
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -1114,6 +1118,8 @@ export default function App() {
         onContentChange={handleContentChange}
         onReloadTab={handleReloadTab}
         onSelectionChange={setEditorSelection}
+        onCursorChange={setCursorPos}
+        cursorPos={cursorPos}
         scrollToLine={searchResultLine}
         settingsProps={{
           agents: backend.agents,
@@ -1239,6 +1245,7 @@ export default function App() {
           fontSize={fontSize}
           onFontSizeChange={setFontSize}
           gitBranch={gitBranch}
+          cursorPos={cursorPos}
         />
       )}
 

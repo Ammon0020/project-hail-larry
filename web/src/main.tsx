@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { initTheme } from '@/lib/theme'
 
 // Apply the persisted theme preference before render (defaults to dark per
@@ -14,7 +15,9 @@ if (import.meta.hot) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 )
 
