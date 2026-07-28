@@ -43,7 +43,11 @@ pub fn ensure_self_signed(cert_dir: &Path, host: &str) -> Result<CertificatePath
         cert: cert_dir.join(CERT_FILE_NAME),
         key: cert_dir.join(KEY_FILE_NAME),
     };
-    if paths.cert.is_file() && paths.key.is_file() {
+    if paths.cert.is_file()
+        && paths.key.is_file()
+        && std::fs::metadata(&paths.cert).is_ok_and(|m| m.len() > 0)
+        && std::fs::metadata(&paths.key).is_ok_and(|m| m.len() > 0)
+    {
         return Ok(paths);
     }
 

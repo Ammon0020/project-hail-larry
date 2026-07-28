@@ -165,7 +165,11 @@ async fn redirect_to_https(
         .get(axum::http::header::HOST)
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost");
-    let host_no_port = host.rsplit_once(':').map_or(host, |(h, _)| h);
+    let host_no_port = if host.ends_with(']') {
+        host
+    } else {
+        host.rsplit_once(':').map_or(host, |(h, _)| h)
+    };
     let location = format!("https://{host_no_port}:{https_port}{path_and_query}");
     (
         StatusCode::PERMANENT_REDIRECT,

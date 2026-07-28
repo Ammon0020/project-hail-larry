@@ -7,6 +7,9 @@ use anyhow::{bail, Context, Result};
 /// Return whether `pid` still identifies a live process.
 #[must_use]
 pub fn is_running(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
     platform::is_running(pid)
 }
 
@@ -21,6 +24,9 @@ pub fn is_running(pid: u32) -> bool {
 /// Returns an error if the stop signal cannot be sent or the process does not
 /// exit within the grace period.
 pub fn stop(pid: u32) -> Result<()> {
+    if pid == 0 {
+        bail!("daemon PID cannot be 0");
+    }
     if !is_running(pid) {
         return Ok(());
     }

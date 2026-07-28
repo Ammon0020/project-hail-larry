@@ -57,7 +57,7 @@ Dispatch **4 `small` subagents in parallel** per batch (all 4 `run_subagent` cal
    - Bugs (race conditions, leaks, error-handling gaps, security, cross-platform)
    - Optimization opportunities
    - Overly complex or verbose code (suggest refactors)
-3. Create **one markdown review file per action item** under `docs/reviews/<YYYY-MM-DD>/` with 1–3 fix options. Skip fixes entirely if the item needs a decision or senior dev — just describe it.
+3. Create **one markdown review file per action item** under `docs/reviews/<YYYY-MM-DD>/`, named `<slug>,<difficulty>,<urgency>.md`.
 4. Read the next file. Describe how it interacts with the previous file(s) if it does. Repeat until all assigned files are reviewed.
 
 **Combining items**: if two action items can be fixed in one change, put them in the same file.
@@ -65,12 +65,9 @@ Dispatch **4 `small` subagents in parallel** per batch (all 4 `run_subagent` cal
 **Finding file format**:
 ```
 - name: short descriptive title
-- difficulty: [trivial, easy, medium, hard]   (how hard to fix)
-- urgency: [low, medium, high, critical]      (how important before commit)
 - file: absolute path
 - lines: line range (e.g. "45-60")
-- description: what the issue is and why it matters
-- options: 1–3 fix options (or skip if it needs a decision)
+- description: what the issue is and why it matters. Include code references as needed
 - verification: how you confirmed this is real (e.g. "read line X, the goroutine at Y has no cancellation path")
 ```
 
@@ -81,14 +78,6 @@ After a batch, `read_subagent` with `block: true` for all 4. Collect findings, t
 ### 5. Stop if findings stack up too high
 
 If findings pile up, stop and note where you are (which batches are done, which remain). Suggested refactors can fix many findings at once — we may want to fix findings then pick up again.
-
-### 6. Write the README index
-
-Create `docs/reviews/<YYYY-MM-DD>/README.md` with:
-- Scope reviewed, subagent/batch count
-- Total findings and breakdown by urgency
-- Tables grouping findings by urgency with file links and difficulty
-- Notes on duplicate root causes or pre-existing issues
 
 ### 7. Final summary to the user
 

@@ -28,7 +28,7 @@
 //! sweeper is the backstop for any prompt whose future is *not* dropped but
 //! whose device went away (Wi-Fi drop mid-session).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -121,7 +121,7 @@ struct Inner {
     pending: HashMap<String, Pending>,
     policy: HashMap<PolicyKey, PermissionDecision>,
     denied: HashSet<PolicyKey>,
-    audit: Vec<AuditEntry>,
+    audit: VecDeque<AuditEntry>,
 }
 
 /// RAII guard that removes a pending entry on drop.
@@ -183,7 +183,7 @@ impl Manager {
                 pending: HashMap::new(),
                 policy: HashMap::new(),
                 denied: HashSet::new(),
-                audit: Vec::new(),
+                audit: VecDeque::new(),
             })),
             sink,
             stale_timeout,
@@ -217,26 +217,28 @@ impl Manager {
         })
     }
 
+    /// Helper to deny and remove pending prompts older than the stale timeout.
+    fn cleanup_stale_locked(inner: &mut Inner, stale_timeout: Duration) {
+        let now = Instant::now();
+        let stale_ids: Vec<String> = inner
+            .pending
+            .iter()
+            .filter(|(_, p)| now.duration_since(p.created_at) >= stale_timeout)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in stale_ids {
+            if let Some(p) = inner.pending.remove(&id) {
+                let _ = p.tx.send(PermissionDecision::Deny);
+            }
+        }
+    }
+
     /// Deny and remove pending prompts older than the stale timeout. The deny
     /// is sent to the waiting `request` future via the oneshot channel; a send
     /// error means the receiver was already dropped (request cancelled), in
     /// which case the entry is simply discarded. Mirrors Go `CleanupStale`.
     pub fn cleanup_stale(&self) {
-        let now = Instant::now();
-        let mut inner = self.lock();
-        let stale_ids: Vec<String> = inner
-            .pending
-            .iter()
-            .filter(|(_, p)| now.duration_since(p.created_at) >= self.stale_timeout)
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in stale_ids {
-            if let Some(p) = inner.pending.remove(&id) {
-                // Non-blocking: a send error means the receiver was dropped
-                // (request future cancelled). The entry is already removed.
-                let _ = p.tx.send(PermissionDecision::Deny);
-            }
-        }
+        Self::cleanup_stale_locked(&mut self.lock(), self.stale_timeout);
     }
 
     /// Currently pending prompts (for re-presentation on reconnect). Prunes
@@ -245,19 +247,7 @@ impl Manager {
     #[must_use]
     pub fn get_pending(&self) -> Vec<PermissionRequest> {
         let mut inner = self.lock();
-        // Inline stale pruning (std::sync::Mutex is not reentrant).
-        let now = Instant::now();
-        let stale_ids: Vec<String> = inner
-            .pending
-            .iter()
-            .filter(|(_, p)| now.duration_since(p.created_at) >= self.stale_timeout)
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in &stale_ids {
-            if let Some(p) = inner.pending.remove(id) {
-                let _ = p.tx.send(PermissionDecision::Deny);
-            }
-        }
+        Self::cleanup_stale_locked(&mut inner, self.stale_timeout);
         inner.pending.values().map(|p| p.request.clone()).collect()
     }
 
@@ -265,7 +255,7 @@ impl Manager {
     /// Mirrors Go `GetAuditLog`.
     #[must_use]
     pub fn get_audit_log(&self) -> Vec<AuditEntry> {
-        self.lock().audit.clone()
+        self.lock().audit.iter().cloned().collect()
     }
 
     /// Drop all cached permission policies for `session_id` and deny any
@@ -295,7 +285,7 @@ impl Manager {
     /// Push an audit entry onto the log under the existing lock. Caller must
     /// hold `inner`.
     fn push_audit_locked(inner: &mut Inner, req: &PermissionRequest, decision: PermissionDecision) {
-        inner.audit.push(AuditEntry {
+        inner.audit.push_back(AuditEntry {
             request_id: req.id.clone(),
             session_id: req.session_id.clone(),
             tool: req.tool.clone(),
@@ -304,9 +294,8 @@ impl Manager {
             timestamp: Utc::now(),
         });
         // Bound the in-memory log to the last MAX_AUDIT_ENTRIES entries.
-        if inner.audit.len() > MAX_AUDIT_ENTRIES {
-            let start = inner.audit.len() - MAX_AUDIT_ENTRIES;
-            inner.audit.drain(0..start);
+        while inner.audit.len() > MAX_AUDIT_ENTRIES {
+            inner.audit.pop_front();
         }
     }
 
@@ -354,18 +343,24 @@ impl PermissionManager for Manager {
             ];
         }
         let key = policy_key_for(&req);
+        let mut global_key = key.clone();
+        global_key.session_id = String::new();
 
         // Check caches + register pending under one lock acquisition. A cached
         // durable decision auto-resolves immediately (no broadcast, no block).
         let rx = {
             let mut inner = self.lock();
-            if let Some(&d) = inner.policy.get(&key) {
+            if let Some(&d) = inner
+                .policy
+                .get(&key)
+                .or_else(|| inner.policy.get(&global_key))
+            {
                 if d == PermissionDecision::AllowAlways || d == PermissionDecision::AllowSession {
                     Self::push_audit_locked(&mut inner, &req, d);
                     return Ok(d);
                 }
             }
-            if inner.denied.contains(&key) {
+            if inner.denied.contains(&key) || inner.denied.contains(&global_key) {
                 Self::push_audit_locked(&mut inner, &req, PermissionDecision::Deny);
                 return Ok(PermissionDecision::Deny);
             }
@@ -413,11 +408,14 @@ impl PermissionManager for Manager {
             let mut inner = self.lock();
             Self::push_audit_locked(&mut inner, &req, decision);
             match decision {
-                PermissionDecision::AllowAlways | PermissionDecision::AllowSession => {
+                PermissionDecision::AllowSession => {
                     inner.policy.insert(key, decision);
                 }
+                PermissionDecision::AllowAlways => {
+                    inner.policy.insert(global_key, decision);
+                }
                 PermissionDecision::RejectAlways => {
-                    inner.denied.insert(key);
+                    inner.denied.insert(global_key);
                 }
                 PermissionDecision::AllowOnce | PermissionDecision::Deny => {}
             }

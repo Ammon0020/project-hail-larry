@@ -389,7 +389,9 @@ impl std::default::Default for Config {
                     "cannot resolve state dir for default config; \
                      falling back to relative .local-agent"
                 );
-                let fallback = PathBuf::from(".local-agent");
+                let fallback = std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(".local-agent");
                 Self {
                     port: 7337,
                     host: "0.0.0.0".to_string(),

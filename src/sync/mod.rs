@@ -73,7 +73,7 @@ struct ClientEntry {
     /// Non-blocking fan-out target for [`Hub::broadcast`].
     tx: mpsc::Sender<Vec<u8>>,
     /// Highest durable event ID delivered to this client (replay or live).
-    last_seen_id: AtomicI64,
+    last_seen_id: Arc<AtomicI64>,
     /// Device ID authenticated at handshake (empty for loopback bypass).
     device_id: String,
     /// Per-connection cancel token so revocation can force-close the socket.
@@ -186,12 +186,13 @@ impl Hub {
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     let cursor = entry.last_seen_id.load(Ordering::Relaxed);
+                    let last_seen_id = Arc::clone(&entry.last_seen_id);
                     warn!(
                         client_id = id,
                         cursor, "sync: client send buffer full; scheduling resync"
                     );
                     drop(entry);
-                    self.schedule_resync(id, cursor);
+                    self.schedule_resync(id, cursor, last_seen_id);
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     drop(entry);
@@ -224,7 +225,7 @@ impl Hub {
             id,
             ClientEntry {
                 tx,
-                last_seen_id: AtomicI64::new(after_id),
+                last_seen_id: Arc::new(AtomicI64::new(after_id)),
                 device_id,
                 cancel: cancel.clone(),
             },
@@ -271,7 +272,7 @@ impl Hub {
 
     /// When a client's outbound buffer is full, either resync from the durable
     /// bus or drop the connection so the gap is not silently skipped.
-    fn schedule_resync(&self, client_id: u64, after_id: i64) {
+    fn schedule_resync(&self, client_id: u64, after_id: i64, last_seen_id: Arc<AtomicI64>) {
         let Some(bus) = self.bus.clone() else {
             warn!(
                 client_id,
@@ -290,6 +291,7 @@ impl Hub {
         tokio::spawn(async move {
             match resync_replay_only(&bus, &tx, after_id, &cancel).await {
                 Ok(last) => {
+                    last_seen_id.fetch_max(last, Ordering::Relaxed);
                     debug!(client_id, last, "sync: lagged resync completed");
                 }
                 Err(err) => {
@@ -572,24 +574,18 @@ async fn write_pump(
                 if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
                     return;
                 }
-                let deadline = sent_at + PING_TIMEOUT;
-                loop {
-                    if cancel.is_cancelled() {
+                let cancel_clone = cancel.clone();
+                let last_pong_clone = Arc::clone(&last_pong);
+                tokio::spawn(async move {
+                    tokio::time::sleep(PING_TIMEOUT).await;
+                    if cancel_clone.is_cancelled() {
                         return;
                     }
-                    {
-                        let guard = last_pong.lock().await;
-                        if *guard >= sent_at {
-                            break;
-                        }
-                    }
-                    if Instant::now() >= deadline {
+                    if *last_pong_clone.lock().await < sent_at {
                         warn!(client_id, "sync: keepalive ping failed (no pong)");
-                        let _ = sink.send(Message::Close(None)).await;
-                        return;
+                        cancel_clone.cancel();
                     }
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                }
+                });
             }
         }
     }

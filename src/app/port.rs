@@ -110,11 +110,10 @@ fn find_pid_listening_on_linux(port: u16) -> Result<Option<u32>> {
     // Resolve each matching socket inode to a PID via /proc/<pid>/fd symlinks.
     let proc_entries = fs::read_dir("/proc").context("read /proc")?;
     for entry in proc_entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
+        let name_os = entry.file_name();
+        let Some(name) = name_os.to_str() else {
             continue;
         };
-        let name = name.to_string();
         if !name.bytes().all(|b| b.is_ascii_digit()) {
             continue;
         }

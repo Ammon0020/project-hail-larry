@@ -459,55 +459,87 @@ async fn policy_allow_once_does_not_auto_resolve() {
     }
 }
 
-/// Verifies that a policy decision in session A does not affect session B.
-/// Mirrors Go `TestPolicySessionScoped` (table-driven over the two durable
-/// allow kinds).
 #[tokio::test]
 async fn policy_session_scoped() {
-    for &decision in &[D::AllowAlways, D::AllowSession] {
-        let m = Manager::new(None);
+    let decision = D::AllowSession;
+    let m = Manager::new(None);
 
-        let req_a = PermissionRequest {
-            id: String::new(),
-            session_id: "sess-A".into(),
-            tool: "edit_file".into(),
-            target: "a.go".into(),
-            options: vec![decision, D::Deny],
-            ..Default::default()
-        };
-        let req_b = PermissionRequest {
-            id: String::new(),
-            session_id: "sess-B".into(),
-            tool: "edit_file".into(),
-            target: "a.go".into(),
-            options: vec![decision, D::Deny],
-            ..Default::default()
-        };
+    let req_a = PermissionRequest {
+        id: String::new(),
+        session_id: "sess-A".into(),
+        tool: "edit_file".into(),
+        target: "a.go".into(),
+        options: vec![decision, D::Deny],
+        ..Default::default()
+    };
+    let req_b = PermissionRequest {
+        id: String::new(),
+        session_id: "sess-B".into(),
+        tool: "edit_file".into(),
+        target: "a.go".into(),
+        options: vec![decision, D::Deny],
+        ..Default::default()
+    };
 
-        // Seed the policy in session A.
-        resolve_first_request(&m, req_a, decision)
-            .await
-            .expect("seed A");
+    // Seed the policy in session A.
+    resolve_first_request(&m, req_a, decision)
+        .await
+        .expect("seed A");
 
-        // Session B's request must still block — different session.
-        let start = std::time::Instant::now();
-        let result = timeout(Duration::from_millis(100), m.request(req_b)).await;
-        let elapsed = start.elapsed();
-        assert!(
-            result.is_err(),
-            "expected session B to block (policy is session-scoped), decision={decision:?}"
-        );
-        assert!(
-            elapsed >= Duration::from_millis(80),
-            "expected session B to block ~100ms, returned after {elapsed:?}"
-        );
+    // Session B's request must still block — different session.
+    let start = std::time::Instant::now();
+    let result = timeout(Duration::from_millis(100), m.request(req_b)).await;
+    let elapsed = start.elapsed();
+    assert!(
+        result.is_err(),
+        "expected session B to block (policy is session-scoped), decision={decision:?}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(80),
+        "expected session B to block ~100ms, returned after {elapsed:?}"
+    );
 
-        // Clean up.
-        let pending = m.get_pending();
-        if let Some(p) = pending.first() {
-            let _ = m.respond(&p.id, D::Deny).await;
-        }
+    // Clean up.
+    let pending = m.get_pending();
+    if let Some(p) = pending.first() {
+        let _ = m.respond(&p.id, D::Deny).await;
     }
+}
+
+/// Verifies that a policy decision globally scoped (`AllowAlways`) affects session B.
+#[tokio::test]
+async fn policy_global_scoped() {
+    let decision = D::AllowAlways;
+    let m = Manager::new(None);
+
+    let req_a = PermissionRequest {
+        id: String::new(),
+        session_id: "sess-A".into(),
+        tool: "edit_file".into(),
+        target: "global.go".into(),
+        options: vec![decision, D::Deny],
+        ..Default::default()
+    };
+    let req_b = PermissionRequest {
+        id: String::new(),
+        session_id: "sess-B".into(),
+        tool: "edit_file".into(),
+        target: "global.go".into(),
+        options: vec![decision, D::Deny],
+        ..Default::default()
+    };
+
+    // Seed the policy in session A.
+    resolve_first_request(&m, req_a, decision)
+        .await
+        .expect("seed A");
+
+    // Session B's request must auto-resolve — policy is global.
+    let d = timeout(Duration::from_secs(1), m.request(req_b))
+        .await
+        .expect("expected session B to auto-resolve")
+        .expect("request error");
+    assert_eq!(d, decision);
 }
 
 /// Verifies that `clear_session` drops cached policies so subsequent requests
@@ -521,12 +553,12 @@ async fn clear_session_removes_policies() {
         session_id: "sess-clear".into(),
         tool: "edit_file".into(),
         target: "main.go".into(),
-        options: vec![D::AllowAlways, D::Deny],
+        options: vec![D::AllowSession, D::Deny],
         ..Default::default()
     };
 
     // Seed the policy.
-    resolve_first_request(&m, req.clone(), D::AllowAlways)
+    resolve_first_request(&m, req.clone(), D::AllowSession)
         .await
         .expect("seed");
 
@@ -535,7 +567,7 @@ async fn clear_session_removes_policies() {
         .await
         .expect("expected auto-resolve before clear")
         .expect("request error");
-    assert_eq!(d, D::AllowAlways);
+    assert_eq!(d, D::AllowSession);
 
     // Clear the session's policies.
     m.clear_session("sess-clear");
@@ -849,11 +881,10 @@ async fn policy_reject_always_auto_denies() {
     assert_eq!(log[1].decision, D::Deny);
 }
 
-/// Verifies that `clear_session` drops cached `reject_always` decisions so
-/// subsequent requests block again (re-prompt) instead of auto-denying.
-/// Mirrors Go `TestClearSessionClearsDenyCache`.
+/// Verifies that `clear_session` does NOT drop cached `reject_always` decisions
+/// since they are globally scoped.
 #[tokio::test]
-async fn clear_session_clears_deny_cache() {
+async fn clear_session_retains_global_deny_cache() {
     let m = Manager::new(None);
 
     let req = PermissionRequest {
@@ -877,27 +908,15 @@ async fn clear_session_clears_deny_cache() {
         .expect("request error");
     assert_eq!(d, D::Deny);
 
-    // Clear the session's deny cache.
+    // Clear the session's cache.
     m.clear_session("sess-clear-deny");
 
-    // Now the request must block again (re-prompt).
-    let start = std::time::Instant::now();
-    let result = timeout(Duration::from_millis(100), m.request(req)).await;
-    let elapsed = start.elapsed();
-    assert!(
-        result.is_err(),
-        "expected request to block after clear_session, but it auto-denied"
-    );
-    assert!(
-        elapsed >= Duration::from_millis(80),
-        "expected request to block ~100ms after clear, returned after {elapsed:?}"
-    );
-
-    // Clean up.
-    let pending = m.get_pending();
-    if let Some(p) = pending.first() {
-        let _ = m.respond(&p.id, D::Deny).await;
-    }
+    // Now the request must still auto-deny (since RejectAlways is global).
+    let d2 = timeout(Duration::from_secs(1), m.request(req.clone()))
+        .await
+        .expect("expected auto-deny after clear")
+        .expect("request error");
+    assert_eq!(d2, D::Deny);
 }
 
 /// Verifies that a `reject_always` for one target does NOT auto-deny a request
