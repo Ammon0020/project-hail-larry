@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 /**
  * Threshold (in px) below which the user is considered "near the bottom".
@@ -40,13 +40,13 @@ export function useAutoscroll<T extends HTMLElement>(
   }
 
   /** Imperatively scrolls the container to the bottom and marks it at-bottom. */
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     const el = containerRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
     wasNearBottomRef.current = true
     setIsAtBottom(true)
-  }
+  }, [containerRef])
 
   // Keep isAtBottom in sync as the user scrolls. This is the only place
   // setState is called from an event handler (not an effect), so it does
@@ -56,8 +56,10 @@ export function useAutoscroll<T extends HTMLElement>(
     if (!el) return
     const handleScroll = () => {
       const atBottom = computeAtBottom()
-      wasNearBottomRef.current = atBottom
-      setIsAtBottom(atBottom)
+      if (atBottom !== wasNearBottomRef.current) {
+        wasNearBottomRef.current = atBottom
+        setIsAtBottom(atBottom)
+      }
     }
     el.addEventListener('scroll', handleScroll, { passive: true })
     // Sync initial state in case the container starts scrolled up.

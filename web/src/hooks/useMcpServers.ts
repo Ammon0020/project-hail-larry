@@ -16,6 +16,7 @@ export function useMcpServers() {
   const [mcpConfigChanged, setMcpConfigChanged] = useState(false)
   const [mcpHealth, setMcpHealth] = useState<Record<string, McpServerStatus>>({})
   const [mcpStatusLoading, setMcpStatusLoading] = useState(false)
+  const [mcpError, setMcpError] = useState<string | null>(null)
   const mountedRef = useRef(true)
   const mcpStatusReqRef = useRef(0)
 
@@ -39,8 +40,10 @@ export function useMcpServers() {
           enabled: config.enabled !== false,
         })),
       )
-    } catch {
-      // If MCP config can't be loaded, just show empty list
+      setMcpError(null)
+    } catch (error) {
+      console.error('Failed to load MCP config:', error)
+      setMcpError('Couldn’t load MCP server config from the daemon.')
     }
   }
 
@@ -57,10 +60,12 @@ export function useMcpServers() {
       const nextHealth: Record<string, McpServerStatus> = {}
       for (const status of statuses) nextHealth[status.name] = status
       setMcpHealth(nextHealth)
+      setMcpError(null)
     } catch (error) {
       if (requestId !== mcpStatusReqRef.current || !mountedRef.current) return
       console.error('Failed to load MCP status:', error)
-      setMcpHealth({})
+      // Preserve last-known health; clearing it would mask the failure as "unknown".
+      setMcpError('Couldn’t load MCP server health.')
     } finally {
       if (requestId === mcpStatusReqRef.current && mountedRef.current) {
         setMcpStatusLoading(false)
@@ -70,7 +75,7 @@ export function useMcpServers() {
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadMcpServers()
+    loadMcpServers().then(() => loadMcpStatus())
   }, [])
 
   const handleToggleMcpServer = async (name: string, enabled: boolean) => {
@@ -82,6 +87,7 @@ export function useMcpServers() {
       setMcpConfigChanged(true)
     } catch (error) {
       console.error('Failed to toggle MCP server:', error)
+      setMcpError(`Couldn’t ${enabled ? 'enable' : 'disable'} MCP server “${name}”.`)
     } finally {
       setMcpTogglingServer(null)
     }
@@ -94,6 +100,8 @@ export function useMcpServers() {
     mcpTogglingServer,
     mcpConfigChanged,
     setMcpConfigChanged,
+    mcpError,
+    setMcpError,
     loadMcpStatus,
     handleToggleMcpServer,
   }

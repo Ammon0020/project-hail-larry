@@ -57,8 +57,16 @@ export function SearchPanel({
   }
 
   // Clear results when switching workspaces (the old results belong to a
-  // different root). Runs in the cleanup of the fetch effect below so it is not
-  // a synchronous setState in the effect body.
+  // different root). Split into its own effect keyed on workspaceId so query
+  // edits do not trigger the clear — otherwise every keystroke flashes the
+  // "No results" empty state between debounced fetches.
+  useEffect(() => {
+    return () => {
+      setResults([])
+      setError(null)
+      setLoading(false)
+    }
+  }, [workspaceId])
 
   useEffect(() => {
     // No workspace or empty query — do not fetch. The render layer shows the
@@ -96,11 +104,6 @@ export function SearchPanel({
 
     return () => {
       clearTimeout(timer)
-      // When the workspace changes, drop results from the previous root so they
-      // do not flash before the new search completes.
-      setResults([])
-      setError(null)
-      setLoading(false)
     }
   }, [trimmed, workspaceId, ignoreCase])
 

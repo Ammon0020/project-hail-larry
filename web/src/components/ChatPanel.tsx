@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
-import { WifiOff } from 'lucide-react'
+import { WifiOff, AlertCircle, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   api,
@@ -201,6 +201,8 @@ export function ChatPanel({
     mcpTogglingServer,
     mcpConfigChanged,
     setMcpConfigChanged,
+    mcpError,
+    setMcpError,
     loadMcpStatus,
     handleToggleMcpServer,
   } = useMcpServers()
@@ -800,6 +802,25 @@ export function ChatPanel({
           className="border-b px-3 py-2 flex items-center gap-2 shrink-0"
         >
           <WifiOff className="w-3.5 h-3.5" /> Reconnecting to daemon…
+        </Banner>
+      )}
+
+      {/* MCP load/toggle failure — surfaces errors the hook used to swallow. */}
+      {mcpError && (
+        <Banner
+          variant="error"
+          className="border-b px-3 py-2 flex items-center gap-2 shrink-0"
+        >
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="flex-1">{mcpError}</span>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={() => setMcpError(null)}
+            className="hover:opacity-80"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </Banner>
       )}
 
