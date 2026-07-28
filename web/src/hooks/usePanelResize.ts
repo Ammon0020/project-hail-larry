@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
   type Dispatch,
-  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type SetStateAction,
 } from 'react'
 
@@ -25,8 +25,8 @@ interface UsePanelResizeResult {
   rightWidth: number
   setLeftWidth: Dispatch<SetStateAction<number>>
   setRightWidth: Dispatch<SetStateAction<number>>
-  startLeftDrag: (event: ReactMouseEvent) => void
-  startRightDrag: (event: ReactMouseEvent) => void
+  startLeftDrag: (event: ReactPointerEvent) => void
+  startRightDrag: (event: ReactPointerEvent) => void
   hideLeftPanel: () => void
   showLeftPanel: () => void
   toggleLeftPanel: () => void
@@ -42,29 +42,47 @@ function readStoredWidth(config: PanelResizeConfig): number {
     : config.initialWidth
 }
 
+function hiddenStorageKey(config: PanelResizeConfig): string {
+  return `${config.storageKey}:hidden`
+}
+
+function readStoredHidden(config: PanelResizeConfig): boolean {
+  return localStorage.getItem(hiddenStorageKey(config)) === '1'
+}
+
 /**
  * Manages persisted left/right panel widths, sidebar visibility restoration,
- * and the window-level pointer listeners used while resizing either panel.
+ * and the pointer-capture listeners used while resizing either panel.
  */
 export function usePanelResize({
   left,
   right,
 }: UsePanelResizeOptions): UsePanelResizeResult {
-  const [leftWidth, setLeftWidth] = useState(() => readStoredWidth(left))
-  const [rightWidth, setRightWidth] = useState(() => readStoredWidth(right))
-  const hiddenLeftWidthRef = useRef(left.initialWidth)
-  const hiddenRightWidthRef = useRef(right.initialWidth)
+  const [leftWidth, setLeftWidth] = useState(() =>
+    readStoredHidden(left) ? 0 : readStoredWidth(left),
+  )
+  const [rightWidth, setRightWidth] = useState(() =>
+    readStoredHidden(right) ? 0 : readStoredWidth(right),
+  )
+  const hiddenLeftWidthRef = useRef(readStoredWidth(left))
+  const hiddenRightWidthRef = useRef(readStoredWidth(right))
   const dragCleanupRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (leftWidth > 0) {
       localStorage.setItem(left.storageKey, String(leftWidth))
+      localStorage.setItem(hiddenStorageKey(left), '0')
+    } else {
+      localStorage.setItem(hiddenStorageKey(left), '1')
     }
   }, [left.storageKey, leftWidth])
 
   useEffect(() => {
     if (rightWidth > 0) {
       localStorage.setItem(right.storageKey, String(rightWidth))
+      localStorage.setItem(hiddenStorageKey(right), '0')
+    } else {
+      localStorage.setItem(hiddenStorageKey(right), '1')
     }
   }, [right.storageKey, rightWidth])
 
@@ -73,15 +91,17 @@ export function usePanelResize({
   }, [])
 
   const startDrag = useCallback(
-    (side: 'left' | 'right', event: ReactMouseEvent) => {
+    (side: 'left' | 'right', event: ReactPointerEvent) => {
       event.preventDefault()
       dragCleanupRef.current?.()
 
+      const target = event.currentTarget
+      target.setPointerCapture(event.pointerId)
       const startX = event.clientX
       const startWidth = side === 'left' ? leftWidth : rightWidth
 
-      const onMove = (moveEvent: MouseEvent) => {
-        const delta = moveEvent.clientX - startX
+      const onMove = (moveEvent: Event) => {
+        const delta = (moveEvent as PointerEvent).clientX - startX
         if (side === 'left') {
           const next = Math.min(
             left.maxWidth,
@@ -98,16 +118,23 @@ export function usePanelResize({
       }
 
       const cleanup = () => {
-        window.removeEventListener('mousemove', onMove)
-        window.removeEventListener('mouseup', cleanup)
+        target.removeEventListener('pointermove', onMove)
+        target.removeEventListener('pointerup', cleanup)
+        target.removeEventListener('pointercancel', cleanup)
+        try {
+          target.releasePointerCapture(event.pointerId)
+        } catch {
+          // Pointer may already be released.
+        }
         document.body.style.cursor = ''
         document.body.style.userSelect = ''
         dragCleanupRef.current = null
       }
 
       dragCleanupRef.current = cleanup
-      window.addEventListener('mousemove', onMove)
-      window.addEventListener('mouseup', cleanup)
+      target.addEventListener('pointermove', onMove)
+      target.addEventListener('pointerup', cleanup)
+      target.addEventListener('pointercancel', cleanup)
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
     },

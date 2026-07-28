@@ -470,17 +470,27 @@ export function EditorPane({
     return exts
   }
 
-  // Memoize extensions per active tab + wrap state so CodeMirror does not
-  // reconfigure on every render (which would reset cursor/scroll state).
-  // The onSaveRef is read only inside the keybinding's run() callback (an event
-  // handler), never during render, so it is safe to reference here.
-  const extensions = useMemo(
-    // eslint-disable-next-line react-hooks/refs -- ref is only read in the keybinding/updateListener event handlers, not during render
-    () => (activeTab ? getExtensions(activeTab.path) : []),
-    // getExtensions depends on `wrap` and the active tab's language/path.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeTab?.language, activeTab?.path, wrap, activeTab?.id, loadedSupports, fontSize, mobile, tabSize, bracketMatching, foldGutter, autoIndent],
-  )
+  // Per-tab extensions so language + selection path follow each tab's path.
+  // Avoids sharing active-tab extensions across all CodeMirror instances
+  // (wrong highlighting / selection path, and reconfigure-on-switch).
+  // Signature omits content so typing does not rebuild extension arrays.
+  // Tab switch only changes activeTabId, so this memo stays stable.
+  const editorTabsSig = tabs
+    .filter((t) => t.kind !== 'settings' && t.kind !== 'preview' && t.kind !== 'git-diff')
+    .filter((t) => !(t.isBinary || (t.previewable && t.viewMode === 'preview')))
+    .map((t) => `${t.id}\0${t.path}\0${t.language ?? ''}`)
+    .join('\n')
+  const extensionsByTabId = useMemo(() => {
+    const map: Record<string, Extension[]> = {}
+    for (const tab of tabs) {
+      if (tab.kind === 'settings' || tab.kind === 'preview' || tab.kind === 'git-diff') continue
+      if (tab.isBinary || (tab.previewable && tab.viewMode === 'preview')) continue
+      // eslint-disable-next-line react-hooks/refs -- refs only read in keybinding/updateListener handlers, not during render
+      map[tab.id] = getExtensions(tab.path)
+    }
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- editorTabsSig covers per-tab path/language
+  }, [editorTabsSig, wrap, loadedSupports, fontSize, mobile, tabSize, bracketMatching, foldGutter, autoIndent])
 
   return (
     <main
@@ -595,7 +605,7 @@ export function EditorPane({
               onChange={(val) => {
                 if (activeTabId === tab.id) onContentChange(val)
               }}
-              extensions={extensions}
+              extensions={extensionsByTabId[tab.id] ?? []}
               theme={oneDark}
               height="100%"
               className="h-full"

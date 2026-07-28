@@ -1096,14 +1096,14 @@ export default function App() {
           aria-valuenow={leftPanelWidth}
           aria-valuemin={LEFT_MIN}
           aria-valuemax={LEFT_MAX}
-          onMouseDown={startLeftDrag}
+          onPointerDown={startLeftDrag}
           onKeyDown={(e) => {
             if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
             e.preventDefault()
             const step = e.key === 'ArrowRight' ? 16 : -16
             setLeftPanelWidth((w) => Math.min(LEFT_MAX, Math.max(LEFT_MIN, w + step)))
           }}
-          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 focus:outline-none focus-visible:bg-accent-foreground/30 transition-colors shrink-0"
+          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 focus:outline-none focus-visible:bg-accent-foreground/30 transition-colors shrink-0 touch-none"
           title="Drag to resize"
         />
       )}
@@ -1170,7 +1170,7 @@ export default function App() {
           aria-valuenow={rightPanelWidth}
           aria-valuemin={RIGHT_MIN}
           aria-valuemax={RIGHT_MAX}
-          onMouseDown={startRightDrag}
+          onPointerDown={startRightDrag}
           onKeyDown={(e) => {
             if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
             e.preventDefault()
@@ -1179,7 +1179,7 @@ export default function App() {
             const step = e.key === 'ArrowLeft' ? 16 : -16
             setRightPanelWidth((w) => Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, w + step)))
           }}
-          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 focus:outline-none focus-visible:bg-accent-foreground/30 transition-colors shrink-0"
+          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 focus:outline-none focus-visible:bg-accent-foreground/30 transition-colors shrink-0 touch-none"
           title="Drag to resize"
         />
       )}

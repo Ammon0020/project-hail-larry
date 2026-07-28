@@ -143,6 +143,7 @@ export function TabBar({
             }
           }}
           className="flex overflow-x-auto tab-scrollbar min-w-0 flex-1 h-full"
+          role="tablist"
         >
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId
@@ -155,6 +156,9 @@ export function TabBar({
                 key={tab.id}
                 data-tab-id={tab.id}
                 title={isSettings ? tab.name : tab.path}
+                role="tab"
+                aria-selected={isActive}
+                tabIndex={0}
                 className={cn(
                   'flex items-center gap-2 px-3 h-9 text-sm shrink-0 border-r border-background cursor-pointer select-none',
                   isActive
@@ -162,6 +166,28 @@ export function TabBar({
                     : 'bg-panel text-muted-foreground hover:bg-editor/50 transition',
                 )}
                 onClick={() => onTabSelect(tab.id)}
+                // Enter/Space activates the tab; arrow keys move focus between
+                // sibling tabs (roving-tab style within the role="tablist").
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onTabSelect(tab.id)
+                  } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                    e.preventDefault()
+                    const container = e.currentTarget.parentElement
+                    if (!container) return
+                    const els = Array.from(
+                      container.querySelectorAll<HTMLElement>('[role="tab"]'),
+                    )
+                    const i = els.indexOf(e.currentTarget)
+                    if (i < 0) return
+                    const next =
+                      e.key === 'ArrowRight'
+                        ? (i + 1) % els.length
+                        : (i - 1 + els.length) % els.length
+                    els[next]?.focus()
+                  }
+                }}
                 onContextMenu={
                   canMenu
                     ? (e) => {
@@ -207,8 +233,16 @@ export function TabBar({
                     e.stopPropagation()
                     onTabClose(tab.id)
                   }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onTabClose(tab.id)
+                    }
+                  }}
                   aria-label={`Close ${tab.name}`}
                   role="button"
+                  tabIndex={0}
                 />
               </div>
             )

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import {
   ChevronRight,
@@ -75,6 +75,38 @@ function replaceBasename(path: string, newName: string): string {
   const idx = normalized.lastIndexOf('/')
   if (idx === -1) return newName
   return `${normalized.slice(0, idx + 1)}${newName}`
+}
+
+/** Stable path key for a tree node (path when present, else display name). */
+function nodeKey(node: FileTreeNode): string {
+  return node.path || node.name
+}
+
+/**
+ * One visible row in the explorer after applying expand/collapse.
+ * Used for roving tabindex and arrow-key movement (WAI-ARIA tree pattern).
+ */
+interface VisibleTreeItem {
+  path: string
+  type: 'file' | 'folder'
+  parentPath: string | null
+}
+
+/** Depth-first list of currently visible nodes (collapsed folders hide descendants). */
+function flattenVisibleItems(
+  nodes: FileTreeNode[],
+  expandedPaths: Set<string>,
+  parentPath: string | null = null,
+): VisibleTreeItem[] {
+  const items: VisibleTreeItem[] = []
+  for (const node of nodes) {
+    const path = nodeKey(node)
+    items.push({ path, type: node.type, parentPath })
+    if (node.type === 'folder' && expandedPaths.has(path) && node.children?.length) {
+      items.push(...flattenVisibleItems(node.children, expandedPaths, path))
+    }
+  }
+  return items
 }
 
 /** Props shared by every recursive tree node for context-menu actions. */
@@ -215,6 +247,10 @@ function TreeNode({
   node,
   expandedPaths,
   onToggleExpand,
+  focusedIndex,
+  itemIndexByPath,
+  onFocusItem,
+  onItemKeyDown,
   menuPath,
   setMenuPath,
   renamingPath,
@@ -224,12 +260,17 @@ function TreeNode({
   node: FileTreeNode
   expandedPaths: Set<string>
   onToggleExpand: (path: string) => void
+  focusedIndex: number
+  itemIndexByPath: Map<string, number>
+  onFocusItem: (index: number) => void
+  onItemKeyDown: (event: KeyboardEvent<HTMLDivElement>, index: number) => void
   menuPath: string | null
   setMenuPath: (path: string | null) => void
   renamingPath: string | null
   setRenamingPath: (path: string | null) => void
 } & TreeActions) {
   const nodePath = node.path || node.name
+  const itemIndex = itemIndexByPath.get(nodePath) ?? -1
   const isFolder = node.type === 'folder'
   const isRenaming = renamingPath === nodePath
   const menuOpen = menuPath === nodePath
@@ -281,9 +322,16 @@ function TreeNode({
     const folderRow = (
       <div
         className={rowStyles({ kind: 'folder', menuOpen })}
+        role="treeitem"
+        aria-expanded={isExpanded}
+        tabIndex={itemIndex === focusedIndex ? 0 : -1}
+        data-tree-index={itemIndex}
         onClick={() => {
+          onFocusItem(itemIndex)
           if (!isRenaming) onToggleExpand(nodePath)
         }}
+        onFocus={() => onFocusItem(itemIndex)}
+        onKeyDown={(event) => onItemKeyDown(event, itemIndex)}
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -347,13 +395,17 @@ function TreeNode({
           // Indent children by the chevron + gap footprint (w-3.5 + gap-1.5 =
           // 20px) so nested icons line up under this folder's icon rather than
           // under its chevron. pl-[20px] is a static value the JIT can detect.
-          <div className="pl-[20px]">
+          <div role="group" className="pl-[20px]">
             {node.children.map((child) => (
               <TreeNode
                 key={child.path || child.name}
                 node={child}
                 expandedPaths={expandedPaths}
                 onToggleExpand={onToggleExpand}
+                focusedIndex={focusedIndex}
+                itemIndexByPath={itemIndexByPath}
+                onFocusItem={onFocusItem}
+                onItemKeyDown={onItemKeyDown}
                 menuPath={menuPath}
                 setMenuPath={setMenuPath}
                 renamingPath={renamingPath}
@@ -377,9 +429,15 @@ function TreeNode({
   const fileRow = (
     <div
       className={rowStyles({ kind, menuOpen })}
+      role="treeitem"
+      tabIndex={itemIndex === focusedIndex ? 0 : -1}
+      data-tree-index={itemIndex}
       onClick={() => {
+        onFocusItem(itemIndex)
         if (!isRenaming) actions.onFileSelect(nodePath)
       }}
+      onFocus={() => onFocusItem(itemIndex)}
+      onKeyDown={(event) => onItemKeyDown(event, itemIndex)}
       onContextMenu={(e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -507,6 +565,14 @@ export function FileTree({
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => loadExpandedPaths(workspaceId))
   const [menuPath, setMenuPath] = useState<string | null>(null)
   const [renamingPath, setRenamingPath] = useState<string | null>(null)
+  const [focusedIndex, setFocusedIndex] = useState(0)
+  const treeRef = useRef<HTMLDivElement>(null)
+  const pendingFocusIndex = useRef<number | null>(null)
+  const visibleItems = useMemo(() => flattenVisibleItems(nodes, expandedPaths), [nodes, expandedPaths])
+  const itemIndexByPath = useMemo(
+    () => new Map(visibleItems.map((item, index) => [item.path, index])),
+    [visibleItems],
+  )
 
   // Recompute the expanded set when the workspace changes (e.g. workspace switch
   // changes workspaceId). Without this, paths from the previous workspace linger
@@ -521,9 +587,10 @@ export function FileTree({
     setExpandedPaths(loadExpandedPaths(workspaceId))
     setMenuPath(null)
     setRenamingPath(null)
+    setFocusedIndex(0)
   }
 
-  const handleToggleExpand = (path: string) => {
+  const handleToggleExpand = useCallback((path: string) => {
     setExpandedPaths((prev) => {
       const next = new Set(prev)
       if (next.has(path)) {
@@ -534,7 +601,81 @@ export function FileTree({
       saveExpandedPaths(workspaceId, next)
       return next
     })
-  }
+  }, [workspaceId])
+
+  const focusItem = useCallback((index: number) => {
+    if (index >= 0) setFocusedIndex(index)
+  }, [])
+
+  const moveFocus = useCallback(
+    (index: number) => {
+      pendingFocusIndex.current = index
+      setFocusedIndex(index)
+    },
+    [],
+  )
+
+  /**
+   * Restores DOM focus after roving tabindex rerenders the destination row.
+   * Clicks and native Tab focus do not set the pending index, so they retain
+   * their browser-managed focus behavior.
+   */
+  useEffect(() => {
+    if (pendingFocusIndex.current !== focusedIndex) return
+    treeRef.current?.querySelector<HTMLElement>(`[data-tree-index="${focusedIndex}"]`)?.focus()
+    pendingFocusIndex.current = null
+  }, [focusedIndex, visibleItems])
+
+  const handleItemKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>, index: number) => {
+      // Rename inputs keep their own Enter/Escape behavior.
+      if (event.currentTarget !== event.target) return
+
+      const item = visibleItems[index]
+      if (!item) return
+
+      switch (event.key) {
+        case 'ArrowDown':
+          event.preventDefault()
+          moveFocus(Math.min(index + 1, visibleItems.length - 1))
+          break
+        case 'ArrowUp':
+          event.preventDefault()
+          moveFocus(Math.max(index - 1, 0))
+          break
+        case 'ArrowRight':
+          if (item.type !== 'folder') return
+          event.preventDefault()
+          if (expandedPaths.has(item.path)) {
+            const childIndex = index + 1
+            if (visibleItems[childIndex]?.parentPath === item.path) moveFocus(childIndex)
+          } else {
+            handleToggleExpand(item.path)
+          }
+          break
+        case 'ArrowLeft': {
+          event.preventDefault()
+          if (item.type === 'folder' && expandedPaths.has(item.path)) {
+            handleToggleExpand(item.path)
+            break
+          }
+          const parentIndex = visibleItems.findIndex((candidate) => candidate.path === item.parentPath)
+          if (parentIndex >= 0) moveFocus(parentIndex)
+          break
+        }
+        case 'Enter':
+        case ' ':
+          if (item.type === 'file') {
+            event.preventDefault()
+            onFileSelect(item.path)
+          }
+          break
+        default:
+          break
+      }
+    },
+    [expandedPaths, handleToggleExpand, moveFocus, onFileSelect, visibleItems],
+  )
 
   /** Ensures a folder is expanded after creating a child under it. */
   const ensureExpanded = (path: string) => {
@@ -628,13 +769,22 @@ export function FileTree({
   )
 
   return (
-    <div className="flex flex-1 flex-col min-h-0 overflow-y-auto px-2 pb-2 text-sm">
+    <div
+      ref={treeRef}
+      role="tree"
+      aria-label="File explorer"
+      className="flex flex-1 flex-col min-h-0 overflow-y-auto px-2 pb-2 text-sm"
+    >
       {nodes.map((node) => (
         <TreeNode
           key={node.path || node.name}
           node={node}
           expandedPaths={expandedPaths}
           onToggleExpand={handleToggleExpand}
+          focusedIndex={focusedIndex}
+          itemIndexByPath={itemIndexByPath}
+          onFocusItem={focusItem}
+          onItemKeyDown={handleItemKeyDown}
           menuPath={menuPath}
           setMenuPath={setMenuPath}
           renamingPath={renamingPath}

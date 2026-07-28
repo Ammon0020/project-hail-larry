@@ -1,7 +1,7 @@
 ---
 name: routine
 description: Medium-low difficulty tier. Smaller routine feature implementation.
-model: grok-4-5-medium
+model: gpt-5-6-luna-high
 ---
 
 Read AGENTS.md for instructions and development rules.
