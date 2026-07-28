@@ -1,6 +1,6 @@
 import { useState, type KeyboardEvent } from 'react'
 import { Terminal } from 'lucide-react'
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
 
 /**
  * Lock screen shown to unpaired devices (Blueprint Sec 19 — device pairing).
@@ -12,13 +12,17 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
   const [error, setError] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [loading, setLoading] = useState(false)
+  // Active while a 429 lockout error is shown; submit + Enter are disabled until
+  // the user edits the passcode. The backend gives no remaining-seconds value,
+  // so we can't render a real countdown — clearing on edit is the honest UX.
+  const [locked, setLocked] = useState(false)
 
   /**
    * Validates the passcode format (4 words) and submits to the backend.
    * On success, stores the device credential and calls onPaired.
    */
   const attemptPair = async () => {
-    if (loading) return
+    if (loading || locked) return
     const words = passcode.trim().toLowerCase().split(/[\s-]+/).filter(Boolean)
     if (words.length !== 4) {
       setError(true)
@@ -31,14 +35,23 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
 
     try {
       const deviceName = navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Browser'
-      const cred = await api.verifyPasscode(passcode.trim(), deviceName)
+      // Normalize to the backend's expected form: lowercase, `-`-joined. The
+      // server does ct_eq against a `-`-joined lowercase passcode, so sending
+      // the raw input rejects valid space/uppercase variations.
+      const normalized = words.join('-')
+      const cred = await api.verifyPasscode(normalized, deviceName)
       // Store credential in sessionStorage (Blueprint Sec 19). Uses the lai: prefix
       // for consistency with other persisted keys (AGENTS.md — consistent keys).
       sessionStorage.setItem('lai:deviceCredential', JSON.stringify(cred))
       onPaired()
     } catch (err) {
       setError(true)
-      setErrorMsg(err instanceof Error ? err.message : 'Invalid or expired passcode.')
+      if (err instanceof ApiError && err.status === 429) {
+        setLocked(true)
+        setErrorMsg('Too many attempts — wait a moment, then edit the passcode and try again.')
+      } else {
+        setErrorMsg(err instanceof Error ? err.message : 'Invalid or expired passcode.')
+      }
     } finally {
       setLoading(false)
     }
@@ -73,6 +86,7 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
             onChange={(e) => {
               setPasscode(e.target.value)
               setError(false)
+              setLocked(false)
             }}
             onKeyDown={handleKeyDown}
             placeholder="purple-fox-delta-wave"
@@ -82,10 +96,10 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
           />
           <button
             onClick={attemptPair}
-            disabled={loading}
+            disabled={loading || locked}
             className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground font-medium py-3 rounded-xl transition"
           >
-            {loading ? 'Pairing...' : 'Pair Device'}
+            {loading ? 'Pairing...' : locked ? 'Locked — edit passcode' : 'Pair Device'}
           </button>
           {error && (
             <p className="text-xs text-destructive text-center">{errorMsg}</p>

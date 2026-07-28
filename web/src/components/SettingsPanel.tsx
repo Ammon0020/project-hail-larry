@@ -175,6 +175,7 @@ export function SettingsPanel({
   const [showAddForm, setShowAddForm] = useState(false)
   const [newAgent, setNewAgent] = useState<Partial<Agent>>({ models: [] })
   const [newModel, setNewModel] = useState({ id: '', name: '' })
+  const [addAgentError, setAddAgentError] = useState<string | null>(null)
 
   // MCP tab state
   const [mcpText, setMcpText] = useState('')
@@ -227,10 +228,18 @@ export function SettingsPanel({
   }
 
   const handleAddAgent = async () => {
-    if (!newAgent.id || !newAgent.name || !newAgent.command) return
-    await onAddAgent(newAgent as Agent)
-    setShowAddForm(false)
-    setNewAgent({ models: [] })
+    setAddAgentError(null)
+    if (!newAgent.id || !newAgent.name || !newAgent.command) {
+      setAddAgentError('ID, name, and command are all required.')
+      return
+    }
+    try {
+      await onAddAgent(newAgent as Agent)
+      setShowAddForm(false)
+      setNewAgent({ models: [] })
+    } catch (e: unknown) {
+      setAddAgentError(e instanceof Error ? e.message : String(e))
+    }
   }
 
   const handleAddModel = () => {
@@ -311,6 +320,12 @@ export function SettingsPanel({
   }
 
   async function handleToggle(name: string, enabled: boolean) {
+    // Quick-toggle reloads the editor from the server; guard against silently
+    // discarding unsaved JSON edits with a confirm.
+    if (mcpText !== mcpOriginal &&
+        !window.confirm('Discard unsaved editor changes to toggle this server?')) {
+      return
+    }
     setTogglingServer(name)
     try {
       await patchMcpServer(name, enabled)
@@ -598,6 +613,8 @@ export function SettingsPanel({
                     <button onClick={handleAddModel} className="px-3 py-1.5 bg-secondary hover:bg-accent rounded-md text-xs">Add Model</button>
                   </div>
                 </div>
+
+                {addAgentError && <ErrorNote message={addAgentError} />}
 
                 <div className="flex justify-end pt-2">
                   <button onClick={handleAddAgent} className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-sm rounded-md font-medium">Save Agent</button>

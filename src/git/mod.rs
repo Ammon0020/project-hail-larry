@@ -453,17 +453,22 @@ pub fn unstage(root: &Path, paths: &[String]) -> Result<Vec<String>, GitError> {
 pub fn commit(
     root: &Path,
     message: &str,
-    expected_head: &str,
+    expected_head: Option<&str>,
     amend: bool,
 ) -> Result<String, GitError> {
     let Some(repo) = open_repo(root)? else {
         return Err(GitError::NotARepo);
     };
     let (_, actual_head) = head_ref_info(&repo);
-    if actual_head
-        .as_deref()
-        .is_none_or(|actual| !actual.eq_ignore_ascii_case(expected_head))
-    {
+    // No precondition is only valid for the initial commit (unborn HEAD). With
+    // a HEAD present, a missing or mismatched If-Match means the working tree
+    // changed since the last status fetch.
+    let head_ok = match (actual_head.as_deref(), expected_head) {
+        (None, _) => true,
+        (Some(actual), Some(expected)) => actual.eq_ignore_ascii_case(expected),
+        _ => false,
+    };
+    if !head_ok {
         return Err(GitError::Operation(
             "working tree changed since last status fetch".to_string(),
         ));
@@ -751,7 +756,7 @@ mod tests {
             .expect("head oid");
         std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
         stage(dir.path(), &[String::from("README.md")]).expect("stage");
-        let oid = commit(dir.path(), "change", &old_oid, false).expect("commit");
+        let oid = commit(dir.path(), "change", Some(&old_oid), false).expect("commit");
         assert_ne!(oid, old_oid);
     }
 
@@ -762,7 +767,29 @@ mod tests {
         std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
         stage(dir.path(), &[String::from("README.md")]).expect("stage");
         assert!(matches!(
-            commit(dir.path(), "change", "0000000", false),
+            commit(dir.path(), "change", Some("0000000"), false),
+            Err(GitError::Operation(_))
+        ));
+    }
+
+    #[test]
+    fn commit_allows_initial_commit_without_precondition() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Unborn repo: `git init` only, no initial commit, then stage a file.
+        std::process::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git init");
+        std::fs::write(dir.path().join("README.md"), "first\n").expect("write");
+        stage(dir.path(), &[String::from("README.md")]).expect("stage");
+        let oid = commit(dir.path(), "initial", None, false).expect("initial commit");
+        assert!(!oid.is_empty());
+        // A missing precondition against a born HEAD must still be rejected.
+        std::fs::write(dir.path().join("README.md"), "second\n").expect("write");
+        stage(dir.path(), &[String::from("README.md")]).expect("stage");
+        assert!(matches!(
+            commit(dir.path(), "second", None, false),
             Err(GitError::Operation(_))
         ));
     }

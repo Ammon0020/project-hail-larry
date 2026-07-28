@@ -75,7 +75,9 @@ function readEditorPrefs(): { fontSize: number; wrap: boolean } {
  * viewports so two side-by-side editors don't render unreadably on phones.
  * Re-evaluates on window resize.
  */
-function useEffectiveMode(requested: 'unified' | 'split'): 'unified' | 'split' {
+function useEffectiveMode(
+  requested: 'unified' | 'split',
+): { effective: 'unified' | 'split'; isNarrow: boolean } {
   const [isNarrow, setIsNarrow] = useState<boolean>(() =>
     typeof window !== 'undefined' && window.innerWidth < SPLIT_MIN_WIDTH
   )
@@ -88,7 +90,7 @@ function useEffectiveMode(requested: 'unified' | 'split'): 'unified' | 'split' {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  return requested === 'split' && isNarrow ? 'unified' : requested
+  return { effective: requested === 'split' && isNarrow ? 'unified' : requested, isNarrow }
 }
 
 export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }: GitDiffViewerProps) {
@@ -96,7 +98,7 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
   // MergeView (split) or EditorView (unified) — only one is live at a time.
   const viewRef = useRef<MergeView | EditorView | null>(null)
   const [userMode, setUserMode] = useState<'unified' | 'split'>(mode)
-  const effectiveMode = useEffectiveMode(userMode)
+  const { effective: effectiveMode, isNarrow } = useEffectiveMode(userMode)
 
   // (Re)build the merge view whenever the inputs or mode change. The
   // @codemirror/merge MergeView is constructed imperatively (there is no
@@ -161,20 +163,22 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-editor border-border">
-      {/* Header: path + mode toggle. The toggle is disabled when split would
-          collapse on the current viewport — the effective mode badge shows
-          the actual rendered mode so the user understands why. */}
+      {/* Header: path + mode toggle. Split is disabled on narrow viewports
+          where it would collapse to unified — `active` reflects the effective
+          rendered mode so the highlight never lies. */}
       <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border text-xs text-muted-foreground shrink-0">
         <span className="truncate font-mono" title={path}>{path}</span>
         <div className="flex items-center gap-1 shrink-0">
           <ModeButton
             label="Unified"
-            active={userMode === 'unified'}
+            active={effectiveMode === 'unified'}
             onClick={() => setUserMode('unified')}
           />
           <ModeButton
             label="Split"
-            active={userMode === 'split'}
+            active={effectiveMode === 'split'}
+            disabled={isNarrow}
+            title={isNarrow ? 'Split needs a wider screen' : undefined}
             onClick={() => setUserMode('split')}
           />
         </div>
@@ -197,19 +201,26 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
 function ModeButton({
   label,
   active,
+  disabled,
+  title,
   onClick,
 }: {
   label: string
   active: boolean
+  disabled?: boolean
+  title?: string
   onClick: () => void
 }) {
   return (
     <button
       type="button"
       aria-pressed={active}
+      disabled={disabled}
+      title={title}
       onClick={onClick}
       className={cn(
         'px-2 py-0.5 rounded transition',
+        disabled && 'opacity-40 cursor-not-allowed',
         active
           ? 'bg-foreground/10 text-foreground font-medium'
           : 'text-muted-foreground hover:bg-foreground/5',

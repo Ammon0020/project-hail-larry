@@ -171,7 +171,7 @@ export function GitPanel({
 
   const stagedFiles = useMemo(() => status?.files.filter((file) => file.staged) ?? [], [status])
   const unstagedFiles = useMemo(() => status?.files.filter((file) => !file.staged) ?? [], [status])
-  const canCommit = !!message.trim() && stagedFiles.length > 0 && !!status?.headOid
+  const canCommit = !!message.trim() && stagedFiles.length > 0
   const busy = busyAction !== null
 
   if (!workspaceId) {
@@ -222,7 +222,7 @@ export function GitPanel({
             </div>
           )}
         </div>
-        <button type="button" onClick={() => void refreshStatus()} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label="Refresh source control" title="Refresh">
+        <button type="button" disabled={busy} onClick={() => void runMutation('refresh', async () => { /* refreshStatus runs as runMutation's trailing reload */ })} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-label="Refresh source control" title="Refresh">
           <RefreshCw className={cn('h-3.5 w-3.5', busyAction === 'refresh' && 'animate-spin')} />
         </button>
       </header>
@@ -239,7 +239,7 @@ export function GitPanel({
         />
         <div className="mt-2 flex gap-2">
           <button type="button" disabled={!canCommit || busy} onClick={() => void runMutation('commit', async () => {
-            await api.gitCommit(workspaceId, message.trim(), false, status!.headOid!)
+            await api.gitCommit(workspaceId, message.trim(), false, status?.headOid ?? null)
             setMessage('')
             await onRepoChanged()
           })} className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-2 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">

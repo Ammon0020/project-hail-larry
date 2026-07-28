@@ -158,15 +158,21 @@ pub async fn commit(
     body: Result<Json<CommitRequest>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, ApiResponseError> {
     let Json(request) = decode_json_body(body)?;
+    // If-Match is optional: a missing precondition is only accepted for the
+    // initial commit (unborn HEAD). See `git::commit`.
     let expected_head = headers
         .get("if-match")
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiResponseError::bad_request("If-Match header required"))?
-        .to_string();
+        .map(std::string::ToString::to_string);
     let root = workspace_root(&state, &id).await?;
     let oid = tokio::task::spawn_blocking(move || {
-        git::commit(&root, &request.message, &expected_head, request.amend)
+        git::commit(
+            &root,
+            &request.message,
+            expected_head.as_deref(),
+            request.amend,
+        )
     })
     .await
     .map_err(|err| blocking_error(&err))?

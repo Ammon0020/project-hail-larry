@@ -118,7 +118,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 /** API errors retain their HTTP status so callers can give conflict-specific guidance. */
-class ApiError extends Error {
+export class ApiError extends Error {
   readonly status: number
 
   constructor(message: string, status: number) {
@@ -295,11 +295,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ paths }),
     }),
-  gitCommit: async (workspaceId: string, message: string, amend: boolean, headOid: string) => {
+  gitCommit: async (workspaceId: string, message: string, amend: boolean, headOid: string | null) => {
     try {
       return await apiFetch<{ oid: string }>(`/workspaces/${workspaceId}/git/commit`, {
         method: 'POST',
-        headers: { 'If-Match': headOid },
+        // Omit If-Match for the initial commit (no HEAD yet); the backend
+        // treats a missing precondition as "only allow when HEAD is unborn".
+        headers: headOid ? { 'If-Match': headOid } : undefined,
         body: JSON.stringify({ message, amend }),
       })
     } catch (err) {

@@ -8,7 +8,10 @@ import { api, type GitRepoInfo } from '@/lib/api'
  */
 export function useGitState(workspaceId: string | null | undefined) {
   const [gitState, setGitState] = useState<GitRepoInfo | null>(null)
-  const [loading, setLoading] = useState(false)
+  // Start in loading state when a workspace is active so the panel shows the
+  // spinner instead of flashing the "No Git repository" screen before the
+  // first detection effect runs.
+  const [loading, setLoading] = useState(!!workspaceId)
 
   const refresh = useCallback(async () => {
     if (!workspaceId) {
