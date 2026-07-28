@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { SettingsPanel, type SettingsSection } from '@/components/SettingsPanel'
 import { FileViewer } from '@/components/FileViewer'
 import { BrowsePreview } from '@/components/BrowsePreview'
+import { GitDiffTab } from '@/components/git/GitDiffTab'
 import { StatusBar } from '@/components/StatusBar'
 import { TabBar } from './TabBar'
 import { editorTabPreviewState } from './tabPreviewState'
@@ -54,6 +55,7 @@ export function EditorPane({
   events,
   isDesktop,
   workspaceName,
+  gitBranch,
   trusted,
   onCloseOthers,
   onCloseSaved,
@@ -130,6 +132,9 @@ export function EditorPane({
   /** Display name of the active workspace, shown as the first breadcrumb
    *  segment. Passed through from App.tsx via backend.activeWorkspace?.name. */
   workspaceName?: string
+  /** Git branch name to show in the mobile StatusBar's branch slot, or
+   *  null/undefined to hide the slot entirely (no repo detected). */
+  gitBranch?: string | null
   /** Per-workspace HTML preview trust state. `null`/undefined = unknown
    *  (prompt), `true` = trusted, `false` = untrusted. Forwarded to
    *  BrowsePreview and FileViewer so HTML iframes apply the right CSP. */
@@ -565,7 +570,20 @@ export function EditorPane({
           </div>
         ))}
 
-        {tabs.filter(t => t.kind !== 'settings' && t.kind !== 'preview').map(tab => {
+        {tabs.filter(t => t.kind === 'git-diff').map(tab => (
+          <div
+            key={tab.id}
+            className={cn('absolute inset-0', activeTabId === tab.id ? 'block' : 'hidden')}
+          >
+            <GitDiffTab
+              workspaceId={tab.workspaceId ?? ''}
+              path={tab.path}
+              staged={tab.staged ?? false}
+            />
+          </div>
+        ))}
+
+        {tabs.filter(t => t.kind !== 'settings' && t.kind !== 'preview' && t.kind !== 'git-diff').map(tab => {
           // Binary files always go to FileViewer. Text-preview files (SVG,
           // CSV, HTML, OBJ, etc.) go to FileViewer only when the user has
           // toggled to preview mode; otherwise they edit in CodeMirror.
@@ -611,6 +629,7 @@ export function EditorPane({
           activeTab={activeTab}
           fontSize={fontSize}
           onFontSizeChange={onFontSizeChange}
+          gitBranch={gitBranch}
         />
       )}
     </main>

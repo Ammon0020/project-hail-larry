@@ -506,6 +506,9 @@ mod tests {
         async fn list(&self) -> Result<Vec<WorkspaceInfo>, AppError> {
             Ok(Vec::new())
         }
+        async fn workspace_root(&self, _id: &str) -> Result<String, AppError> {
+            Err(AppError::not_found_kind("workspace"))
+        }
         async fn remove(&self, _id: &str) -> Result<(), AppError> {
             Err(AppError::unsupported("not needed"))
         }

@@ -43,8 +43,11 @@ export interface Tab {
    *  - `'file'` (default): CodeMirror / FileViewer for a workspace file
    *  - `'settings'`: settings panel (synthetic path, not persisted)
    *  - `'preview'`: browse-preview iframe for a multi-file static site
-   *    (distinct from `viewMode: 'preview'` / `isPreview` transient file tabs) */
-  kind?: 'file' | 'settings' | 'preview'
+   *    (distinct from `viewMode: 'preview'` / `isPreview` transient file tabs)
+   *  - `'git-diff'`: structured diff view (GitDiffTab) for a single file's
+   *    git changes. `path` is the file relative to the workspace root;
+   *    `staged` selects the index diff vs. the working-tree diff. */
+  kind?: 'file' | 'settings' | 'preview' | 'git-diff'
   /** True when the file is binary (image, executable, archive, etc.) and
    *  cannot be edited as text. The editor renders a placeholder or image
    *  preview instead of a CodeMirror instance. */
@@ -63,6 +66,9 @@ export interface Tab {
    *  first edit or explicit tab click converts it to a persistent tab. Preview
    *  tabs are not persisted to localStorage. */
   isPreview?: boolean
+  /** For `kind: 'git-diff'` tabs: whether to show the staged (index) diff
+   *  (`true`) or the working-tree (unstaged) diff (`false`, default). */
+  staged?: boolean
 }
 
 /** A registered AI agent (Blueprint Sec 5 — agent registration). */
@@ -229,7 +235,7 @@ export interface AppEvent {
 }
 
 /** Left panel view options (Blueprint Sec 17 — activity bar). */
-export type LeftPanel = 'files' | 'search'
+export type LeftPanel = 'files' | 'search' | 'git'
 
 /** Mobile bottom-nav views (Blueprint Sec 17 — mobile layout). */
 export type MobileView = 'explorer' | 'editor' | 'chat'

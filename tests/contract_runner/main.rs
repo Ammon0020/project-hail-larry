@@ -209,6 +209,38 @@ async fn rest_workspaces_files_not_found() {
 }
 
 #[tokio::test]
+async fn rest_workspaces_git_ok() {
+    banner("REST: workspaces_git_ok");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "workspaces_git_ok").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_workspaces_git_not_found() {
+    banner("REST: workspaces_git_not_found");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "workspaces_git_not_found").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_workspaces_git_status_not_a_repo() {
+    banner("REST: workspaces_git_status_not_a_repo");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "workspaces_git_status_not_a_repo").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_workspaces_git_diff_not_a_repo() {
+    banner("REST: workspaces_git_diff_not_a_repo");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "workspaces_git_diff_not_a_repo").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
 async fn rest_workspaces_read_ok() {
     banner("REST: workspaces_read_ok");
     let h = BackendHarness::start().await;

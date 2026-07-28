@@ -1,4 +1,4 @@
-import { Files, Search, Settings } from 'lucide-react'
+import { Files, GitBranch, Search, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { LeftPanel } from '@/types'
 
@@ -19,6 +19,7 @@ export function ActivityBar({
   const items: { id: LeftPanel; icon: typeof Files; label: string }[] = [
     { id: 'files', icon: Files, label: 'Explorer' },
     { id: 'search', icon: Search, label: 'Search' },
+    { id: 'git', icon: GitBranch, label: 'Source Control' },
   ]
 
   return (

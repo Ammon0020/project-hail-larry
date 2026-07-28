@@ -1,8 +1,9 @@
 import type { CSSProperties } from 'react'
-import { Files, Search } from 'lucide-react'
+import { Files, GitBranch, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileTree } from './FileTree'
 import { SearchPanel } from './SearchPanel'
+import { GitPanel } from './git/GitPanel'
 import type { FileTreeNode, LeftPanel } from '@/types'
 import { WorkspaceHeader } from './WorkspaceHeader'
 
@@ -27,6 +28,8 @@ export function LeftSidebar({
   activeWorkspace,
   onWorkspaceSelect,
   onSearchResultSelect,
+  onOpenDiff,
+  onRepoChanged,
   style,
   connected = true,
 }: {
@@ -48,15 +51,20 @@ export function LeftSidebar({
   onWorkspaceSelect: (ws: { id: string; name: string; path: string }) => void
   /** Called when a search result is clicked — opens the file in the editor. */
   onSearchResultSelect?: (path: string, lineNumber: number) => void
+  /** Opens a persistent diff tab for a staged or worktree change. */
+  onOpenDiff: (path: string, staged: boolean) => void
+  /** Refreshes app-level git state after repository initialization. */
+  onRepoChanged: () => Promise<void>
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
   style?: CSSProperties
   /** Whether the backend WebSocket is connected. Drives the Online/Offline badge. */
   connected?: boolean
 }) {
-  /** Mini horizontal activity bar for mobile (files/search toggle). */
+  /** Mini horizontal activity bar for mobile. */
   const miniTabs: { id: LeftPanel; icon: typeof Files; label: string }[] = [
     { id: 'files', icon: Files, label: 'Files' },
     { id: 'search', icon: Search, label: 'Search' },
+    { id: 'git', icon: GitBranch, label: 'Git' },
   ]
 
   return (
@@ -123,6 +131,15 @@ export function LeftSidebar({
         <SearchPanel
           workspaceId={activeWorkspace?.id ?? null}
           onSelectResult={onSearchResultSelect}
+        />
+      )}
+
+      {/* Source Control panel */}
+      {activePanel === 'git' && (
+        <GitPanel
+          workspaceId={activeWorkspace?.id ?? null}
+          onOpenDiff={onOpenDiff}
+          onRepoChanged={onRepoChanged}
         />
       )}
     </aside>

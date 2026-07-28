@@ -13,15 +13,19 @@ export function StatusBar({
   activeTab,
   fontSize,
   onFontSizeChange,
+  gitBranch,
 }: {
   activeTab: Tab | null
   fontSize: number
   onFontSizeChange: (fn: (s: number) => number) => void
+  gitBranch?: string | null
 }) {
   return (
     <div className="flex items-center justify-between bg-status-bar text-white text-[10px] md:text-[11px] px-3 py-0.5 shrink-0">
       <div className="flex items-center gap-3">
-        <span className="flex items-center gap-1"><GitBranch className="w-3 h-3" /> main</span>
+        {gitBranch && (
+          <span className="flex items-center gap-1"><GitBranch className="w-3 h-3" /> {gitBranch}</span>
+        )}
         <span className="hidden md:flex items-center gap-1"><CircleAlert className="w-3 h-3" /> 0 errors</span>
         <span className="hidden md:flex items-center gap-1"><TriangleAlert className="w-3 h-3" /> 0 warnings</span>
       </div>

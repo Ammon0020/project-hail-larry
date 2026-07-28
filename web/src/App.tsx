@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { X, Wifi, WifiOff, Bot, Command, PanelLeft, FolderOpen, Search, Settings, Save } from 'lucide-react'
+import { X, Wifi, WifiOff, Bot, Command, PanelLeft, FolderOpen, GitBranch, Search, Settings, Save } from 'lucide-react'
 import { useEditorSettings } from '@/hooks/useEditorSettings'
 import { LockScreen } from '@/components/LockScreen'
 import { CommandPalette, type Command as PaletteCommand } from '@/components/CommandPalette'
@@ -17,6 +17,7 @@ import { MobileNav } from '@/components/MobileNav'
 import { StatusBar } from '@/components/StatusBar'
 import { useBackend } from '@/hooks/useBackend'
 import { useFileChangeDetection } from '@/hooks/useFileChangeDetection'
+import { useGitState } from '@/hooks/useGitState'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { usePanelResize } from '@/hooks/usePanelResize'
 import type { EditorSelectionInfo } from '@/lib/api'
@@ -147,7 +148,7 @@ export default function App() {
   // Validated against the allowed union values so a corrupted/old entry cannot
   // produce an invalid panel id (AGENTS.md — type safety).
   const [leftPanel, setLeftPanel] = useState<LeftPanel>(
-    () => readValidString('lai:leftPanel', ['files', 'search'] as const, 'files'),
+    () => readValidString('lai:leftPanel', ['files', 'search', 'git'] as const, 'files'),
   )
   const [mobileView, setMobileView] = useState<MobileView>(
     () => readValidString('lai:mobileView', ['explorer', 'editor', 'chat'] as const, 'editor'),
@@ -378,6 +379,9 @@ export default function App() {
   }, [searchResultLine])
 
   useFileChangeDetection(backend, openTabs, setOpenTabs)
+
+  const { gitState, refresh: refreshGitState } = useGitState(backend.activeWorkspace?.id)
+  const gitBranch = gitState?.repoDetected ? gitState.headBranch : null
 
   // ---- Tab operations ----
   // Defined before the unpaired early return so the keyboard-shortcut
@@ -680,6 +684,7 @@ export default function App() {
     { id: 'toggle-chat', label: 'Toggle Chat Panel', icon: <Bot className="w-4 h-4" />, action: () => toggleRightPanel() },
     { id: 'open-explorer', label: 'Open Explorer', icon: <FolderOpen className="w-4 h-4" />, action: () => { setLeftPanel('files'); showLeftPanel() } },
     { id: 'open-search', label: 'Open Search', icon: <Search className="w-4 h-4" />, action: () => { setLeftPanel('search'); showLeftPanel() } },
+    { id: 'open-source-control', label: 'Open Source Control', icon: <GitBranch className="w-4 h-4" />, action: () => { setLeftPanel('git'); showLeftPanel() } },
     { id: 'open-settings', label: 'Open Settings', icon: <Settings className="w-4 h-4" />, action: () => openSettingsTab() },
     { id: 'save-file', label: 'Save File', icon: <Save className="w-4 h-4" />, action: () => handleSave() },
     { id: 'close-tab', label: 'Close Active Tab', icon: <X className="w-4 h-4" />, action: () => { if (activeTabId) handleTabClose(activeTabId) } },
@@ -757,6 +762,34 @@ export default function App() {
     }
     setOpenTabs((prev) => [...prev, tab])
     setActiveTabId(tabId)
+    if (!isDesktop) setMobileView('editor')
+  }
+
+  /** Opens a persistent tab for the selected index or worktree version of a changed file. */
+  const handleOpenDiff = (path: string, staged: boolean) => {
+    const workspaceId = backend.activeWorkspace?.id
+    if (!workspaceId) return
+    const tabId = `git-diff:${staged ? 'staged' : 'worktree'}:${path}`
+    const existing = openTabs.find((tab) => tab.id === tabId)
+    if (existing) {
+      setActiveTabId(existing.id)
+    } else {
+      const name = path.split(/[\\/]/).pop() || path
+      setOpenTabs((prev) => [...prev, {
+        id: tabId,
+        name: `Diff: ${name}`,
+        path,
+        content: '',
+        revision: 0,
+        unsaved: false,
+        language: '',
+        kind: 'git-diff',
+        workspaceId,
+        staged,
+        isPreview: false,
+      }])
+      setActiveTabId(tabId)
+    }
     if (!isDesktop) setMobileView('editor')
   }
 
@@ -1016,7 +1049,7 @@ export default function App() {
         }}
       />
 
-      {/* Left Sidebar — workspace switcher + file tree / search */}
+      {/* Left Sidebar — workspace switcher + explorer, search, or source control */}
       <LeftSidebar
         activePanel={leftPanel}
         onSwitchPanel={setLeftPanel}
@@ -1034,6 +1067,8 @@ export default function App() {
         activeWorkspace={backend.activeWorkspace}
         onWorkspaceSelect={backend.selectWorkspace}
         onSearchResultSelect={handleSearchResultSelect}
+        onOpenDiff={handleOpenDiff}
+        onRepoChanged={refreshGitState}
         style={isDesktop ? { width: leftPanelWidth } : undefined}
         connected={backend.connected}
       />
@@ -1092,6 +1127,7 @@ export default function App() {
         events={backend.events as AppEvent[]}
         isDesktop={isDesktop}
         workspaceName={backend.activeWorkspace?.name}
+        gitBranch={gitBranch}
         trusted={backend.activeWorkspace?.trusted}
         onCloseOthers={handleCloseOthers}
         onCloseSaved={handleCloseSaved}
@@ -1192,6 +1228,7 @@ export default function App() {
           activeTab={openTabs.find((t) => t.id === activeTabId) || null}
           fontSize={fontSize}
           onFontSizeChange={setFontSize}
+          gitBranch={gitBranch}
         />
       )}
 

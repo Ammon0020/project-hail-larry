@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/workspaces/nonexistent/git",
+  "status": 404,
+  "contentType": "application/json",
+  "body": "{\"error\":\"workspace not found: nonexistent\"}\n"
+}

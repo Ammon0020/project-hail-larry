@@ -66,7 +66,9 @@ build.sh / build.ps1 / Makefile / build.rs   # build + `make check` gate
 - The client owns filesystem access, shell execution, permissions, and sessions.
 - The UI never talks directly to an agent implementation.
 - Agents propose actions; the client performs approved actions.
-- Prefer small, maintainable code; avoid duplicated or speculative code.
+- Prefer small, maintainable code and simple algorithms; avoid duplicated or speculative code.
+- Before planning complicated fixes or features, compare 3 or 4 possible implementations.
+- Avoid large files; plan modules if the file will grow.
 
 ## Development
 

@@ -197,6 +197,15 @@ rust-embed = { version = "8.12.0", features = ["interpolate-folder-path"] }
 # around Axum's type-erased Body. Verified 2026-07-17.
 http-body = "1.1.0"
 
+# --- Git (S-GIT-DETECT and S-GIT-API) ---
+# gix: pure-Rust git implementation (no libgit2 C dependency). Used by
+# src/git/ for read-only repo detection and status/diff/stage/commit, and
+# (in S-GIT-API) for everything except `push`, which shells out because gix
+# lacks a credential-aware transport. Verified 2026-07-26. MSRV 1.85 ≤ ours.
+# Features: `basic` (head/refs/index) for S-GIT-DETECT; `status` for the
+# worktree-change probe; `worktree-mutation` for stage/commit (S-GIT-API).
+gix = { version = "0.85.0", default-features = false, features = ["basic", "status", "worktree-mutation", "comfort", "sha1"] }
+
 [target."cfg(windows)".dependencies]
 # winreg implements the non-admin HKCU Run-key autostart path. It is compiled
 # only for Windows, so Unix/macOS builds carry no registry dependency.

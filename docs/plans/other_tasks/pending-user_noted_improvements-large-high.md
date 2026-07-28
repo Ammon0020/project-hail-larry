@@ -11,10 +11,10 @@ Items are grouped by code area so a developer can stay in one context while work
 
 ## Git
 
-- [ ] **[Large/Medium]** Add a git action bar item and diff viewer and a way to stage/commit/push if a git repo is detected.
-  - *Backend only has `runGit()` for agent context (`internal/acp/context.go:407-425`); no git API endpoints in `internal/server/`. Frontend hardcodes "main" in `EditorPane.tsx:496`. Needs: status/diff/stage/commit/push endpoints, a diff viewer (`@codemirror/merge` not installed), and a git action bar UI. Foundational for the items below.*
-- [ ] **[Small/Medium]** Add a way to initialize git in the workspace if it isn't detected.
-  - *Depends on the git detection infrastructure above. Add `POST /api/workspaces/{id}/git/init` + a UI trigger (WorkspaceHeader/settings).*
+- [x] **[Large/Medium]** Add a git action bar item and diff viewer and a way to stage/commit/push if a git repo is detected.
+  - *Done 2026-07-26 — see `docs/plans/git-action-bar/`. Backend `gix` + git-CLI-porcelain API (`src/git/`, `src/api/git.rs`), CodeMirror merge diff viewer (`web/src/components/git/GitDiffViewer.tsx`), Source Control panel (`GitPanel.tsx`), and dynamic branch in `StatusBar.tsx`.*
+- [x] **[Small/Medium]** Add a way to initialize git in the workspace if it isn't detected.
+  - *Done 2026-07-26 — `POST /api/workspaces/{id}/git/init` + "Initialize Repository" button in `GitPanel.tsx` (shown when `repoDetected === false`).*
 
 ---
 

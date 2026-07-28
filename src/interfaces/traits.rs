@@ -63,6 +63,13 @@ pub trait WorkspaceManager: Send + Sync {
     /// List all registered workspaces.
     async fn list(&self) -> Result<Vec<WorkspaceInfo>, AppError>;
 
+    /// Absolute, validated filesystem root path for a workspace.
+    ///
+    /// Used by services that need the root itself (not a file under it), e.g.
+    /// the git module opening a repo at the workspace root. Reuses the same
+    /// availability check as every other workspace-scoped operation.
+    async fn workspace_root(&self, workspace_id: &str) -> Result<String, AppError>;
+
     /// Remove a workspace from the registry by ID.
     async fn remove(&self, id: &str) -> Result<(), AppError>;
 

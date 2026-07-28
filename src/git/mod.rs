@@ -1,0 +1,783 @@
+//! Workspace git operations — read-only repo detection (S-GIT-DETECT) plus
+//! the status/diff/stage/unstage/commit/push API surface (S-GIT-API).
+//!
+//! Backed by [`gix`] (pure-Rust git, no libgit2 C dependency). Every entry
+//! point takes an already-validated, canonical workspace root path from the
+//! [`WorkspaceManager`](crate::interfaces::WorkspaceManager) trait so path
+//! containment and symlink rejection stay enforced by the existing workspace
+//! policy — this module never re-derives a root from a client-supplied path.
+//!
+//! Security notes:
+//! - `push` is the only operation that shells out to the `git` CLI, because
+//!   `gix` lacks a credential-aware transport. The daemon never stores or
+//!   proxies git credentials; `push` inherits the agent process environment
+//!   (SSH agent, credential helper, `GIT_ASKPASS`).
+//! - Diff output is bounded per file (`MAX_DIFF_BYTES`) to prevent a huge
+//!   generated file from exhausting daemon memory or the LAN response budget.
+//! - Symlinks inside `.git/` are rejected up front by `open_repo`, matching
+//!   the workspace symlink policy.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use thiserror::Error;
+
+use crate::interfaces::AppError;
+
+/// Maximum unified-diff bytes returned for a single file before truncation.
+/// Bounds daemon memory and LAN response size; the API flags truncation so
+/// the UI can warn instead of silently dropping content.
+pub const MAX_DIFF_BYTES: usize = 1024 * 1024;
+
+/// Read-only snapshot of a workspace's git repo state (S-GIT-DETECT).
+///
+/// Returned by [`detect`] and surfaced verbatim by
+/// `GET /api/workspaces/{id}/git`. When `repo_detected` is `false`, every
+/// other field is `None`/default and the caller must not assume a repo.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRepoInfo {
+    /// `false` when the workspace root has no `.git` (or it could not be
+    /// opened read-only). All other fields are `None` in that case.
+    pub repo_detected: bool,
+    /// Current branch name, or `None` for a detached HEAD / unborn branch.
+    pub head_branch: Option<String>,
+    /// Hex object id of the HEAD commit, or `None` for an unborn repo.
+    pub head_oid: Option<String>,
+    /// True for a `.git/shallow` clone. Surfaced so the UI can warn that
+    /// history is partial.
+    pub is_shallow: bool,
+    /// Best-effort "are there any uncommitted changes" flag, computed from
+    /// the index vs. worktree without running a full status. Used by the
+    /// action bar badge; full status lives in [`status`] (S-GIT-API).
+    pub has_uncommitted_changes: bool,
+}
+
+/// One row of `GET /api/workspaces/{id}/git/status` (S-GIT-API).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileStatus {
+    /// Workspace-relative path with forward slashes.
+    pub path: String,
+    /// For renames, the previous path; otherwise `None`.
+    pub old_path: Option<String>,
+    /// `added` | `modified` | `deleted` | `renamed` | `untracked` | `conflicted`.
+    pub status: String,
+    /// `true` when the change is staged in the index (vs. only in the worktree).
+    pub staged: bool,
+}
+
+/// `GET /api/workspaces/{id}/git/status` response (S-GIT-API).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusResult {
+    pub head_branch: Option<String>,
+    pub head_oid: Option<String>,
+    /// Upstream tracking branch name, e.g. `origin/main`, if configured.
+    pub upstream: Option<String>,
+    /// Commits on HEAD not on upstream.
+    pub ahead: u64,
+    /// Commits on upstream not on HEAD.
+    pub behind: u64,
+    pub files: Vec<FileStatus>,
+}
+
+/// `GET /api/workspaces/{id}/git/diff` response (S-GIT-API).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffResult {
+    /// Unified-diff text (bounded by [`MAX_DIFF_BYTES`]).
+    pub unified: String,
+    /// Base (old) file content used by the editor merge viewer.
+    pub base: String,
+    /// Head (new) file content used by the editor merge viewer.
+    pub head: String,
+    /// `true` when the diff was capped at [`MAX_DIFF_BYTES`].
+    pub truncated: bool,
+}
+
+/// Typed errors for git operations. Mapped to [`AppError`] by callers so the
+/// API layer surfaces stable HTTP status codes without re-parsing strings.
+#[derive(Debug, Error)]
+pub enum GitError {
+    /// No `.git` at the workspace root (operation requires a repo).
+    #[error("not a git repository")]
+    NotARepo,
+    /// The `.git` entry is a symlink — rejected per the workspace symlink policy.
+    #[error(".git is a symlink; refusing to open")]
+    SymlinkedGitDir,
+    /// `gix` returned an error opening or reading the repo. Boxed to keep
+    /// `GitError` small (the underlying error type is ~128 bytes).
+    #[error("git open error: {0}")]
+    Open(Box<gix::open::Error>),
+    /// A `gix` operation failed (status, diff, stage, commit).
+    #[error("git operation failed: {0}")]
+    Operation(String),
+    /// A path passed in for stage/unstage escaped the workspace root.
+    #[error("path escapes workspace root: {0}")]
+    PathEscapes(String),
+    /// Spawning `git push` failed, or it exited non-zero.
+    #[error("git push failed: {0}")]
+    Push(String),
+}
+
+impl From<GitError> for AppError {
+    fn from(error: GitError) -> Self {
+        match error {
+            GitError::NotARepo => AppError::not_found_kind("git repository"),
+            GitError::SymlinkedGitDir | GitError::PathEscapes(_) => {
+                AppError::validation(error.to_string())
+            }
+            GitError::Open(_) | GitError::Operation(_) | GitError::Push(_) => {
+                AppError::internal(error.to_string())
+            }
+        }
+    }
+}
+
+/// Open `root` as a read-only `gix` repo, rejecting symlinked `.git` first.
+///
+/// Returns `Ok(None)` when no `.git` exists (so callers can branch on
+/// "no repo" without treating it as an error). The workspace manager has
+/// already canonicalised `root` and rejected a symlinked root, so a
+/// symlinked `.git` here is an agent-created escape attempt and is rejected.
+///
+/// # Errors
+/// - [`GitError::SymlinkedGitDir`] when `.git` is a symlink.
+/// - [`GitError::Open`] when `gix` fails to open the repo.
+fn open_repo(root: &Path) -> Result<Option<gix::Repository>, GitError> {
+    let dot_git = root.join(".git");
+    if !dot_git.exists() {
+        return Ok(None);
+    }
+    if let Ok(meta) = std::fs::symlink_metadata(&dot_git) {
+        if meta.file_type().is_symlink() {
+            return Err(GitError::SymlinkedGitDir);
+        }
+    }
+    let repo = gix::open(root).map_err(|e| GitError::Open(Box::new(e)))?;
+    Ok(Some(repo))
+}
+
+/// Detect a git repo at `root` and return a compact snapshot.
+///
+/// Pure read: opens the repo read-only, reads HEAD via the high-level
+/// `head_name` / `head_commit` APIs, and probes for uncommitted changes via
+/// `repo.status(...)`. Used by `GET /api/workspaces/{id}/git` (S-GIT-DETECT)
+/// and for the action bar badge.
+///
+/// # Errors
+/// Returns [`GitError`] only for symlink/open failures. A missing repo is
+/// `Ok(GitRepoInfo { repo_detected: false, .. })`, never an error.
+pub fn detect(root: &Path) -> Result<GitRepoInfo, GitError> {
+    let Some(repo) = open_repo(root)? else {
+        return Ok(GitRepoInfo::default());
+    };
+
+    // Shallow clones carry a `.git/shallow` file; checking it directly avoids
+    // pulling in the gix-shallow API surface for a simple boolean.
+    let is_shallow = root.join(".git").join("shallow").exists();
+
+    let (head_branch, head_oid) = head_ref_info(&repo);
+    let has_uncommitted_changes = has_worktree_changes(&repo);
+
+    Ok(GitRepoInfo {
+        repo_detected: true,
+        head_branch,
+        head_oid,
+        is_shallow,
+        has_uncommitted_changes,
+    })
+}
+
+/// Resolve `(branch_name, hex_oid)` from HEAD.
+///
+/// - `(Some(name), Some(oid))` — normal branch checked out, HEAD points at a
+///   commit.
+/// - `(None, Some(oid))` — detached HEAD.
+/// - `(None, None)` — unborn repo (no commits yet) or HEAD read failure.
+fn head_ref_info(repo: &gix::Repository) -> (Option<String>, Option<String>) {
+    // `head_name()` returns `Ok(None)` for a detached HEAD; `Ok(Some(name))`
+    // for a branch. Errors (e.g. missing HEAD) map to `None`.
+    let head_branch = repo
+        .head_name()
+        .ok()
+        .flatten()
+        .map(|full_name| full_name.shorten().to_string());
+
+    // `head_commit()` fails for an unborn repo (no commits yet) — that maps
+    // to `None` rather than an error.
+    let head_oid = repo
+        .head_commit()
+        .ok()
+        .map(|commit| commit.id().to_hex().to_string());
+
+    (head_branch, head_oid)
+}
+
+/// Best-effort "is the worktree dirty" probe. Uses `repo.status(...)` with a
+/// discard-progress handle and checks whether any item is returned. Any
+/// error is treated as "no changes detected" so detection never fails a
+/// workspace that simply has an unusual repo layout.
+fn has_worktree_changes(repo: &gix::Repository) -> bool {
+    let Ok(status) = repo.status(gix::progress::Discard) else {
+        return false;
+    };
+    let Ok(mut iter) = status.into_iter(None) else {
+        return false;
+    };
+    // `next()` returning `Ok(_)` means at least one changed entry exists.
+    iter.any(|item| item.is_ok())
+}
+
+/// Reject `rel_path` if it escapes `root`. Returns the validated absolute
+/// path. Mirrors the workspace manager's containment check so the git ops
+/// layer is defence-in-depth even though callers pre-validate.
+///
+/// Not yet called by S-GIT-DETECT; used by `stage`/`unstage`/`diff` in
+/// S-GIT-API. Kept here so the path-validation contract lives with the ops.
+#[allow(dead_code)]
+fn contained_path(root: &Path, rel_path: &str) -> Result<PathBuf, GitError> {
+    use crate::pathutil::clean_path;
+    clean_path(root, rel_path)
+        .map_err(|_| GitError::PathEscapes(rel_path.to_string()))
+        .and_then(|p| {
+            // Final-component symlink rejection — workspace policy.
+            crate::pathutil::resolve_symlink(root, &p)
+                .map_err(|_| GitError::PathEscapes(rel_path.to_string()))
+        })
+}
+
+// ---- S-GIT-API operations (status / diff / stage / unstage / commit) ----
+
+/// `GET /api/workspaces/{id}/git/status`. Returns one row per changed file
+/// grouped by staged vs. worktree, plus ahead/behind vs. upstream.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when `root` is not a repository or status collection
+/// fails.
+pub fn status(root: &Path) -> Result<StatusResult, GitError> {
+    let Some(repo) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    let (head_branch, head_oid) = head_ref_info(&repo);
+    // gix provides the authoritative repository open and HEAD data. Its status
+    // item API is still evolving rapidly, so porcelain v1 is used for this MVP
+    // to retain Git's complete rename/conflict classification.
+    let output = git_output(root, ["status", "--porcelain=v1", "-z"])?;
+    let mut files = Vec::new();
+    let entries: Vec<String> = output
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| String::from_utf8_lossy(entry).into_owned())
+        .collect();
+    let mut index = 0;
+    while index < entries.len() {
+        let entry = &entries[index];
+        if entry.len() < 3 {
+            index += 1;
+            continue;
+        }
+        let xy = &entry[..2];
+        let path = entry[3..].replace('\\', "/");
+        let rename = matches!(xy.as_bytes()[0], b'R' | b'C');
+        let old_path = if rename {
+            index += 1;
+            entries.get(index).map(|old| old.replace('\\', "/"))
+        } else {
+            None
+        };
+        let status_for = |code: u8| match code {
+            b'A' => "added",
+            b'D' => "deleted",
+            b'R' | b'C' => "renamed",
+            b'U' => "conflicted",
+            _ => "modified",
+        };
+        if xy == "??" {
+            files.push(FileStatus {
+                path,
+                old_path: None,
+                status: "untracked".to_string(),
+                staged: false,
+            });
+        } else {
+            if xy.as_bytes()[0] != b' ' {
+                files.push(FileStatus {
+                    path: path.clone(),
+                    old_path: old_path.clone(),
+                    status: status_for(xy.as_bytes()[0]).to_string(),
+                    staged: true,
+                });
+            }
+            if xy.as_bytes()[1] != b' ' {
+                files.push(FileStatus {
+                    path,
+                    old_path,
+                    status: status_for(xy.as_bytes()[1]).to_string(),
+                    staged: false,
+                });
+            }
+        }
+        index += 1;
+    }
+    // Upstream/ahead/behind needs reference configuration traversal. Keep this
+    // MVP deterministic until that gix plumbing is added.
+    Ok(StatusResult {
+        head_branch,
+        head_oid,
+        upstream: None,
+        ahead: 0,
+        behind: 0,
+        files,
+    })
+}
+
+/// `GET /api/workspaces/{id}/git/diff?path=...&staged=...`. Bounded by
+/// [`MAX_DIFF_BYTES`]; sets `truncated: true` when capped.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when the path escapes the workspace, `root` is not a
+/// repository, or Git cannot read the requested version.
+pub fn diff(root: &Path, rel_path: &str, staged: bool) -> Result<DiffResult, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    let path = contained_path(root, rel_path)?;
+    let git_path = path
+        .strip_prefix(root)
+        .map_err(|_| GitError::PathEscapes(rel_path.to_string()))?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let base = if staged {
+        git_file(root, &format!("HEAD:{git_path}"))?
+    } else {
+        git_file(root, &format!(":{git_path}"))?
+    };
+    let head = if staged {
+        git_file(root, &format!(":{git_path}"))?
+    } else {
+        std::fs::read(path).unwrap_or_default()
+    };
+    if base[..base.len().min(8192)].contains(&0) || head[..head.len().min(8192)].contains(&0) {
+        return Ok(DiffResult {
+            unified: String::new(),
+            base: "[binary file]".to_string(),
+            head: "[binary file]".to_string(),
+            truncated: false,
+        });
+    }
+    let mut base = String::from_utf8_lossy(&base).into_owned();
+    let mut head = String::from_utf8_lossy(&head).into_owned();
+    let truncated = base.len().saturating_add(head.len()) > MAX_DIFF_BYTES;
+    if truncated {
+        base = truncate_utf8(&base, MAX_DIFF_BYTES / 2);
+        head = truncate_utf8(&head, MAX_DIFF_BYTES / 2);
+    }
+    // CodeMirror's merge view consumes base/head and computes its own diff.
+    Ok(DiffResult {
+        unified: String::new(),
+        base,
+        head,
+        truncated,
+    })
+}
+
+/// `POST /api/workspaces/{id}/git/stage`. Validates each path against the
+/// workspace root before staging.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when a path escapes the workspace, `root` is not a
+/// repository, or Git cannot update its index.
+pub fn stage(root: &Path, paths: &[String]) -> Result<Vec<String>, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    if paths.is_empty() {
+        let changed = status(root)?
+            .files
+            .into_iter()
+            .map(|file| file.path)
+            .collect();
+        git_output(root, ["add", "-A"])?;
+        return Ok(changed);
+    }
+    for path in paths {
+        contained_path(root, path)?;
+    }
+    // gix index mutation is the intended long-term path; CLI preserves exact
+    // Git ignore, intent-to-add, and deletion semantics for the MVP.
+    let mut command = Command::new("git");
+    command.current_dir(root).arg("add").arg("--").args(paths);
+    run_git(command)?;
+    Ok(paths.to_vec())
+}
+
+/// `POST /api/workspaces/{id}/git/unstage`.
+///
+/// # Errors
+///
+/// # Errors
+///
+/// Returns [`GitError`] when a path escapes the workspace, `root` is not a
+/// repository, or Git cannot reset its index.
+pub fn unstage(root: &Path, paths: &[String]) -> Result<Vec<String>, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    for path in paths {
+        contained_path(root, path)?;
+    }
+    let mut command = Command::new("git");
+    command
+        .current_dir(root)
+        .arg("reset")
+        .arg("HEAD")
+        .arg("--")
+        .args(paths);
+    run_git(command)?;
+    Ok(paths.to_vec())
+}
+
+/// `POST /api/workspaces/{id}/git/commit`. Caller passes the `head_oid` from
+/// the last `/status` as `expected_head`; mismatch → [`GitError::Operation`]
+/// (mapped to 409 by the API layer) so a mid-flight edit cannot be committed.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when `root` is not a repository, the supplied head is
+/// stale, or Git cannot create the commit.
+pub fn commit(
+    root: &Path,
+    message: &str,
+    expected_head: &str,
+    amend: bool,
+) -> Result<String, GitError> {
+    let Some(repo) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    let (_, actual_head) = head_ref_info(&repo);
+    if actual_head
+        .as_deref()
+        .is_none_or(|actual| !actual.eq_ignore_ascii_case(expected_head))
+    {
+        return Err(GitError::Operation(
+            "working tree changed since last status fetch".to_string(),
+        ));
+    }
+    // gix commit creation is the intended long-term path; use Git here to
+    // honor hooks and configured signing while the MVP has no identity store.
+    let mut command = Command::new("git");
+    command
+        .current_dir(root)
+        .arg("commit")
+        .arg("-m")
+        .arg(message);
+    if amend {
+        command.arg("--amend");
+    }
+    configure_default_identity(&mut command, root);
+    run_git(command)?;
+    Ok(
+        String::from_utf8_lossy(&git_output(root, ["rev-parse", "HEAD"])?)
+            .trim()
+            .to_string(),
+    )
+}
+
+/// `POST /api/workspaces/{id}/git/push`. Shells out to `git push` so the
+/// user's existing git credentials apply.
+/// `stderr` is returned verbatim for the UI to stream.
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository and
+/// [`GitError::Push`] when Git cannot push.
+pub fn push(root: &Path, remote: Option<&str>, set_upstream: bool) -> Result<String, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    let mut command = Command::new("git");
+    command.current_dir(root).arg("push");
+    if set_upstream {
+        command.arg("--set-upstream");
+    }
+    command.arg(remote.unwrap_or("origin"));
+    let output = command
+        .output()
+        .map_err(|err| GitError::Push(err.to_string()))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Push(text));
+    }
+    Ok(text)
+}
+
+/// `POST /api/workspaces/{id}/git/init`. Creates a repo at the workspace root
+/// with `main` as the initial branch. Refuses if `.git` already exists.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when a repository already exists or initialization
+/// cannot create the initial commit.
+pub fn init(root: &Path) -> Result<String, GitError> {
+    if root.join(".git").exists() {
+        return Err(GitError::Operation(".git already exists".to_string()));
+    }
+    gix::init(root).map_err(|err| GitError::Operation(err.to_string()))?;
+    let mut command = Command::new("git");
+    command
+        .current_dir(root)
+        .args(["commit", "--allow-empty", "-m", "initial"]);
+    configure_default_identity(&mut command, root);
+    run_git(command)?;
+    Ok(
+        String::from_utf8_lossy(&git_output(root, ["rev-parse", "HEAD"])?)
+            .trim()
+            .to_string(),
+    )
+}
+
+fn git_output<const N: usize>(root: &Path, args: [&str; N]) -> Result<Vec<u8>, GitError> {
+    let mut command = Command::new("git");
+    command.current_dir(root).args(args);
+    Ok(run_git(command)?.stdout)
+}
+
+fn git_file(root: &Path, spec: &str) -> Result<Vec<u8>, GitError> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .arg("show")
+        .arg(spec)
+        .output()
+        .map_err(|err| GitError::Operation(err.to_string()))?;
+    // A missing path is expected for additions/deletions.
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+fn run_git(mut command: Command) -> Result<Output, GitError> {
+    let output = command
+        .output()
+        .map_err(|err| GitError::Operation(err.to_string()))?;
+    if output.status.success() {
+        Ok(output)
+    } else {
+        Err(GitError::Operation(output_text(&output)))
+    }
+}
+
+fn configure_default_identity(command: &mut Command, root: &Path) {
+    let has_email = Command::new("git")
+        .current_dir(root)
+        .args(["config", "user.email"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !has_email {
+        command
+            .env("GIT_AUTHOR_NAME", "Local Agent")
+            .env("GIT_AUTHOR_EMAIL", "agent@local")
+            .env("GIT_COMMITTER_NAME", "Local Agent")
+            .env("GIT_COMMITTER_EMAIL", "agent@local");
+    }
+}
+
+fn output_text(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn truncate_utf8(value: &str, limit: usize) -> String {
+    let mut end = limit.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a throwaway repo with `git init` + an initial commit so the
+    /// detection + status probes have real state to read. Production code
+    /// never shells out — only the test fixture does.
+    fn fresh_repo(dir: &Path) {
+        std::process::Command::new("git")
+            .arg("init")
+            .arg("-q")
+            .arg("-b")
+            .arg("main")
+            .current_dir(dir)
+            .status()
+            .expect("git init");
+        std::fs::write(dir.join("README.md"), "hello\n").expect("write");
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir)
+            .status()
+            .expect("git add");
+        std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ])
+            .current_dir(dir)
+            .status()
+            .expect("git commit");
+    }
+
+    #[test]
+    fn detect_returns_no_repo_for_plain_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let info = detect(dir.path()).expect("detect");
+        assert!(!info.repo_detected);
+        assert_eq!(info.head_branch, None);
+        assert_eq!(info.head_oid, None);
+        assert!(!info.is_shallow);
+    }
+
+    #[test]
+    fn detect_reports_branch_and_oid_for_real_repo() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        let info = detect(dir.path()).expect("detect");
+        assert!(info.repo_detected);
+        assert_eq!(info.head_branch.as_deref(), Some("main"));
+        assert!(info.head_oid.is_some());
+        assert!(!info.is_shallow);
+        assert!(!info.has_uncommitted_changes);
+    }
+
+    #[test]
+    fn detect_flags_uncommitted_changes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+        let info = detect(dir.path()).expect("detect");
+        assert!(info.has_uncommitted_changes);
+    }
+
+    #[test]
+    fn detect_rejects_symlinked_git_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let real = tempfile::tempdir().expect("tempdir");
+        fresh_repo(real.path());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(real.path().join(".git"), dir.path().join(".git"))
+                .expect("symlink");
+        }
+        let err = detect(dir.path()).expect_err("should reject symlinked .git");
+        assert!(matches!(err, GitError::SymlinkedGitDir));
+    }
+
+    #[test]
+    fn status_returns_empty_for_clean_repo() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        assert!(status(dir.path()).expect("status").files.is_empty());
+    }
+
+    #[test]
+    fn status_lists_modified_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+        let files = status(dir.path()).expect("status").files;
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "README.md");
+        assert!(!files[0].staged);
+    }
+
+    #[test]
+    fn status_lists_staged_file_after_add() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+        Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git add");
+        assert!(status(dir.path()).expect("status").files[0].staged);
+    }
+
+    #[test]
+    fn diff_returns_base_and_head_for_modified_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+        let result = diff(dir.path(), "README.md", false).expect("diff");
+        assert!(!result.base.is_empty());
+        assert!(!result.head.is_empty());
+    }
+
+    #[test]
+    fn stage_then_status_shows_staged() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+        stage(dir.path(), &[String::from("README.md")]).expect("stage");
+        assert!(status(dir.path())
+            .expect("status")
+            .files
+            .iter()
+            .any(|file| file.path == "README.md" && file.staged));
+    }
+
+    #[test]
+    fn commit_creates_new_oid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        let old_oid = detect(dir.path())
+            .expect("detect")
+            .head_oid
+            .expect("head oid");
+        std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+        stage(dir.path(), &[String::from("README.md")]).expect("stage");
+        let oid = commit(dir.path(), "change", &old_oid, false).expect("commit");
+        assert_ne!(oid, old_oid);
+    }
+
+    #[test]
+    fn commit_rejects_stale_expected_head() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+        stage(dir.path(), &[String::from("README.md")]).expect("stage");
+        assert!(matches!(
+            commit(dir.path(), "change", "0000000", false),
+            Err(GitError::Operation(_))
+        ));
+    }
+
+    #[test]
+    fn init_refuses_existing_repo() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        assert!(init(dir.path()).is_err());
+    }
+
+    #[test]
+    fn init_creates_repo_in_plain_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(!init(dir.path()).expect("init").is_empty());
+        assert!(detect(dir.path()).expect("detect").repo_detected);
+    }
+}

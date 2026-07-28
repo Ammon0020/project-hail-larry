@@ -11,3 +11,6 @@ review/
 
 # Rust build artifacts (Cargo.lock is committed — this is an application).
 target/
+
+# Local rustup toolchain config (per-developer, not shared).
+.rustup/

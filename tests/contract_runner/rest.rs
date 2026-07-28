@@ -174,6 +174,33 @@ const REST_CASES: &[RestCase] = &[
         path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/search?pattern=hello",
         body: "",
     },
+    // Git — read-only repo detection (S-GIT-DETECT). The seed workspace is
+    // not a git repo, so the ok fixture pins the `repoDetected: false`
+    // shape with null branch/oid fields.
+    RestCase {
+        name: "workspaces_git_ok",
+        method: "GET",
+        path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/git",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_git_not_found",
+        method: "GET",
+        path: "/api/workspaces/nonexistent/git",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_git_status_not_a_repo",
+        method: "GET",
+        path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/git/status",
+        body: "",
+    },
+    RestCase {
+        name: "workspaces_git_diff_not_a_repo",
+        method: "GET",
+        path: "/api/workspaces/<REDACTED_WORKSPACE_ID>/git/diff?path=README.md",
+        body: "",
+    },
     RestCase {
         name: "workspaces_write_bad_body",
         method: "POST",

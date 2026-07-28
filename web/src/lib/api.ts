@@ -105,7 +105,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw new ApiError(body.error || `HTTP ${res.status}`, res.status)
   }
   const data = await res.json()
   // Go's json.Encoder serializes nil slices as null — coerce to [] for array types.
@@ -115,6 +115,16 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     return [] as unknown as T
   }
   return data as T
+}
+
+/** API errors retain their HTTP status so callers can give conflict-specific guidance. */
+class ApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
 }
 
 // ---- Types matching the Go structs ----
@@ -156,6 +166,49 @@ export interface FileNode {
   type: 'folder' | 'file'
   path: string
   children?: FileNode[]
+}
+
+/** Read-only git repo detection snapshot (GET /api/workspaces/{id}/git).
+ *  `repo_detected: false` with null fields when the workspace is not a git
+ *  repo; the frontend uses this to show the breadcrumb branch and gate the
+ *  git action bar item. */
+export interface GitRepoInfo {
+  repoDetected: boolean
+  headBranch: string | null
+  headOid: string | null
+  isShallow: boolean
+  hasUncommittedChanges: boolean
+}
+
+/** A changed path returned by GET /api/workspaces/{id}/git/status. */
+export interface FileStatus {
+  path: string
+  oldPath: string | null
+  status: 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'conflicted'
+  staged: boolean
+}
+
+/** Current branch, synchronization, and changed-path information for a repository. */
+export interface StatusResult {
+  headBranch: string | null
+  headOid: string | null
+  upstream: string | null
+  ahead: number
+  behind: number
+  files: FileStatus[]
+}
+
+/** Result of GET /api/workspaces/{id}/git/diff?path=<rel>&staged=<bool>
+ *  (S-GIT-DIFF-VIEWER). `unified` is a unified-diff string for raw display /
+ *  copy; `base` and `head` are the full file contents on each side of the diff
+ *  so the merge viewer can render a structured side-by-side or unified view.
+ *  `truncated` is true when the backend capped the response at its size limit
+ *  (the viewer shows a banner so the user knows the diff is incomplete). */
+export interface GitDiffResult {
+  unified: string
+  base: string
+  head: string
+  truncated: boolean
 }
 
 export interface PermissionOptionInfo {
@@ -228,6 +281,51 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ trusted: trusted ?? null }),
     }),
+  getGitState: (workspaceId: string) =>
+    apiFetch<GitRepoInfo>(`/workspaces/${workspaceId}/git`),
+  getGitStatus: (workspaceId: string) =>
+    apiFetch<StatusResult>(`/workspaces/${workspaceId}/git/status`),
+  gitStage: (workspaceId: string, paths: string[], all: boolean) =>
+    apiFetch<{ staged: number }>(`/workspaces/${workspaceId}/git/stage`, {
+      method: 'POST',
+      body: JSON.stringify({ paths, all }),
+    }),
+  gitUnstage: (workspaceId: string, paths: string[]) =>
+    apiFetch<{ unstaged: number }>(`/workspaces/${workspaceId}/git/unstage`, {
+      method: 'POST',
+      body: JSON.stringify({ paths }),
+    }),
+  gitCommit: async (workspaceId: string, message: string, amend: boolean, headOid: string) => {
+    try {
+      return await apiFetch<{ oid: string }>(`/workspaces/${workspaceId}/git/commit`, {
+        method: 'POST',
+        headers: { 'If-Match': headOid },
+        body: JSON.stringify({ message, amend }),
+      })
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        throw new Error(
+          'Commit rejected because HEAD changed. Status has been refreshed; review and try again.',
+          { cause: err },
+        )
+      }
+      throw err
+    }
+  },
+  gitPush: (workspaceId: string, remote: string | null = null, setUpstream = false) =>
+    apiFetch<{ ok: true; stderr: string }>(`/workspaces/${workspaceId}/git/push`, {
+      method: 'POST',
+      body: JSON.stringify({ remote, setUpstream }),
+    }),
+  gitInit: (workspaceId: string) =>
+    apiFetch<{ oid: string }>(`/workspaces/${workspaceId}/git/init`, { method: 'POST' }),
+  /** GET /api/workspaces/{id}/git/diff?path=<rel>&staged=<bool> — fetches the
+   *  base/head contents and unified diff for a single file. `staged` selects
+   *  the index (staged) diff vs. the working-tree (unstaged) diff. */
+  getGitDiff: (workspaceId: string, path: string, staged: boolean) =>
+    apiFetch<GitDiffResult>(
+      `/workspaces/${workspaceId}/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`,
+    ),
   getSessionHistoryCapabilities: (sessionId: string) =>
     apiFetch<SessionHistoryCapabilities>(`/sessions/${sessionId}/capabilities`),
   readFile: (workspaceId: string, path: string) =>

@@ -6,6 +6,7 @@
 //! browser-specific credential and Origin gate.
 
 mod embed;
+mod git;
 mod mcp;
 mod profiles;
 mod providers;
@@ -273,6 +274,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/search", get(search))
         .route("/api/workspaces/{id}/rename", post(rename_path))
         .route("/api/workspaces/{id}/mkdir", post(mkdir))
+        .route("/api/workspaces/{id}/git", get(git::get_git_state))
+        .route("/api/workspaces/{id}/git/status", get(git::get_git_status))
+        .route("/api/workspaces/{id}/git/diff", get(git::get_git_diff))
+        .route("/api/workspaces/{id}/git/stage", post(git::stage))
+        .route("/api/workspaces/{id}/git/unstage", post(git::unstage))
+        .route("/api/workspaces/{id}/git/commit", post(git::commit))
+        .route("/api/workspaces/{id}/git/push", post(git::push))
+        .route("/api/workspaces/{id}/git/init", post(git::init_repo))
         .route("/api/events", get(events))
         .route("/api/events/{session_id}", get(session_events))
         .route("/api/agents", get(list_agents).post(upsert_agent))
@@ -1811,7 +1820,10 @@ fn event_limit(limit: Option<i32>) -> i32 {
         .min(MAX_EVENT_LIMIT)
 }
 
-fn required_query(value: Option<String>, name: &str) -> Result<String, ApiResponseError> {
+pub(crate) fn required_query(
+    value: Option<String>,
+    name: &str,
+) -> Result<String, ApiResponseError> {
     value
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ApiResponseError::bad_request(format!("missing '{name}' query parameter")))
@@ -1939,7 +1951,7 @@ pub(crate) struct ApiResponseError {
 
 impl ApiResponseError {
     /// Shared constructor for status + message pairs used by handlers.
-    fn new(status: StatusCode, message: impl Into<String>) -> Self {
+    pub(crate) fn new(status: StatusCode, message: impl Into<String>) -> Self {
         Self {
             status,
             message: message.into(),

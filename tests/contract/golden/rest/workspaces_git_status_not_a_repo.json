@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/workspaces/<REDACTED_WORKSPACE_ID>/git/status",
+  "status": 404,
+  "contentType": "application/json",
+  "body": "{\"error\":\"git repository not found\"}\n"
+}

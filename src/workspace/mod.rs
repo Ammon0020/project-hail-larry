@@ -203,6 +203,14 @@ impl WorkspaceManager for Manager {
         Ok(workspaces)
     }
 
+    async fn workspace_root(&self, id: &str) -> Result<String, AppError> {
+        let root = self.root_for(id)?;
+        // Return the forward-slash wire form so callers (git module, API
+        // layers) never see the `\\?\` verbatim prefix Windows
+        // `fs::canonicalize` adds. Matches `WorkspaceEntry::to_info`.
+        Ok(path_to_slash(&strip_verbatim_prefix(&root)).clone())
+    }
+
     async fn remove(&self, id: &str) -> Result<(), AppError> {
         self.workspaces
             .write()

@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/workspaces/<REDACTED_WORKSPACE_ID>/git",
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"repoDetected\":false,\"headBranch\":null,\"headOid\":null,\"isShallow\":false,\"hasUncommittedChanges\":false}\n"
+}

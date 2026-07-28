@@ -13,6 +13,7 @@
 //! - [`files`]      — revision tracking, per-file locking, LRU base-content cache (Go `files/`)
 //! - [`fsutil`]     — shared home-dir + durable atomic write (used by config/MCP/logging)
 //! - [`fswatch`]    — on-disk change detection, external file changes (Go `fswatch/`)
+//! - [`git`]        — workspace git detection + status/diff/stage/commit/push (`gix`)
 //! - [`pairing`]    — QR + mnemonic pairing, device credentials (Go `pairing/`)
 //! - [`permissions`]— permission request/response, policies (Go `permissions/`)
 //! - [`pathutil`]   — path traversal + symlink containment (Go `pathutil/` + `workspace.safeJoin`)
@@ -43,6 +44,7 @@ pub mod events;
 pub mod files;
 pub mod fsutil;
 pub mod fswatch;
+pub mod git;
 pub mod interfaces;
 pub mod mcp;
 pub mod migrate;

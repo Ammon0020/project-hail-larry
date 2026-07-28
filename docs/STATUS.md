@@ -1,6 +1,6 @@
 # Project Status — Local Agent Interface
 
-> Updated: 2026-07-25. Task detail lives in `docs/plans/`; deferred gaps in
+> Updated: 2026-07-26. Task detail lives in `docs/plans/`; deferred gaps in
 > `docs/known-issues.md`; architecture is `docs/plans/Blueprint.md`.
 
 ## What Works
@@ -33,6 +33,11 @@
 - [ ] **ACP futures** — multi-client gateway, workers, session lifecycle,
   elicitation, NES, audio, and ACP inspector. See
   `docs/plans/pending-multi-client-acp-gateway-med.md`.
+- [x] **Git action bar + diff viewer** — workspace git detection, backend
+  status/diff/stage/unstage/commit/push/init API (`gix` + git CLI porcelain),
+  reusable CodeMirror merge diff viewer, Source Control activity-bar panel,
+  and git init. Foundational for the edited-files popup. See
+  `docs/plans/git-action-bar/` (all stories done).
 - [x] **ACP core modularization** — callbacks, actor runtime, turn state,
   session registry, lifecycle, operations, and the thin client facade are
   extracted (`S-ACP-MOD-CALLBACKS` through `S-ACP-MOD-FACADE`). See
@@ -61,6 +66,15 @@
   supports it, but the broker is not wired. Inline MCP remains the active path.
 
 ## Recent Changes (2026-07)
+
+- **Git integration** — full Source Control surface shipped: `gix`-based
+  workspace detection (`GET /git`), status/diff/stage/unstage/commit/push/init
+  REST API (authenticated paired-device gate, no permission sink), CodeMirror
+  merge diff viewer tab (`@codemirror/merge`), Source Control activity-bar
+  panel with stage/unstage/commit/push and a repo-init affordance, and dynamic
+  branch display in the status bar (replacing the hardcoded "main"). Contract
+  tests cover the read-only git endpoints; init contract test deferred per
+  `docs/known-issues.md` (harness isolation).
 
 - **S-ACP-MOD-ACTOR** — actor startup, SDK connection construction, initialize,
   and session new/load resolution moved to `src/acp/core/actor/mod.rs`; the
