@@ -1,9 +1,9 @@
 # Review 2026-07-27
 
 Comprehensive review of the full codebase, prioritizing user-facing issues.
-**All high-urgency findings resolved.** 41 fixed across 8 commits; 48 remain open (37 med, 13 low — no high left).
+**All high-urgency findings resolved.** 62 fixed across 12 commits; 28 remain open (21 med, 7 low — no high left).
 
-## Fixed (41)
+## Fixed (62)
 
 | Finding | Difficulty | Urgency | Commit |
 |---|---|---|---|
@@ -54,12 +54,32 @@ Comprehensive review of the full codebase, prioritizing user-facing issues.
 | mobilenav-safe-area-inset | small | med | 9fb348d |
 | popover-fixed-width-and-no-scroll | small | med | 9fb348d |
 | dropdown-subcontent-overflow-and-item-targets | small | med | 9fb348d |
+| chatpanel-handlesend-error-restore-overwrites-new-input | small | med | e694fa4 |
+| chatpanel-pendingcreatedsessionids-never-drains | small | med | e694fa4 |
+| chatmessageitem-shelloutputstreamed-dropped | medium | med | e694fa4 |
+| commit-ctrl-enter-missing | small | med | e694fa4 |
+| diff-tab-error-retry-and-fetch-race | small | med | e694fa4 |
+| fileviewer-pdf-sandbox-breaks-firefox | small | med | e694fa4 |
+| fileviewer-modelviewer-no-resize | small | med | e694fa4 |
+| tab-close-activates-last-not-neighbor | small | med | e65f9a0 |
+| permissioncard-reject-variant-normalization-incomplete | small | med | e65f9a0 |
+| switchagentdialog-no-busy-state-on-confirm | small | med | e65f9a0 |
+| switchagentdialog-chars-vs-bytes-mismatch | small | med | e65f9a0 |
+| searchpanel-truncation-and-hidden-matches | small | med | e65f9a0 |
+| fileviewer-duplicate-image-svg-viewer | small | low | 8f95315 |
+| fileicon-d-ts-dead-code | small | low | 8f95315 |
+| types-duplicate-file-node | medium | low | 8f95315 |
+| usetheme-duplicate-matchmedia-listener | small | low | 8f95315 |
+| theme-localstorage-and-listener-leak | small | med | 8f95315 |
+| usebackend-reportcontext-timer-not-cleared-on-unmount | small | low | 8f95315 |
+| usefilechangedetection-readfile-overwrites-tab-without-revision-guard | medium | med | 8f95315 |
+| settingspanel-megafile-split-sections | medium | low | 4e5baa8 |
 
-## Open (48)
+## Open (28)
 
 All remaining findings are med or low urgency. No high-urgency items remain.
 
-### Medium urgency (37)
+### Medium urgency (21)
 
 Grouped by cluster. Files are named `<slug>,<difficulty>,<urgency>.md`.
 
@@ -72,14 +92,7 @@ Grouped by cluster. Files are named `<slug>,<difficulty>,<urgency>.md`.
 - `settingspanel-mobile-nav-no-escape-hardcoded-offset,small,med.md`
 
 **Error states / silent failures**
-- `chatmessageitem-shelloutputstreamed-dropped,medium,med.md`
-- `diff-tab-error-retry-and-fetch-race,small,med.md`
-- `fileviewer-pdf-sandbox-breaks-firefox,small,med.md`
-- `fileviewer-modelviewer-no-resize,small,med.md`
 - `fileviewer-csv-no-virtualization-large-files,medium,med.md`
-- `permissioncard-reject-variant-normalization-incomplete,small,med.md`
-- `switchagentdialog-no-busy-state-on-confirm,small,med.md`
-- `switchagentdialog-chars-vs-bytes-mismatch,small,med.md`
 - `settingspanel-prompt-context-inputs-silent-reject,small,med.md`
 - `profilessettings-disabled-save-no-reason,small,med.md`
 - `profilessettings-delete-default-no-mobile-hint,small,med.md`
@@ -87,7 +100,6 @@ Grouped by cluster. Files are named `<slug>,<difficulty>,<urgency>.md`.
 
 **Races**
 - `search-result-line-clear-race,small,med.md`
-- `usefilechangedetection-readfile-overwrites-tab-without-revision-guard,medium,med.md`
 
 **A11y**
 - `command-palette-a11y,small,med.md`
@@ -95,23 +107,16 @@ Grouped by cluster. Files are named `<slug>,<difficulty>,<urgency>.md`.
 
 **Other**
 - `chatcomposer-placeholder-references-nonexistent-at-mention,small,med.md`
-- `chatpanel-handlesend-error-restore-overwrites-new-input,small,med.md`
-- `chatpanel-pendingcreatedsessionids-never-drains,small,med.md`
-- `commit-ctrl-enter-missing,small,med.md`
 - `filetree-active-file-not-revealed,small,med.md`
 - `filetree-mobile-rename-longpress-bugs,small,med.md`
-- `fileicon-d-ts-dead-code,small,low.md` (misfiled as low)
 - `language-dotfiles-no-highlighting,small,med.md`
 - `native-browser-dialogs,large,med.md`
-- `searchpanel-truncation-and-hidden-matches,small,med.md`
 - `settingspanel-nav-highlight-feedback-loop,small,med.md`
 - `sw-autoupdate-stale-running-tab,small,med.md`
-- `tab-close-activates-last-not-neighbor,small,med.md`
-- `theme-localstorage-and-listener-leak,small,med.md`
 - `usebackend-loadsessions-called-inside-setstate-updater,small,med.md`
 - `uselocalstorage-no-cross-tab-storage-event-sync,medium,med.md`
 
-### Low urgency (13)
+### Low urgency (7)
 
 Minor a11y, dead code, style token, and maintainability items.
 - `api-content-type-on-get,small,low.md`
@@ -120,10 +125,4 @@ Minor a11y, dead code, style token, and maintainability items.
 - `git-panel-error-banner-a11y,small,low.md`
 - `header-activity-bar-magic-width,small,low.md`
 - `profilessettings-legacy-tools-no-clear-action,small,low.md`
-- `settingspanel-megafile-split-sections,medium,low.md`
-- `types-duplicate-file-node,medium,low.md`
-- `usebackend-reportcontext-timer-not-cleared-on-unmount,small,low.md`
-- `usetheme-duplicate-matchmedia-listener,small,low.md`
 - `workspace-header-status-button-a11y,small,low.md`
-- `fileviewer-duplicate-image-svg-viewer,small,low.md`
-- `fileicon-d-ts-dead-code,small,low.md`
