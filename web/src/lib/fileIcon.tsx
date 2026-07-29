@@ -25,7 +25,7 @@ import {
   Webpack, Turborepo, CMake, Gradle, Shadcn,
   CodeOrange, CodeBlue, BracketsYellow,
   Http, Haml, Pug, Twig, Liquid, Coldfusion, Nunjucks,
-  Stylus, Dts, Patch, I18n, EditorConfig, Knip, Cursor, Claude,
+  Stylus, Patch, I18n, EditorConfig, Knip, Cursor, Claude,
 } from '@react-symbols/icons/files'
 import { DefaultFileIcon } from '@react-symbols/icons/utils'
 import { createElement, type ComponentType, type SVGProps } from 'react'
@@ -126,7 +126,6 @@ const EXT_MAP: Record<string, FileIconComponent> = {
   ...group(Exe, 'exe', 'msi', 'bin'),
   ...group(Font, 'woff', 'woff2', 'ttf', 'otf', 'eot'),
   ipynb: Notebook,
-  ...group(Dts, 'd.ts', 'd.cts', 'd.mts'),
   ...group(Patch, 'patch', 'diff'),
   ...group(I18n, 'po', 'pot', 'mo', 'lang'),
   ...group(Http, 'http', 'rest'),

@@ -768,6 +768,7 @@ export function useBackend() {
       document.removeEventListener('visibilitychange', onVisibility)
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       if (treeRefreshTimerRef.current) clearTimeout(treeRefreshTimerRef.current)
+      if (reportContextTimerRef.current) clearTimeout(reportContextTimerRef.current)
       wsRef.current?.close()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run-once-on-mount: opens the single WebSocket; must not re-run on every render.

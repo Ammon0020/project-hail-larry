@@ -140,7 +140,7 @@ export function FileViewer({ tab, active, onToggleViewMode, trusted }: { tab: Ta
             ? <HeicViewer url={url} name={tab.name} />
             : <ImageViewer url={url} name={tab.name} />
       )}
-      {url && kind === 'svg' && <SvgViewer url={url} name={tab.name} />}
+      {url && kind === 'svg' && <ImageViewer url={url} name={tab.name} />}
       {url && kind === 'pdf' && <PdfViewer url={url} />}
       {url && kind === 'video' && <VideoViewer url={url} name={tab.name} />}
       {url && kind === 'audio' && <AudioViewer url={url} name={tab.name} />}
@@ -171,19 +171,6 @@ export function FileViewer({ tab, active, onToggleViewMode, trusted }: { tab: Ta
 // ---------------------------------------------------------------------------
 
 function ImageViewer({ url, name }: { url: string; name: string }) {
-  return (
-    <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
-      <img
-        src={url}
-        alt={name}
-        className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg bg-checkerboard"
-      />
-      <span className="text-xs text-muted-foreground">{name}</span>
-    </div>
-  )
-}
-
-function SvgViewer({ url, name }: { url: string; name: string }) {
   return (
     <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
       <img

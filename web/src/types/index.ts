@@ -4,11 +4,18 @@
  * and what ACP agents return. See Blueprint sections 4-11.
  */
 
-/** A file or folder node in the workspace file tree (Blueprint Sec 13). */
-export interface FileTreeNode {
+/** Backend payload for a file or folder node in the workspace file tree
+ *  (Blueprint Sec 13). The daemon always sends `path`, so it is required. */
+export interface FileNode {
   name: string
   type: 'folder' | 'file'
-  path?: string
+  path: string
+  children?: FileNode[]
+}
+
+/** UI-augmented file-tree node used by the explorer component — a `FileNode`
+ *  plus display/interaction state. */
+export interface FileTreeNode extends FileNode {
   icon?: string
   iconColor?: string
   expanded?: boolean

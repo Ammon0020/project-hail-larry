@@ -21,7 +21,7 @@ import { useGitState } from '@/hooks/useGitState'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { usePanelResize } from '@/hooks/usePanelResize'
 import type { EditorSelectionInfo } from '@/lib/api'
-import type { LeftPanel, MobileView, FileTreeNode, AppEvent, Attachment, SessionStatus, Tab } from '@/types'
+import type { LeftPanel, MobileView, FileNode, FileTreeNode, AppEvent, Attachment, SessionStatus, Tab } from '@/types'
 
 /**
  * Runtime guard that narrows an arbitrary backend status string to the
@@ -683,13 +683,13 @@ export default function App() {
   // path. Validates `type` at runtime so a malformed backend node cannot
   // silently become a typed union (AGENTS.md — type safety).
   const fileTree: FileTreeNode[] = useMemo(() => {
-    const convertNode = (n: { name: string; type: string; path?: string; children?: { name: string; type: string; path?: string; children?: unknown[] }[] }): FileTreeNode => ({
+    const convertNode = (n: FileNode): FileTreeNode => ({
       name: n.name,
       type: n.type === 'folder' ? 'folder' : 'file',
       path: n.path,
-      children: n.children?.map((c) => convertNode(c as typeof n)),
+      children: n.children?.map(convertNode),
     })
-    return backend.fileTree.map((n) => convertNode(n))
+    return backend.fileTree.map(convertNode)
   }, [backend.fileTree])
 
   const commands: PaletteCommand[] = useMemo(() => [

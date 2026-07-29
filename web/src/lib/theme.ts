@@ -11,8 +11,12 @@ const VALID: readonly Theme[] = ['dark', 'light', 'system']
 
 /** Reads the persisted theme preference, falling back to 'dark'. */
 export function getStoredTheme(): Theme {
-  const v = localStorage.getItem(STORAGE_KEY)
-  return v && (VALID as readonly string[]).includes(v) ? (v as Theme) : 'dark'
+  try {
+    const v = localStorage.getItem(STORAGE_KEY)
+    return v && (VALID as readonly string[]).includes(v) ? (v as Theme) : 'dark'
+  } catch {
+    return 'dark'
+  }
 }
 
 /** Returns true when the OS currently prefers a dark color scheme. */
@@ -38,14 +42,21 @@ export function applyTheme(theme: Theme): void {
 
 /** Persists and applies a theme preference. */
 export function setTheme(theme: Theme): void {
-  localStorage.setItem(STORAGE_KEY, theme)
+  try {
+    localStorage.setItem(STORAGE_KEY, theme)
+  } catch {
+    // Quota / private mode — UI still works without persistence.
+  }
   applyTheme(theme)
 }
 
 /**
  * Initializes theming on startup: applies the stored preference and, when it
- * is 'system', keeps it in sync with OS changes. Returns a cleanup function
- * for the media-query listener (a no-op when not following the system).
+ * is 'system', keeps it in sync with OS changes for the page lifetime. The
+ * listener re-reads the stored preference on each OS change so an explicit
+ * 'dark'/'light' choice made later (via setTheme) wins over the OS. Returns a
+ * cleanup function for the media-query listener (a no-op when not following
+ * the system).
  */
 export function initTheme(): () => void {
   const stored = getStoredTheme()
@@ -54,7 +65,9 @@ export function initTheme(): () => void {
     return () => {}
   }
   const mq = window.matchMedia('(prefers-color-scheme: dark)')
-  const onChange = () => applyTheme('system')
+  const onChange = () => {
+    if (getStoredTheme() === 'system') applyTheme('system')
+  }
   mq.addEventListener('change', onChange)
   return () => mq.removeEventListener('change', onChange)
 }

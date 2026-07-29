@@ -62,7 +62,9 @@ export function useFileChangeDetection(
         .then((file) => {
           setOpenTabs((currentTabs) =>
             currentTabs.map((currentTab) =>
-              currentTab.id === tab.id && !currentTab.unsaved
+              currentTab.id === tab.id &&
+              !currentTab.unsaved &&
+              file.revision > currentTab.revision
                 ? {
                     ...currentTab,
                     content: file.content,

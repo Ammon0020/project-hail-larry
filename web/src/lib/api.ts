@@ -3,11 +3,11 @@
  * All endpoints are relative to the same origin (served by the Go server).
  */
 
-import type { AppEvent, Attachment, Agent, PromptContextSettings, Session, SearchOptions, SearchResult } from '@/types'
+import type { AppEvent, Attachment, Agent, FileNode, PromptContextSettings, Session, SearchOptions, SearchResult } from '@/types'
 
 // Re-export types so existing callers importing them from '@/lib/api' keep
 // working — the canonical definitions live in @/types.
-export type { AppEvent, Agent, Session, SearchOptions, SearchResult }
+export type { AppEvent, Agent, FileNode, Session, SearchOptions, SearchResult }
 
 const API_BASE = '/api'
 
@@ -159,13 +159,6 @@ export interface SessionHistoryCapabilities {
   canResumeSession: boolean
   canCloseSession: boolean
   canDeleteSession: boolean
-}
-
-export interface FileNode {
-  name: string
-  type: 'folder' | 'file'
-  path: string
-  children?: FileNode[]
 }
 
 /** Read-only git repo detection snapshot (GET /api/workspaces/{id}/git).
