@@ -5,7 +5,9 @@ Users write the key missing features they see.
 **Difficulty:** `Trivial` < `Small` < `Medium` < `Large`
 **Urgency:** `High` > `Medium` > `Low`
 
-Items are grouped by code area so a developer can stay in one context while working through a batch. Within each group, quick wins come first. Dependencies are noted inline.
+Items are grouped by code area so a developer can stay in one context while working through a batch. Within each group, quick wins come first. Dependencies are noted inline. 
+
+TODO: Break this down into individual stories. 
 
 ---
 
@@ -41,7 +43,10 @@ Items are grouped by code area so a developer can stay in one context while work
 
 ## UI
 - [ ] Move preview, line wrap, and save buttons from the tabs bar at the top of the main canvas to the right side of the line below in the editor, the one where the filepath is shown. This keeps it visible without taking space for tabs, especially on mobile. 
-- 
+- [ ] x buttons on tabs should have a clearer, slightly larger hitbox when hovered over.
+- [ ] When scroll arrows for tab scroll disappear, tabs should not shift. Absolute position, hide and unhide, unless you find a more elegant method.
+- [ ] When you switch workspace, it switches which tabs are open. When you reopen, they open back up. Keeps tabs associated with workspace. Tabs are remembered per-workspace on the server. 
+  - [ ] Next: Tabs are synced between devices, saved to workspace rather than browser, but only when workspace syncing is enabled. Remove the word "online" from the online indicator in the top left and leave it as an icon, then add a button to turn on/off workspace syncing.
 
 ## Agent Chat
 - [ ] Fix Devin auto-detect models
