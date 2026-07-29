@@ -52,10 +52,15 @@ TODO: Break this down into individual stories.
 - [ ] Fix Devin auto-detect models
 - [ ] Fix Cursor Agent auto-detect models
 - [ ] Chat auto-naming
-- [ ] **[Medium/Medium]** Permission approvals: show exact grant scope before
+- [x] **[Medium/Medium]** Permission approvals: show exact grant scope before
       resolving "Always allow" / "Allow for session", and add an optional
       broader "always allow this tool kind" scope tier.
-  - *Plan: `docs/plans/other_tasks/pending-permission-grant-transparency-med-med.md`.*
-  - *Today's "Always allow" silently caches `(tool, exact_target_or_command)`
-    forever, with no preview and no tool-kind granularity — see
-    `src/permissions/manager.rs::policy_key_for`.*
+  - *Done 2026-07-29 — see `docs/plans/other_tasks/pending-permission-grant-transparency-med-med.md`.*
+  - *Part 1: `chatConverter.ts` populates `confirm` + `grants` on durable
+    decisions so the ToolFallback confirm step shows exactly what will be
+    persisted (tool + target/command + scope) before the user commits.*
+  - *Part 2: `AllowToolKind` variant added to `PermissionDecision`; manager
+    caches a tool-kind-scoped policy key; ACP handler synthesizes the option
+    for a conservative allowlist (move/edit/read/search, never execute);
+    frontend renders it with a confirm step and "(any target)" grant
+    description.*

@@ -1,5 +1,8 @@
 # Permission approvals: show exact grant scope, add tool-kind scoping
 
+> Status: **complete** (2026-07-29). Part 1 (transparency) and Part 2
+> (tool-kind scoping) both implemented and passing `make check`.
+
 > Difficulty: medium. Urgency: medium.
 > Source: user question while reviewing the assistant-ui chat migration
 > (2026-07-28) — "I would like to see exactly what 'Always allow' is
