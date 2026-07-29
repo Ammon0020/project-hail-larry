@@ -1,6 +1,6 @@
 # Epic: Git Action Bar, Diff Viewer, and SCM Surface
 
-> **Status:** Done (2026-07-26). **Difficulty:** large. **Urgency:** medium.
+> **Status:** Done (2026-07-26) — follow-up bugs open, see `git-action-bar/pending-git-panel-nonfunctional-medium-high.md` (reported 2026-07-28: panel non-functional in practice). **Difficulty:** large. **Urgency:** medium.
 > **Source:** `top-level-todo.md` (Git section). **Created:** 2026-07-26.
 > **Related:** `docs/specs/backend-spec.md`, `docs/specs/ui-spec.md`,
 > `src/acp/context.rs` (existing `runGit()` agent context only).
