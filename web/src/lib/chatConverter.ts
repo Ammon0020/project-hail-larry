@@ -313,11 +313,7 @@ export function eventsToMessages(
             approval: {
               id: requestId,
               approved: resolution === 'granted' ? true : resolution === 'denied' ? false : undefined,
-              options: pending?.optionDetails?.map((o) => ({
-                id: o.id,
-                label: o.name,
-                kind: o.kind.replace(/_/g, '-'),
-              })),
+              options: approvalOptionsFor(pending),
             },
           }),
         )
@@ -381,6 +377,42 @@ function systemRowMessage(
   }
 }
 
+/**
+ * Builds the ToolFallback-facing option list for a pending permission.
+ *
+ * The backend only populates `optionDetails` when the ACP agent supplied
+ * explicit per-option labels; otherwise the field is omitted from JSON
+ * (`skip_serializing_if` on empty), and we must fall back to the always-set
+ * `options` array of raw decision ids (e.g. `allow_once`, `allow_session`,
+ * `allow_always`, `deny`) that `PermissionManager::request` defaults to. When
+ * falling back we leave `label` unset so `ToolFallback`'s default label map
+ * (see `APPROVAL_OPTION_DEFAULT_LABELS` in the vendored tool-fallback.tsx)
+ * supplies a human label instead of showing the raw decision string.
+ *
+ * `id` is always the backend's snake_case decision kind (`allow_once`,
+ * `allow_session`, `allow_always`, `deny`, `reject_always`) rather than the
+ * agent's opaque ACP option id: `POST /permissions/:id/respond` decodes
+ * `decision` straight into `PermissionDecision`, and `acp/core/handlers/
+ * permission.rs` re-derives the matching ACP option by kind, not by that id.
+ * `AssistantThread` forwards `respondToApproval`'s `optionId` as `decision`
+ * verbatim, so this must already be a valid `PermissionDecision` value.
+ */
+function approvalOptionsFor(
+  pending: PendingPermission | undefined,
+): { id: string; label?: string; kind: string }[] | undefined {
+  if (pending?.optionDetails && pending.optionDetails.length > 0) {
+    return pending.optionDetails.map((o) => ({
+      id: o.kind,
+      label: o.name,
+      kind: o.kind.replace(/_/g, '-'),
+    }))
+  }
+  return pending?.options?.map((decision) => ({
+    id: decision,
+    kind: decision.replace(/_/g, '-'),
+  }))
+}
+
 interface ToolCallOptions {
   running: boolean
   failed?: boolean
@@ -392,7 +424,7 @@ interface ToolCallOptions {
   approval?: {
     id: string
     approved?: boolean
-    options?: { id: string; label: string; kind: string }[]
+    options?: { id: string; label?: string; kind: string }[]
   }
 }
 

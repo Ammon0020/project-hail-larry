@@ -318,12 +318,18 @@ const DENIED_RESULT = "User denied tool execution";
 const APPROVAL_OPTION_DEFAULT_LABELS: Record<string, string> = {
   "allow-once": "Allow",
   "allow-always": "Always allow",
+  // Not one of assistant-ui's 4 standard kinds — our backend's permission
+  // manager offers a durable "for this session" decision (see
+  // PermissionDecision::AllowSession) alongside the standard once/always
+  // pair. We extend the kit's allowlist here (in our vendored copy) so it
+  // isn't silently dropped by the `Object.hasOwn` filter below.
+  "allow-session": "Allow for session",
   "reject-once": "Deny",
   "reject-always": "Always deny",
 };
 
 const isAllowKind = (kind: string) =>
-  kind === "allow-once" || kind === "allow-always";
+  kind === "allow-once" || kind === "allow-always" || kind === "allow-session";
 
 const approvalOptionLabel = (option: ToolApprovalOption) =>
   option.label ??
@@ -383,7 +389,10 @@ function ToolFallbackApproval({
 
   const respondWithOption = (option: ToolApprovalOption) => {
     if (submitted) return;
-    respondToApproval?.({ optionId: option.id });
+    // Pass `approved` explicitly rather than relying on assistant-ui core's
+    // internal kind->boolean map, which only knows the 4 standard kinds and
+    // throws for our custom "allow-session" kind.
+    respondToApproval?.({ optionId: option.id, approved: isAllowKind(option.kind) });
     setSubmitted(true);
     setConfirmingId(null);
   };

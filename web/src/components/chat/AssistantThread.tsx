@@ -89,8 +89,13 @@ export function AssistantThread({
     convertMessage: (message) => message,
     onNew: async () => {},
     onCancel: async () => {},
-    onRespondToToolApproval: async ({ approvalId, approved }) => {
-      onPermissionResponse(approvalId, approved ? 'granted' : 'deny')
+    // `optionId` carries the backend's decision kind verbatim when the user
+    // picked a declared option (allow_once/allow_session/allow_always/deny/
+    // reject_always — see `approvalOptionsFor` in chatConverter.ts). The
+    // plain Allow/Deny fallback (no declared options) has no optionId, so we
+    // map the boolean to the two decisions every PermissionRequest accepts.
+    onRespondToToolApproval: async ({ approvalId, approved, optionId }) => {
+      onPermissionResponse(approvalId, optionId ?? (approved ? 'allow_once' : 'deny'))
     },
   })
 

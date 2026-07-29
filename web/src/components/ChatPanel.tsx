@@ -765,6 +765,24 @@ export function ChatPanel({
             return acc
           }
         }
+        // ToolCompleted replaces ToolStarted so the tool card transitions from
+        // running to complete in place (same pattern as ShellCommand above).
+        if (event.type === 'ToolCompleted') {
+          const last = acc[acc.length - 1]
+          if (
+            last?.type === 'ToolStarted' &&
+            (!event.toolCallId ||
+              !last.toolCallId ||
+              last.toolCallId === event.toolCallId)
+          ) {
+            acc[acc.length - 1] = {
+              ...event,
+              // Preserve the toolCallId from Started if Completed lacks one.
+              toolCallId: event.toolCallId ?? last.toolCallId,
+            }
+            return acc
+          }
+        }
         acc.push(event)
         return acc
       }, []),
