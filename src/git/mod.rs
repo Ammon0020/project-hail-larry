@@ -265,7 +265,10 @@ pub fn status(root: &Path) -> Result<StatusResult, GitError> {
     // gix provides the authoritative repository open and HEAD data. Its status
     // item API is still evolving rapidly, so porcelain v1 is used for this MVP
     // to retain Git's complete rename/conflict classification.
-    let output = git_output(root, ["status", "--porcelain=v1", "-z"])?;
+    let output = git_output(
+        root,
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
     let mut files = Vec::new();
     let entries: Vec<String> = output
         .split(|byte| *byte == 0)
@@ -708,6 +711,29 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "README.md");
         assert!(!files[0].staged);
+    }
+
+    #[test]
+    fn status_expands_untracked_directory_into_individual_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        std::fs::create_dir_all(dir.path().join("group")).expect("mkdir");
+        std::fs::write(dir.path().join("group/a.txt"), "a\n").expect("write");
+        std::fs::write(dir.path().join("group/b.txt"), "b\n").expect("write");
+        let files = status(dir.path()).expect("status").files;
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert!(
+            paths.contains(&"group/a.txt"),
+            "expected group/a.txt, got {paths:?}"
+        );
+        assert!(
+            paths.contains(&"group/b.txt"),
+            "expected group/b.txt, got {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.ends_with('/')),
+            "no collapsed folder entries, got {paths:?}"
+        );
     }
 
     #[test]
