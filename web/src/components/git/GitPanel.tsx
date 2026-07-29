@@ -4,6 +4,7 @@ import {
   ArrowUp,
   Circle,
   CircleDot,
+  Folder,
   GitBranch,
   Loader2,
   Minus,
@@ -42,7 +43,9 @@ function GitFileRow({
   busy: boolean
 }) {
   const style = statusStyles[file.status]
+  const isFolder = file.status === 'untracked' && file.path.endsWith('/')
   const displayPath = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path
+  const stageLabel = isFolder ? `Stage folder contents: ${file.path}` : file.staged ? `Unstage ${file.path}` : `Stage ${file.path}`
   return (
     <div
       className="group flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent"
@@ -51,11 +54,13 @@ function GitFileRow({
       <button
         type="button"
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        onClick={() => onOpenDiff(file.path, file.staged)}
+        onClick={() => !isFolder && onOpenDiff(file.path, file.staged)}
       >
-        {file.status === 'untracked'
-          ? <Circle className={cn('h-3.5 w-3.5 shrink-0', style.className)} />
-          : <CircleDot className={cn('h-3.5 w-3.5 shrink-0', style.className)} />}
+        {isFolder
+          ? <Folder className={cn('h-3.5 w-3.5 shrink-0', style.className)} />
+          : file.status === 'untracked'
+            ? <Circle className={cn('h-3.5 w-3.5 shrink-0', style.className)} />
+            : <CircleDot className={cn('h-3.5 w-3.5 shrink-0', style.className)} />}
         <span className="min-w-0 flex-1 truncate">{displayPath}</span>
         <span className={cn('shrink-0 font-semibold', style.className)}>{style.label}</span>
       </button>
@@ -64,8 +69,8 @@ function GitFileRow({
         disabled={busy}
         onClick={() => file.staged ? onUnstage(file.path) : onStage(file.path)}
         className="shrink-0 rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-        aria-label={file.staged ? `Unstage ${file.path}` : `Stage ${file.path}`}
-        title={file.staged ? 'Unstage Changes' : 'Stage Changes'}
+        aria-label={stageLabel}
+        title={stageLabel}
       >
         {file.staged ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
       </button>
