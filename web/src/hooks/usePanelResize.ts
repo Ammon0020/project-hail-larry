@@ -58,6 +58,10 @@ export function usePanelResize({
   left,
   right,
 }: UsePanelResizeOptions): UsePanelResizeResult {
+  const leftStorageKey = left.storageKey
+  const rightStorageKey = right.storageKey
+  const leftHiddenKey = hiddenStorageKey(left)
+  const rightHiddenKey = hiddenStorageKey(right)
   const [leftWidth, setLeftWidth] = useState(() =>
     readStoredHidden(left) ? 0 : readStoredWidth(left),
   )
@@ -70,21 +74,21 @@ export function usePanelResize({
 
   useEffect(() => {
     if (leftWidth > 0) {
-      localStorage.setItem(left.storageKey, String(leftWidth))
-      localStorage.setItem(hiddenStorageKey(left), '0')
+      localStorage.setItem(leftStorageKey, String(leftWidth))
+      localStorage.setItem(leftHiddenKey, '0')
     } else {
-      localStorage.setItem(hiddenStorageKey(left), '1')
+      localStorage.setItem(leftHiddenKey, '1')
     }
-  }, [left.storageKey, leftWidth])
+  }, [leftStorageKey, leftHiddenKey, leftWidth])
 
   useEffect(() => {
     if (rightWidth > 0) {
-      localStorage.setItem(right.storageKey, String(rightWidth))
-      localStorage.setItem(hiddenStorageKey(right), '0')
+      localStorage.setItem(rightStorageKey, String(rightWidth))
+      localStorage.setItem(rightHiddenKey, '0')
     } else {
-      localStorage.setItem(hiddenStorageKey(right), '1')
+      localStorage.setItem(rightHiddenKey, '1')
     }
-  }, [right.storageKey, rightWidth])
+  }, [rightStorageKey, rightHiddenKey, rightWidth])
 
   useEffect(() => {
     return () => dragCleanupRef.current?.()
