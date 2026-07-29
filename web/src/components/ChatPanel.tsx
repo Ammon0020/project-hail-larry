@@ -199,6 +199,9 @@ export function ChatPanel({
   // immediately so they can pick a transfer-history truncate length.
   const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
   const [truncateLength, setTruncateLength] = useState<number>(8000)
+  // True while a switch-agent rebind is in flight — disables the dialog
+  // buttons so a double-click can't fire onRebindSession twice.
+  const [rebinding, setRebinding] = useState(false)
 
   const {
     mcpServers,
@@ -511,7 +514,7 @@ export function ChatPanel({
 
   /** Confirms the pending agent switch and rebinds with the chosen truncate length. */
   const confirmSwitchAgent = () => {
-    if (!pendingAgentId || !activeSessionId) {
+    if (!pendingAgentId || !activeSessionId || rebinding) {
       setPendingAgentId(null)
       return
     }
@@ -521,8 +524,13 @@ export function ChatPanel({
     const modelId = pickDefaultModelId(agent?.models ?? [], '')
     if (agent) setStoredModel(modelId)
     const maxBytes = truncateLength > 0 ? truncateLength : undefined
-    onRebindSession(activeSessionId, agentId, modelId, maxBytes)
-    setPendingAgentId(null)
+    setRebinding(true)
+    try {
+      onRebindSession(activeSessionId, agentId, modelId, maxBytes)
+    } finally {
+      setRebinding(false)
+      setPendingAgentId(null)
+    }
   }
 
   /** Cancels the pending agent switch — reverts the dropdown to the current agent. */
@@ -973,6 +981,7 @@ export function ChatPanel({
         setTruncateLength={setTruncateLength}
         onConfirm={confirmSwitchAgent}
         onCancel={cancelSwitchAgent}
+        busy={rebinding}
       />
     </aside>
   )

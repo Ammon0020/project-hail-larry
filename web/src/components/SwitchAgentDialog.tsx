@@ -25,6 +25,8 @@ interface SwitchAgentDialogProps {
   setTruncateLength: (v: number) => void
   onConfirm: () => void
   onCancel: () => void
+  /** Disables both buttons while a rebind is in flight. */
+  busy?: boolean
 }
 
 /**
@@ -42,6 +44,7 @@ export function SwitchAgentDialog({
   setTruncateLength,
   onConfirm,
   onCancel,
+  busy,
 }: SwitchAgentDialogProps) {
   return (
     <Dialog
@@ -66,7 +69,7 @@ export function SwitchAgentDialog({
             transferred as context (truncated to{' '}
             <span className="font-semibold text-foreground">
               {truncateLength > 0
-                ? `${truncateLength.toLocaleString()} chars`
+                ? `${truncateLength.toLocaleString()} bytes`
                 : 'no limit'}
             </span>
             ).
@@ -93,20 +96,22 @@ export function SwitchAgentDialog({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="4000">4,000 chars</SelectItem>
-              <SelectItem value="8000">8,000 chars</SelectItem>
-              <SelectItem value="16000">16,000 chars</SelectItem>
-              <SelectItem value="32000">32,000 chars</SelectItem>
+              <SelectItem value="4000">4,000 bytes</SelectItem>
+              <SelectItem value="8000">8,000 bytes</SelectItem>
+              <SelectItem value="16000">16,000 bytes</SelectItem>
+              <SelectItem value="32000">32,000 bytes</SelectItem>
               <SelectItem value="0">Full (no limit)</SelectItem>
             </SelectContent>
           </Select>
         </div>
 
         <DialogFooter>
-          <Button variant="secondary" onClick={onCancel}>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={onConfirm}>Switch Agent</Button>
+          <Button onClick={onConfirm} disabled={busy}>
+            {busy ? 'Switching…' : 'Switch Agent'}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

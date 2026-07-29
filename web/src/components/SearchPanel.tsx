@@ -198,7 +198,7 @@ export function SearchPanel({
                         <span className="text-muted-foreground tabular-nums shrink-0 group-hover:text-primary">
                           {r.lineNumber}
                         </span>
-                        <span className="text-foreground truncate font-mono text-[11px]">
+                        <span className="text-foreground font-mono text-[11px] whitespace-pre-wrap break-all max-h-12 overflow-hidden">
                           {renderLine(r)}
                         </span>
                       </button>
@@ -207,6 +207,11 @@ export function SearchPanel({
                 </ul>
               </div>
             ))}
+            {results.length >= 200 && (
+              <div className="text-muted-foreground text-center py-2">
+                Showing first 200 matches — refine your query to see more.
+              </div>
+            )}
           </div>
         )}
       </div>

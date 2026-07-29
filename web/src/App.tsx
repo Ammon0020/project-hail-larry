@@ -426,9 +426,10 @@ export default function App() {
       const tab = openTabs.find((t) => t.id === id)
       if (tab?.unsaved && !window.confirm(`Close "${tab.name}" without saving? Unsaved edits will be lost.`)) return
       setOpenTabs((prev) => {
+        const idx = prev.findIndex((t) => t.id === id)
         const next = prev.filter((t) => t.id !== id)
-        if (activeTabId === id) {
-          setActiveTabId(next.length > 0 ? next[next.length - 1].id : null)
+        if (activeTabId === id && next.length > 0) {
+          setActiveTabId(next[Math.min(Math.max(0, idx - 1), next.length - 1)].id)
         }
         return next
       })

@@ -65,7 +65,7 @@ function permissionToolLabel(tool?: string, toolKind?: string): string {
 /**
  * Permission prompt card. Renders a "Permission Required" panel with one
  * button per backend-provided option while pending, or a compact inline
- * "Permission granted/denied — <tool>" row once resolved. The `reject_once`
+ * "Permission granted/denied — <tool>" row once resolved. Any `reject_*`
  * option kind is normalized to `deny` in the onClick handler.
  */
 export function PermissionCard({
@@ -120,7 +120,7 @@ export function PermissionCard({
               disabled={!pending}
               onClick={() => {
                 let decision = o.kind;
-                if (decision === 'reject_once') decision = 'deny';
+                if (decision.startsWith('reject')) decision = 'deny';
                 onPermissionResponse?.(requestId, decision);
               }}
               className={`text-primary-foreground text-xs font-medium py-1.5 rounded transition disabled:opacity-50 disabled:cursor-not-allowed ${optionStyle(o.kind)}`}
