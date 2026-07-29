@@ -115,6 +115,20 @@ else
     fi
 fi
 
+# --- sccache -----------------------------------------------------------------
+if ! command -v sccache >/dev/null 2>&1; then
+    if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+        fail "ERROR: 'sccache' is not installed or not on PATH." \
+             "  Required: sccache for build and test caching." \
+             "  Install: \`cargo install sccache\` or via package manager (e.g., \`apt install sccache\` / \`brew install sccache\`)"
+    else
+        if command -v cargo >/dev/null 2>&1; then
+            echo "${CYAN}Installing sccache via cargo...${RESET}"
+            cargo install sccache --quiet || fail "ERROR: Failed to install sccache via cargo."
+        fi
+    fi
+fi
+
 # --- web/node_modules --------------------------------------------------------
 NODE_MODULES_DIR="$ROOT_DIR/web/node_modules"
 if [[ ! -d "$NODE_MODULES_DIR" ]]; then
