@@ -77,6 +77,7 @@ function ChangeSection({
   title,
   files,
   staged,
+  hint,
   onStage,
   onUnstage,
   onOpenDiff,
@@ -85,6 +86,7 @@ function ChangeSection({
   title: string
   files: FileStatus[]
   staged: boolean
+  hint?: string
   onStage: (paths: string[], all: boolean) => void
   onUnstage: (paths: string[]) => void
   onOpenDiff: (path: string, staged: boolean) => void
@@ -96,17 +98,17 @@ function ChangeSection({
     <section>
       <div className="flex items-center justify-between px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         <span>{title} ({files.length})</span>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => staged ? onUnstage(files.map((file) => file.path)) : onStage([], true)}
-          className="rounded p-1 hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          aria-label={actionLabel}
-          title={actionLabel}
-        >
-          {staged ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-        </button>
+        {staged ? (
+          <button type="button" disabled={busy} onClick={() => onUnstage(files.map((file) => file.path))} className="rounded p-1 hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-label={actionLabel} title={actionLabel}>
+            <Minus className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <button type="button" disabled={busy} onClick={() => onStage([], true)} className="rounded px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-primary hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50" aria-label={actionLabel} title={actionLabel}>
+            Stage All
+          </button>
+        )}
       </div>
+      {hint && <div className="px-3 pb-1.5 text-[10px] text-muted-foreground">{hint}</div>}
       {files.map((file) => (
         <GitFileRow
           key={`${file.staged}:${file.path}`}
@@ -171,6 +173,7 @@ export function GitPanel({
 
   const stagedFiles = useMemo(() => status?.files.filter((file) => file.staged) ?? [], [status])
   const unstagedFiles = useMemo(() => status?.files.filter((file) => !file.staged) ?? [], [status])
+  const allUntrackedHint = stagedFiles.length === 0 && unstagedFiles.length > 0 && unstagedFiles.every((file) => file.status === 'untracked') ? 'New files — stage them, then commit.' : undefined
   const canCommit = !!message.trim() && stagedFiles.length > 0
   const busy = busyAction !== null
 
@@ -266,7 +269,7 @@ export function GitPanel({
 
       <div className="flex-1 overflow-y-auto pb-2">
         <ChangeSection title="Staged Changes" files={stagedFiles} staged onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} busy={busy} />
-        <ChangeSection title="Changes" files={unstagedFiles} staged={false} onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} busy={busy} />
+        <ChangeSection title="Changes" files={unstagedFiles} staged={false} hint={allUntrackedHint} onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} busy={busy} />
         {status && status.files.length === 0 && <div className="p-6 text-center text-xs text-muted-foreground">No changes.</div>}
       </div>
     </div>

@@ -160,13 +160,29 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
     }
   }, [base, head, path, effectiveMode, resolvedTheme])
 
+  const badge =
+    base === '' && head !== ''
+      ? { label: 'New file', className: 'text-green-500' }
+      : head === '' && base !== ''
+        ? { label: 'Deleted file', className: 'text-destructive' }
+        : base === '' && head === ''
+          ? { label: 'Empty file', className: 'text-muted-foreground' }
+          : null
+
   return (
     <div className="flex flex-col h-full min-h-0 bg-editor border-border">
       {/* Header: path + mode toggle. Split is disabled on narrow viewports
           where it would collapse to unified — `active` reflects the effective
           rendered mode so the highlight never lies. */}
       <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border text-xs text-muted-foreground shrink-0">
-        <span className="truncate font-mono" title={path}>{path}</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="truncate font-mono" title={path}>{path}</span>
+          {badge && (
+            <span className={cn('shrink-0 rounded px-1 py-0.5 text-[10px] font-medium', badge.className)}>
+              {badge.label}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-1 shrink-0">
           <ModeButton
             label="Unified"
