@@ -22,6 +22,8 @@ fn fixture() -> TempDir {
     fs::write(root.join("package.json"), r#"{"name":"test"}"#).unwrap();
     fs::write(root.join("README.md"), "# Test").unwrap();
     fs::write(root.join(".hidden"), "hidden").unwrap();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(root.join(".git/HEAD"), "ref: refs/heads/main").unwrap();
     fs::create_dir_all(root.join("node_modules")).unwrap();
     fs::write(root.join("node_modules/noise.js"), "TODO noise").unwrap();
     dir
@@ -85,7 +87,8 @@ async fn file_tree_sorts_and_filters_entries() {
     assert_eq!(tree[0].node_type, FILE_NODE_TYPE_FOLDER);
     assert!(tree
         .iter()
-        .all(|node| node.name != ".hidden" && node.name != "node_modules"));
+        .all(|node| node.name != ".git" && node.name != "node_modules"));
+    assert!(tree.iter().any(|node| node.name == ".hidden"));
     assert!(tree
         .iter()
         .skip(1)

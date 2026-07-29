@@ -635,10 +635,7 @@ fn build_tree(
         let file_type = entry
             .file_type()
             .map_err(|err| AppError::internal(format!("stat directory entry: {err}")))?;
-        if name.starts_with('.')
-            || file_type.is_symlink()
-            || (file_type.is_dir() && is_noise_dir(&name))
-        {
+        if file_type.is_symlink() || (file_type.is_dir() && is_noise_dir(&name)) {
             continue;
         }
         *node_count += 1;
@@ -734,6 +731,9 @@ fn is_noise_dir(name: &str) -> bool {
             | "target"
             | "bin"
             | "obj"
+            | ".git"
+            | ".svn"
+            | ".hg"
             | ".next"
             | ".nuxt"
             | ".output"
