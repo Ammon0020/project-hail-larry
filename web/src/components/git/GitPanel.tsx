@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   ArrowDown,
   ArrowUp,
   Circle,
   CircleDot,
+  Copy,
+  Eye,
   Folder,
   GitBranch,
   Loader2,
@@ -15,6 +18,13 @@ import {
 import { api, type FileStatus, type StatusResult } from '@/lib/api'
 import { useGitState } from '@/hooks/useGitState'
 import { cn } from '@/lib/utils'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 const statusStyles: Record<FileStatus['status'], { label: string; className: string }> = {
   added: { label: 'A', className: 'text-green-500' },
@@ -25,8 +35,41 @@ const statusStyles: Record<FileStatus['status'], { label: string; className: str
   conflicted: { label: 'C', className: 'text-destructive' },
 }
 
+/** Estimated row height: py-1.5 (12px) + text-xs line (~16px) ≈ 28px. */
+const ROW_HEIGHT = 28
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/**
+ * Long-press (500ms) → open context menu; move/end/cancel clears the timer.
+ * Mirrors the hook in `FileTree.tsx` — duplicated here rather than extracted to
+ * a shared hook to keep this change focused (the FileTree version is the
+ * canonical one; consolidate on a follow-up).
+ */
+function useLongPressHandlers(onOpen: () => void, enabled = true) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clear = useCallback(() => {
+    if (timer.current) {
+      clearTimeout(timer.current)
+      timer.current = null
+    }
+  }, [])
+  const handlers = useMemo(
+    () => ({
+      onTouchStart: () => {
+        if (!enabled) return
+        clear()
+        timer.current = setTimeout(onOpen, 500)
+      },
+      onTouchEnd: clear,
+      onTouchMove: clear,
+      onTouchCancel: clear,
+    }),
+    [onOpen, enabled, clear],
+  )
+  return { handlers, timer, clear }
 }
 
 function GitFileRow({
@@ -34,22 +77,41 @@ function GitFileRow({
   onOpenDiff,
   onStage,
   onUnstage,
+  onIgnore,
   busy,
+  menuOpen,
+  onOpenMenu,
+  onCloseMenu,
 }: {
   file: FileStatus
   onOpenDiff: (path: string, staged: boolean) => void
   onStage: (path: string) => void
   onUnstage: (path: string) => void
+  onIgnore: (path: string) => void
   busy: boolean
+  menuOpen: boolean
+  onOpenMenu: () => void
+  onCloseMenu: () => void
 }) {
   const style = statusStyles[file.status]
   const isFolder = file.status === 'untracked' && file.path.endsWith('/')
   const displayPath = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path
   const stageLabel = isFolder ? `Stage folder contents: ${file.path}` : file.staged ? `Unstage ${file.path}` : `Stage ${file.path}`
-  return (
+  const { handlers: touchHandlers } = useLongPressHandlers(onOpenMenu)
+
+  const row = (
     <div
-      className="group flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent"
+      className={cn(
+        'group flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent',
+        menuOpen && 'ring-1 ring-primary outline-none',
+      )}
       title={displayPath}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onOpenMenu()
+      }}
+      {...touchHandlers}
     >
       <button
         type="button"
@@ -76,6 +138,61 @@ function GitFileRow({
       </button>
     </div>
   )
+
+  return (
+    <DropdownMenu
+      open={menuOpen}
+      onOpenChange={(open) => {
+        if (!open) onCloseMenu()
+      }}
+    >
+      <DropdownMenuTrigger asChild>{row}</DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {!isFolder && (
+          <DropdownMenuItem
+            onSelect={() => {
+              onOpenDiff(file.path, file.staged)
+              onCloseMenu()
+            }}
+          >
+            <Eye className="w-3.5 h-3.5" />
+            Open Diff
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          onSelect={() => {
+            if (file.staged) onUnstage(file.path)
+            else onStage(file.path)
+            onCloseMenu()
+          }}
+        >
+          {file.staged
+            ? <Minus className="w-3.5 h-3.5" />
+            : <Plus className="w-3.5 h-3.5" />}
+          {file.staged ? 'Unstage' : 'Stage'}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={() => {
+            onIgnore(file.path)
+            onCloseMenu()
+          }}
+        >
+          <Folder className="w-3.5 h-3.5" />
+          {isFolder ? 'Add folder to .gitignore' : 'Add to .gitignore'}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={() => {
+            void navigator.clipboard.writeText(file.path)
+            onCloseMenu()
+          }}
+        >
+          <Copy className="w-3.5 h-3.5" />
+          Copy Path
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 }
 
 function ChangeSection({
@@ -86,7 +203,11 @@ function ChangeSection({
   onStage,
   onUnstage,
   onOpenDiff,
+  onIgnore,
   busy,
+  scrollRef,
+  menuPath,
+  setMenuPath,
 }: {
   title: string
   files: FileStatus[]
@@ -95,10 +216,29 @@ function ChangeSection({
   onStage: (paths: string[], all: boolean) => void
   onUnstage: (paths: string[]) => void
   onOpenDiff: (path: string, staged: boolean) => void
+  onIgnore: (path: string) => void
   busy: boolean
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  menuPath: string | null
+  setMenuPath: (path: string | null) => void
 }) {
+  // Virtualize the file rows so a workspace with thousands of untracked
+  // entries (e.g. `target/` expanded by `--untracked-files=all`) only mounts
+  // the visible ones. The section header + hint render above the virtualized
+  // list and scroll with it because they live in the same scroll parent.
+  // The hook must run on every render (no early return before it) to satisfy
+  // the rules-of-hooks; the empty-list short-circuit happens after.
+  const virtualizer = useVirtualizer({
+    count: files.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
+  })
+
   if (files.length === 0) return null
   const actionLabel = staged ? 'Unstage All Changes' : 'Stage All Changes'
+  const items = virtualizer.getVirtualItems()
+
   return (
     <section>
       <div className="flex items-center justify-between px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -114,16 +254,35 @@ function ChangeSection({
         )}
       </div>
       {hint && <div className="px-3 pb-1.5 text-[10px] text-muted-foreground">{hint}</div>}
-      {files.map((file) => (
-        <GitFileRow
-          key={`${file.staged}:${file.path}`}
-          file={file}
-          onOpenDiff={onOpenDiff}
-          onStage={(path) => onStage([path], false)}
-          onUnstage={(path) => onUnstage([path])}
-          busy={busy}
-        />
-      ))}
+      <div style={{ position: 'relative', height: virtualizer.getTotalSize() }}>
+        {items.map((vi) => {
+          const file = files[vi.index]
+          return (
+            <div
+              key={`${file.staged}:${file.path}`}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${vi.start}px)`,
+              }}
+            >
+              <GitFileRow
+                file={file}
+                onOpenDiff={onOpenDiff}
+                onStage={(path) => onStage([path], false)}
+                onUnstage={(path) => onUnstage([path])}
+                onIgnore={onIgnore}
+                busy={busy}
+                menuOpen={menuPath === file.path}
+                onOpenMenu={() => setMenuPath(file.path)}
+                onCloseMenu={() => setMenuPath(null)}
+              />
+            </div>
+          )
+        })}
+      </div>
     </section>
   )
 }
@@ -143,6 +302,13 @@ export function GitPanel({
   const [message, setMessage] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
+  // Single scroll parent for both sections; each ChangeSection's virtualizer
+  // reads this ref as its scroll element. One shared scroll keeps the UX
+  // (Staged + Changes scroll together) and avoids two competing containers.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // Controlled context-menu state: the path of the row whose menu is open, or
+  // null. Shared by both sections so only one menu is open at a time.
+  const [menuPath, setMenuPath] = useState<string | null>(null)
 
   const refreshStatus = useCallback(async () => {
     if (!workspaceId || !gitState?.repoDetected) {
@@ -272,9 +438,9 @@ export function GitPanel({
 
       {error && <div className="mx-3 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">{error}</div>}
 
-      <div className="flex-1 overflow-y-auto pb-2">
-        <ChangeSection title="Staged Changes" files={stagedFiles} staged onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} busy={busy} />
-        <ChangeSection title="Changes" files={unstagedFiles} staged={false} hint={allUntrackedHint} onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} busy={busy} />
+      <div ref={scrollRef} className="flex-1 overflow-y-auto pb-2">
+        <ChangeSection title="Staged Changes" files={stagedFiles} staged onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })} busy={busy} scrollRef={scrollRef} menuPath={menuPath} setMenuPath={setMenuPath} />
+        <ChangeSection title="Changes" files={unstagedFiles} staged={false} hint={allUntrackedHint} onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })} busy={busy} scrollRef={scrollRef} menuPath={menuPath} setMenuPath={setMenuPath} />
         {status && status.files.length === 0 && <div className="p-6 text-center text-xs text-muted-foreground">No changes.</div>}
       </div>
     </div>

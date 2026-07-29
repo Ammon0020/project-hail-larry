@@ -314,6 +314,13 @@ export const api = {
     }),
   gitInit: (workspaceId: string) =>
     apiFetch<{ oid: string }>(`/workspaces/${workspaceId}/git/init`, { method: 'POST' }),
+  /** POST /api/workspaces/{id}/git/ignore — append patterns to `.gitignore`.
+   *  Returns the list of patterns actually added (empty when all were dupes). */
+  gitIgnore: (workspaceId: string, patterns: string[]) =>
+    apiFetch<{ added: string[] }>(`/workspaces/${workspaceId}/git/ignore`, {
+      method: 'POST',
+      body: JSON.stringify({ patterns }),
+    }),
   /** GET /api/workspaces/{id}/git/diff?path=<rel>&staged=<bool> — fetches the
    *  base/head contents and unified diff for a single file. `staged` selects
    *  the index (staged) diff vs. the working-tree (unstaged) diff. */

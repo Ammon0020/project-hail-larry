@@ -612,6 +612,65 @@ fn truncate_utf8(value: &str, limit: usize) -> String {
     value[..end].to_string()
 }
 
+/// Append `patterns` to `root/.gitignore`, deduping exact-line matches.
+///
+/// Unlike the other ops in this module, this does **not** require a repo —
+/// `.gitignore` is just a file at the workspace root, so we read/write it
+/// directly without `open_repo`. Each pattern is trimmed and rejected if empty.
+/// Returns the list of patterns that were actually appended (empty when every
+/// requested pattern was already present as an exact line).
+///
+/// # Errors
+///
+/// Returns [`GitError::Operation`] for any I/O error or when a pattern is empty
+/// after trimming.
+pub fn add_to_gitignore(root: &Path, patterns: &[String]) -> Result<Vec<String>, GitError> {
+    let mut added: Vec<String> = Vec::new();
+    let path = root.join(".gitignore");
+
+    // Read existing lines (if any) so we can dedup exact matches. A trailing
+    // newline is trimmed so the existing content is treated as a line list.
+    let mut content = match std::fs::read_to_string(&path) {
+        Ok(existing) => existing,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(GitError::Operation(format!("read .gitignore: {err}"))),
+    };
+    // Own the lines so `content` can be mutated below without keeping an
+    // immutable borrow alive.
+    let existing_lines: Vec<String> = content.lines().map(str::to_string).collect();
+
+    for raw in patterns {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(GitError::Operation("empty pattern".into()));
+        }
+        if existing_lines.iter().any(|line| line == trimmed) {
+            continue;
+        }
+        // Ensure the existing content ends with a newline before appending so
+        // we don't merge the last old line with the first new one.
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(trimmed);
+        content.push('\n');
+        added.push(trimmed.to_string());
+    }
+
+    if added.is_empty() {
+        // Nothing to write — avoid touching the file's mtime for pure-dedup
+        // calls (also avoids creating an empty `.gitignore` when the file was
+        // missing and every pattern was a no-op, which can't happen here
+        // because missing-file dedup is trivially empty, but the guard keeps
+        // the contract clear).
+        return Ok(added);
+    }
+
+    std::fs::write(&path, content)
+        .map_err(|err| GitError::Operation(format!("write .gitignore: {err}")))?;
+    Ok(added)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -832,5 +891,45 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         assert!(!init(dir.path()).expect("init").is_empty());
         assert!(detect(dir.path()).expect("detect").repo_detected);
+    }
+
+    #[test]
+    fn gitignore_creates_file_when_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        let added = add_to_gitignore(dir.path(), &["target/".into()]).expect("add");
+        let file = dir.path().join(".gitignore");
+        assert!(file.exists(), ".gitignore should be created");
+        let content = std::fs::read_to_string(file).expect("read");
+        assert!(
+            content.lines().any(|line| line == "target/"),
+            "content: {content}"
+        );
+        assert_eq!(added, vec!["target/".to_string()]);
+    }
+
+    #[test]
+    fn gitignore_dedups_existing_lines() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        let file = dir.path().join(".gitignore");
+        std::fs::write(&file, "target/\n").expect("write");
+        let added = add_to_gitignore(dir.path(), &["target/".into()]).expect("add");
+        assert!(added.is_empty(), "no new patterns: {added:?}");
+        assert_eq!(std::fs::read_to_string(file).expect("read"), "target/\n");
+    }
+
+    #[test]
+    fn gitignore_appends_new_patterns() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fresh_repo(dir.path());
+        let file = dir.path().join(".gitignore");
+        std::fs::write(&file, "target/\n").expect("write");
+        let added = add_to_gitignore(dir.path(), &["node_modules/".into()]).expect("add");
+        let content = std::fs::read_to_string(file).expect("read");
+        let lines: Vec<&str> = content.lines().collect();
+        assert!(lines.contains(&"target/"), "content: {content}");
+        assert!(lines.contains(&"node_modules/"), "content: {content}");
+        assert_eq!(added, vec!["node_modules/".to_string()]);
     }
 }

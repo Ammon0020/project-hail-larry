@@ -95,6 +95,11 @@ pub(crate) struct PushRequest {
     set_upstream: bool,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct IgnoreRequest {
+    patterns: Vec<String>,
+}
+
 /// `GET /api/workspaces/{id}/git/status`.
 pub async fn get_git_status(
     State(state): State<AppState>,
@@ -203,6 +208,28 @@ pub async fn init_repo(
     let root = workspace_root(&state, &id).await?;
     let oid = run_git_blocking("init", move || git::init(&root)).await?;
     Ok(Json(json!({ "oid": oid })))
+}
+
+/// `POST /api/workspaces/{id}/git/ignore` — append patterns to `.gitignore`.
+///
+/// Named `ignore_paths` (not `add_to_gitignore`) to avoid clashing with the
+/// `git::add_to_gitignore` function. The op does not require a repo, but it
+/// still runs on a blocking thread because file I/O is synchronous.
+pub async fn ignore_paths(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<IgnoreRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    if request.patterns.is_empty() {
+        return Err(ApiResponseError::bad_request("patterns required"));
+    }
+    let root = workspace_root(&state, &id).await?;
+    let added = run_git_blocking("ignore", move || {
+        git::add_to_gitignore(&root, &request.patterns)
+    })
+    .await?;
+    Ok(Json(json!({ "added": added })))
 }
 
 async fn workspace_root(state: &AppState, id: &str) -> Result<PathBuf, ApiResponseError> {

@@ -282,6 +282,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/git/commit", post(git::commit))
         .route("/api/workspaces/{id}/git/push", post(git::push))
         .route("/api/workspaces/{id}/git/init", post(git::init_repo))
+        .route("/api/workspaces/{id}/git/ignore", post(git::ignore_paths))
         .route("/api/events", get(events))
         .route("/api/events/{session_id}", get(session_events))
         .route("/api/agents", get(list_agents).post(upsert_agent))
