@@ -6,6 +6,14 @@ use uuid::Uuid;
 
 use super::HandlerDeps;
 
+/// Tool kinds for which the client synthesizes an "Always allow this tool type"
+/// (`AllowToolKind`) option. This is intentionally conservative — a blanket
+/// "always allow all shell commands" for `execute` would be a security risk
+/// (one `allow_tool_kind` for `echo hello` would auto-approve `rm -rf /`).
+/// `move`/`edit`/`read`/`search` are file-scoped operations where the worst case
+/// is an unwanted file mutation, not arbitrary code execution.
+const TOOL_KIND_ALLOWLIST: &[&str] = &["move", "edit", "read", "search"];
+
 pub(in crate::acp::core) async fn request_permission(
     deps: HandlerDeps,
     request: RequestPermissionRequest,
@@ -37,12 +45,12 @@ pub(in crate::acp::core) async fn request_permission(
         .map_or_else(String::new, |location| {
             location.path.to_string_lossy().into_owned()
         });
-    let options = request
+    let mut options: Vec<crate::interfaces::PermissionDecision> = request
         .options
         .iter()
         .filter_map(|option| permission_decision(option.kind))
         .collect();
-    let option_details = request
+    let mut option_details: Vec<crate::interfaces::PermissionOptionInfo> = request
         .options
         .iter()
         .map(|option| crate::interfaces::PermissionOptionInfo {
@@ -51,6 +59,23 @@ pub(in crate::acp::core) async fn request_permission(
             kind: permission_kind_name(option.kind).to_string(),
         })
         .collect();
+
+    // Synthesize an "Always allow this tool type" option for the conservative
+    // allowlist of non-execute tool kinds. This is a client-only decision — no
+    // ACP `PermissionOptionKind` maps to it. The option is appended to both
+    // `options` (so `respond` validation accepts it) and `option_details` (so
+    // the frontend can render it). When the user picks it, the manager records
+    // a tool-kind-scoped policy and this handler responds to the ACP agent with
+    // `AllowAlways` (the broadest ACP allow) so the agent proceeds.
+    if TOOL_KIND_ALLOWLIST.contains(&tool_kind.as_str()) {
+        options.push(crate::interfaces::PermissionDecision::AllowToolKind);
+        option_details.push(crate::interfaces::PermissionOptionInfo {
+            id: "allow_tool_kind".to_string(),
+            name: "Always allow this tool type".to_string(),
+            kind: "allow_tool_kind".to_string(),
+        });
+    }
+
     let permission = crate::interfaces::PermissionRequest {
         id: Uuid::new_v4().to_string(),
         // Agent session IDs are protocol transport identifiers. Permissions
@@ -65,18 +90,33 @@ pub(in crate::acp::core) async fn request_permission(
         option_details,
     };
     match deps.permissions.request(permission).await {
-        Ok(decision) => request
-            .options
-            .iter()
-            .find(|option| permission_decision(option.kind) == Some(decision))
-            .map_or_else(
-                || RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
-                |option| {
-                    RequestPermissionResponse::new(RequestPermissionOutcome::Selected(
+        Ok(decision) => {
+            // `AllowToolKind` is client-only — no ACP option maps to it. When
+            // the user picks it, respond to the ACP agent with `AllowAlways`
+            // (the broadest ACP allow) so the agent proceeds with the tool call.
+            if decision == crate::interfaces::PermissionDecision::AllowToolKind {
+                if let Some(option) = request.options.iter().find(|option| {
+                    permission_decision(option.kind)
+                        == Some(crate::interfaces::PermissionDecision::AllowAlways)
+                }) {
+                    return RequestPermissionResponse::new(RequestPermissionOutcome::Selected(
                         SelectedPermissionOutcome::new(option.option_id.clone()),
-                    ))
-                },
-            ),
+                    ));
+                }
+            }
+            request
+                .options
+                .iter()
+                .find(|option| permission_decision(option.kind) == Some(decision))
+                .map_or_else(
+                    || RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+                    |option| {
+                        RequestPermissionResponse::new(RequestPermissionOutcome::Selected(
+                            SelectedPermissionOutcome::new(option.option_id.clone()),
+                        ))
+                    },
+                )
+        }
         Err(error) => {
             tracing::warn!(error = %error, "ACP permission request cancelled");
             RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)

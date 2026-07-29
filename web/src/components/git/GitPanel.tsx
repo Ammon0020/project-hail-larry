@@ -228,6 +228,11 @@ function ChangeSection({
   // list and scroll with it because they live in the same scroll parent.
   // The hook must run on every render (no early return before it) to satisfy
   // the rules-of-hooks; the empty-list short-circuit happens after.
+  // TanStack Virtual's useVirtualizer returns functions that the React Compiler
+  // cannot memoize safely (it would close over stale scroll/size state); the
+  // hook is called unconditionally here and its values stay local to this
+  // component, so skipping compiler memoization is intentional and safe.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: files.length,
     getScrollElement: () => scrollRef.current,

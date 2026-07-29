@@ -1095,3 +1095,106 @@ async fn event_bus_sink_publishes_permission_requested() {
     let _ = m.respond(&pending[0].id, D::AllowOnce).await;
     let _ = task.await;
 }
+
+// ---------------------------------------------------------------------------
+// allow_tool_kind (tool-kind-scoped allow)
+// ---------------------------------------------------------------------------
+
+/// Verifies that an `allow_tool_kind` decision for `move` auto-resolves a
+/// subsequent `move` request with a **different target**. The tool-kind key
+/// blanks target/command, so any request with the same `tool` title matches
+/// regardless of which file is being moved.
+#[tokio::test]
+async fn policy_allow_tool_kind_auto_resolves_different_target() {
+    let (sink, counter) = CountingSink::new();
+    let m = Manager::new(Some(Arc::new(sink)));
+
+    let first = PermissionRequest {
+        id: String::new(),
+        session_id: "sess-tool-kind".into(),
+        tool: "move".into(),
+        target: "src/a.rs".into(),
+        options: vec![D::AllowToolKind, D::AllowOnce, D::Deny],
+        ..Default::default()
+    };
+
+    // First request blocks and is resolved with allow_tool_kind.
+    let d = resolve_first_request(&m, first, D::AllowToolKind)
+        .await
+        .expect("first request");
+    assert_eq!(d, D::AllowToolKind);
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "sink invoked once for first request"
+    );
+
+    // Second request with a DIFFERENT target must auto-resolve immediately
+    // (no blocking, no second broadcast) because the tool-kind key ignores
+    // target/command.
+    let second = PermissionRequest {
+        id: String::new(),
+        session_id: "sess-tool-kind".into(),
+        tool: "move".into(),
+        target: "src/b.rs".into(),
+        options: vec![D::AllowToolKind, D::AllowOnce, D::Deny],
+        ..Default::default()
+    };
+    let result = timeout(Duration::from_secs(1), m.request(second))
+        .await
+        .expect("second request did not auto-resolve (blocked)")
+        .expect("request error");
+    assert_eq!(result, D::AllowToolKind);
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "sink not invoked for tool-kind auto-resolve"
+    );
+
+    // The auto-resolve must be recorded in the audit log (seed + auto = 2).
+    let log = m.get_audit_log();
+    assert_eq!(log.len(), 2, "expected 2 audit entries (seed + auto)");
+    assert_eq!(log[1].decision, D::AllowToolKind);
+}
+
+/// Verifies that an `allow_tool_kind` decision for one tool does NOT
+/// auto-resolve a request for a different tool kind. The tool-kind key
+/// includes the `tool` title, so `move` and `edit` grants are independent.
+#[tokio::test]
+async fn allow_tool_kind_does_not_cross_tool_kinds() {
+    let m = Manager::new(None);
+
+    let first = PermissionRequest {
+        id: String::new(),
+        session_id: "sess-tool-kind-cross".into(),
+        tool: "move".into(),
+        target: "src/a.rs".into(),
+        options: vec![D::AllowToolKind, D::Deny],
+        ..Default::default()
+    };
+    resolve_first_request(&m, first, D::AllowToolKind)
+        .await
+        .expect("seed");
+
+    // A different tool kind (`edit`) must NOT auto-resolve from the `move`
+    // grant — it should block.
+    let second = PermissionRequest {
+        id: String::new(),
+        session_id: "sess-tool-kind-cross".into(),
+        tool: "edit".into(),
+        target: "src/a.rs".into(),
+        options: vec![D::AllowToolKind, D::Deny],
+        ..Default::default()
+    };
+    let result = timeout(Duration::from_millis(100), m.request(second)).await;
+    assert!(
+        result.is_err(),
+        "expected different tool kind to block (not auto-resolved)"
+    );
+
+    // Clean up the pending request so the test doesn't leak.
+    let pending = m.get_pending();
+    if let Some(p) = pending.first() {
+        let _ = m.respond(&p.id, D::Deny).await;
+    }
+}

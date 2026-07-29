@@ -767,6 +767,9 @@ export function ChatPanel({
         }
         // ToolCompleted replaces ToolStarted so the tool card transitions from
         // running to complete in place (same pattern as ShellCommand above).
+        // ToolCompleted doesn't carry `command`/`tool`/`target` (those are on
+        // ToolStarted), so preserve them from the Started event to keep the
+        // completed card's args/label intact.
         if (event.type === 'ToolCompleted') {
           const last = acc[acc.length - 1]
           if (
@@ -777,8 +780,11 @@ export function ChatPanel({
           ) {
             acc[acc.length - 1] = {
               ...event,
-              // Preserve the toolCallId from Started if Completed lacks one.
               toolCallId: event.toolCallId ?? last.toolCallId,
+              command: event.command ?? last.command,
+              tool: event.tool ?? last.tool,
+              target: event.target ?? last.target,
+              toolKind: event.toolKind ?? last.toolKind,
             }
             return acc
           }

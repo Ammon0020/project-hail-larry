@@ -228,6 +228,8 @@ function ToolFallbackContent({
   );
 }
 
+const MAX_TEXT_LENGTH = 2000;
+
 function ToolFallbackArgs({
   argsText,
   className,
@@ -237,6 +239,10 @@ function ToolFallbackArgs({
 }) {
   if (!argsText) return null;
 
+  const displayText = argsText.length > MAX_TEXT_LENGTH
+    ? argsText.slice(0, MAX_TEXT_LENGTH) + `\n\n... (truncated ${argsText.length - MAX_TEXT_LENGTH} more characters)`
+    : argsText;
+
   return (
     <div
       data-slot="tool-fallback-args"
@@ -244,7 +250,7 @@ function ToolFallbackArgs({
       {...props}
     >
       <pre className="aui-tool-fallback-args-value bg-muted/50 text-foreground/90 rounded-md p-2.5 text-xs whitespace-pre-wrap">
-        {argsText}
+        {displayText}
       </pre>
     </div>
   );
@@ -259,6 +265,11 @@ function ToolFallbackResult({
 }) {
   if (result === undefined) return null;
 
+  const resultText = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+  const displayText = resultText.length > MAX_TEXT_LENGTH
+    ? resultText.slice(0, MAX_TEXT_LENGTH) + `\n\n... (truncated ${resultText.length - MAX_TEXT_LENGTH} more characters)`
+    : resultText;
+
   return (
     <div
       data-slot="tool-fallback-result"
@@ -269,7 +280,7 @@ function ToolFallbackResult({
         Result:
       </p>
       <pre className="aui-tool-fallback-result-content bg-muted/50 text-foreground/90 mt-1 rounded-md p-2.5 text-xs whitespace-pre-wrap">
-        {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
+        {displayText}
       </pre>
     </div>
   );
@@ -324,12 +335,20 @@ const APPROVAL_OPTION_DEFAULT_LABELS: Record<string, string> = {
   // pair. We extend the kit's allowlist here (in our vendored copy) so it
   // isn't silently dropped by the `Object.hasOwn` filter below.
   "allow-session": "Allow for session",
+  // Tool-kind-scoped allow: "always allow this tool type" (e.g. all move
+  // operations, regardless of target). Client-only — synthesized by the ACP
+  // handler for a conservative allowlist (move/edit/read/search, never
+  // execute). See PermissionDecision::AllowToolKind.
+  "allow-tool-kind": "Always allow this tool type",
   "reject-once": "Deny",
   "reject-always": "Always deny",
 };
 
 const isAllowKind = (kind: string) =>
-  kind === "allow-once" || kind === "allow-always" || kind === "allow-session";
+  kind === "allow-once" ||
+  kind === "allow-always" ||
+  kind === "allow-session" ||
+  kind === "allow-tool-kind";
 
 const approvalOptionLabel = (option: ToolApprovalOption) =>
   option.label ??

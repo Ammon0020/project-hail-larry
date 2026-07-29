@@ -657,6 +657,15 @@ pub enum PermissionDecision {
     /// Go counterpart: `permissions.PermissionRejectAlways` (`"reject_always"`).
     #[serde(rename = "reject_always")]
     RejectAlways,
+    /// Durable allow scoped by tool kind (e.g. all `move` operations, regardless
+    /// of target). This is a client-only decision — no ACP `PermissionOptionKind`
+    /// maps to it; the ACP handler synthesizes it for a conservative allowlist of
+    /// tool kinds (`move`, `edit`, `read`, `search` — never `execute`). When the
+    /// user picks this option, the backend records the policy AND responds to the
+    /// ACP agent with `AllowAlways` (the broadest ACP allow) so the agent
+    /// proceeds.
+    #[serde(rename = "allow_tool_kind")]
+    AllowToolKind,
 }
 
 impl PermissionDecision {
@@ -669,6 +678,7 @@ impl PermissionDecision {
             Self::AllowAlways => "allow_always",
             Self::Deny => "deny",
             Self::RejectAlways => "reject_always",
+            Self::AllowToolKind => "allow_tool_kind",
         }
     }
 }

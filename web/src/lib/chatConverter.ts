@@ -378,6 +378,90 @@ function systemRowMessage(
 }
 
 /**
+ * Backend decision kinds that persist a grant beyond the immediate tool call.
+ * Only these get a confirm step + `grants` preview in the ToolFallback UI,
+ * because clicking them writes a row the user can't see otherwise. One-shot
+ * kinds (`allow_once`, `deny`) resolve and forget, so they need no preview.
+ */
+const DURABLE_DECISION_KINDS = new Set([
+  'allow_session',
+  'allow_always',
+  'reject_always',
+  'allow_tool_kind',
+])
+
+/**
+ * Maps an ACP `PermissionOptionKind` string (as carried in
+ * `optionDetails[].kind`) to the backend `PermissionDecision` value that
+ * `POST /api/permissions/:id/respond` expects. ACP `reject_once` maps to
+ * backend `deny` — the strings differ, so this table is required.
+ * See `src/acp/core/handlers/permission.rs::permission_decision`.
+ */
+const ACP_KIND_TO_DECISION: Record<string, string> = {
+  allow_once: 'allow_once',
+  allow_always: 'allow_always',
+  reject_once: 'deny',
+  reject_always: 'reject_always',
+}
+
+/**
+ * Maps a backend `PermissionDecision` value to the kebab-case `kind` string
+ * that the vendored `ToolFallback` uses for label lookup via
+ * `APPROVAL_OPTION_DEFAULT_LABELS`. Backend `deny` maps to `reject-once`
+ * (the one-shot refusal label), not `deny` — the label map has no `deny` key.
+ */
+const DECISION_TO_TOOLFALLBACK_KIND: Record<string, string> = {
+  allow_once: 'allow-once',
+  allow_session: 'allow-session',
+  allow_always: 'allow-always',
+  deny: 'reject-once',
+  reject_always: 'reject-always',
+  allow_tool_kind: 'allow-tool-kind',
+}
+
+/**
+ * Builds a human-readable description of exactly what a durable permission
+ * decision would persist, shown in the ToolFallback confirm step before the
+ * user commits. Format mirrors the grant shape the backend stores
+ * (`PermissionDecision` + `PendingPermission` fields):
+ *   - File-oriented (target set):  `edit_file` on `src/main.rs` — this session only
+ *   - Shell-oriented (command set): `execute`: `npm test` — forever, all sessions
+ *   - Fallback (tool only):         `tool_name` — forever, all sessions
+ *
+ * The scope suffix is derived from the decision kind: `allow_always` /
+ * `reject_always` persist across sessions ("forever, all sessions"), while
+ * `allow_session` is cleared when the session closes ("this session only").
+ */
+function grantDescriptionFor(
+  pending: PendingPermission,
+  decision: string,
+): string {
+  // `allow_tool_kind` ignores target/command — the grant covers ALL operations
+  // of this tool type, not just this one. The description must NOT include the
+  // specific target/command (it would be misleading to name one file when the
+  // grant applies to every file).
+  if (decision === 'allow_tool_kind') {
+    return `\`${pending.tool}\` (any target) — forever, all sessions`
+  }
+
+  const scope =
+    decision === 'allow_session' ? 'this session only' : 'forever, all sessions'
+
+  if (pending.target) {
+    // File-oriented permission: target is a workspace-relative path.
+    return `\`${pending.tool}\` on \`${pending.target}\` — ${scope}`
+  }
+  if (pending.command) {
+    // Shell-oriented permission: command is the literal argv the agent wants to run.
+    return `\`${pending.tool}\`: \`${pending.command}\` — ${scope}`
+  }
+  // Fallback when neither target nor command is present (rare; e.g. a generic
+  // tool grant with no path/argv scope). Still names the tool so the user has
+  // *something* concrete to read before committing.
+  return `\`${pending.tool}\` — ${scope}`
+}
+
+/**
  * Builds the ToolFallback-facing option list for a pending permission.
  *
  * The backend only populates `optionDetails` when the ACP agent supplied
@@ -396,21 +480,58 @@ function systemRowMessage(
  * permission.rs` re-derives the matching ACP option by kind, not by that id.
  * `AssistantThread` forwards `respondToApproval`'s `optionId` as `decision`
  * verbatim, so this must already be a valid `PermissionDecision` value.
+ *
+ * Durable decisions (`allow_session`, `allow_always`, `reject_always`) also
+ * carry `confirm: true` and a `grants: [string]` array. The vendored
+ * ToolFallback renders a confirm step listing each grant string before
+ * resolving the option, so the user can see exactly what will be persisted
+ * (tool + scope) before clicking "Confirm". One-shot kinds (`allow_once`,
+ * `deny`) resolve immediately and persist nothing, so they omit both fields.
  */
 function approvalOptionsFor(
   pending: PendingPermission | undefined,
-): { id: string; label?: string; kind: string }[] | undefined {
-  if (pending?.optionDetails && pending.optionDetails.length > 0) {
-    return pending.optionDetails.map((o) => ({
-      id: o.kind,
-      label: o.name,
-      kind: o.kind.replace(/_/g, '-'),
-    }))
-  }
-  return pending?.options?.map((decision) => ({
-    id: decision,
-    kind: decision.replace(/_/g, '-'),
-  }))
+): { id: string; label?: string; kind: string; confirm?: boolean; grants?: string[] }[] | undefined {
+  if (!pending) return undefined
+
+  // Build a unified list of { decision, label } pairs. When the ACP agent
+  // supplied option details, map each ACP kind to the backend decision
+  // (reject_once → deny). Otherwise fall back to the always-set `options`
+  // array of raw decision ids and leave labels unset so ToolFallback's
+  // default label map supplies human-readable text.
+  const details = pending.optionDetails?.length
+    ? pending.optionDetails.map((o) => ({
+        decision: ACP_KIND_TO_DECISION[o.kind] ?? o.kind,
+        label: o.name,
+      }))
+    : pending.options?.map((decision) => ({
+        decision,
+        label: undefined as string | undefined,
+      }))
+
+  if (!details?.length) return undefined
+
+  return details.map(({ decision, label }) => {
+    const tfKind = DECISION_TO_TOOLFALLBACK_KIND[decision] ?? decision.replace(/_/g, '-')
+    const durable = DURABLE_DECISION_KINDS.has(decision)
+    // For durable decisions, attach a confirm step + grant preview so the
+    // user sees exactly what will be persisted before clicking "Confirm".
+    // One-shot kinds resolve immediately and persist nothing, so they omit
+    // both fields and skip the confirm step in the vendored ToolFallback.
+    if (!durable) {
+      return {
+        id: decision,
+        ...(label !== undefined && { label }),
+        kind: tfKind,
+      }
+    }
+    return {
+      id: decision,
+      ...(label !== undefined && { label }),
+      kind: tfKind,
+      confirm: true,
+      grants: [grantDescriptionFor(pending, decision)],
+    }
+  })
 }
 
 interface ToolCallOptions {
@@ -424,7 +545,7 @@ interface ToolCallOptions {
   approval?: {
     id: string
     approved?: boolean
-    options?: { id: string; label?: string; kind: string }[]
+    options?: { id: string; label?: string; kind: string; confirm?: boolean; grants?: string[] }[]
   }
 }
 
@@ -463,7 +584,7 @@ function toolCallMessage(
     toolName,
     args,
     argsText: ev.command ?? '',
-    result: opts.result,
+    result: opts.result ?? opts.output,
     isError: opts.failed,
     approval: opts.approval,
   }
