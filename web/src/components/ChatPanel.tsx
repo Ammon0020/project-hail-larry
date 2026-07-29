@@ -12,12 +12,11 @@ import {
 import { isSessionNotFound } from '@/lib/errors'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatComposer } from './ChatComposer'
-import { ConversationView } from './ConversationView'
+import { AssistantThread } from './chat/AssistantThread'
 import { ChatHistory } from './ChatHistory'
 import { SwitchAgentDialog } from './SwitchAgentDialog'
 import { WorkspaceBar } from './chat/WorkspaceBar'
 import { Banner } from './ui/Banner'
-import { useAutoscroll } from '@/hooks/useAutoscroll'
 import { useChatTabs } from '@/hooks/useChatTabs'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { useMcpServers } from '@/hooks/useMcpServers'
@@ -354,8 +353,6 @@ export function ChatPanel({
     setShowNewChatTab(true)
   }
 
-  // Scroll container ref for the smart-autoscroll hook (Feature 1).
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const { openTabIds, openTab, handleCloseTab } = useChatTabs({
     sessions,
     activeSessionId,
@@ -774,17 +771,6 @@ export function ChatPanel({
     [events],
   )
 
-  // Smart autoscroll — follows new content only when the user is already
-  // near the bottom; otherwise stays put and shows a jump-to-bottom button.
-  // `pendingPermissions` is in the deps because it arrives via a separate
-  // async REST call (loadPendingPermissions) after the PermissionRequested
-  // event — when it lands the permission card grows to show action buttons,
-  // and we need to scroll again so the card isn't cut off at the bottom.
-  const { isAtBottom, scrollToBottom } = useAutoscroll(
-    scrollContainerRef,
-    [mergedEvents, error, pendingPermissions],
-  )
-
   const handleLoadOlder = useCallback(async () => {
     if (!activeSessionId || loadingOlderEvents) return
     setLoadingOlderEvents(true)
@@ -902,15 +888,13 @@ export function ChatPanel({
         </Banner>
       )}
 
-      <ConversationView
+      <AssistantThread
         events={mergedEvents}
         pendingPermissions={pendingPermissions}
         permissionResolution={permissionResolution}
         onPermissionResponse={onPermissionResponse}
+        isRunning={agentRunning}
         error={error}
-        scrollContainerRef={scrollContainerRef}
-        isAtBottom={isAtBottom}
-        onJumpToBottom={scrollToBottom}
         hasOlderEvents={hasOlderEvents}
         loadingOlderEvents={loadingOlderEvents}
         onLoadOlder={handleLoadOlder}

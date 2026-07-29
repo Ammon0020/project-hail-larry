@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "tw-shimmer";
 @plugin "@tailwindcss/typography";
 
 /*
@@ -112,6 +113,22 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  @keyframes collapsible-down {
+  from {
+    height: 0;
+    }
+  to {
+    height: var(--radix-collapsible-content-height, var(--collapsible-panel-height, auto));
+    }
+  }
+  @keyframes collapsible-up {
+  from {
+    height: var(--radix-collapsible-content-height, var(--collapsible-panel-height, auto));
+    }
+  to {
+    height: 0;
+    }
+  }
 }
 
 @layer base {
@@ -230,3 +247,11 @@
 .prose-docx a { color: #2563eb; text-decoration: underline; }
 .prose-docx strong { font-weight: 700; }
 .prose-docx em { font-style: italic; }
+/*
+ ---break---
+ */
+@custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
+/*
+ ---break---
+ */
+@custom-variant data-closed (&:where([data-state="closed"], [data-closed]:not([data-closed="false"])));
