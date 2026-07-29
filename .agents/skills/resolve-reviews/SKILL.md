@@ -1,23 +1,57 @@
 ---
 name: resolve-reviews
-description: Triage and resolve a folder of review finding files — validate each is a real and worthwhile issue, plan, implement, verify, then delete or mark wontfix/deferred. Dispatches parallel non-overlapping subagents.
-argument-hint: "[reviews-folder]  (default: most recent docs/reviews/<date>/)"
+description: Subagent-driven review fixer — processes action item finding files in batches, delegates fixes to subagents, and validates via parent-level tests, linting, and formatting before suggesting commits.
+argument-hint: "[dir] (default: docs/reviews/<YYYY-MM-DD> or latest review dir)"
+allowed-tools:
+  - read
+  - grep
+  - glob
+  - exec
+  - write
+  - edit
+  - run_subagent
+  - read_subagent
+  - todo_write
 ---
 
-# Resolve Review Backlog
+# Fix Reviews
 
-Read review finding files (e.g. `docs/reviews/<date>/`), check if they're valid, and fix them.
+Batch-fix review action items using parallel `small` subagents, validate changes centrally at the parent level, and recommend git commit messages per resolved batch.
 
-## File Naming & Status
-Files are named `<slug>,<difficulty>,<urgency>.md`. They may have a status suffix:
-- **Pending**: `<slug>,<diff>,<urg>.md` (Work on these)
-- **in-progress**: `...,in-progress.md`
-- **wontfix**: `...,wontfix.md` (Valid outcome if not worth fixing. Append `## Resolution` and reason, rename, do NOT delete).
-- **deferred**: `...,deferred.md` (Log in `docs/known-issues.md`, rename, do NOT delete).
-- **done**: Delete these when fixed and verified.
+## Workflow
 
-## Execution Rules
-1. **Parallel execution**: Run up to 4 subagents concurrently for simple fixes. 
-2. **Strict File-Disjointness**: Never let two concurrent subagents edit the same file.
-3. **Serial execution**: Cross-cutting or `hard` difficulty items MUST run one at a time.
-4. **Verification**: After all items are resolved, run project-wide verification (`make check` for the full suite, or `make lint` for a fast style/correctness pass).
+### 1. Collect & Group Action Items
+1. Locate finding files in `docs/reviews/<YYYY-MM-DD>/` (or passed path).
+2. Read files and group related findings into logical batches (max 3 concurrent fixes per batch). Focus on tightly coupled files or individual `<slug>,<difficulty>,<urgency>.md` units meant to be fixed together.
+
+### 2. Dispatch Fix Subagents (Max 3 Concurrent)
+Dispatch up to **3 `small` subagents in parallel** (`is_background: true`).
+
+**Instructions to include in every subagent prompt:**
+1. Read the assigned finding file(s) and target code files.
+2. Apply the required code modifications using `edit` or `write`.
+3. Do NOT run tests, linters, or git operations—leave validation to the parent.
+4. Report completed changes and any unexpected edge cases encountered.
+
+### 3. Validate Changes (Parent Level)
+Once a batch finishes, run project checks at the parent level:
+```sh
+# Run relevant formatters, linters, and test suites
+npm run format / cargo fmt / ruff format
+npm run lint / cargo clippy / ruff check
+npm test / cargo test / pytest
+```
+- **If checks fail**: Dispatch a targeted subagent or fix directly using check errors.
+- **If checks pass**: Mark the corresponding finding files with the `,done` suffix (or move/delete according to your workflow).
+
+### 4. Recommend Commit Message
+After each successfully validated batch, provide a clean, descriptive commit message recommendation:
+
+> **Suggested Commit:**
+> `fix(scope): brief summary of fixed action items`
+>
+> - Resolved `<slug-1>`
+> - Resolved `<slug-2>`
+
+### 5. Repeat
+Proceed to the next batch until all targeted finding files are resolved.

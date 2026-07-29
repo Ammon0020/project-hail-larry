@@ -1,6 +1,6 @@
 ---
 name: comprehensive-review
-description: Parallel subagent code review — splits the surface area into groups, dispatches 4 small subagents per batch, each writes one markdown file per action item to docs/reviews/<date>/
+description: Parallel subagent code review — splits the surface area into groups, dispatches up to 3 subagents per batch, each writes markdown files per action item to docs/reviews/<date>/
 argument-hint: "[base-ref]  (default: HEAD — reviews all uncommitted changes)"
 allowed-tools:
   - read
@@ -18,82 +18,41 @@ allowed-tools:
 
 # Comprehensive Review
 
-Review a code surface area by splitting it across parallel `small` subagents. Each subagent walks its files one at a time and writes one markdown file per action item.
-
-## Inputs
-
-- **Base ref** (optional): ref to diff against. Defaults to `HEAD` (all uncommitted: staged + unstaged + untracked).
+Review a code surface area using parallel `small` subagents (max 3 concurrent). Subagents analyze assigned files sequentially and write grouped action items to finding files.
 
 ## Workflow
 
-### 1. Decide the surface area
+### 1. Identify Surface Area & Group Files
+Run `git status` and `git diff --stat` (against `<base-ref>` if provided) to map changed files. Split files into logical groups for subagents.
 
-```sh
-git status --short
-git diff --stat          # unstaged
-git diff --cached --stat # staged
-git diff --stat <base>   # if a base ref is given
-git status --porcelain | grep '^??'  # untracked
-```
+### 2. Dispatch Subagents (Max 3 Concurrent)
+Dispatch up to **3 `small` subagents in parallel** (`is_background: true`). 
 
-If nothing changed, say so and stop. Note which files are staged vs unstaged vs untracked — subagents need to know which `git diff` variant to run.
+**Instructions to include in every subagent prompt:**
+- Do NOT run build or test commands. Use only reading and diffing tools.
+- Follow this exact sequence for assigned files:
+  1. Read the file.
+  2. Summarize its architecture.
+  3. Summarize action items.
+  4. Write each action item into `docs/reviews/<YYYY-MM-DD>/<slug>,<difficulty>,<urgency>.md`. Combine action items meant to be fixed in the same go into the same file.
+  5. Repeat steps 1–4 for the next file.
+  6. Summarize connections between all files reviewed so far.
+  7. Summarize new action items derived from cross-file interactions (written using the same file naming format).
+  8. Repeat the entire process until all assigned files are completed.
 
-### 2. Create a todo list to iterate through
+### 3. Monitor & Throttle
+- Collect subagent outputs.
+- **Stop dispatching new subagents** if too many findings pile up—especially large-scale refactors—so they can be addressed first.
+- If findings are manageable, dispatch the next batch (max 3 at a time) until the entire review is complete.
 
-Use `todo_write` with one item per batch of 4 subagent reviews, plus an item for the final summary. Group changed files into ~4 logical review units per batch (by package, feature area, or file type).
+## Finding File Format
 
-### 3. Dispatch 4 subagents per batch
+**Filename**: `<slug>,<difficulty>,<urgency>.md` (e.g., `refactor-session-auth,medium,high.md`)
 
-Dispatch **4 `small` subagents in parallel** per batch (all 4 `run_subagent` calls in one message, `is_background: true`).
-
-**Required subagent instructions** (include in every prompt):
-- `IMPORTANT: Do NOT run build/test commands. Only use read, grep, and git diff. Keep all commands short and synchronous.`
-- State the exact files to review and which `git diff` variant to run.
-- Tell subagents to return "no findings" explicitly if clean.
-
-**Per-subagent process** (spell this out in the prompt):
-1. Create a todo list of all items to explore in the assigned files.
-2. Read **one** file. Describe its architecture. Call out:
-   - Bugs (race conditions, leaks, error-handling gaps, security, cross-platform)
-   - Optimization opportunities
-   - Overly complex or verbose code (suggest refactors)
-3. Create **one markdown review file per action item** under `docs/reviews/<YYYY-MM-DD>/`, named `<slug>,<difficulty>,<urgency>.md`.
-4. Read the next file. Describe how it interacts with the previous file(s) if it does. Repeat until all assigned files are reviewed.
-
-**Combining items**: if two action items can be fixed in one change, put them in the same file.
-
-**Finding file format**:
-```
+```markdown
 - name: short descriptive title
 - file: absolute path
-- lines: line range (e.g. "45-60")
-- description: what the issue is and why it matters. Include code references as needed
-- verification: how you confirmed this is real (e.g. "read line X, the goroutine at Y has no cancellation path")
+- lines: line range
+- description: issue details and code references
+- verification: how this was confirmed
 ```
-
-### 4. Collect, then dispatch the next batch
-
-After a batch, `read_subagent` with `block: true` for all 4. Collect findings, then dispatch the next 4. Kill any subagent stuck looping on background commands and re-dispatch with stronger instructions.
-
-### 5. Stop if findings stack up too high
-
-If findings pile up, stop and note where you are (which batches are done, which remain). Suggested refactors can fix many findings at once — we may want to fix findings then pick up again.
-
-### 7. Final summary to the user
-
-- Total findings, breakdown by urgency
-- The 6 highest-urgency findings called out by name
-- Reference to the README index
-
-## File naming
-
-Finding files: `<slug>,<difficulty>,<urgency>.md` (kebab-case slug derived from the title).
-Example: `uploads-sessionid-path-traversal,medium,high.md`
-
-Status suffixes (managed by `resolve-reviews`, not this skill): `,in-progress`, `,wontfix`, `,deferred`.
-
-## Pacing rules
-
-- **4 subagents max concurrent** — wait for a batch to finish before dispatching the next.
-- **Write files incrementally** — subagents write their own finding files as they go.
-- **Mark todos complete immediately** as each batch finishes.
