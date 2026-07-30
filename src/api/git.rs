@@ -25,7 +25,7 @@ use serde_json::json;
 use std::path::PathBuf;
 use tracing::{debug, error};
 
-use crate::git::{self, detect, DiffResult, GitError, GitRepoInfo, StatusResult};
+use crate::git::{self, detect, DiffResult, GitError, GitRepoInfo, LogResult, StatusResult};
 use crate::interfaces::WorkspaceManager;
 
 use super::{app_error, decode_json_body, required_query, ApiResponseError, AppState};
@@ -66,6 +66,17 @@ pub async fn get_git_state(
 pub(crate) struct DiffQuery {
     path: Option<String>,
     staged: Option<bool>,
+}
+
+/// `GET /api/workspaces/{id}/git/log` query params (S-GIT-LOG-API).
+#[derive(Deserialize)]
+pub(crate) struct LogQuery {
+    /// Max commits to return (clamped to 200 by the backend). Defaults to 100.
+    #[serde(default)]
+    limit: Option<u32>,
+    /// Number of commits to skip (for pagination). Defaults to 0.
+    #[serde(default)]
+    offset: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +131,23 @@ pub async fn get_git_diff(
     let staged = query.staged.unwrap_or(false);
     let root = workspace_root(&state, &id).await?;
     let result = run_git_blocking("diff", move || git::diff(&root, &path, staged)).await?;
+    Ok(Json(result))
+}
+
+/// `GET /api/workspaces/{id}/git/log?limit=...&offset=...` (S-GIT-LOG-API).
+///
+/// Returns a paginated commit list with parent refs, branch labels, and the
+/// HEAD marker. Defaults: `limit=100`, `offset=0`. `limit` is clamped to 200
+/// by the backend. An unborn repo returns an empty list, not an error.
+pub async fn get_git_log(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<LogQuery>,
+) -> Result<Json<LogResult>, ApiResponseError> {
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
+    let root = workspace_root(&state, &id).await?;
+    let result = run_git_blocking("log", move || git::log(&root, limit, offset)).await?;
     Ok(Json(result))
 }
 

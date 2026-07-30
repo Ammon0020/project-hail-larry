@@ -277,6 +277,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/git", get(git::get_git_state))
         .route("/api/workspaces/{id}/git/status", get(git::get_git_status))
         .route("/api/workspaces/{id}/git/diff", get(git::get_git_diff))
+        .route("/api/workspaces/{id}/git/log", get(git::get_git_log))
         .route("/api/workspaces/{id}/git/stage", post(git::stage))
         .route("/api/workspaces/{id}/git/unstage", post(git::unstage))
         .route("/api/workspaces/{id}/git/commit", post(git::commit))

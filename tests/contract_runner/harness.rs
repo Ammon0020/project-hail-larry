@@ -241,7 +241,23 @@ fn find_repo_root() -> PathBuf {
 }
 
 /// Build the Rust binary (`cargo build --bin local_agent`).
+///
+/// Pre-checks `web/dist/index.html` before invoking cargo: `build.rs` requires
+/// it (rust-embed) and exits with a generic "missing" error that is confusing
+/// when triggered by a parallel `cargo build` race. Failing here with a clear
+/// message points the user at `make build-frontend` (or `make test-contract`,
+/// which depends on it).
 async fn build_rust_binary(repo_root: &Path) -> PathBuf {
+    let dist_index = repo_root.join("web").join("dist").join("index.html");
+    if !dist_index.is_file() {
+        panic!(
+            "web/dist/index.html is missing — the Rust binary embeds the \
+             frontend via rust-embed. Build it first:\n  make build-frontend \
+             (or `cd web && npm run build`),\nor run the contract suite via \
+             `make test-contract` which depends on build-frontend."
+        );
+    }
+
     eprintln!("[contract] building Rust binary: cargo build --bin local_agent");
 
     let output = tokio::process::Command::new("cargo")

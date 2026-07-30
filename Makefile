@@ -20,7 +20,11 @@ test:
 
 # Black-box contract suite against the Rust backend.
 # The `contract` feature gate keeps this out of `cargo test --all-targets`.
-test-contract:
+# Depends on `build-frontend`: the contract harness invokes
+# `cargo build --bin local_agent`, whose `build.rs` requires `web/dist/index.html`
+# (rust-embed). Without this dependency, parallel `cargo build` invocations can
+# race on a missing/stale `web/dist` and fail with a confusing build error.
+test-contract: build-frontend
 	CONTRACT_BACKEND=rust cargo test --test contract_runner --features contract -- --nocapture
 
 # Run cargo clippy (Rust). Deny levels come from [lints] in Cargo.toml;

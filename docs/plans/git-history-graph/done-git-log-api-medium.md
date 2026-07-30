@@ -1,7 +1,16 @@
 # S-GIT-LOG-API — Backend git log endpoint
 
-> **Status:** Pending. **Difficulty:** medium. **Epic:** `pending-git-history-graph-large.md`.
+> **Status:** Done (2026-07-29). **Difficulty:** medium. **Epic:** `pending-git-history-graph-large.md`.
 > **Depends on:** `done-git-action-bar-large.md` (git API + `gix` infrastructure).
+>
+> *Done 2026-07-29 — `GET /api/workspaces/{id}/git/log?limit=&offset=` implemented
+> in `src/git/mod.rs` (`log()`, `LogResult`, `LogCommit`, `CommitAuthor`) +
+> `src/api/git.rs` (`get_git_log` handler) + route in `src/api/mod.rs`. Uses
+> `gix::Repository::rev_walk()` for the commit graph, `references().local_branches()`
+> for branch labels, and `chrono` for ISO 8601 UTC author timestamps. 7 new unit
+> tests cover unborn repo, plain dir, HEAD commit, pagination, limit cap, branch
+> labels, and parent oids. No new `gix` features needed (existing `basic` +
+> `comfort` suffice). `make check` passes.*
 
 ## Goal
 
