@@ -273,6 +273,15 @@ export function useBackend() {
       try {
         const event = JSON.parse(msg.data) as AppEvent
         commitEvents((prev) => {
+          // Dedupe by event id: the backend may replay events on reconnect,
+          // and loadEvents() may have already fetched the same event via REST.
+          // Without this, duplicate ToolStarted events with the same toolCallId
+          // survive mergedEvents (which only folds ToolCompleted into ToolStarted,
+          // not duplicate ToolStarted), producing duplicate toolCallId keys that
+          // crash assistant-ui's useResources reconciler ("Duplicate key").
+          if (event.id !== undefined && prev.some((e) => e.id === event.id)) {
+            return prev
+          }
           const next = prev.length >= MAX_EVENTS ? prev.slice(prev.length - MAX_EVENTS + 1) : prev.slice()
           next.push(event)
           return next

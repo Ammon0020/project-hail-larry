@@ -141,6 +141,11 @@ export function eventsToMessages(
   let idCounter = 0
   const nextId = (event: AppEvent) =>
     `evt-${event.id ?? 'x'}-${idCounter++}`
+  // Tracks toolCallIds already emitted so duplicates (from event replay or
+  // unmerged ToolStarted/Completed pairs) get a unique suffix. Without this,
+  // assistant-ui's useResources throws "Duplicate key toolCallId-…" and crashes
+  // the chat panel.
+  const seenToolCallIds = new Set<string>()
 
   for (const ev of events) {
     switch (ev.type) {
@@ -261,7 +266,7 @@ export function eventsToMessages(
       }
 
       case 'ToolStarted': {
-        pushOrMergeToolCallMessage(out, ev, nextId, { running: true })
+        pushOrMergeToolCallMessage(out, ev, nextId, { running: true }, seenToolCallIds)
         break
       }
 
@@ -271,7 +276,7 @@ export function eventsToMessages(
           running: false,
           failed,
           result: ev.content ?? ev.summary ?? '',
-        })
+        }, seenToolCallIds)
         break
       }
 
@@ -280,7 +285,7 @@ export function eventsToMessages(
           running: true,
           isShell: true,
           output: ev.content,
-        })
+        }, seenToolCallIds)
         break
       }
 
@@ -292,7 +297,7 @@ export function eventsToMessages(
           isShell: true,
           output: ev.content || ev.summary,
           exitCode: ev.exitCode,
-        })
+        }, seenToolCallIds)
         break
       }
 
@@ -308,7 +313,7 @@ export function eventsToMessages(
             approved: resolution === 'granted' ? true : resolution === 'denied' ? false : undefined,
             options: approvalOptionsFor(pending),
           },
-        })
+        }, seenToolCallIds)
         break
       }
 
@@ -546,6 +551,7 @@ function toolCallMessage(
   ev: AppEvent,
   id: string,
   opts: ToolCallOptions,
+  seenToolCallIds: Set<string>,
 ): ThreadMessageLike {
   const meta: ToolCallMetadata = {
     toolKind: ev.toolKind,
@@ -555,7 +561,17 @@ function toolCallMessage(
     exitCode: opts.exitCode,
     isShell: opts.isShell,
   }
-  const toolCallId = ev.toolCallId ?? ev.requestId ?? id
+  // Ensure the toolCallId is unique across the thread. assistant-ui's
+  // useResources keys resources by toolCallId and throws "Duplicate key" on
+  // collisions. Duplicate events (WS replay, reconnect REST/WS race) or
+  // unmerged ToolStarted/Completed pairs can produce two parts with the same
+  // toolCallId; suffixing with the unique message id keeps the key unique
+  // without breaking the normal (non-duplicate) case.
+  let toolCallId = ev.toolCallId ?? ev.requestId ?? id
+  if (seenToolCallIds.has(toolCallId)) {
+    toolCallId = `${toolCallId}#${id}`
+  }
+  seenToolCallIds.add(toolCallId)
   const toolName = opts.isShell
     ? 'shell'
     : opts.isPermission
@@ -600,15 +616,23 @@ function toolCallMessage(
  * preceding assistant message if that message is already a container for tool calls.
  * This groups consecutive tool call events in a turn into a single message
  * container, reducing DOM nodes and message reconciler overhead by up to 90%.
+ *
+ * If the same `toolCallId` is already present in the target message (e.g. a
+ * `PermissionRequested` followed by `ToolStarted`/`ToolCompleted` for the same
+ * tool call), the existing part is replaced instead of appended. assistant-ui
+ * keys tool-call parts by `toolCallId`; duplicate keys in a single message throw
+ * "Duplicate key ... in useResources" and crash the thread renderer.
  */
 function pushOrMergeToolCallMessage(
   out: ThreadMessageLike[],
   ev: AppEvent,
   nextId: (ev: AppEvent) => string,
   opts: ToolCallOptions,
+  seenToolCallIds: Set<string>,
 ) {
-  const message = toolCallMessage(ev, nextId(ev), opts)
+  const message = toolCallMessage(ev, nextId(ev), opts, seenToolCallIds)
   const part = (message.content as ContentPart[])[0]
+  const partToolCallId = (part as Record<string, unknown>).toolCallId
   const last = out[out.length - 1]
 
   if (
@@ -618,15 +642,33 @@ function pushOrMergeToolCallMessage(
     last.content.length > 0 &&
     (last.content[last.content.length - 1] as Record<string, unknown>).type === 'tool-call'
   ) {
-    ;(last.content as ContentPart[]).push(part)
-    const PRECEDENCE = { 'requires-action': 2, 'running': 1, 'complete': 0 }
-    const currentScore = PRECEDENCE[(last.status?.type as keyof typeof PRECEDENCE) ?? 'complete'] ?? 0
-    const newScore = PRECEDENCE[(message.status?.type as keyof typeof PRECEDENCE) ?? 'complete'] ?? 0
+    const existingIndex = (last.content as ContentPart[]).findIndex(
+      (p) =>
+        (p as Record<string, unknown>).type === 'tool-call' &&
+        (p as Record<string, unknown>).toolCallId === partToolCallId,
+    )
 
-    if (newScore > currentScore) {
+    if (existingIndex !== -1) {
+      // Replace the existing part for this tool call so we never have two parts
+      // with the same toolCallId in one message (breaks assistant-ui's useResources
+      // keying and can crash the thread renderer).
+      ;(last.content as ContentPart[])[existingIndex] = part
       out[out.length - 1] = {
         ...last,
         status: message.status,
+        metadata: message.metadata,
+      }
+    } else {
+      ;(last.content as ContentPart[]).push(part)
+      const PRECEDENCE = { 'requires-action': 2, 'running': 1, 'complete': 0 }
+      const currentScore = PRECEDENCE[(last.status?.type as keyof typeof PRECEDENCE) ?? 'complete'] ?? 0
+      const newScore = PRECEDENCE[(message.status?.type as keyof typeof PRECEDENCE) ?? 'complete'] ?? 0
+
+      if (newScore > currentScore) {
+        out[out.length - 1] = {
+          ...last,
+          status: message.status,
+        }
       }
     }
   } else {

@@ -735,14 +735,19 @@ export function ChatPanel({
         }
         // Live shell stdout/stderr: append onto the running Started card.
         if (event.type === 'ShellOutputStreamed') {
-          const last = acc[acc.length - 1]
-          if (
-            last?.type === 'ShellCommandStarted' &&
-            (!event.toolCallId || last.toolCallId === event.toolCallId)
-          ) {
-            acc[acc.length - 1] = {
-              ...last,
-              content: (last.content || '') + (event.content || ''),
+          let startedIdx = -1
+          for (let i = acc.length - 1; i >= 0; i--) {
+            const e = acc[i]
+            if (e.type === 'ShellCommandStarted' && (!event.toolCallId || e.toolCallId === event.toolCallId)) {
+              startedIdx = i
+              break
+            }
+          }
+          if (startedIdx !== -1) {
+            const started = acc[startedIdx]
+            acc[startedIdx] = {
+              ...started,
+              content: (started.content || '') + (event.content || ''),
             }
             return acc
           }
@@ -751,16 +756,20 @@ export function ChatPanel({
         }
         // Completed replaces Started so exit code + streamed output share one card.
         if (event.type === 'ShellCommandCompleted') {
-          const last = acc[acc.length - 1]
-          if (
-            last?.type === 'ShellCommandStarted' &&
-            (!event.toolCallId ||
-              !last.toolCallId ||
-              last.toolCallId === event.toolCallId)
-          ) {
-            acc[acc.length - 1] = {
+          let startedIdx = -1
+          for (let i = acc.length - 1; i >= 0; i--) {
+            const e = acc[i]
+            if (e.type === 'ShellCommandStarted' && (!event.toolCallId || !e.toolCallId || e.toolCallId === event.toolCallId)) {
+              startedIdx = i
+              break
+            }
+          }
+          if (startedIdx !== -1) {
+            const started = acc[startedIdx]
+            acc[startedIdx] = {
               ...event,
-              content: last.content || event.content || event.summary,
+              id: started.id, // Preserve original event ID for stable React keys
+              content: started.content || event.content || event.summary,
             }
             return acc
           }
@@ -771,20 +780,24 @@ export function ChatPanel({
         // ToolStarted), so preserve them from the Started event to keep the
         // completed card's args/label intact.
         if (event.type === 'ToolCompleted') {
-          const last = acc[acc.length - 1]
-          if (
-            last?.type === 'ToolStarted' &&
-            (!event.toolCallId ||
-              !last.toolCallId ||
-              last.toolCallId === event.toolCallId)
-          ) {
-            acc[acc.length - 1] = {
+          let startedIdx = -1
+          for (let i = acc.length - 1; i >= 0; i--) {
+            const e = acc[i]
+            if (e.type === 'ToolStarted' && (!event.toolCallId || !e.toolCallId || e.toolCallId === event.toolCallId)) {
+              startedIdx = i
+              break
+            }
+          }
+          if (startedIdx !== -1) {
+            const started = acc[startedIdx]
+            acc[startedIdx] = {
               ...event,
-              toolCallId: event.toolCallId ?? last.toolCallId,
-              command: event.command ?? last.command,
-              tool: event.tool ?? last.tool,
-              target: event.target ?? last.target,
-              toolKind: event.toolKind ?? last.toolKind,
+              id: started.id, // Preserve original event ID for stable React keys
+              toolCallId: event.toolCallId ?? started.toolCallId,
+              command: event.command ?? started.command,
+              tool: event.tool ?? started.tool,
+              target: event.target ?? started.target,
+              toolKind: event.toolKind ?? started.toolKind,
             }
             return acc
           }
