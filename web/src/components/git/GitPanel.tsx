@@ -12,6 +12,7 @@ import {
   Minus,
   Plus,
   RefreshCw,
+  RotateCcw,
   Send,
   MoreHorizontal,
 } from 'lucide-react'
@@ -80,6 +81,7 @@ function GitFileRow({
   onUnstage,
   onIgnore,
   onFileSelect,
+  onDiscard,
   busy,
   menuOpen,
   onOpenMenu,
@@ -91,6 +93,7 @@ function GitFileRow({
   onUnstage: (path: string) => void
   onIgnore: (path: string) => void
   onFileSelect?: (path: string) => void
+  onDiscard?: (file: FileStatus) => void
   busy: boolean
   menuOpen: boolean
   onOpenMenu: () => void
@@ -125,10 +128,13 @@ function GitFileRow({
   const row = (
     <div
       className={cn(
-        'group flex items-center gap-1.5 px-3 h-7 text-xs hover:bg-accent',
+        'group flex items-center gap-1.5 px-3 h-7 text-xs hover:bg-accent cursor-pointer select-none',
         menuOpen && 'ring-1 ring-primary outline-none',
       )}
-      title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
+      title={`${file.oldPath ? `${file.oldPath} → ${file.path}` : file.path} • ${file.status}`}
+      onClick={() => {
+        if (!isFolder) onOpenDiff(file.path, file.staged)
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -136,11 +142,7 @@ function GitFileRow({
       }}
       {...touchHandlers}
     >
-      <button
-        type="button"
-        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-        onClick={() => !isFolder && onOpenDiff(file.path, file.staged)}
-      >
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
         {isFolder
           ? <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           : <FileIcon name={newFilename} className="h-3.5 w-3.5 shrink-0" />}
@@ -148,21 +150,47 @@ function GitFileRow({
           <span className="shrink-0 truncate max-w-full text-xs">{displayName}</span>
           {displayDirname && <span className="min-w-0 truncate text-[10px] text-muted-foreground">{displayDirname}</span>}
         </div>
-      </button>
-      <div className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex">
+      </div>
+      <div
+        className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
         {!isFolder && onFileSelect && (
           <button
             type="button"
             disabled={busy}
             onClick={(e) => {
               e.stopPropagation()
+              e.preventDefault()
               onFileSelect(file.path)
             }}
-            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-primary hover:text-primary-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
             title="Open File"
             aria-label={`Open ${file.path}`}
           >
             <File className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {!file.staged && onDiscard && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={(e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              onDiscard(file)
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            title="Discard Changes"
+            aria-label={`Discard changes in ${file.path}`}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
           </button>
         )}
         <button
@@ -170,20 +198,23 @@ function GitFileRow({
           disabled={busy}
           onClick={(e) => {
             e.stopPropagation()
+            e.preventDefault()
             if (file.staged) {
               onUnstage(file.path)
             } else {
               onStage(file.path)
             }
           }}
-          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-primary hover:text-primary-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           aria-label={stageLabel}
           title={stageLabel}
         >
           {file.staged ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
         </button>
       </div>
-      <span className={cn('shrink-0 font-semibold text-xs w-3 text-center ml-1', style.className)}>{style.label}</span>
+      <span className={cn('shrink-0 font-semibold text-xs ml-1', style.className)}>{style.label}</span>
     </div>
   )
 
@@ -253,6 +284,7 @@ function ChangeSection({
   onOpenDiff,
   onIgnore,
   onFileSelect,
+  onDiscard,
   busy,
   scrollRef,
   menuPath,
@@ -267,6 +299,7 @@ function ChangeSection({
   onOpenDiff: (path: string, staged: boolean) => void
   onIgnore: (path: string) => void
   onFileSelect?: (path: string) => void
+  onDiscard?: (file: FileStatus) => void
   busy: boolean
   scrollRef: React.RefObject<HTMLDivElement | null>
   menuPath: string | null
@@ -330,6 +363,7 @@ function ChangeSection({
                 onUnstage={(path) => onUnstage([path])}
                 onIgnore={onIgnore}
                 onFileSelect={onFileSelect}
+                onDiscard={onDiscard}
                 busy={busy}
                 menuOpen={menuPath === file.path}
                 onOpenMenu={() => setMenuPath(file.path)}
@@ -512,7 +546,33 @@ export function GitPanel({
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto pb-2">
         <ChangeSection title="Staged Changes" files={stagedFiles} staged onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })} onFileSelect={onFileSelect} busy={busy} scrollRef={scrollRef} menuPath={menuPath} setMenuPath={setMenuPath} />
-        <ChangeSection title="Changes" files={unstagedFiles} staged={false} hint={allUntrackedHint} onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })} onFileSelect={onFileSelect} busy={busy} scrollRef={scrollRef} menuPath={menuPath} setMenuPath={setMenuPath} />
+        <ChangeSection
+          title="Changes"
+          files={unstagedFiles}
+          staged={false}
+          hint={allUntrackedHint}
+          onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })}
+          onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })}
+          onOpenDiff={onOpenDiff}
+          onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })}
+          onFileSelect={onFileSelect}
+          onDiscard={(file) => void runMutation('discard', async () => {
+            if (!workspaceId) return
+            if (file.status === 'untracked') {
+              await api.deleteFile(workspaceId, file.path)
+            } else {
+              const fileData = await api.readFile(workspaceId, file.path).catch(() => ({ revision: 0 }))
+              const diff = await api.getGitDiff(workspaceId, file.path, false)
+              if (diff && diff.base !== undefined) {
+                await api.saveFile(workspaceId, file.path, diff.base, fileData.revision)
+              }
+            }
+          })}
+          busy={busy}
+          scrollRef={scrollRef}
+          menuPath={menuPath}
+          setMenuPath={setMenuPath}
+        />
         {status && status.files.length === 0 && <div className="p-6 text-center text-xs text-muted-foreground">No changes.</div>}
       </div>
     </div>
