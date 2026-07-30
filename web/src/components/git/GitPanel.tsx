@@ -125,7 +125,7 @@ function GitFileRow({
   const row = (
     <div
       className={cn(
-        'group flex items-center gap-1.5 px-3 py-1.5 text-xs hover:bg-accent',
+        'group flex items-center gap-1.5 px-3 h-7 text-xs hover:bg-accent',
         menuOpen && 'ring-1 ring-primary outline-none',
       )}
       title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
@@ -149,7 +149,7 @@ function GitFileRow({
           {displayDirname && <span className="min-w-0 truncate text-[10px] text-muted-foreground">{displayDirname}</span>}
         </div>
       </button>
-      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+      <div className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex">
         {!isFolder && onFileSelect && (
           <button
             type="button"
