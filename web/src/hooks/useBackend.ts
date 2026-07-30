@@ -166,19 +166,40 @@ export function useBackend() {
    * session's events on demand (see MAX_EVENTS).
    */
   const commitEvents = useCallback((next: AppEvent[] | ((prev: AppEvent[]) => AppEvent[])) => {
+    // Dedupe by event id as a safety net. The WS onmessage handler and REST
+    // load* functions pre-filter duplicates for performance (avoiding needless
+    // setEvents calls / re-renders), but centralizing the check here guarantees
+    // correctness even if a caller forgets to pre-filter — duplicate ToolStarted
+    // events with the same toolCallId would otherwise crash assistant-ui's
+    // useResources reconciler ("Duplicate key"). Events without an id (mock
+    // data, merged stream events) are always kept. Uses a local Set so there
+    // are no ref mutations inside React's updater (StrictMode-safe).
+    const dedupe = (arr: AppEvent[]): AppEvent[] => {
+      const seen = new Set<number>()
+      const result: AppEvent[] = []
+      for (const e of arr) {
+        if (e.id === undefined || !seen.has(e.id)) {
+          if (e.id !== undefined) seen.add(e.id)
+          result.push(e)
+        }
+      }
+      return result
+    }
     if (typeof next === 'function') {
       // Functional path: build the new list once inside React's updater so the
       // hot WS onmessage path doesn't spread the whole event log per token.
       setEvents((prev) => {
         const built = next(prev)
         const trimmed = built.length > MAX_EVENTS ? built.slice(built.length - MAX_EVENTS) : built
-        eventsRef.current = trimmed
-        return trimmed
+        const deduped = dedupe(trimmed)
+        eventsRef.current = deduped
+        return deduped
       })
     } else {
       const trimmed = next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next
-      eventsRef.current = trimmed
-      setEvents(trimmed)
+      const deduped = dedupe(trimmed)
+      eventsRef.current = deduped
+      setEvents(deduped)
     }
   }, [])
 
