@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, getDeviceCredential, type AppEvent, type WorkspaceInfo, type FileNode, type DeviceCredential, type PendingPermission, type UploadResult, type EditorSelectionInfo } from '@/lib/api'
-import { isSessionNotFound } from '@/lib/errors'
-import type { Attachment, Agent, Session } from '@/types'
+import { api, getDeviceCredential, type AppEvent, type WorkspaceInfo, type FileNode, type DeviceCredential, type PendingPermission } from '@/lib/api'
+import type { Agent, Session } from '@/types'
+import { useFileActions } from '@/hooks/useFileActions'
+import { useSessionActions } from '@/hooks/useSessionActions'
 
 /**
  * Upper bound on how many events we keep in memory at once. The in-memory
@@ -75,9 +76,6 @@ export function useBackend() {
   // Debounces file-tree refreshes triggered by FileWritten / FileChangedOnDisk
   // bursts (bulk agent edits, rapid on-disk saves) so we hit getFileTree once.
   const treeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  // Latest refreshFileTree — connectWebSocket's onmessage closes over this ref
-  // so reconnects always call the current implementation.
-  const refreshFileTreeRef = useRef<() => Promise<void>>(async () => {})
   // Reconnect attempt counter for exponential backoff. Reset to 0 on every
   // successful ws.onopen so a long-lived connection doesn't ramp the delay.
   const reconnectAttemptRef = useRef(0)
@@ -202,6 +200,17 @@ export function useBackend() {
       setEvents(deduped)
     }
   }, [])
+
+  const {
+    refreshFileTree,
+    readFile,
+    saveFile,
+    deleteFile,
+    renameFile,
+    mkdir,
+    createFile,
+    refreshFileTreeRef,
+  } = useFileActions({ activeWorkspaceRef, setFileTree })
 
   // ---- WebSocket connection for real-time events ----
   function connectWebSocket() {
@@ -539,208 +548,25 @@ export function useBackend() {
     }
   }, [commitEvents])
 
-  // ---- File actions ----
-  /**
-   * Reloads the file tree for the active workspace from the backend. Called
-   * after a FileWritten / FileChangedOnDisk event (debounced) so the explorer
-   * reflects agent-created and external files without a manual refresh.
-   */
-  const refreshFileTree = useCallback(async () => {
-    const ws = activeWorkspaceRef.current
-    if (!ws) return
-    try {
-      setFileTree(await api.getFileTree(ws.id))
-    } catch {
-      // Workspace may have been removed; leave the tree as-is.
-    }
-  }, [])
-  useEffect(() => {
-    refreshFileTreeRef.current = refreshFileTree
-  }, [refreshFileTree])
-
-  const readFile = useCallback(async (path: string, workspaceId?: string) => {
-    const wsId = workspaceId || activeWorkspaceRef.current?.id || ''
-    return await api.readFile(wsId, path)
-  }, [])
-
-  const saveFile = useCallback(
-    async (path: string, content: string, expectedRevision: number, workspaceId?: string) => {
-      const wsId = workspaceId || activeWorkspaceRef.current?.id || ''
-      return await api.saveFile(wsId, path, content, expectedRevision)
-    },
-    [],
-  )
-
-  /** Deletes a file (or empty folder) then refreshes the explorer tree. */
-  const deleteFile = useCallback(
-    async (path: string) => {
-      const wsId = activeWorkspaceRef.current?.id || ''
-      await api.deleteFile(wsId, path)
-      await refreshFileTree()
-    },
-    [refreshFileTree],
-  )
-
-  /** Renames/moves a path then refreshes the explorer tree. */
-  const renameFile = useCallback(
-    async (from: string, to: string) => {
-      const wsId = activeWorkspaceRef.current?.id || ''
-      await api.renameFile(wsId, from, to)
-      await refreshFileTree()
-    },
-    [refreshFileTree],
-  )
-
-  /** Creates a directory then refreshes the explorer tree. */
-  const mkdir = useCallback(
-    async (path: string) => {
-      const wsId = activeWorkspaceRef.current?.id || ''
-      await api.mkdir(wsId, path)
-      await refreshFileTree()
-    },
-    [refreshFileTree],
-  )
-
-  /** Creates an empty file (expectedRevision 0) then refreshes the tree. */
-  const createFile = useCallback(
-    async (path: string) => {
-      const wsId = activeWorkspaceRef.current?.id || ''
-      await api.saveFile(wsId, path, '', 0)
-      await refreshFileTree()
-    },
-    [refreshFileTree],
-  )
-
-  // ---- Session actions ----
-  const createSession = useCallback(async (agentId: string, modelId: string, profileId?: string) => {
-    const wsId = activeWorkspaceRef.current?.id || ''
-    const session = await api.createSession(agentId, modelId, wsId, profileId)
-    setSessions((prev) => [...prev, session])
-    return session
-  }, [])
-
-  const sendPrompt = useCallback(
-    async (
-      sessionId: string,
-      content: string,
-      attachments?: Attachment[],
-    ) => {
-      try {
-        await api.sendPrompt(sessionId, content, attachments)
-      } catch (err) {
-        // A stale activeSessionId (e.g. after a daemon restart that wiped
-        // conversations.json, or a deleted session) makes the backend return
-        // 404 "session not found: sess-…". Recover gracefully: clear the
-        // persisted id so the UI resets to the new-chat state, and surface a
-        // friendly message instead of the raw error string.
-        const msg = err instanceof Error ? err.message : String(err)
-        if (isSessionNotFound(msg)) {
-          localStorage.removeItem('lai:activeSessionId')
-          throw new Error('This conversation is no longer available. Start a new chat.', {
-            cause: err,
-          })
-        }
-        throw err
-      }
-    },
-    [],
-  )
-
-  /** Uploads a file to a session's upload store. Thin wrapper around
-   *  api.uploadFile so components can call it through the hook and share the
-   *  hook's session-recovery semantics. */
-  const uploadFile = useCallback(async (sessionId: string, file: File): Promise<UploadResult> => {
-    return await api.uploadFile(sessionId, file)
-  }, [])
-
-  const cancelSession = useCallback(async (sessionId: string) => {
-    await api.cancelSession(sessionId)
-  }, [])
-
-  const renameSession = useCallback(
-    async (sessionId: string, name: string) => {
-      await api.patchSession(sessionId, { name })
-      await loadSessions()
-    },
-    [loadSessions],
-  )
-
-  const rebindSession = useCallback(
-    async (
-      sessionId: string,
-      agentId: string,
-      modelId: string,
-      maxTransferBytes?: number,
-    ) => {
-      await api.patchSession(sessionId, { agentId, modelId, maxTransferBytes })
-      await loadSessions()
-    },
-    [loadSessions],
-  )
-
-  /**
-   * Switches the model on a live session without restarting the agent process.
-   * Unlike rebindSession, this preserves the full conversation context — the
-   * agent keeps its in-memory state and just uses the new model for subsequent
-   * turns. Sends a model-only PATCH (no agentId) so the backend routes to
-   * SwitchModel instead of RebindSession.
-   */
-  const switchModel = useCallback(
-    async (sessionId: string, modelId: string) => {
-      await api.patchSession(sessionId, { modelId })
-      await loadSessions()
-    },
-    [loadSessions],
-  )
-
-  // Debounce timer for reportContext so rapid tab switches / edits don't
-  // flood the backend with context updates.
-  const reportContextTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-
-  /**
-   * Reports the current open files and recent edits to the backend so the
-   * context middleware can inject them into the next agent prompt. Debounced
-   * by ~1s to coalesce rapid tab switches and keystroke-driven unsaved-state
-   * changes into a single request. The optional selection is the user's
-   * current editor selection (sent as a resource block by the backend).
-   */
-  const reportContext = useCallback(
-    (
-      sessionId: string,
-      openFiles: string[],
-      recentEdits: string[],
-      selection?: EditorSelectionInfo,
-    ) => {
-      if (reportContextTimerRef.current) clearTimeout(reportContextTimerRef.current)
-      reportContextTimerRef.current = setTimeout(async () => {
-        try {
-          await api.reportSessionContext(sessionId, openFiles, recentEdits, selection)
-        } catch {
-          // Non-fatal — context reporting is best-effort.
-        }
-      }, 1000)
-    },
-    [],
-  )
-
-  const deleteSession = useCallback(
-    async (sessionId: string) => {
-      await api.closeSession(sessionId)
-      setSessions((prev) => prev.filter((s) => s.id !== sessionId))
-      // Drop the deleted conversation's events from the local cache. Filtering
-      // only shrinks the list, but route it through commitEvents anyway so every
-      // event-log mutation goes through the single capped path.
-      commitEvents(eventsRef.current.filter((e) => e.sessionId !== sessionId))
-    },
-    [commitEvents],
-  )
-
-  /** Exports a conversation as a markdown transcript. The backend renders the
-   *  full event history into a readable transcript and the api client triggers
-   *  a browser download of the resulting text/markdown blob. */
-  const exportSession = useCallback(async (sessionId: string) => {
-    await api.exportSession(sessionId)
-  }, [])
+  const {
+    createSession,
+    sendPrompt,
+    uploadFile,
+    cancelSession,
+    renameSession,
+    rebindSession,
+    switchModel,
+    reportContext,
+    deleteSession,
+    exportSession,
+    reportContextTimerRef,
+  } = useSessionActions({
+    activeWorkspaceRef,
+    setSessions,
+    loadSessions,
+    commitEvents,
+    eventsRef,
+  })
 
   // ---- Pairing actions ----
   const verifyPasscode = useCallback(
@@ -798,6 +624,7 @@ export function useBackend() {
       document.removeEventListener('visibilitychange', onVisibility)
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       if (treeRefreshTimerRef.current) clearTimeout(treeRefreshTimerRef.current)
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- reportContextTimerRef is a stable debounce timer ref from useSessionActions, not a React node; reading .current at cleanup is intentional.
       if (reportContextTimerRef.current) clearTimeout(reportContextTimerRef.current)
       wsRef.current?.close()
     }
