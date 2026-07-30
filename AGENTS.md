@@ -17,48 +17,21 @@ Self-hosted, cross-platform web IDE with built-in AI. A Rust daemon serves thin 
 - Configuration is stored in `~/.local-agent`; events use an append-only SQLite WAL store. Clients receive authenticated WebSocket sync, reconnection, and event replay.
 - Pairing issues expiring device credentials. Any paired device can answer a pending file-write or shell-command permission prompt.
 
-## Layout
+## File Map
 
-```
-src/
-  acp/                # the only agent integration boundary
-    core/             # session actor, lifecycle, handlers/, ops, registry
-    autodetect/       # harness discovery: claude_code, codex, cursor, devin, vibe
-    profile*.rs       # agent profiles + registry
-    store.rs          # session persistence
-  api/                # REST handlers (embed, mcp, profiles, providers, settings)
-  app/                # daemon: listen, tls, rate_limit, logging, process
-  cli/                # CLI + per-OS service installers
-  config/             # config model + store (~/.local-agent)
-  events/             # append-only SQLite event store + publisher + replay
-  files/              # client-side file read/write surface
-  shell/              # scoped shell execution surface
-  permissions/        # permission manager + sink (file-write/shell prompts)
-  workspace/          # workspace registration + path containment
-  sync/               # WebSocket sync + three-way merge
-  pairing/            # QR/mnemonic device pairing + expiring credentials
-  interfaces/         # ACP wire types, traits, DTOs shared with web
-  mcp/ migrate/       # MCP integration; config migration
-  bin/mockagent.rs    # mock ACP agent for tests
-web/src/
-  components/         # editor/, chat/, settings/, chrome, ui/ (radix primitives)
-  hooks/              # useBackend, useChatTabs, useEditorSettings, useTheme, ...
-  lib/                # api.ts (REST/WS client), errors, modelPrefs, theme, utils
-  types/              # mirror of src/interfaces/
-tests/
-  contract/           # source-of-truth contract suite (fixtures, golden, scripts)
-  contract_runner/    # harness: rest, ws, compare, redactor
-docs/
-  STATUS.md           # current task status (<100 lines, <90 cols)
-  known-issues.md     # deferred gaps
-  plans/              # epics + stories (status-prefixed filenames) + Blueprint.md
-  specs/              # backend-spec, ui-spec, chat-panel-spec
-  reference/          # acp/, mcp/ protocol reference
-  reviews/<date>/     # audit findings
-configs/              # shipped runtime config (system-messages.json)
-scripts/              # setup, spa-smoke, exec-guard
-build.sh / build.ps1 / Makefile / build.rs   # build + `make check` gate
-```
+- **`src/`** — Rust daemon server, library, and CLI. (See `src/AGENTS.md`)
+  - **`src/acp/`** — ACP engine, streaming, & provider integration. (See `src/acp/AGENTS.md`)
+  - **`src/api/`** — REST API endpoints & route handlers. (See `src/api/AGENTS.md`)
+  - **`src/app/`** — Daemon server listener, TLS, & process control. (See `src/app/AGENTS.md`)
+- **`web/`** — Vite + React web client interface. (See `web/AGENTS.md`)
+  - **`web/src/components/`** — UI components, panels, & view widgets. (See `web/src/components/AGENTS.md`)
+- **`tests/`** — Integration contract test suite & runner. (See `tests/AGENTS.md`)
+  - **`tests/contract_runner/`** — Test runner harness & diff redactor. (See `tests/contract_runner/AGENTS.md`)
+- **`docs/`** — Project specs, reference documentation, & audit reviews. (See `docs/AGENTS.md`)
+  - **`docs/plans/`** — Epics, stories, & work tracking status files. (See `docs/plans/AGENTS.md`)
+- **`configs/`** — Bundled default runtime configuration templates. (See `configs/AGENTS.md`)
+- **`scripts/`** — Environment setup, guard scripts, & smoke tests. (See `scripts/AGENTS.md`)
+- **`build.sh`** / **`build.ps1`** / **`Makefile`** / **`build.rs`** — Build & unified verification gates (`make check`).
 
 ## Architecture
 
