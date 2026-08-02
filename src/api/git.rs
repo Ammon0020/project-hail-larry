@@ -56,7 +56,7 @@ pub async fn get_git_state(
         })?
         .map_err(|err| {
             debug!(%err, "git detect failed");
-            // GitError → AppError via the From impl in src/git/mod.rs.
+            // GitError → AppError via its From impl.
             app_error(err.into())
         })?;
     Ok(Json(info))
