@@ -1,6 +1,6 @@
 # Project Status — Local Agent Interface
 
-> Updated: 2026-07-26. Task detail lives in `docs/plans/`; deferred gaps in
+> Updated: 2026-07-29. Task detail lives in `docs/plans/`; deferred gaps in
 > `docs/known-issues.md`; architecture is `docs/plans/Blueprint.md`.
 
 ## What Works
@@ -67,6 +67,21 @@
 
 ## Recent Changes (2026-07)
 
+- **Git log API (S-GIT-LOG-API)** — `GET /api/workspaces/{id}/git/log?limit=&offset=`
+  implemented with `gix::Repository::rev_walk()` for the commit graph, branch
+  labels, and ISO 8601 UTC author timestamps. 7 unit tests. See
+  `docs/plans/git-history-graph/done-git-log-api-medium.md`.
+- **Git discard button** — client-side discard (untracked → delete, tracked →
+  restore base via readFile/getGitDiff/saveFile). Backend discard endpoint
+  still pending (`pending-git-discard-endpoint-med-high.md`).
+- **useBackend hook extraction** — file and session action hooks extracted
+  from `useBackend.ts` into `useFileActions.ts` and `useSessionActions.ts`.
+- **Permission grant transparency** — durable permission decisions
+  (`allow_session`/`allow_always`/`reject_always`/`allow_tool_kind`) now show a
+  confirm step with the exact grant scope before the user commits. Tool-kind
+  scoping (`AllowToolKind`) added for a conservative allowlist
+  (move/edit/read/search, never execute). See
+  `docs/plans/other_tasks/done-permission-grant-transparency-med-med.md`.
 - **Git integration** — full Source Control surface shipped: `gix`-based
   workspace detection (`GET /git`), status/diff/stage/unstage/commit/push/init
   REST API (authenticated paired-device gate, no permission sink), CodeMirror
