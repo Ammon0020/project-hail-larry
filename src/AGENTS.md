@@ -9,26 +9,28 @@ Rust daemon library and binaries.
 
 ## Module Map
 
-- **`acp/`** — ACP integration boundary: actor, autodetect, profiles, providers, store, stream. (See `src/acp/AGENTS.md`)
-- **`api/`** — REST handlers: embed, git, mcp, profiles, providers, settings, session extras. (See `src/api/AGENTS.md`)
-- **`app/`** — Daemon: listener, TLS, rate limiting, process mgmt, logging. (See `src/app/AGENTS.md`)
-- `cli/` — CLI commands + per-OS service installers.
-- `config/` — Config model and `~/.local-agent` file store.
-- `events/` — Append-only SQLite WAL event store, publisher, replay.
-- `files/` — Client-side file read/write surface.
-- `shell/` — Scoped shell execution.
-- `permissions/` — Permission manager and sink for file/shell prompts.
-- `workspace/` — Workspace registration and path containment.
-- `sync/` — WebSocket sync and three-way merge.
-- `pairing/` — QR/mnemonic pairing and expiring credentials.
-- `interfaces/` — ACP wire types, traits, DTOs shared with the web client.
-- `mcp/` — MCP integration.
-- `migrate/` — Config migration/validation.
-- `fsutil/`, `pathutil/`, `procutil/` — Cross-platform fs/path/process helpers.
-- `fswatch/` — Filesystem watcher + debouncer.
-- `search/` — Content search (ripgrep + native fallback).
-- `uploads/` — Per-session upload store.
-- `git/` — Git operations and porcelain API.
+```text
+src/
+├── acp/          ACP boundary: actor, context, providers (See acp/AGENTS.md)
+├── api/          REST/WS handlers (See api/AGENTS.md)
+├── app/          daemon, listeners, TLS (See app/AGENTS.md)
+├── cli/          commands and service installers
+├── config/       config model/store
+├── events/       SQLite WAL event bus
+├── files/        client file surface
+├── fswatch/      filesystem watcher
+├── git/          Git operations
+├── interfaces/   wire types, DTOs, traits
+├── mcp/          MCP integration
+├── migrate/      config migration/validation
+├── pairing/      QR/mnemonic credentials
+├── permissions/  permission manager/sink
+├── search/       ripgrep/native search
+├── shell/        scoped shell execution
+├── sync/         WebSocket sync/merge
+├── uploads/      session upload store
+└── workspace/    registration/path containment
+```
 
 ## Rules & Patterns
 

@@ -6,25 +6,28 @@ Daemon HTTP/REST and WebSocket API route handlers serving frontend client reques
 
 ## Module Map
 
-- **`mod.rs`** — Axum web router setup, API endpoint registrations, authentication middleware, and error handling.
-- **`agents.rs`** — Agent registration, removal, and executable autodetection endpoints.
-- **`auth.rs`** — Request authentication middleware, peer extraction, and preview credential checks.
-- **`devices.rs`** — Paired-device listing, revocation, and device pending-action endpoints.
-- **`embed.rs`** — Static web asset embedding and SPA fallback handler.
-- **`events.rs`** — Event history queries, session filtering, and pagination limits.
-- **`files.rs`** — Workspace file tree, reads/writes, mutations, raw serving, and search endpoints.
-- **`git.rs`** — Git workspace operations, diff generation, branch control, and staging endpoints.
-- **`mcp.rs`** — Model Context Protocol (MCP) server status and configuration endpoints.
-- **`pair.rs`** — Pairing initiation/verification endpoints and per-peer rate limiting.
-- **`permissions.rs`** — Pending permission listing and response endpoints.
-- **`preview.rs`** — Preview-session tickets, authorization, cookies, and preview file serving.
-- **`profiles.rs`** — Agent profile management endpoints (CRUD for agent configurations and options).
-- **`providers.rs`** — Available LLM/ACP provider listing and status endpoints.
-- **`sessions.rs`** — Session lifecycle, prompts, cancellation, and profile validation endpoints.
-- **`session_extra.rs`** — Extended session operations, file uploads, and auxiliary context attachments.
-- **`settings.rs`** — User preference and daemon configuration update endpoints.
-- **`test_support.rs`** — Shared test-state construction and router dispatch helpers for API tests.
-- **`workspaces.rs`** — Workspace registration/removal, trust, and pending-registration endpoints.
+```text
+src/api/
+├── mod.rs           router, state, shared errors/helpers
+├── auth.rs          request and WebSocket auth
+├── pair.rs          pairing and rate limits
+├── devices.rs       device/revocation routes
+├── workspaces.rs    workspace registration/trust
+├── files.rs         file CRUD, search, raw serving
+├── preview.rs       preview tickets/cookies/serving
+├── events.rs        event history queries
+├── agents.rs        agent CRUD/autodetect
+├── sessions.rs      session lifecycle/prompts
+├── permissions.rs   permission routes
+├── embed.rs         embedded assets/SPA fallback
+├── git.rs           Git routes and operations
+├── mcp.rs           MCP config/status routes
+├── profiles.rs      profile CRUD routes
+├── providers.rs     provider routes
+├── session_extra.rs uploads/context/export routes
+├── settings.rs      daemon/user settings routes
+└── test_support.rs  shared API test harness
+```
 
 ## Rules & Patterns
 

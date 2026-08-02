@@ -6,16 +6,25 @@ Agent Communication Protocol (ACP) integration boundary and execution engine. Ma
 
 ## Module Map
 
-- **`mod.rs`** — ACP subsystem module declaration and public export interface.
-- **`core.rs`** / **`core/`** — Core ACP actor lifecycle, message dispatching, and agent session handling.
-- **`autodetect/`** — Agent discovery and executable autodetection for installed harnesses (e.g. Claude, Gemini, Codex).
-- **`agent_registry.rs`** — Central registry managing registered agent instances and runtime availability.
-- **`context.rs`** — Context window policy, token tracking, and message truncation rules.
-- **`conversation.rs`** — Active conversation turn management and event state assembly.
-- **`profile.rs`** / **`profile_config.rs`** — Agent profile definitions, custom arguments, system prompts, and configuration persistence.
-- **`providers.rs`** — ACP provider abstraction mapping external agent APIs to unified internal protocols.
-- **`store.rs`** — Conversation history storage and session state persistence.
-- **`stream.rs`** — Real-time event streaming and SSE/WebSocket delta delivery to frontend clients.
+```text
+src/acp/
+├── mod.rs                 exports/boundary
+├── core.rs                client facade
+├── core/                  actor runtime and lifecycle
+│   ├── actor/              session actor/turns
+│   ├── handlers/           filesystem, terminal, permission callbacks
+│   ├── lifecycle/          startup/restore/teardown
+│   └── registry.rs         live/dormant sessions
+├── autodetect/             harness discovery
+├── agent_registry.rs       registered agents
+├── context.rs              context/token policy
+├── conversation.rs         conversation turns/events
+├── profile.rs              profile definitions
+├── profile_config.rs       persisted profile config
+├── providers.rs            ACP providers
+├── store.rs                history/session storage
+└── stream.rs               event streaming
+```
 
 ## Rules & Patterns
 

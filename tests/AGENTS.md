@@ -6,9 +6,15 @@ Test infrastructure and contract suites.
 
 ## Module Map
 
-- `contract/` — Source-of-truth contract fixtures, golden files, scripts.
-- **`contract_runner/`** — Integration test harness for REST/WS validation and dynamic redaction. (See `tests/contract_runner/AGENTS.md`)
-- `migrate/` — Config migration tests.
+```text
+tests/
+├── contract/          fixtures, goldens, scripts
+├── contract_runner/   REST/WS harness (See contract_runner/AGENTS.md)
+├── migrate/           config migration tests
+├── acp_core_lifecycle.rs
+├── spike_acp.rs
+└── ...                integration tests
+```
 
 ## Rules & Patterns
 

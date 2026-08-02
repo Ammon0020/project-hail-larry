@@ -6,9 +6,12 @@ Developer setup scripts, environment guards, and smoke test utilities.
 
 ## Module Map
 
-- **`setup.sh`** / **`setup.ps1`** — Environment bootstrap and developer dependency installers.
-- **`spa-smoke.sh`** / **`spa-smoke.ps1`** — Single-page app build and smoke test scripts.
-- **`exec-guard.py`** — Shell execution guard helper and policy filter.
+```text
+scripts/
+├── setup.sh, setup.ps1       environment bootstrap
+├── spa-smoke.sh, spa-smoke.ps1 SPA build/smoke tests
+└── exec-guard.py              shell policy guard
+```
 
 ## Rules & Patterns
 

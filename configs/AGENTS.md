@@ -6,7 +6,10 @@ Shipped runtime configuration files bundled with the daemon binary.
 
 ## Module Map
 
-- **`system-messages.json`** — Default system message templates for agent session initialization.
+```text
+configs/
+└── system-messages.json   default agent-session messages
+```
 
 ## Rules & Patterns
 

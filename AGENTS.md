@@ -19,19 +19,32 @@ Self-hosted, cross-platform web IDE with built-in AI. A Rust daemon serves thin 
 
 ## File Map
 
-- **`src/`** — Rust daemon server, library, and CLI. (See `src/AGENTS.md`)
-  - **`src/acp/`** — ACP engine, streaming, & provider integration. (See `src/acp/AGENTS.md`)
-  - **`src/api/`** — REST API endpoints & route handlers. (See `src/api/AGENTS.md`)
-  - **`src/app/`** — Daemon server listener, TLS, & process control. (See `src/app/AGENTS.md`)
-- **`web/`** — Vite + React web client interface. (See `web/AGENTS.md`)
-  - **`web/src/components/`** — UI components, panels, & view widgets. (See `web/src/components/AGENTS.md`)
-- **`tests/`** — Integration contract test suite & runner. (See `tests/AGENTS.md`)
-  - **`tests/contract_runner/`** — Test runner harness & diff redactor. (See `tests/contract_runner/AGENTS.md`)
-- **`docs/`** — Project specs, reference documentation, & audit reviews. (See `docs/AGENTS.md`)
-  - **`docs/plans/`** — Epics, stories, & work tracking status files. (See `docs/plans/AGENTS.md`)
-- **`configs/`** — Bundled default runtime configuration templates. (See `configs/AGENTS.md`)
-- **`scripts/`** — Environment setup, guard scripts, & smoke tests. (See `scripts/AGENTS.md`)
-- **`build.sh`** / **`build.ps1`** / **`Makefile`** / **`build.rs`** — Build & unified verification gates (`make check`).
+```text
+src/                 Rust daemon, library, and CLI (See src/AGENTS.md)
+├── acp/             ACP engine (See src/acp/AGENTS.md)
+├── api/             REST/WS API (See src/api/AGENTS.md)
+├── app/             daemon lifecycle/TLS (See src/app/AGENTS.md)
+├── cli/             commands and service installers
+├── config/          config model/store
+├── interfaces/      wire types and traits
+├── pairing/         device pairing/credentials
+├── workspace/       workspace/path containment
+└── ...              domain services and utilities
+web/                 React/Vite client (See web/AGENTS.md)
+└── src/
+    ├── components/  UI (See web/src/components/AGENTS.md)
+    ├── hooks/       state and backend hooks
+    ├── lib/         API client and utilities
+    └── types/       frontend wire types
+tests/               integration/contract tests (See tests/AGENTS.md)
+└── contract_runner/ REST/WS runner (See tests/contract_runner/AGENTS.md)
+docs/                specs, plans, status, reviews (See docs/AGENTS.md)
+└── plans/           epics and stories (See docs/plans/AGENTS.md)
+configs/             bundled runtime defaults (See configs/AGENTS.md)
+scripts/             setup and smoke utilities (See scripts/AGENTS.md)
+```
+
+Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
 
 ## Architecture
 

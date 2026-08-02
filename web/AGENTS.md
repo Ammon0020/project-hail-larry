@@ -8,17 +8,23 @@ Vite + React web client served by the Rust daemon.
 
 ## Module Map
 
-- **`src/components/`** — React components, panels, view widgets, and UI primitives. (See `web/src/components/AGENTS.md`)
-  - `assistant-ui/` — Assistant UI primitives.
-  - `chat/` — Chat panel, composer, thread, tool parts.
-  - `git/` — Git diff viewer and source control panel.
-  - `preview/` — File/preview renderers.
-  - `settings/` — Settings panels.
-  - `ui/` — Shared reusable UI (Radix primitives).
-- `src/hooks/` — React hooks: `useBackend`, `useChatTabs`, `useEditorSettings`, `useTheme`, etc.
-- `src/lib/` — API client, errors, model prefs, theme, utilities.
-- `src/types/` — TypeScript mirrors of Rust `src/interfaces/`.
-- `src/assets/`, `public/` — Static assets and HTML entry.
+```text
+web/
+├── src/
+│   ├── App.tsx           app shell/composition
+│   ├── components/      UI (See src/components/AGENTS.md)
+│   │   ├── chat/         chat/thread/tool parts
+│   │   ├── assistant-ui/ assistant primitives
+│   │   ├── git/          source control UI
+│   │   ├── preview/      preview renderers
+│   │   ├── settings/     settings panels
+│   │   └── ui/           Radix primitives
+│   ├── hooks/            backend and UI state
+│   ├── lib/              API client/utilities
+│   └── types/            Rust-wire mirrors
+├── public/               static files
+└── vite.config.ts        build config
+```
 
 ## Rules & Patterns
 

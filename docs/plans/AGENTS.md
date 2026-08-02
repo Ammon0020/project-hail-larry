@@ -6,14 +6,19 @@ Project epic and story execution plans, roadmap blueprints, and task tracking fi
 
 ## Module Map
 
-- **`Blueprint.md`** — High-level product summary, technical architecture, and macro roadmap goals.
-- **`acp-context-policy/`**, **`acp-core-modularization/`**, **`acp-crate-extraction/`**, **`acp-session-history/`** — Subsystem epic plan directories.
-- **`git-action-bar/`**, **`git-history-graph/`**, **`multi-client-acp-gateway/`** — Feature epic directories containing story breakdowns.
-- **`other_tasks/`** — Minor bug fixes, chores, and standalone work items.
-- **Status-Prefixed Files** — Top-level epic/story files named by status:
-  - `pending-*.md` — Proposed or queued work items.
-  - `active-*.md` — In-progress development tasks.
-  - `done-*.md` — Completed work items kept for audit history.
+```text
+docs/plans/
+├── Blueprint.md
+├── acp-context-policy/       context-policy stories
+├── acp-core-modularization/ ACP core stories
+├── acp-crate-extraction/    crate-boundary stories
+├── acp-session-history/     history stories
+├── git-action-bar/          Git UI stories
+├── git-history-graph/       Git history stories
+├── multi-client-acp-gateway gateway stories
+└── other_tasks/             bugs/chores/standalone work
+    └── {pending,active,done}-*.md
+```
 
 ## Rules & Patterns
 
