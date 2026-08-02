@@ -67,6 +67,10 @@
 
 ## Recent Changes (2026-07)
 
+- **API module split** — REST handlers, auth, pairing, files, previews, sessions,
+  and shared test support moved into focused `src/api/` modules; `mod.rs` now
+  owns composition and shared plumbing. See
+  `docs/plans/other_tasks/done-api-module-split-large-medium.md`.
 - **Git log API (S-GIT-LOG-API)** — `GET /api/workspaces/{id}/git/log?limit=&offset=`
   implemented with `gix::Repository::rev_walk()` for the commit graph, branch
   labels, and ISO 8601 UTC author timestamps. 7 unit tests. See
