@@ -1,6 +1,6 @@
 # Git module split
 
-> Difficulty: large. Urgency: high. Status: active.
+> Difficulty: large. Urgency: high. Status: complete.
 
 ## Goal
 
@@ -49,6 +49,21 @@ make check
 
 Compare Git route/DTO contract tests and inspect the final diff for path,
 symlink, subprocess, credential, and output-size regressions.
+
+## Result
+
+Completed as a mechanical split into `types.rs`, `repo.rs`, `history.rs`,
+`worktree.rs`, `cli.rs`, and `tests.rs`. `src/git/mod.rs` is now a 34-line
+facade with unchanged `crate::git::*` exports. The four Git contract goldens
+remain unchanged.
+
+Verification completed after every extraction phase and at the final gate:
+
+- Rust format check, Clippy, and all 511 Rust tests passed.
+- Frontend lint and production build passed.
+- Contract suite passed: 82 tests.
+- `cargo doc` was retried quietly with one job; it remains blocked by
+  pre-existing rustdoc private/broken-link warnings outside `src/git`.
 
 ## Handoff
 

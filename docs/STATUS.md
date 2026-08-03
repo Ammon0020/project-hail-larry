@@ -67,6 +67,9 @@
 
 ## Recent Changes (2026-07)
 
+- **Git module split** — Git DTOs, repository/history, worktree operations,
+  CLI helpers, and tests moved out of `src/git/mod.rs`; the facade is now 34
+  lines. See `docs/plans/other_tasks/done-git-module-split-large-high.md`.
 - **API module split** — REST handlers, auth, pairing, files, previews, sessions,
   and shared test support moved into focused `src/api/` modules; `mod.rs` now
   owns composition and shared plumbing. See

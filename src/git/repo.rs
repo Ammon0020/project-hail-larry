@@ -102,9 +102,8 @@ fn has_worktree_changes(repo: &gix::Repository) -> bool {
 /// path. Mirrors the workspace manager's containment check so the git ops
 /// layer is defence-in-depth even though callers pre-validate.
 ///
-/// Not yet called by S-GIT-DETECT; used by `stage`/`unstage`/`diff` in
-/// S-GIT-API. Kept here so the path-validation contract lives with the ops.
-#[allow(dead_code)]
+/// Used by `stage`/`unstage`/`diff` in S-GIT-API. Kept here so the
+/// path-validation contract lives with the operations.
 pub(super) fn contained_path(root: &Path, rel_path: &str) -> Result<PathBuf, GitError> {
     use crate::pathutil::clean_path;
     clean_path(root, rel_path)

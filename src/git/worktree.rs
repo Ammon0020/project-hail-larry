@@ -96,8 +96,6 @@ pub fn stage(root: &Path, paths: &[String]) -> Result<Vec<String>, GitError> {
 ///
 /// # Errors
 ///
-/// # Errors
-///
 /// Returns [`GitError`] when a path escapes the workspace, `root` is not a
 /// repository, or Git cannot reset its index.
 pub fn unstage(root: &Path, paths: &[String]) -> Result<Vec<String>, GitError> {
