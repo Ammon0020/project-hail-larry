@@ -6,9 +6,9 @@
 //! DB lock is never held across `.await`.
 //!
 //! Layout:
-//! - [`payload`] — on-disk JSON payload matching Go `eventPayload`
-//! - [`store`] — [`Store`] + [`EventStore`] impl, prune, PRAGMAs
-//! - [`publisher`] — [`EventBus`] (`EventStore` + `EventPublisher` + subscribe
+//! - `payload` — on-disk JSON payload matching Go `eventPayload`
+//! - `store` — [`Store`] + `EventStore` impl, prune, PRAGMAs
+//! - `publisher` — [`EventBus`] (`EventStore` + `EventPublisher` + subscribe
 //!   handoff: subscribe → replay → dedupe by ID → live delivery)
 //!
 //! See `docs/plans/rust-port/complete-S-EVENTS-event-store-med.md`.

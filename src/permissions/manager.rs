@@ -22,7 +22,7 @@
 //! ## Cancellation
 //!
 //! The [`PermissionManager::request`] trait method has no cancellation token
-//! parameter; cancellation is future-drop. A [`PendingCleanup`] guard removes
+//! parameter; cancellation is future-drop. A `PendingCleanup` guard removes
 //! the pending entry when the `request` future is dropped (e.g. the agent's RPC
 //! deadline elapses), so the prompt does not linger in the map. The stale
 //! sweeper is the backstop for any prompt whose future is *not* dropped but
@@ -198,7 +198,7 @@ impl Manager {
     /// The sweeper is the backstop for prompts whose `request` future is *not*
     /// dropped but whose responding device went away (Wi-Fi drop). Prompts whose
     /// `request` future is cancelled are cleaned up immediately by the
-    /// [`PendingCleanup`] guard.
+    /// `PendingCleanup` guard.
     #[must_use]
     pub fn start_sweeper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let weak = Arc::downgrade(self);
@@ -324,7 +324,7 @@ impl PermissionManager for Manager {
     ///
     /// Cancellation is future-drop: if the caller drops the returned future
     /// (e.g. via `tokio::time::timeout`), the pending entry is removed by the
-    /// [`PendingCleanup`] guard and an error is surfaced to the caller through
+    /// `PendingCleanup` guard and an error is surfaced to the caller through
     /// the dropped future. On a successful decision the audit log is appended
     /// and durable policies (`allow_always` / `allow_session` / `reject_always`)
     /// are cached.

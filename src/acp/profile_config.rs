@@ -205,7 +205,7 @@ impl ProfileConfig {
     /// Validates, serializes, and atomically writes to the default state-dir path.
     ///
     /// Used by `PUT /api/profiles`. Does not update in-memory middleware; callers
-    /// must [`super::profile::ProfileMiddleware::replace_config`] (or `reload`)
+    /// must call `ProfileMiddleware::replace_config` (or `reload`)
     /// after a successful save.
     ///
     /// # Errors

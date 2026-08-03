@@ -9,10 +9,10 @@
 //! module ports.
 //!
 //! Layout:
-//! - [`error`]    — [`MigrateError`]
-//! - [`detect`]   — format detection + versioned backup naming
-//! - [`config`]   — atomic config.json → config.toml migration
-//! - [`validate`] — open/validate non-config Go state artifacts
+//! - `error`    — [`MigrateError`]
+//! - `detect`   — format detection + versioned backup naming
+//! - `config`   — atomic config.json → config.toml migration
+//! - `validate` — open/validate non-config Go state artifacts
 //!
 //! Invariants (per story + AGENTS.md):
 //! - atomic (backup before destructive change; TOML via atomic write)

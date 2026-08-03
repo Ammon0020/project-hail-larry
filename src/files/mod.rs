@@ -22,7 +22,7 @@
 //! Per-file lock entries are [`DashMap`] entries mapping to
 //! `Arc<tokio::sync::Mutex<()>>`. To prevent the lock map from growing
 //! indefinitely with arbitrary file paths, idle entries are evicted after the
-//! per-file operation completes (see [`FileSync::lock_for`]).
+//! per-file operation completes (see `FileSync::lock_for`).
 //!
 //! # 48-bit content hash
 //!

@@ -7,10 +7,10 @@
 //! is reproduced via the same `serde` rename projected to JSON.
 //!
 //! Layout:
-//! - [`error`]  — `ConfigError` enum (thiserror).
-//! - [`model`]  — `Config`, `AgentInfo`, `AgentModel`, defaults, in-memory
+//! - `error`  — `ConfigError` enum (thiserror).
+//! - `model`  — `Config`, `AgentInfo`, `AgentModel`, defaults, in-memory
 //!   workspace/agent mutation methods.
-//! - [`store`]  — `load`, atomic `save`, and the thread-safe `ConfigStore`
+//! - `store`  — `load`, atomic `save`, and the thread-safe `ConfigStore`
 //!   wrapper (`RwLock<Config>`).
 //!
 //! See `docs/plans/rust-port/complete-S-CONFIG-config-med.md`.
