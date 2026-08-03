@@ -721,7 +721,15 @@ export function ChatPanel({
         currentAgentId={effectiveAgentId}
         onSelectAgent={handleAgentChange}
         workspaces={workspaces}
-        workspaceId={workspaceId}
+        // Once a conversation has started, pin the display to the workspace
+        // captured on the session so switching the global workspace elsewhere
+        // in the app doesn't visually change the locked selector. Mirrors the
+        // agent/model pinning in useAgentSelection.
+        workspaceId={
+          hasConversation && activeSession?.workspace
+            ? activeSession.workspace
+            : workspaceId
+        }
         onSelectWorkspace={onSelectWorkspace}
         workspaceDisabled={hasConversation}
         disabled={activeSending || agents.length === 0}
