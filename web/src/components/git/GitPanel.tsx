@@ -3,9 +3,8 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   ArrowDown,
   ArrowUp,
-  Check,
-  Copy,
   ChevronDown,
+  Copy,
   DownloadCloud,
   Eye,
   File,
@@ -32,6 +31,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { BranchPicker, type BranchOption } from '@/components/git/BranchPicker'
 
 const statusStyles: Record<FileStatus['status'], { label: string; className: string }> = {
   added: { label: 'A', className: 'text-green-500' },
@@ -367,6 +367,7 @@ export function GitPanel({
   // Controlled context-menu state: the path of the row whose menu is open, or
   // null. Shared by both sections so only one menu is open at a time.
   const [menuPath, setMenuPath] = useState<string | null>(null)
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false)
 
   const refreshStatus = useCallback(async () => {
     if (!workspaceId || !gitState?.repoDetected) {
@@ -403,16 +404,16 @@ export function GitPanel({
   const stagedFiles = useMemo(() => status?.files.filter((file) => file.staged) ?? [], [status])
   const unstagedFiles = useMemo(() => status?.files.filter((file) => !file.staged) ?? [], [status])
   // Dedup local + remote branches. Local branches take precedence; remote-only
-  // branches are stripped of their `origin/` prefix so checkout auto-creates a
-  // tracking branch. `isRemote` flags remote-only entries for visual distinction.
+  // branches keep their full `origin/branch` display but checkout uses the
+  // short name so git auto-creates a tracking branch.
   const branchOptions = useMemo(() => {
     const raw = status?.branches ?? []
     const seen = new Set<string>()
-    const result: { name: string; isRemote: boolean }[] = []
+    const result: BranchOption[] = []
     for (const b of raw) {
       if (!b.includes('/')) {
         seen.add(b)
-        result.push({ name: b, isRemote: false })
+        result.push({ name: b, display: b, isRemote: false })
       }
     }
     for (const b of raw) {
@@ -421,7 +422,7 @@ export function GitPanel({
       const short = b.slice(slash + 1)
       if (!seen.has(short)) {
         seen.add(short)
-        result.push({ name: short, isRemote: true })
+        result.push({ name: short, display: b, isRemote: true })
       }
     }
     return result
@@ -473,37 +474,31 @@ export function GitPanel({
 
   return (
     <div className="flex h-full flex-col">
+      <BranchPicker
+        open={branchPickerOpen}
+        onOpenChange={setBranchPickerOpen}
+        branches={branchOptions}
+        currentBranch={status?.headBranch ?? gitState.headBranch}
+        busy={busy}
+        onCheckout={(branch) => {
+          void runMutation('checkout', async () => {
+            await api.gitCheckout(workspaceId, branch)
+            await onRepoChanged()
+          })
+        }}
+      />
       <header className="flex items-center justify-between border-b border-border px-3 py-2">
         <div className="min-w-0">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button type="button" disabled={busy} className="flex items-center gap-1.5 text-xs font-medium rounded px-1 -mx-1 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50 outline-none">
-                <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{status?.headBranch ?? gitState.headBranch ?? 'Detached HEAD'}</span>
-                {branchOptions.length > 1 && <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />}
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="max-h-64 overflow-y-auto">
-              {branchOptions.map(({ name, isRemote }) => (
-                <DropdownMenuItem
-                  key={name}
-                  disabled={busy || name === status?.headBranch}
-                  onSelect={() => {
-                    void runMutation('checkout', async () => {
-                      await api.gitCheckout(workspaceId, name)
-                      await onRepoChanged()
-                    })
-                  }}
-                >
-                  <span className="flex items-center gap-1.5">
-                    {name === status?.headBranch && <Check className="h-3 w-3" />}
-                    {name}
-                    {isRemote && <span className="text-[10px] text-muted-foreground">remote</span>}
-                  </span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setBranchPickerOpen(true)}
+            className="flex items-center gap-1.5 text-xs font-medium rounded px-1 -mx-1 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50 outline-none"
+          >
+            <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{status?.headBranch ?? gitState.headBranch ?? 'Detached HEAD'}</span>
+            {branchOptions.length > 1 && <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />}
+          </button>
           {status && (status.upstream || status.ahead || status.behind) && (
             <div className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
               {status.upstream && <span className="truncate">{status.upstream}</span>}

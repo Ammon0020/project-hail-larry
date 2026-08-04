@@ -145,9 +145,10 @@
   "Pull from remote" dropdown action. See
   `docs/plans/git-history-graph/done-git-fetch-pull-small.md`.
 - **S-GIT-CHECKOUT** — `POST /git/checkout` switches local branches (refuses
-  dirty trees with 409); `status()` now returns `branches: Vec<String>` for the
-  dropdown. GitPanel header branch name replaced with a dropdown showing all
-  local branches with a check on the current one. See
+  dirty trees with 409); `status()` returns local and remote-tracking branch
+  names. GitPanel header branch name opens a searchable, keyboard-accessible
+  picker modal showing `origin/branch` entries with muted remote prefixes and a
+  check on the current branch. See
   `docs/plans/git-history-graph/done-git-checkout-small.md`.
 
 ## Known Gaps

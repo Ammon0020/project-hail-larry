@@ -12,12 +12,14 @@ Switch branches from the UI via `POST /api/workspaces/{id}/git/checkout`.
 - `POST /api/workspaces/{id}/git/checkout` with `{ branch: string }`.
 - Backend: `git checkout <branch>` via CLI (gix doesn't support checkout write
   ops). Refuses if working tree dirty (409 + file list).
-- Frontend: branch dropdown in GitPanel header (replaces the static branch
-  display). Shows local branches, highlights current. On select → checkout →
-  refresh status + file tree.
-- No remote branch creation, no new branch creation for v1.
-- `status()` now also returns `branches: Vec<String>` (local branch short names)
-  so the frontend can populate the dropdown without a separate endpoint.
+- Frontend: searchable branch-picker modal in the GitPanel header (replaces the
+  static branch display and inline dropdown). Shows local and remote-tracking
+  branches, highlights current, and supports click or keyboard selection. On
+  select → checkout → refresh status + file tree.
+- No explicit remote branch creation or detached-head actions for v1.
+- `status()` returns `branches: Vec<String>` containing local and
+  remote-tracking short names so the frontend can populate the picker without a
+  separate endpoint.
 
 ## Acceptance
 
@@ -37,12 +39,17 @@ Switch branches from the UI via `POST /api/workspaces/{id}/git/checkout`.
   `git checkout <branch>`, returns stderr.
 - **Route** (`src/api/git.rs`, `src/api/mod.rs`): `POST .../git/checkout`
   handler with `CheckoutRequest { branch: String }`. Empty branch → 400.
-- **Frontend** (`web/src/lib/api/git.ts`, `web/src/components/git/GitPanel.tsx`):
-  `gitCheckout` API function; the static branch `<span>` replaced with a
-  `DropdownMenu` trigger (branch icon + name + chevron, chevron only when >1
-  branch). Current branch item is disabled with a `Check` icon. On select,
-  calls `gitCheckout` via `runMutation('checkout', ...)` then `onRepoChanged()`
-  to refresh the file tree.
-- **Unit tests** (`src/git/tests.rs`): 5 new tests covering branch listing
-  (single, multiple), checkout not-a-repo, checkout dirty-tree refusal, and
-  checkout switching the active branch.
+- **Frontend** (`web/src/lib/api/git.ts`, `web/src/components/git/`):
+  `gitCheckout` API function; the static branch display replaced with a
+  `BranchPicker` Radix dialog. The picker auto-focuses its search input,
+  filters local and remote entries case-insensitively, displays remote names as
+  `origin/branch` with a muted prefix, supports arrow-key navigation and Enter,
+  and marks the current branch with a check. On select, it calls `gitCheckout`
+  via `runMutation('checkout', ...)` then `onRepoChanged()` to refresh the file
+  tree.
+- **Tests** (`src/git/tests.rs`): 6 backend tests cover branch listing
+  (single, multiple, remote refs with `origin/HEAD` filtering), checkout
+  not-a-repo, checkout dirty-tree refusal, and checkout switching the active
+  branch. The frontend intentionally has no React/DOM tests; its existing
+  Vitest suite remains pure-function-only and no meaningful standalone helper
+  was introduced by the picker.
