@@ -10,6 +10,7 @@ Developer setup scripts, environment guards, and smoke test utilities.
 scripts/
 ├── setup.sh, setup.ps1       environment bootstrap
 ├── spa-smoke.sh, spa-smoke.ps1 SPA build/smoke tests
+├── watch-ci.sh               background CI run watcher + desktop notification
 └── exec-guard.py              shell policy guard
 ```
 
