@@ -124,25 +124,33 @@ export function ProfilesSettings() {
     load()
   }, [load])
 
-  useEffect(() => {
-    let cancelled = false
-    void getMcpConfig()
-      .then(raw => {
-        if (!cancelled) {
-          setMcpServers(parseMcpServerOptions(raw))
-          setMcpServersError(null)
-        }
-      })
-      .catch(err => {
-        if (!cancelled) {
-          setMcpServers([])
-          setMcpServersError(err instanceof Error ? err.message : String(err))
-        }
-      })
-    return () => {
-      cancelled = true
+  // Fetch the current MCP server options. Called on mount and whenever the
+  // MCP config changes elsewhere in Settings (e.g. McpServersSettings saves or
+  // toggles a server) via the 'mcp-changed' window event — mirrors the
+  // 'profiles-changed' pattern used for profile reloads.
+  const loadMcpServers = useCallback(async () => {
+    try {
+      const raw = await getMcpConfig()
+      setMcpServers(parseMcpServerOptions(raw))
+      setMcpServersError(null)
+    } catch (err) {
+      setMcpServers([])
+      setMcpServersError(err instanceof Error ? err.message : String(err))
     }
   }, [])
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadMcpServers()
+  }, [loadMcpServers])
+
+  // Refresh the server list when MCP config changes in another settings
+  // section (save/toggle) so the user doesn't have to reopen Settings.
+  useEffect(() => {
+    const onChange = () => { void loadMcpServers() }
+    window.addEventListener('mcp-changed', onChange)
+    return () => window.removeEventListener('mcp-changed', onChange)
+  }, [loadMcpServers])
 
   // Clear the "Saved" flash timer if the component unmounts (e.g. the user
   // switches settings tabs) before the 2s timeout fires.
