@@ -230,6 +230,25 @@ write_user_cargo_config() {
 }
 write_user_cargo_config
 
+# --- cargo-watch (optional dev convenience) ----------------------------------
+# cargo-watch powers `scripts/dev.sh`'s auto-rebuild-on-Rust-changes mode.
+# It is NOT a build requirement — dev.sh falls back to a single `cargo run`
+# when it is absent. We install it in auto mode (mirroring sccache) so the
+# common dev loop gets auto-rebuild out of the box; --verify only reports.
+if ! command -v cargo-watch >/dev/null 2>&1; then
+    if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+        echo "${CYAN}NOTE: 'cargo-watch' is not installed — dev.sh will not auto-rebuild${RESET}" >&2
+        echo "${CYAN}      the Rust daemon on source changes. Optional; install with:${RESET}" >&2
+        echo "${CYAN}      \`cargo install cargo-watch\`${RESET}" >&2
+    else
+        if command -v cargo >/dev/null 2>&1; then
+            echo "${CYAN}Installing cargo-watch via cargo (optional dev convenience)...${RESET}"
+            cargo install cargo-watch --quiet || \
+                echo "${YELLOW}  cargo-watch install failed; dev.sh will fall back to single cargo run.${RESET}" >&2
+        fi
+    fi
+fi
+
 # --- web/node_modules --------------------------------------------------------
 NODE_MODULES_DIR="$ROOT_DIR/web/node_modules"
 if [[ ! -d "$NODE_MODULES_DIR" ]]; then

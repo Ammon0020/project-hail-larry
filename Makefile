@@ -7,7 +7,9 @@ setup:
 # All-in-one dev mode: Rust daemon (cargo run) + Vite HMR dev server.
 # Open http://localhost:5173 — Vite proxies /api and /ws to the daemon.
 # Ctrl+C stops both. Requires web/dist/index.html (run `npm run build` once
-# if missing after `make clean`).
+# if missing after `make clean`). If cargo-watch is installed, the daemon
+# auto-rebuilds and restarts on src/ changes; otherwise Rust changes need
+# a manual restart. Install cargo-watch: `cargo install cargo-watch`.
 dev:
 	./scripts/dev.sh
 

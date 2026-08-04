@@ -63,6 +63,8 @@ Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
   Rust daemon and Vite dev server together. Open http://localhost:5173;
   Vite proxies `/api` and `/ws` to the daemon. Ctrl+C stops both. Requires
   `web/dist/index.html` (run `cd web && npm run build` once after `make clean`).
+  If `cargo-watch` is installed, the daemon auto-rebuilds on `src/` changes;
+  otherwise Rust edits need a manual restart. Install: `cargo install cargo-watch`.
 - During active development, use `make qcheck` to automatically fix formatting/lints and quietly run the full test suite.
 - Before completion, run the verbose unified gate: `make check` (fmt + clippy + cargo
   test + frontend eslint/build + contract suite). For a fast style/correctness

@@ -4,7 +4,13 @@
 #
 # The Vite dev server proxies /api, /ws, and /health to the daemon (see
 # web/vite.config.ts), so you open http://localhost:5173 in the browser and
-# get instant frontend HMR. Rust changes require a restart of this script.
+# get instant frontend HMR.
+#
+# If `cargo-watch` is installed, the Rust daemon auto-rebuilds and restarts
+# on changes under src/, Cargo.toml, build.rs, rust-toolchain.toml, and
+# configs/. Otherwise the daemon is started once with `cargo run` and Rust
+# changes require a manual restart (Ctrl+C, then re-run this script).
+# Install cargo-watch with: `cargo install cargo-watch`.
 #
 # Usage:
 #   scripts/dev.sh          # foreground, Ctrl+C kills both
@@ -52,7 +58,20 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "${CYAN}Starting Rust daemon (cargo run -- start)...${RESET}"
-cargo run -- start &
+# If cargo-watch is available, use it to auto-rebuild + restart on Rust source
+# changes. Scope the watch to src/ and root build manifests so frontend changes
+# under web/ (handled by Vite HMR) don't trigger redundant daemon rebuilds.
+# Without cargo-watch, fall back to a single `cargo run -- start`.
+if command -v cargo-watch >/dev/null 2>&1; then
+    echo "${CYAN}cargo-watch detected — daemon will auto-rebuild on Rust changes.${RESET}"
+    cargo watch \
+        -w src -w Cargo.toml -w build.rs -w rust-toolchain.toml -w configs \
+        -x 'run -- start' &
+else
+    echo "${YELLOW}cargo-watch not found — Rust changes require a manual restart.${RESET}"
+    echo "${YELLOW}Install it for auto-rebuild: cargo install cargo-watch${RESET}"
+    cargo run -- start &
+fi
 DAEMON_PID=$!
 
 # Wait for the daemon to bind its HTTP listener before starting Vite, so the
@@ -80,6 +99,11 @@ echo "${GREEN}${BOLD}║     http://localhost:5173                              
 echo "${GREEN}${BOLD}║                                                              ║${RESET}"
 echo "${GREEN}${BOLD}║  This is the Vite dev server with HMR.                       ║${RESET}"
 echo "${GREEN}${BOLD}║  Do NOT open :7337 — that serves the old embedded build.    ║${RESET}"
+if command -v cargo-watch >/dev/null 2>&1; then
+    echo "${GREEN}${BOLD}║  Rust daemon auto-rebuilds on src/ changes (cargo-watch).    ║${RESET}"
+else
+    echo "${GREEN}${BOLD}║  Rust changes require a restart (no cargo-watch).            ║${RESET}"
+fi
 echo "${GREEN}${BOLD}║                                                              ║${RESET}"
 echo "${GREEN}${BOLD}║  Daemon API (proxied):  http://localhost:7337                ║${RESET}"
 echo "${GREEN}${BOLD}║  Press Ctrl+C to stop both.                                  ║${RESET}"

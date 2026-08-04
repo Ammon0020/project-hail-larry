@@ -16,8 +16,15 @@ make dev            # or: scripts/dev.sh
 Starts the Rust daemon (`cargo run -- start`) and the Vite dev server
 (`npm run dev`) together. Open **http://localhost:5173** — Vite proxies
 `/api`, `/ws`, and `/health` to the daemon on port 7337. You get instant
-frontend HMR; only Rust changes require a restart (Ctrl+C, then `make dev`
-again).
+frontend HMR.
+
+If [cargo-watch](https://github.com/watchexec/cargo-watch) is installed,
+the daemon also auto-rebuilds and restarts on changes under `src/`,
+`Cargo.toml`, `build.rs`, `rust-toolchain.toml`, and `configs/` — no
+manual restart needed for Rust edits. Install it with
+`cargo install cargo-watch` (or run `./scripts/setup.sh`, which installs
+it as an optional dev convenience). Without cargo-watch, Rust changes
+require a manual restart (Ctrl+C, then `make dev` again).
 
 Requires `web/dist/index.html` to exist (build.rs needs it for `cargo run`
 to compile). It persists across builds; run `cd web && npm run build` once

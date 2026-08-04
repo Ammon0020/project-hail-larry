@@ -159,6 +159,21 @@ ERROR: 'sccache' is not installed or not on PATH.
     $sccachePresent = $true
 }
 
+# cargo-watch (optional dev convenience) — powers scripts/dev.sh auto-rebuild.
+# Not a build requirement; dev.sh falls back to a single `cargo run` when absent.
+if (-not (Get-Command cargo-watch -ErrorAction SilentlyContinue)) {
+    if ($Verify) {
+        Write-Host "NOTE: 'cargo-watch' is not installed — dev.sh will not auto-rebuild" -ForegroundColor Cyan
+        Write-Host "      the Rust daemon on source changes. Optional; install with:" -ForegroundColor Cyan
+        Write-Host "      ``cargo install cargo-watch``" -ForegroundColor Cyan
+    } elseif ($cargoOk) {
+        Write-Host "Installing cargo-watch via cargo (optional dev convenience)..." -ForegroundColor Cyan
+        try { cargo install cargo-watch --quiet } catch {
+            Write-Host "  cargo-watch install failed; dev.sh will fall back to single cargo run." -ForegroundColor Yellow
+        }
+    }
+}
+
 # web\node_modules
 $nodeModulesPath = Join-Path $RootDir 'web\node_modules'
 $nodeModulesOk = Test-Path $nodeModulesPath
