@@ -270,6 +270,44 @@ pub fn pull(root: &Path, remote: Option<&str>) -> Result<String, GitError> {
     Ok(text)
 }
 
+/// `POST /api/workspaces/{id}/git/checkout`. Shells out to `git checkout
+/// <branch>`. Refuses if the working tree is dirty (returns
+/// [`GitError::DirtyTree`], mapped to 409 by the API layer) because checkout
+/// could conflict with uncommitted changes. `stderr` is returned verbatim.
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository,
+/// [`GitError::DirtyTree`] when the working tree has uncommitted changes, and
+/// [`GitError::Operation`] when Git cannot checkout.
+pub fn checkout(root: &Path, branch: &str) -> Result<String, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    // Refuse if the working tree has uncommitted changes — checkout could
+    // conflict. Same guard as pull().
+    let current = status(root)?;
+    if !current.files.is_empty() {
+        let file_list = current
+            .files
+            .iter()
+            .map(|f| f.path.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(GitError::DirtyTree(file_list));
+    }
+    let mut command = Command::new("git");
+    command.current_dir(root).arg("checkout").arg(branch);
+    let output = command
+        .output()
+        .map_err(|err| GitError::Operation(format!("checkout: {err}")))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Operation(text));
+    }
+    Ok(text)
+}
+
 /// `POST /api/workspaces/{id}/git/init`. Creates a repo at the workspace root
 /// with `main` as the initial branch. Refuses if `.git` already exists.
 ///

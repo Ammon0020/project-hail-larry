@@ -29,7 +29,7 @@ pub use types::{
     CommitAuthor, DiffResult, FileStatus, GitError, GitRepoInfo, LogCommit, LogResult, StatusResult,
 };
 pub use worktree::{
-    add_to_gitignore, commit, diff, discard, fetch, init, pull, push, stage, unstage,
+    add_to_gitignore, checkout, commit, diff, discard, fetch, init, pull, push, stage, unstage,
     MAX_DIFF_BYTES,
 };
 

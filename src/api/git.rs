@@ -112,6 +112,11 @@ pub(crate) struct FetchPullRequest {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct CheckoutRequest {
+    branch: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct IgnoreRequest {
     patterns: Vec<String>,
 }
@@ -265,6 +270,24 @@ pub async fn pull(
     let root = workspace_root(&state, &id).await?;
     let output =
         run_git_blocking("pull", move || git::pull(&root, request.remote.as_deref())).await?;
+    Ok(Json(json!({ "ok": true, "stderr": output })))
+}
+
+/// `POST /api/workspaces/{id}/git/checkout`. Refuses with 409 when the working
+/// tree is dirty — same `GitError::DirtyTree` → `AppError::conflict` mapping
+/// as pull.
+pub async fn checkout(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<CheckoutRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    if request.branch.is_empty() {
+        return Err(ApiResponseError::bad_request("branch required"));
+    }
+    let root = workspace_root(&state, &id).await?;
+    let output =
+        run_git_blocking("checkout", move || git::checkout(&root, &request.branch)).await?;
     Ok(Json(json!({ "ok": true, "stderr": output })))
 }
 

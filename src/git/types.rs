@@ -51,6 +51,11 @@ pub struct StatusResult {
     pub ahead: u64,
     /// Commits on upstream not on HEAD.
     pub behind: u64,
+    /// Local and remote-tracking branch short names (e.g. `main`,
+    /// `origin/feature`). Used by the `GitPanel` branch dropdown. The frontend
+    /// dedups remote entries against local ones and strips the `origin/`
+    /// prefix for checkout.
+    pub branches: Vec<String>,
     pub files: Vec<FileStatus>,
 }
 

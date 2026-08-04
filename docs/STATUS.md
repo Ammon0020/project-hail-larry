@@ -144,6 +144,11 @@
   pull refuses dirty trees (409). GitPanel header has a Fetch button and a
   "Pull from remote" dropdown action. See
   `docs/plans/git-history-graph/done-git-fetch-pull-small.md`.
+- **S-GIT-CHECKOUT** — `POST /git/checkout` switches local branches (refuses
+  dirty trees with 409); `status()` now returns `branches: Vec<String>` for the
+  dropdown. GitPanel header branch name replaced with a dropdown showing all
+  local branches with a check on the current one. See
+  `docs/plans/git-history-graph/done-git-checkout-small.md`.
 
 ## Known Gaps
 

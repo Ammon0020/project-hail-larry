@@ -3,7 +3,9 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   ArrowDown,
   ArrowUp,
+  Check,
   Copy,
+  ChevronDown,
   DownloadCloud,
   Eye,
   File,
@@ -400,6 +402,30 @@ export function GitPanel({
 
   const stagedFiles = useMemo(() => status?.files.filter((file) => file.staged) ?? [], [status])
   const unstagedFiles = useMemo(() => status?.files.filter((file) => !file.staged) ?? [], [status])
+  // Dedup local + remote branches. Local branches take precedence; remote-only
+  // branches are stripped of their `origin/` prefix so checkout auto-creates a
+  // tracking branch. `isRemote` flags remote-only entries for visual distinction.
+  const branchOptions = useMemo(() => {
+    const raw = status?.branches ?? []
+    const seen = new Set<string>()
+    const result: { name: string; isRemote: boolean }[] = []
+    for (const b of raw) {
+      if (!b.includes('/')) {
+        seen.add(b)
+        result.push({ name: b, isRemote: false })
+      }
+    }
+    for (const b of raw) {
+      const slash = b.indexOf('/')
+      if (slash < 0) continue
+      const short = b.slice(slash + 1)
+      if (!seen.has(short)) {
+        seen.add(short)
+        result.push({ name: short, isRemote: true })
+      }
+    }
+    return result
+  }, [status?.branches])
   const allUntrackedHint = stagedFiles.length === 0 && unstagedFiles.length > 0 && unstagedFiles.every((file) => file.status === 'untracked') ? 'New files — stage them, then commit.' : undefined
   const canCommit = !!message.trim() && stagedFiles.length > 0
   const busy = busyAction !== null
@@ -449,10 +475,35 @@ export function GitPanel({
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-border px-3 py-2">
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-xs font-medium">
-            <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <span className="truncate">{status?.headBranch ?? gitState.headBranch ?? 'Detached HEAD'}</span>
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" disabled={busy} className="flex items-center gap-1.5 text-xs font-medium rounded px-1 -mx-1 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50 outline-none">
+                <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">{status?.headBranch ?? gitState.headBranch ?? 'Detached HEAD'}</span>
+                {branchOptions.length > 1 && <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-64 overflow-y-auto">
+              {branchOptions.map(({ name, isRemote }) => (
+                <DropdownMenuItem
+                  key={name}
+                  disabled={busy || name === status?.headBranch}
+                  onSelect={() => {
+                    void runMutation('checkout', async () => {
+                      await api.gitCheckout(workspaceId, name)
+                      await onRepoChanged()
+                    })
+                  }}
+                >
+                  <span className="flex items-center gap-1.5">
+                    {name === status?.headBranch && <Check className="h-3 w-3" />}
+                    {name}
+                    {isRemote && <span className="text-[10px] text-muted-foreground">remote</span>}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
           {status && (status.upstream || status.ahead || status.behind) && (
             <div className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
               {status.upstream && <span className="truncate">{status.upstream}</span>}

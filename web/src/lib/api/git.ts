@@ -32,6 +32,7 @@ export interface StatusResult {
   upstream: string | null
   ahead: number
   behind: number
+  branches: string[]
   files: FileStatus[]
 }
 
@@ -108,6 +109,13 @@ export function gitPull(workspaceId: string, remote: string | null = null) {
   return apiFetch<{ ok: true; stderr: string }>(`/workspaces/${workspaceId}/git/pull`, {
     method: 'POST',
     body: JSON.stringify({ remote }),
+  })
+}
+
+export function gitCheckout(workspaceId: string, branch: string) {
+  return apiFetch<{ ok: true; stderr: string }>(`/workspaces/${workspaceId}/git/checkout`, {
+    method: 'POST',
+    body: JSON.stringify({ branch }),
   })
 }
 

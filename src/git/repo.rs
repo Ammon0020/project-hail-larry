@@ -200,12 +200,26 @@ pub fn status(root: &Path) -> Result<StatusResult, GitError> {
         Some(_) => upstream_ahead_behind(root),
         None => (None, 0, 0),
     };
+    // List local + remote-tracking branch short names. `--all` includes
+    // `refs/remotes/*`; `%(refname:short)` strips to `main` / `origin/main`.
+    // `HEAD` symbolic refs (e.g. `origin/HEAD`) are filtered out — they're
+    // not checkoutable and just clutter the dropdown.
+    let branches: Vec<String> = git_output(root, ["branch", "--all", "--format=%(refname:short)"])
+        .map(|bytes| {
+            String::from_utf8_lossy(&bytes)
+                .lines()
+                .map(|line| line.trim().to_string())
+                .filter(|name| !name.is_empty() && !name.ends_with("/HEAD") && name != "HEAD")
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(StatusResult {
         head_branch,
         head_oid,
         upstream,
         ahead,
         behind,
+        branches,
         files,
     })
 }

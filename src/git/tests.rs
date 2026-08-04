@@ -623,3 +623,140 @@ fn pull_refuses_dirty_tree() {
         "expected DirtyTree mentioning README.md, got {err:?}"
     );
 }
+
+#[test]
+fn status_lists_local_branches() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let result = status(dir.path()).expect("status");
+    assert!(
+        result.branches.iter().any(|b| b == "main"),
+        "expected main in branches: {:?}",
+        result.branches
+    );
+}
+
+#[test]
+fn status_lists_multiple_branches() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    Command::new("git")
+        .args(["branch", "feature"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git branch");
+    let result = status(dir.path()).expect("status");
+    assert!(
+        result.branches.iter().any(|b| b == "main"),
+        "expected main: {:?}",
+        result.branches
+    );
+    assert!(
+        result.branches.iter().any(|b| b == "feature"),
+        "expected feature: {:?}",
+        result.branches
+    );
+}
+
+#[test]
+fn status_includes_remote_branches_and_filters_head() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    // Register a dummy remote + remote-tracking refs so `--all` lists them.
+    let base_oid = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir.path())
+            .output()
+            .expect("rev-parse")
+            .stdout,
+    )
+    .expect("utf8")
+    .trim()
+    .to_string();
+    Command::new("git")
+        .args(["remote", "add", "origin", "file:///dummy"])
+        .current_dir(dir.path())
+        .status()
+        .expect("remote add");
+    Command::new("git")
+        .args(["update-ref", "refs/remotes/origin/main", &base_oid])
+        .current_dir(dir.path())
+        .status()
+        .expect("update-ref");
+    Command::new("git")
+        .args(["update-ref", "refs/remotes/origin/feature", &base_oid])
+        .current_dir(dir.path())
+        .status()
+        .expect("update-ref feature");
+    // symbolic-ref creates `origin/HEAD` which must be filtered out.
+    Command::new("git")
+        .args([
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ])
+        .current_dir(dir.path())
+        .status()
+        .expect("symbolic-ref");
+
+    let result = status(dir.path()).expect("status");
+    assert!(
+        result.branches.iter().any(|b| b == "main"),
+        "expected local main: {:?}",
+        result.branches
+    );
+    assert!(
+        result.branches.iter().any(|b| b == "origin/main"),
+        "expected remote origin/main: {:?}",
+        result.branches
+    );
+    assert!(
+        result.branches.iter().any(|b| b == "origin/feature"),
+        "expected remote origin/feature: {:?}",
+        result.branches
+    );
+    assert!(
+        !result.branches.iter().any(|b| b == "origin/HEAD"),
+        "origin/HEAD must be filtered: {:?}",
+        result.branches
+    );
+}
+
+#[test]
+fn checkout_returns_not_a_repo_for_plain_dir() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let err = checkout(dir.path(), "main").expect_err("should error");
+    assert!(matches!(err, GitError::NotARepo));
+}
+
+#[test]
+fn checkout_refuses_dirty_tree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    Command::new("git")
+        .args(["branch", "other"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git branch");
+    std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+    let err = checkout(dir.path(), "other").expect_err("dirty tree should be refused");
+    assert!(
+        matches!(err, GitError::DirtyTree(ref msg) if msg.contains("README.md")),
+        "expected DirtyTree mentioning README.md, got {err:?}"
+    );
+}
+
+#[test]
+fn checkout_switches_branch() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    Command::new("git")
+        .args(["branch", "other"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git branch");
+    checkout(dir.path(), "other").expect("checkout");
+    let result = status(dir.path()).expect("status");
+    assert_eq!(result.head_branch.as_deref(), Some("other"));
+}
