@@ -15,6 +15,15 @@ fn fresh_repo(dir: &Path) {
         .current_dir(dir)
         .status()
         .expect("git init");
+    // Disable autocrlf so Windows checkout preserves LF in the working tree,
+    // matching the content the tests write and expect. Without this, Windows
+    // git converts LF to CRLF on checkout and the discard/restore assertions
+    // fail with left="hello\r\n" vs right="hello\n".
+    std::process::Command::new("git")
+        .args(["config", "core.autocrlf", "false"])
+        .current_dir(dir)
+        .status()
+        .expect("git config core.autocrlf");
     std::fs::write(dir.join("README.md"), "hello\n").expect("write");
     std::process::Command::new("git")
         .args(["add", "."])

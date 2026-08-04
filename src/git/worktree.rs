@@ -25,9 +25,11 @@ pub fn diff(root: &Path, rel_path: &str, staged: bool) -> Result<DiffResult, Git
     let path = contained_path(root, rel_path)?;
     // contained_path canonicalises the path; on Windows that yields a
     // `\\?\`-prefixed verbatim path while `root` is typically the
-    // non-verbatim form. Strip the prefix on both sides so strip_prefix
-    // compares like-for-like forms and the relative path resolves.
-    let root_norm = strip_verbatim_prefix(root);
+    // non-verbatim form. Canonicalise `root` first so both sides are in the
+    // same long-name form, then strip the verbatim prefix so strip_prefix
+    // compares like-for-like and the relative path resolves.
+    let root_canon = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root_norm = strip_verbatim_prefix(&root_canon);
     let path_norm = strip_verbatim_prefix(&path);
     let git_path = path_norm
         .strip_prefix(&root_norm)
