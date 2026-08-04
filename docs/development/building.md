@@ -46,9 +46,12 @@ caches dependency crates, and only the changed crate + final LTO/link step
 re-run.
 
 On x86_64 Linux, [mold](https://github.com/rui314/mold) is used as the linker
-(configured in `.cargo/config.toml` via `clang -fuse-ld=mold`) to offset LTO
-link time. `./scripts/setup.sh --verify` checks for mold and clang. Other
-platforms use the default linker and are unaffected.
+to offset LTO link time. sccache and mold are local-dev optimizations only —
+the repo's `.cargo/config.toml` is intentionally empty so CI runners without
+these tools build out of the box. `./scripts/setup.sh` writes the sccache +
+mold config to the user-level `~/.cargo/config.toml`; `./scripts/setup.sh
+--verify` checks for the tools. Other platforms use the default linker and
+are unaffected.
 
 `make check` and `make qcheck` use the debug profile, which is unaffected by
 LTO. The dev profile uses `debug = "line-tables-only"` for faster compilation

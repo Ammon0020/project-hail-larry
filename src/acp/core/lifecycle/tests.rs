@@ -6,6 +6,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tempfile::TempDir;
 
+/// Timeout for async state-transition polls in these tests. Generous enough
+/// to absorb Windows CI's slower process spawn + stdio IPC (the mock agent
+/// streams with a 20ms-per-word delay) while still failing fast on a real
+/// hang. Keep well below CI's per-test job timeout.
+const TEST_POLL_TIMEOUT: Duration = Duration::from_secs(15);
+
 use super::super::actor::{Handle, TerminalOutcome};
 use super::super::diagnostics::StderrTail;
 use super::super::registry::SessionEntry;
@@ -176,7 +182,7 @@ pub(crate) async fn mock_client() -> (Arc<Client>, Arc<RecordingPermissions>, Te
 
 /// Wait until `send_prompt` has atomically reserved the session's turn.
 pub(crate) async fn wait_until_running(client: &Client, session_id: &str) {
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(TEST_POLL_TIMEOUT, async {
         loop {
             if client
                 .get_session_info(session_id)
@@ -289,7 +295,7 @@ async fn unexpected_post_startup_exit_marks_session_failed() {
     };
 
     // Wait for the terminal watcher to mark the session Failed.
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(TEST_POLL_TIMEOUT, async {
         loop {
             if client
                 .get_session_info(&session_id)
@@ -370,7 +376,7 @@ async fn rebind_preserves_session_identity_and_event_history() {
         .await
         .expect("admit first prompt");
     // send_prompt returns after admission; wait until the turn published history.
-    let before = tokio::time::timeout(Duration::from_secs(5), async {
+    let before = tokio::time::timeout(TEST_POLL_TIMEOUT, async {
         loop {
             let events = client
                 .deps
@@ -497,7 +503,7 @@ async fn prompt_injection_fallback_skips_set_config_option() {
     // streamed reply with `[profile: X]` only when it received the
     // `session/set_config_option` RPC, so absence proves the RPC was skipped.
     // send_prompt returns after admission — wait for the turn to finish streaming.
-    let events = tokio::time::timeout(Duration::from_secs(5), async {
+    let events = tokio::time::timeout(TEST_POLL_TIMEOUT, async {
         loop {
             let events = client
                 .deps
@@ -706,7 +712,7 @@ async fn prompt_on_stored_session_starts_actor_without_wiping_history() {
     assert_eq!(info.id, session_id);
 
     // send_prompt returns after admission; wait for the restored turn to append.
-    let after = tokio::time::timeout(Duration::from_secs(5), async {
+    let after = tokio::time::timeout(TEST_POLL_TIMEOUT, async {
         loop {
             let events = client
                 .deps

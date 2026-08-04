@@ -69,15 +69,12 @@ fn detect_flags_uncommitted_changes() {
 }
 
 #[test]
+#[cfg(unix)]
 fn detect_rejects_symlinked_git_dir() {
     let dir = tempfile::tempdir().expect("tempdir");
     let real = tempfile::tempdir().expect("tempdir");
     fresh_repo(real.path());
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(real.path().join(".git"), dir.path().join(".git"))
-            .expect("symlink");
-    }
+    std::os::unix::fs::symlink(real.path().join(".git"), dir.path().join(".git")).expect("symlink");
     let err = detect(dir.path()).expect_err("should reject symlinked .git");
     assert!(matches!(err, GitError::SymlinkedGitDir));
 }

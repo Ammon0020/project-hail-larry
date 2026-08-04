@@ -4,6 +4,7 @@ use std::process::Command;
 use super::cli::{configure_default_identity, git_file, git_output, output_text, run_git};
 use super::repo::{contained_path, head_ref_info, open_repo, status};
 use super::{DiffResult, GitError};
+use crate::pathutil::strip_verbatim_prefix;
 
 /// Maximum unified-diff bytes returned for a single file before truncation.
 /// Bounds daemon memory and LAN response size; the API flags truncation so
@@ -22,8 +23,14 @@ pub fn diff(root: &Path, rel_path: &str, staged: bool) -> Result<DiffResult, Git
         return Err(GitError::NotARepo);
     };
     let path = contained_path(root, rel_path)?;
-    let git_path = path
-        .strip_prefix(root)
+    // contained_path canonicalises the path; on Windows that yields a
+    // `\\?\`-prefixed verbatim path while `root` is typically the
+    // non-verbatim form. Strip the prefix on both sides so strip_prefix
+    // compares like-for-like forms and the relative path resolves.
+    let root_norm = strip_verbatim_prefix(root);
+    let path_norm = strip_verbatim_prefix(&path);
+    let git_path = path_norm
+        .strip_prefix(&root_norm)
         .map_err(|_| GitError::PathEscapes(rel_path.to_string()))?
         .to_string_lossy()
         .replace('\\', "/");

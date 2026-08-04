@@ -79,9 +79,12 @@ Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
   performance (see `[profile.release]` in `Cargo.toml`). The first cold release
   compile is slower (~6 min) but produces a faster binary; incremental rebuilds
   are much faster via sccache. On x86_64 Linux, mold is used as the linker
-  (configured in `.cargo/config.toml`) to offset LTO link time — `setup.sh
-  --verify` checks for it. `make check` and `make qcheck` use the debug profile
-  and are unaffected by LTO.
+  to offset LTO link time. sccache and mold are local-dev optimizations only —
+  the repo's `.cargo/config.toml` is intentionally empty so CI runners without
+  these tools build out of the box. `scripts/setup.sh` (and `setup.ps1` for
+  sccache) write the optimization config to the user-level `~/.cargo/config.toml`;
+  `setup.sh --verify` checks for the tools. `make check` and `make qcheck` use
+  the debug profile and are unaffected by LTO.
 - Record unrelated test failures in `docs/known-issues.md`; do not expand scope.
 - For planning work, follow `.agents/skills/plan-management/SKILL.md`.
 - Discover work by listing `docs/plans/`, then the chosen epic folder. Use status-prefixed filenames; rename them when status changes. Keep plans concise and executable in one branch.

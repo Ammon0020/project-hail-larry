@@ -116,6 +116,13 @@ else
 fi
 
 # --- sccache -----------------------------------------------------------------
+# sccache and the mold linker are local-dev optimizations, NOT build
+# requirements. The repo's .cargo/config.toml is intentionally empty so CI
+# runners without these tools build out of the box. setup.sh writes the
+# optimization config to the user-level ~/.cargo/config.toml (in
+# write_user_cargo_config below) so a developer's `cargo` invocations get
+# sccache + mold without forcing them on every contributor or CI environment.
+SCCACHE_PRESENT=0
 if ! command -v sccache >/dev/null 2>&1; then
     if [[ "$VERIFY_ONLY" -eq 1 ]]; then
         fail "ERROR: 'sccache' is not installed or not on PATH." \
@@ -125,16 +132,23 @@ if ! command -v sccache >/dev/null 2>&1; then
         if command -v cargo >/dev/null 2>&1; then
             echo "${CYAN}Installing sccache via cargo...${RESET}"
             cargo install sccache --quiet || fail "ERROR: Failed to install sccache via cargo."
+            SCCACHE_PRESENT=1
         fi
     fi
+else
+    SCCACHE_PRESENT=1
 fi
 
 # --- mold + clang (Linux x86_64 only) ----------------------------------------
-# .cargo/config.toml wires mold as the linker via clang's -fuse-ld=mold for
-# fat-LTO release builds. Mold is 2–5x faster than GNU ld and significantly
-# offsets the link-time cost of whole-program optimization. On non-x86_64
-# Linux or other platforms, .cargo/config.toml does not activate mold, so
-# this check is scoped to x86_64 Linux only.
+# mold is wired as the linker via clang's -fuse-ld=mold for fat-LTO release
+# builds. Mold is 2–5x faster than GNU ld and significantly offsets the
+# link-time cost of whole-program optimization. On non-x86_64 Linux or other
+# platforms, mold is not activated, so this check is scoped to x86_64 Linux.
+# The config is written to the user-level ~/.cargo/config.toml (see
+# write_user_cargo_config below), NOT the repo .cargo/config.toml, so CI
+# runners without mold/clang build out of the box.
+MOLD_PRESENT=0
+CLANG_PRESENT=0
 if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
     if ! command -v mold >/dev/null 2>&1; then
         if [[ "$VERIFY_ONLY" -eq 1 ]]; then
@@ -145,6 +159,8 @@ if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
             echo "${CYAN}mold is not installed — release builds will use the default linker.${RESET}" >&2
             echo "${CYAN}For 2–5x faster linking, install mold: \`sudo apt install mold\`${RESET}" >&2
         fi
+    else
+        MOLD_PRESENT=1
     fi
     if ! command -v clang >/dev/null 2>&1; then
         if [[ "$VERIFY_ONLY" -eq 1 ]]; then
@@ -154,8 +170,65 @@ if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
         else
             echo "${CYAN}clang is not installed — required as the linker driver for mold.${RESET}" >&2
         fi
+    else
+        CLANG_PRESENT=1
     fi
 fi
+
+# --- user-level ~/.cargo/config.toml (sccache + mold) ------------------------
+# Write the local-dev optimization config to the user-level cargo config so
+# the repo's .cargo/config.toml can stay empty for CI portability. Skipped in
+# --verify mode (no filesystem mutation) and when neither tool is present.
+# Idempotent: re-runs replace the managed block instead of duplicating it.
+write_user_cargo_config() {
+    [[ "$VERIFY_ONLY" -eq 1 ]] && return 0
+    local cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    local user_config="$cargo_home/config.toml"
+    mkdir -p "$cargo_home"
+
+    local has_sccache=0 has_mold_linker=0
+    [[ "$SCCACHE_PRESENT" -eq 1 ]] && has_sccache=1
+    if [[ "$MOLD_PRESENT" -eq 1 && "$CLANG_PRESENT" -eq 1 ]]; then
+        has_mold_linker=1
+    fi
+    [[ "$has_sccache" -eq 0 && "$has_mold_linker" -eq 0 ]] && return 0
+
+    # Preserve any user-written content outside our managed block. The
+    # managed block is bracketed by marker comments so re-runs replace it
+    # cleanly instead of accumulating duplicates.
+    local managed_start="# --- managed by scripts/setup.sh ---"
+    local managed_end="# --- end managed by scripts/setup.sh ---"
+    local prior=""
+    [[ -f "$user_config" ]] && prior="$(cat "$user_config")"
+
+    if [[ -n "$prior" && "$prior" == *"$managed_start"* ]]; then
+        # Keep everything before the first managed marker.
+        prior="${prior%%"$managed_start"*}"
+    fi
+    # Trim trailing blank lines so the file doesn't accumulate whitespace.
+    prior="$(printf '%s' "$prior" | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba}')"
+
+    {
+        if [[ -n "$prior" ]]; then
+            printf '%s\n\n' "$prior"
+        fi
+        printf '%s\n' "$managed_start"
+        printf '# Local-dev build optimizations written by scripts/setup.sh.\n'
+        printf '# The repo .cargo/config.toml is intentionally empty so CI\n'
+        printf '# runners without sccache/mold build out of the box.\n'
+        if [[ "$has_sccache" -eq 1 ]]; then
+            printf '[build]\nrustc-wrapper = "sccache"\n'
+        fi
+        if [[ "$has_mold_linker" -eq 1 ]]; then
+            printf '\n[target.x86_64-unknown-linux-gnu]\n'
+            printf 'linker = "clang"\n'
+            printf 'rustflags = ["-C", "link-arg=-fuse-ld=mold"]\n'
+        fi
+        printf '%s\n' "$managed_end"
+    } > "$user_config"
+    echo "${GREEN}Wrote local-dev cargo config to $user_config${RESET}"
+}
+write_user_cargo_config
 
 # --- web/node_modules --------------------------------------------------------
 NODE_MODULES_DIR="$ROOT_DIR/web/node_modules"

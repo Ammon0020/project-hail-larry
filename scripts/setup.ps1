@@ -142,13 +142,21 @@ ERROR: 'rustc' is not installed or not on PATH.
 "@
 }
 
-# sccache
+# sccache and the mold linker are local-dev optimizations, NOT build
+# requirements. The repo's .cargo/config.toml is intentionally empty so CI
+# runners without these tools build out of the box. setup.ps1 writes the
+# optimization config to the user-level ~\.cargo\config.toml (in
+# Write-UserCargoConfig below) so a developer's `cargo` invocations get
+# sccache without forcing it on every contributor or CI environment.
+$sccachePresent = $false
 if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) {
     $failures += @"
 ERROR: 'sccache' is not installed or not on PATH.
   Required: sccache for build and test caching.
   Install: ``cargo install sccache`` or via package manager (e.g. ``winget install Mozilla.sccache`` / ``choco install sccache``)
 "@
+} else {
+    $sccachePresent = $true
 }
 
 # web\node_modules
@@ -160,6 +168,49 @@ ERROR: web\node_modules is missing — frontend dependencies are not installed.
   Run: .\scripts\setup.ps1   (or: cd web; npm ci)
 "@
 }
+
+# --- user-level ~\.cargo\config.toml (sccache) -------------------------------
+# Write the local-dev optimization config to the user-level cargo config so
+# the repo's .cargo/config.toml can stay empty for CI portability. Skipped in
+# -Verify mode (no filesystem mutation) and when sccache is absent. Mold is
+# Linux-only and not configured here; Linux developers use setup.sh.
+# Idempotent: re-runs replace the managed block instead of duplicating it.
+function Write-UserCargoConfig {
+    if ($Verify) { return }
+    if (-not $sccachePresent) { return }
+    $cargoHome = $env:CARGO_HOME
+    if (-not $cargoHome) { $cargoHome = Join-Path $HOME '.cargo' }
+    if (-not (Test-Path $cargoHome)) { New-Item -ItemType Directory -Force -Path $cargoHome | Out-Null }
+    $userConfig = Join-Path $cargoHome 'config.toml'
+
+    $managedStart = '# --- managed by scripts/setup.ps1 ---'
+    $managedEnd   = '# --- end managed by scripts/setup.ps1 ---'
+
+    # Preserve any user-written content outside our managed block.
+    $prior = ''
+    if (Test-Path $userConfig) {
+        $prior = Get-Content -Raw $userConfig
+        if ($prior -and $prior.Contains($managedStart)) {
+            $idx = $prior.IndexOf($managedStart)
+            $prior = $prior.Substring(0, $idx)
+        }
+        $prior = $prior.TrimEnd()
+    }
+
+    $body = New-Object System.Text.StringBuilder
+    if ($prior) { [void]$body.AppendLine($prior); [void]$body.AppendLine() }
+    [void]$body.AppendLine($managedStart)
+    [void]$body.AppendLine('# Local-dev build optimizations written by scripts/setup.ps1.')
+    [void]$body.AppendLine('# The repo .cargo/config.toml is intentionally empty so CI')
+    [void]$body.AppendLine('# runners without sccache build out of the box.')
+    [void]$body.AppendLine('[build]')
+    [void]$body.AppendLine('rustc-wrapper = "sccache"')
+    [void]$body.AppendLine($managedEnd)
+
+    Set-Content -Path $userConfig -Value $body.ToString() -Encoding UTF8
+    Write-Host "Wrote local-dev cargo config to $userConfig" -ForegroundColor Green
+}
+Write-UserCargoConfig
 
 # --- Act on results ----------------------------------------------------------
 
