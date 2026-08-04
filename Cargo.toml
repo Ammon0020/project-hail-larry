@@ -268,7 +268,22 @@ expect_used = "deny"      # no `.expect()` — same rationale as `unwrap_used`
 # Re-run to verify: `cargo clippy --all-targets -- -W clippy::pedantic`
 pedantic = "deny"
 
-# Release binaries: strip symbols for smaller single-binary distribution
-# (S-BUILD). Debug builds keep symbols for local development.
+# Release binaries: maximum runtime performance for the released daemon.
+#   - `lto = "fat"`: whole-program optimization across all crates; the single
+#     biggest runtime win for a binary that links axum + tokio + gix + ACP SDK.
+#   - `codegen-units = 1`: lets LLVM see the whole crate at once for better
+#     inlining and register allocation. Slower compile, faster binary.
+#   - `strip = true`: smaller single-binary distribution (S-BUILD).
+# Compile cost is offset by sccache (incremental) + mold (linking).
+# `panic` is left at the default "unwind": connection tasks are spawned into a
+# JoinSet without catch_unwind, so unwinding isolates a panicking task instead
+# of aborting the whole daemon (src/app/AGENTS.md "Zero Panic Listener").
 [profile.release]
+lto = "fat"
+codegen-units = 1
 strip = true
+
+# Dev/test iteration: line tables only give backtraces without the full debug
+# info that bloats object files and slows compilation. Does not affect release.
+[profile.dev]
+debug = "line-tables-only"

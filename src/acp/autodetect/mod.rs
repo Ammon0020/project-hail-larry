@@ -14,8 +14,10 @@ mod cursor;
 mod devin;
 mod vibe;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use futures_util::future::join_all;
 
 use crate::config::{AgentInfo, AgentModel};
 
@@ -107,12 +109,31 @@ pub async fn autodetect_with(options: AutodetectOptions) -> Vec<AgentInfo> {
     if std::env::var_os("LOCAL_AGENT_NO_AUTODETECT").is_some_and(|v| !v.is_empty()) {
         return Vec::new();
     }
-    let mut agents = Vec::new();
-    for harness in HARNESSES {
-        let Some(command) = find_first_command(harness.commands(), harness.search_paths()) else {
-            continue;
-        };
-        let (models, warning) = detect_models_for(*harness, &command, options).await;
+
+    // First pass: resolve commands for all harnesses via cheap synchronous PATH
+    // lookups. Harnesses without an installed command are skipped.
+    let pending: Vec<(&'static dyn Harness, PathBuf)> = HARNESSES
+        .iter()
+        .filter_map(|&harness| {
+            find_first_command(harness.commands(), harness.search_paths())
+                .map(|command| (harness, command))
+        })
+        .collect();
+
+    // Probe all installed harnesses concurrently. Each probe is independent
+    // (separate subprocess or file read), so parallel execution reduces startup
+    // latency from sum(probe_times) to max(probe_times) — e.g. Cursor (8s) and
+    // Devin (8–90s) run side by side instead of back to back. join_all preserves
+    // input order, so the output matches the previous sequential registry order.
+    let probes = pending.iter().map(|&(harness, ref command)| {
+        let command = command.clone();
+        Box::pin(async move {
+            let (models, warning) = detect_models_for(harness, &command, options).await;
+            (harness, command, models, warning)
+        })
+    });
+    let mut agents = Vec::with_capacity(pending.len());
+    for (harness, command, models, warning) in join_all(probes).await {
         agents.push(AgentInfo {
             id: harness.id().into(),
             name: harness.name().into(),

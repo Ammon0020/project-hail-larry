@@ -1,2 +1,11 @@
 [build]
 rustc-wrapper = "sccache"
+
+# Use mold for linking on Linux x86_64. Mold is 2–5x faster than GNU ld and
+# significantly offsets the link-time cost of fat LTO. Requires clang as the
+# linker driver (rustc's default cc wrapper passes `-fuse-ld=mold` through).
+# Falls back gracefully when mold is absent: cargo only reads this file at
+# build start, and a missing mold surfaces as a clear linker error.
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
