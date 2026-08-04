@@ -1,7 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, GitBranch, Search } from 'lucide-react'
+import { type LucideIcon, Check, GitBranch, Plus, Search } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
+
+/**
+ * Persistent VS Code-style picker command shown above the branch list.
+ * These are stubs: visible but non-selectable until wired up. They are
+ * intentionally excluded from keyboard navigation and Enter selection so
+ * the existing branch-row semantics stay intact.
+ */
+interface PickerAction {
+  id: string
+  label: string
+  icon: LucideIcon
+}
+
+const PICKER_ACTIONS: PickerAction[] = [
+  { id: 'create-branch', label: 'Create new branch...', icon: Plus },
+  { id: 'create-branch-from', label: 'Create new branch from...', icon: GitBranch },
+  { id: 'checkout-detached', label: 'Checkout detached...', icon: GitBranch },
+]
 
 /** Normalized branch option: local branches win over remote-only names. */
 export interface BranchOption {
@@ -118,6 +136,27 @@ export function BranchPicker({
             aria-activedescendant={filtered.length > 0 ? `branch-picker-item-${activeRow}` : undefined}
             className="flex-1 bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground"
           />
+        </div>
+        {/* Stub action rows: persistent commands, never filtered by search and
+         * excluded from keyboard navigation (no data-idx, no role=option). */}
+        <div
+          role="group"
+          aria-label="Branch actions"
+          className="border-b border-border p-1"
+        >
+          {PICKER_ACTIONS.map(({ id, label, icon: Icon }) => (
+            <div
+              key={id}
+              aria-disabled="true"
+              className="flex items-center gap-2 px-3 h-8 text-sm rounded-sm select-none cursor-default opacity-60"
+            >
+              <span className="flex w-4 shrink-0 items-center justify-center text-muted-foreground">
+                <Icon className="h-3.5 w-3.5" />
+              </span>
+              <span className="min-w-0 truncate">{label}</span>
+              <span className="ml-auto text-xs text-muted-foreground/70">Coming soon</span>
+            </div>
+          ))}
         </div>
         <div
           ref={listRef}

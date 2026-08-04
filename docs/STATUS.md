@@ -147,8 +147,9 @@
 - **S-GIT-CHECKOUT** — `POST /git/checkout` switches local branches (refuses
   dirty trees with 409); `status()` returns local and remote-tracking branch
   names. GitPanel header branch name opens a searchable, keyboard-accessible
-  picker modal showing `origin/branch` entries with muted remote prefixes and a
-  check on the current branch. See
+  picker modal showing `origin/branch` entries with muted remote prefixes, a
+  check on the current branch, and visible `Coming soon` rows for creating a
+  branch, creating from a branch, and detached checkout. See
   `docs/plans/git-history-graph/done-git-checkout-small.md`.
 
 ## Known Gaps

@@ -44,8 +44,11 @@ Switch branches from the UI via `POST /api/workspaces/{id}/git/checkout`.
   `BranchPicker` Radix dialog. The picker auto-focuses its search input,
   filters local and remote entries case-insensitively, displays remote names as
   `origin/branch` with a muted prefix, supports arrow-key navigation and Enter,
-  and marks the current branch with a check. On select, it calls `gitCheckout`
-  via `runMutation('checkout', ...)` then `onRepoChanged()` to refresh the file
+  and marks the current branch with a check. It also shows persistent stub rows
+  for `Create new branch...`, `Create new branch from...`, and
+  `Checkout detached...`, each marked `Coming soon` and excluded from branch
+  search/navigation. On select, it calls `gitCheckout` via
+  `runMutation('checkout', ...)` then `onRepoChanged()` to refresh the file
   tree.
 - **Tests** (`src/git/tests.rs`): 6 backend tests cover branch listing
   (single, multiple, remote refs with `origin/HEAD` filtering), checkout
