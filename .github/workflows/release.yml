@@ -36,8 +36,8 @@ jobs:
           - runner: macos-latest
             artifact: local_agent-macos-arm64
             smoke: bash scripts/spa-smoke.sh
-          # macOS Intel — macos-13 is the last Intel runner GitHub offers.
-          - runner: macos-13
+          # macOS Intel — macos-15-intel is the supported Intel runner.
+          - runner: macos-15-intel
             artifact: local_agent-macos-x86_64
             smoke: bash scripts/spa-smoke.sh
           # Windows x86_64

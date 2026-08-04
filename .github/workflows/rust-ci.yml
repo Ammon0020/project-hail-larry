@@ -92,7 +92,7 @@ jobs:
           CONTRACT_BACKEND=rust CONTRACT_BINARY=./target/debug/local_agent \
             cargo test -q --test contract_runner --features contract -- --test-threads=1
 
-  # macos-latest = Apple Silicon (arm64); macos-13 = last Intel (x86_64) runner.
+  # macos-latest = Apple Silicon (arm64); macos-15-intel = Intel (x86_64).
   # Build-verify on both; full SPA smoke runs only on release-macos (arm64)
   # below. Intel release binaries come from the tag-triggered release.yml.
   build-macos:
@@ -100,7 +100,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-latest, macos-13]
+        runner: [macos-latest, macos-15-intel]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
