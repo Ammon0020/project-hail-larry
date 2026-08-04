@@ -59,6 +59,10 @@ Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
 ## Development
 
 - Use `./build.sh` on Linux/macOS or `.\build.ps1` on Windows → `bin/local_agent`.
+- For frontend dev with HMR, use `make dev` (or `scripts/dev.sh`) — starts the
+  Rust daemon and Vite dev server together. Open http://localhost:5173;
+  Vite proxies `/api` and `/ws` to the daemon. Ctrl+C stops both. Requires
+  `web/dist/index.html` (run `cd web && npm run build` once after `make clean`).
 - During active development, use `make qcheck` to automatically fix formatting/lints and quietly run the full test suite.
 - Before completion, run the verbose unified gate: `make check` (fmt + clippy + cargo
   test + frontend eslint/build + contract suite). For a fast style/correctness
@@ -67,6 +71,10 @@ Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
 - For Rust-only changes, `cargo test -q --all-targets`,
   `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt -q --check`
   suffice; `make check` adds the frontend + contract bar for full CI parity.
+- Frontend unit tests (vitest) cover pure utility functions in `web/src/lib/`.
+  Run with `make test-frontend` (or `cd web && npm test -- --run`). Tests are
+  pure-function only — no React rendering, no DOM mocking. Add tests for new
+  pure functions; skip hooks/components that couple to `useBackend` or the DOM.
 - Release builds use fat LTO + `codegen-units = 1` for maximum runtime
   performance (see `[profile.release]` in `Cargo.toml`). The first cold release
   compile is slower (~6 min) but produces a faster binary; incremental rebuilds

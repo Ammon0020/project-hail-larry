@@ -7,6 +7,22 @@
 .\build.ps1         # Windows — same → bin\local_agent.exe
 ```
 
+## Dev mode (HMR)
+
+```bash
+make dev            # or: scripts/dev.sh
+```
+
+Starts the Rust daemon (`cargo run -- start`) and the Vite dev server
+(`npm run dev`) together. Open **http://localhost:5173** — Vite proxies
+`/api`, `/ws`, and `/health` to the daemon on port 7337. You get instant
+frontend HMR; only Rust changes require a restart (Ctrl+C, then `make dev`
+again).
+
+Requires `web/dist/index.html` to exist (build.rs needs it for `cargo run`
+to compile). It persists across builds; run `cd web && npm run build` once
+only if you've run `make clean`.
+
 Primary binary:
 
 - `bin/local_agent` / `bin/local_agent.exe` — Rust daemon (`local_agent start`)
