@@ -522,23 +522,23 @@ fn handle_event(
     let now = Instant::now();
 
     for path in &event.paths {
-        // A newly created directory must be watched too (recursive coverage).
-        // The directory creation itself is not a file change to surface. Use
-        // `symlink_metadata` so a newly created symlink to an external dir
+        // Directory transitions are not file changes to surface. Some notify
+        // backends report a newly created directory as a non-Create event, so
+        // classify existing directory paths before inspecting the event kind.
+        // Keep newly discovered directories watched for recursive coverage.
+        // Use `symlink_metadata` so a newly created symlink to an external dir
         // (e.g. `ln -s /etc proj/link`) is rejected rather than watched.
-        if matches!(event.kind, EventKind::Create(_)) {
-            if let Ok(meta) = fs::symlink_metadata(path) {
-                let ft = meta.file_type();
-                if ft.is_symlink() {
-                    continue;
+        if let Ok(meta) = fs::symlink_metadata(path) {
+            let ft = meta.file_type();
+            if ft.is_symlink() && matches!(event.kind, EventKind::Create(_)) {
+                continue;
+            }
+            if ft.is_dir() {
+                let name = path.file_name().and_then(OsStr::to_str).unwrap_or("");
+                if !is_ignored_dir_name(name) && !name.starts_with('.') {
+                    let _ = command_tx.send(Command::WatchNewDir(path.clone()));
                 }
-                if ft.is_dir() {
-                    let name = path.file_name().and_then(OsStr::to_str).unwrap_or("");
-                    if !is_ignored_dir_name(name) && !name.starts_with('.') {
-                        let _ = command_tx.send(Command::WatchNewDir(path.clone()));
-                    }
-                    continue;
-                }
+                continue;
             }
         }
 

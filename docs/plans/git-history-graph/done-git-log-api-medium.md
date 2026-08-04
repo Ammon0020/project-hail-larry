@@ -11,6 +11,12 @@
 > tests cover unborn repo, plain dir, HEAD commit, pagination, limit cap, branch
 > labels, and parent oids. No new `gix` features needed (existing `basic` +
 > `comfort` suffice). `make check` passes.*
+>
+> *Updated 2026-07-30 — the log walk now seeds `rev_walk()` from the union of all
+> local branch heads plus detached HEAD (when the repo is in a detached state),
+> so commits reachable from any local branch or the checked-out commit appear.
+> `isHead` is preserved for the commit HEAD currently points at, regardless of
+> whether that commit is also a branch tip.*
 
 ## Goal
 
@@ -41,7 +47,10 @@ commit graph (no `git log` CLI spawn).
 
 - `limit` capped at 200; `offset` for pagination.
 - Branch labels: resolve which branches point at each commit (scan refs).
-- HEAD: mark the commit HEAD points at.
+- HEAD: mark the commit HEAD points at. The walk seeds from the union of all
+  local branch heads plus detached HEAD (when detached), so the checked-out
+  commit is reachable even when no local branch points at it; `is_head` is
+  preserved for the commit HEAD currently points at.
 - New types + `log()` function in `src/git/mod.rs`; handler in `src/api/git.rs`;
   route in `src/api/mod.rs`.
 - Tests following the existing `fresh_repo` + commit helper pattern.

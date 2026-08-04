@@ -461,6 +461,100 @@ fn log_reports_parent_oids() {
 }
 
 #[test]
+fn log_includes_all_local_branch_heads_not_only_head() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    // `init` is the only commit; main (HEAD) and `feature` both start there.
+    Command::new("git")
+        .args(["branch", "feature"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git branch feature");
+    // Advance main past the fork point so the two branches diverge.
+    add_commit(dir.path(), "a.txt", "second");
+    // Switch to `feature` and add a commit unique to it, then return to main
+    // so HEAD ends up on `main` (the non-diverged branch). This is the case the
+    // old HEAD-only walk got wrong: `feature`'s unique commit was invisible.
+    Command::new("git")
+        .args(["checkout", "-q", "feature"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git checkout feature");
+    add_commit(dir.path(), "feat.txt", "feat work");
+    Command::new("git")
+        .args(["checkout", "-q", "main"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git checkout main");
+
+    let result = log(dir.path(), 100, 0).expect("log");
+
+    // The union walk reaches both branch tips plus the shared fork point.
+    assert_eq!(result.total, 3, "total: {:?}", result.commits);
+
+    let by_msg = |m: &str| {
+        result
+            .commits
+            .iter()
+            .find(|c| c.message == m)
+            .unwrap_or_else(|| panic!("missing commit {m:?} in {:?}", result.commits))
+    };
+    let main_tip = by_msg("second");
+    let feat_tip = by_msg("feat work");
+    let fork = by_msg("init");
+
+    // Both branch tips are present and labeled with their own branch only.
+    assert!(
+        main_tip.branch_labels.iter().any(|l| l == "main"),
+        "main tip labels: {:?}",
+        main_tip.branch_labels
+    );
+    assert!(
+        !main_tip.branch_labels.iter().any(|l| l == "feature"),
+        "main tip must not carry feature: {:?}",
+        main_tip.branch_labels
+    );
+    assert!(
+        feat_tip.branch_labels.iter().any(|l| l == "feature"),
+        "feature tip labels: {:?}",
+        feat_tip.branch_labels
+    );
+    assert!(
+        !feat_tip.branch_labels.iter().any(|l| l == "main"),
+        "feature tip must not carry main: {:?}",
+        feat_tip.branch_labels
+    );
+    // No branch points at the fork point, so it carries no labels.
+    assert!(
+        fork.branch_labels.is_empty(),
+        "fork labels: {:?}",
+        fork.branch_labels
+    );
+
+    // HEAD is on `main`, so only the main tip keeps the HEAD marker.
+    assert!(main_tip.is_head, "main tip should be HEAD");
+    assert!(!feat_tip.is_head, "feature tip should not be HEAD");
+    assert!(!fork.is_head, "fork point should not be HEAD");
+
+    // The fork point is the parent of both tips — the parents vector gives the
+    // frontend enough to reconstruct the diverged multi-branch topology.
+    assert_eq!(main_tip.parents, vec![fork.oid.clone()]);
+    assert_eq!(feat_tip.parents, vec![fork.oid.clone()]);
+    assert!(fork.parents.is_empty(), "init has no parents");
+
+    // Pagination totals/has_more stay correct for the union walk.
+    let page1 = log(dir.path(), 2, 0).expect("log page 1");
+    assert_eq!(page1.commits.len(), 2);
+    assert_eq!(page1.total, 3);
+    assert!(page1.has_more);
+
+    let page2 = log(dir.path(), 2, 2).expect("log page 2");
+    assert_eq!(page2.commits.len(), 1);
+    assert_eq!(page2.total, 3);
+    assert!(!page2.has_more);
+}
+
+#[test]
 fn discard_restores_modified_tracked_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     fresh_repo(dir.path());

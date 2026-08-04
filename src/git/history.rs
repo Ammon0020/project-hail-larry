@@ -11,14 +11,20 @@ pub const MAX_LOG_LIMIT: u32 = 200;
 
 /// `GET /api/workspaces/{id}/git/log?limit=100&offset=0` (S-GIT-LOG-API).
 ///
-/// Walks the commit graph from HEAD using `gix` (no `git log` CLI spawn),
+/// Walks the commit graph from every local branch head (plus the checked-out
+/// HEAD, in case it is detached) using `gix` (no `git log` CLI spawn),
 /// returning a paginated list with parent refs, branch labels, and the HEAD
 /// marker. An unborn repo (no commits) returns an empty list, not an error.
 ///
+/// Walking the union of branch heads — not just `HEAD` — means a diverged
+/// local branch's unique commits appear in the log even when it isn't
+/// checked out, so the frontend can render the full branch topology. The
+/// `is_head` flag is still set only on the commit `HEAD` actually points at.
+///
 /// `limit` is clamped to [`MAX_LOG_LIMIT`]; `offset` skips commits (for
-/// pagination). `total` is the full count of commits reachable from HEAD so
-/// the frontend can render a pager; `has_more` is `true` when the page does
-/// not reach the end.
+/// pagination). `total` is the full count of commits reachable from the
+/// union of branch heads so the frontend can render a pager; `has_more` is
+/// `true` when the page does not reach the end.
 ///
 /// # Errors
 ///
@@ -36,17 +42,24 @@ pub fn log(root: &Path, limit: u32, offset: u32) -> Result<LogResult, GitError> 
     };
     let head_oid = head_commit.id;
 
-    // Branch labels: scan local refs and map commit oid → short branch names.
-    // Built once for the whole repo (cheap; refs are a small list) and looked
-    // up per-commit below.
-    let branch_map = build_branch_label_map(&repo)?;
+    // Branch labels and walk tips: scan local refs once and build both the
+    // commit oid → short branch names map (for per-commit labels) and the set
+    // of branch-head oids to seed the union walk. Cheap; refs are a small list.
+    let (branch_map, mut tips) = build_branch_refs(&repo)?;
 
-    // Walk all commits reachable from HEAD, newest-first (topological). We
-    // collect the full walk into a Vec so we can report `total` for pagination
-    // — repos with huge histories may want a streaming approach later, but
-    // for the MVP this is simple and correct.
+    // Seed the walk with HEAD too, so a detached HEAD's commit (which no local
+    // branch points at) still appears and `is_head` always has a match. When
+    // HEAD sits on a branch the oid is already in `tips`; dedup keeps it cheap.
+    if !tips.contains(&head_oid) {
+        tips.push(head_oid);
+    }
+
+    // Walk all commits reachable from the union of branch heads + HEAD,
+    // topological breadth-first. We collect the full walk into a Vec so we can
+    // report `total` for pagination — repos with huge histories may want a
+    // streaming approach later, but for the MVP this is simple and correct.
     let walk = repo
-        .rev_walk([head_oid])
+        .rev_walk(tips)
         .all()
         .map_err(|e| GitError::Operation(format!("rev walk: {e}")))?;
 
@@ -113,16 +126,24 @@ pub fn log(root: &Path, limit: u32, offset: u32) -> Result<LogResult, GitError> 
     })
 }
 
-/// Build a map of commit hex oid → short branch names for all local branches.
+/// Build the branch label map and the set of local branch-head oids used to
+/// seed the union walk.
 ///
-/// Scans `refs/heads/*` and peels each to its target commit. Multiple branches
-/// can point at the same commit (e.g. after a fast-forward), so the value is a
-/// `Vec`. Errors are non-fatal: a broken ref is skipped rather than failing
-/// the whole log call.
-fn build_branch_label_map(
+/// Scans `refs/heads/*` once and peels each to its target commit, returning:
+/// - a map of commit hex oid → short branch names (multiple branches can point
+///   at the same commit, e.g. after a fast-forward, so the value is a `Vec`);
+/// - the detached oids of every local branch head, for `rev_walk` tips.
+///
+/// Errors are non-fatal: a broken ref is skipped rather than failing the whole
+/// log call.
+/// Commit hex oid → short local branch names pointing at it.
+type BranchLabelMap = std::collections::HashMap<String, Vec<String>>;
+
+fn build_branch_refs(
     repo: &gix::Repository,
-) -> Result<std::collections::HashMap<String, Vec<String>>, GitError> {
+) -> Result<(BranchLabelMap, Vec<gix::ObjectId>), GitError> {
     let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut tips: Vec<gix::ObjectId> = Vec::new();
     let refs = repo
         .references()
         .map_err(|e| GitError::Operation(format!("references: {e}")))?;
@@ -152,15 +173,20 @@ fn build_branch_label_map(
             );
 
         // Peel to the commit oid. Symbolic refs (e.g. HEAD) resolve through;
-        // a branch that doesn't peel to a commit is skipped.
+        // a branch that doesn't peel to a commit is skipped. The detached oid
+        // seeds the union walk; its hex string keys the label map.
         let mut branch = branch;
         if let Ok(id) = branch.peel_to_id() {
-            let hex = id.to_hex().to_string();
+            let oid = id.detach();
+            let hex = oid.to_hex().to_string();
             map.entry(hex).or_default().push(short);
+            if !tips.contains(&oid) {
+                tips.push(oid);
+            }
         }
     }
 
-    Ok(map)
+    Ok((map, tips))
 }
 
 /// Format a `gix::date::Time` as an RFC 3339 / ISO 8601 UTC string.

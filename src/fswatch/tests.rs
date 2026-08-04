@@ -8,10 +8,9 @@
 //! — re-run before investigating.
 
 use std::fs;
-use std::path::Path;
 use std::sync::mpsc;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
@@ -30,6 +29,27 @@ fn wait_for_event(
     timeout: Duration,
 ) -> Option<crate::interfaces::types::Event> {
     rx.recv_timeout(timeout).ok()
+}
+
+/// Wait for a specific target while ignoring unrelated filesystem events.
+/// Different notify backends can report directory transitions before the file
+/// event that a test is exercising.
+fn wait_for_target(
+    rx: &mpsc::Receiver<crate::interfaces::types::Event>,
+    target: &str,
+    timeout: Duration,
+) -> Option<crate::interfaces::types::Event> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        let event = rx.recv_timeout(remaining).ok()?;
+        if event.target == target {
+            return Some(event);
+        }
+    }
 }
 
 /// RAII guard that holds the watcher lock and drops the watcher before
@@ -56,7 +76,11 @@ fn make_watcher() -> Option<(
     WatcherGuard,
     mpsc::Receiver<crate::interfaces::types::Event>,
 )> {
-    let lock = WATCHER_LOCK.lock().expect("watcher lock");
+    // Recover the lock so one failed timing-sensitive test does not mask every
+    // later fswatch test with a secondary PoisonError.
+    let lock = WATCHER_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (tx, rx) = mpsc::channel();
     match Watcher::new(move |e| {
         let _ = tx.send(e);
@@ -191,11 +215,10 @@ fn recursive_create_directory_watches() {
     let target = nested.join("index.js");
     fs::write(&target, b"module.exports = 1;").expect("write");
 
-    let e = wait_for_event(&rx, Duration::from_secs(4))
+    let e = wait_for_target(&rx, "src/routes/index.js", Duration::from_secs(4))
         .expect("expected a FileChangedOnDisk event for a file inside a newly created nested dir");
     assert_eq!(e.event_type, EventType::FileChangedOnDisk);
-    let want = Path::new("src").join("routes").join("index.js");
-    assert_eq!(Path::new(&e.target), want);
+    assert_eq!(e.target, "src/routes/index.js");
 }
 
 /// Two rapid writes to the same file produce exactly one event (the second is

@@ -76,8 +76,11 @@
   `docs/plans/other_tasks/done-api-module-split-large-medium.md`.
 - **Git log API (S-GIT-LOG-API)** — `GET /api/workspaces/{id}/git/log?limit=&offset=`
   implemented with `gix::Repository::rev_walk()` for the commit graph, branch
-  labels, and ISO 8601 UTC author timestamps. 7 unit tests. See
-  `docs/plans/git-history-graph/done-git-log-api-medium.md`.
+  labels, and ISO 8601 UTC author timestamps. The walk now seeds from the union
+  of all local branch heads plus detached HEAD (when detached), so the
+  checked-out commit is reachable even when no local branch points at it;
+  `is_head` is preserved for the commit HEAD currently points at. 7 unit tests.
+  See `docs/plans/git-history-graph/done-git-log-api-medium.md`.
 - **Git history graph (S-GIT-GRAPH-VIEWER)** — collapsible/resizable bottom pane
   in the Source Control panel rendering an SVG commit graph (greedy lane
   layout in `gitGraphLayout.ts`, 6 vitest cases) with a graph/flat-list toggle,
