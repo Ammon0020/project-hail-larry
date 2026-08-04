@@ -81,7 +81,7 @@ export function WorkspaceHeader({
       <div className="flex-1 min-w-0" />
 
       {/* Workspace Label */}
-      <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider shrink-0 hidden @[280px]:inline">Workspace:</span>
+      <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider shrink-0 hidden @[340px]:inline">Workspace:</span>
 
       {/* Workspace Selector */}
       <div className="relative shrink-0 w-[140px] @[280px]:w-[160px]">
