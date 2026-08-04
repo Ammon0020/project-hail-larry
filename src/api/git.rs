@@ -25,7 +25,10 @@ use serde_json::json;
 use std::path::PathBuf;
 use tracing::{debug, error};
 
-use crate::git::{self, detect, DiffResult, GitError, GitRepoInfo, LogResult, StatusResult};
+use crate::git::{
+    self, commit_diff, detect, CommitDiffResult, DiffResult, GitError, GitRepoInfo, LogResult,
+    StatusResult,
+};
 use crate::interfaces::WorkspaceManager;
 
 use super::{app_error, decode_json_body, required_query, ApiResponseError, AppState};
@@ -66,6 +69,11 @@ pub async fn get_git_state(
 pub(crate) struct DiffQuery {
     path: Option<String>,
     staged: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CommitDiffQuery {
+    oid: Option<String>,
 }
 
 /// `GET /api/workspaces/{id}/git/log` query params (S-GIT-LOG-API).
@@ -146,6 +154,18 @@ pub async fn get_git_diff(
     let staged = query.staged.unwrap_or(false);
     let root = workspace_root(&state, &id).await?;
     let result = run_git_blocking("diff", move || git::diff(&root, &path, staged)).await?;
+    Ok(Json(result))
+}
+
+/// `GET /api/workspaces/{id}/git/commit-diff?oid=...`.
+pub async fn get_git_commit_diff(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<CommitDiffQuery>,
+) -> Result<Json<CommitDiffResult>, ApiResponseError> {
+    let oid = required_query(query.oid, "oid")?;
+    let root = workspace_root(&state, &id).await?;
+    let result = run_git_blocking("commit diff", move || commit_diff(&root, &oid)).await?;
     Ok(Json(result))
 }
 

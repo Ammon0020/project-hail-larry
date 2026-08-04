@@ -60,7 +60,7 @@ pub struct StatusResult {
 }
 
 /// `GET /api/workspaces/{id}/git/diff` response (S-GIT-API).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffResult {
     /// Unified-diff text (bounded by [`crate::git::MAX_DIFF_BYTES`]).
@@ -71,6 +71,24 @@ pub struct DiffResult {
     pub head: String,
     /// `true` when the diff was capped at [`crate::git::MAX_DIFF_BYTES`].
     pub truncated: bool,
+}
+
+/// One file changed by a commit, with its parent and commit snapshots.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDiffFile {
+    pub path: String,
+    #[serde(flatten)]
+    pub diff: DiffResult,
+}
+
+/// `GET /api/workspaces/{id}/git/commit-diff` response.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDiffResult {
+    pub oid: String,
+    pub parent_oid: Option<String>,
+    pub files: Vec<CommitDiffFile>,
 }
 
 /// Author identity for a commit log entry (S-GIT-LOG-API).

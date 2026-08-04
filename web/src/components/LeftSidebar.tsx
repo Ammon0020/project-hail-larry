@@ -29,6 +29,7 @@ export function LeftSidebar({
   onWorkspaceSelect,
   onSearchResultSelect,
   onOpenDiff,
+  onOpenCommitDiff,
   onRepoChanged,
   style,
   connected = true,
@@ -53,6 +54,8 @@ export function LeftSidebar({
   onSearchResultSelect?: (path: string, lineNumber: number) => void
   /** Opens a persistent diff tab for a staged or worktree change. */
   onOpenDiff: (path: string, staged: boolean) => void
+  /** Opens a persistent multi-file diff tab for a history commit. */
+  onOpenCommitDiff: (commitOid: string) => void
   /** Refreshes app-level git state after repository initialization. */
   onRepoChanged: () => Promise<void>
   /** Optional inline style — used by App.tsx to apply a persisted panel width on desktop. */
@@ -139,6 +142,7 @@ export function LeftSidebar({
         <GitPanel
           workspaceId={activeWorkspace?.id ?? null}
           onOpenDiff={onOpenDiff}
+          onOpenCommitDiff={onOpenCommitDiff}
           onRepoChanged={onRepoChanged}
           onFileSelect={onFileSelect}
         />

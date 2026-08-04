@@ -152,6 +152,33 @@ export function useEditorTabHandlers({
     if (!isDesktop) setMobileView('editor')
   }
 
+  /** Opens a persistent tab for all files changed by one history commit. */
+  const handleOpenCommitDiff = (commitOid: string) => {
+    const workspaceId = backend.activeWorkspace?.id
+    if (!workspaceId) return
+    const tabId = `git-commit-diff:${commitOid}`
+    const existing = openTabs.find((tab) => tab.id === tabId)
+    if (existing) {
+      setActiveTabId(existing.id)
+    } else {
+      setOpenTabs((prev) => [...prev, {
+        id: tabId,
+        name: `Commit: ${commitOid.slice(0, 8)}`,
+        path: commitOid,
+        content: '',
+        revision: 0,
+        unsaved: false,
+        language: '',
+        kind: 'git-commit-diff',
+        workspaceId,
+        commitOid,
+        isPreview: false,
+      }])
+      setActiveTabId(tabId)
+    }
+    if (!isDesktop) setMobileView('editor')
+  }
+
   /** Prompts for a name and creates an empty file under the folder, then opens it. */
   const handleTreeNewFile = async (parentPath: string) => {
     const name = window.prompt('New file name')
@@ -213,6 +240,7 @@ export function useEditorTabHandlers({
     handleFileSelect,
     handleOpenPreview,
     handleOpenDiff,
+    handleOpenCommitDiff,
     handleTreeNewFile,
     handleTreeNewFolder,
     handleTabBarPreview,

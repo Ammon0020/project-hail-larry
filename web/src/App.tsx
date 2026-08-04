@@ -159,6 +159,7 @@ export default function App() {
     handleFileSelect,
     handleOpenPreview,
     handleOpenDiff,
+    handleOpenCommitDiff,
     handleTreeNewFile,
     handleTreeNewFolder,
     handleTabBarPreview,
@@ -554,6 +555,7 @@ export default function App() {
         onWorkspaceSelect={backend.selectWorkspace}
         onSearchResultSelect={handleSearchResultSelect}
         onOpenDiff={handleOpenDiff}
+        onOpenCommitDiff={handleOpenCommitDiff}
         onRepoChanged={refreshGitState}
         style={isDesktop ? { width: leftPanelWidth } : undefined}
         connected={backend.connected}

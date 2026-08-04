@@ -26,11 +26,12 @@ mod worktree;
 pub use history::{log, MAX_LOG_LIMIT};
 pub use repo::{detect, status};
 pub use types::{
-    CommitAuthor, DiffResult, FileStatus, GitError, GitRepoInfo, LogCommit, LogResult, StatusResult,
+    CommitAuthor, CommitDiffFile, CommitDiffResult, DiffResult, FileStatus, GitError, GitRepoInfo,
+    LogCommit, LogResult, StatusResult,
 };
 pub use worktree::{
-    add_to_gitignore, checkout, commit, diff, discard, fetch, init, pull, push, stage, unstage,
-    MAX_DIFF_BYTES,
+    add_to_gitignore, checkout, commit, commit_diff, diff, discard, fetch, init, pull, push, stage,
+    unstage, MAX_DIFF_BYTES,
 };
 
 #[cfg(test)]

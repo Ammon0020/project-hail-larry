@@ -180,6 +180,49 @@ fn commit_creates_new_oid() {
 }
 
 #[test]
+fn commit_diff_returns_parent_and_head_snapshots() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let old_oid = detect(dir.path())
+        .expect("detect")
+        .head_oid
+        .expect("head oid");
+    std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+    std::fs::write(dir.path().join("new.txt"), "new file\n").expect("write");
+    stage(dir.path(), &[]).expect("stage all");
+    let oid = commit(dir.path(), "change", Some(&old_oid), false).expect("commit");
+
+    let result = commit_diff(dir.path(), &oid).expect("commit diff");
+    assert_eq!(result.oid, oid);
+    assert_eq!(result.parent_oid.as_deref(), Some(old_oid.as_str()));
+    assert_eq!(result.files.len(), 2);
+    let readme = result
+        .files
+        .iter()
+        .find(|file| file.path == "README.md")
+        .expect("readme");
+    assert_eq!(readme.diff.base, "hello\n");
+    assert_eq!(readme.diff.head, "changed\n");
+    let new_file = result
+        .files
+        .iter()
+        .find(|file| file.path == "new.txt")
+        .expect("new file");
+    assert!(new_file.diff.base.is_empty());
+    assert_eq!(new_file.diff.head, "new file\n");
+}
+
+#[test]
+fn commit_diff_rejects_invalid_oid() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    assert!(matches!(
+        commit_diff(dir.path(), "not-an-oid"),
+        Err(GitError::Operation(_))
+    ));
+}
+
+#[test]
 fn commit_rejects_stale_expected_head() {
     let dir = tempfile::tempdir().expect("tempdir");
     fresh_repo(dir.path());

@@ -53,8 +53,10 @@ export interface Tab {
    *    (distinct from `viewMode: 'preview'` / `isPreview` transient file tabs)
    *  - `'git-diff'`: structured diff view (GitDiffTab) for a single file's
    *    git changes. `path` is the file relative to the workspace root;
-   *    `staged` selects the index diff vs. the working-tree diff. */
-  kind?: 'file' | 'settings' | 'preview' | 'git-diff'
+   *    `staged` selects the index diff vs. the working-tree diff.
+   *  - `'git-commit-diff'`: multi-file commit diff view; `commitOid` identifies
+   *    the commit and `path` is a display label. */
+  kind?: 'file' | 'settings' | 'preview' | 'git-diff' | 'git-commit-diff'
   /** True when the file is binary (image, executable, archive, etc.) and
    *  cannot be edited as text. The editor renders a placeholder or image
    *  preview instead of a CodeMirror instance. */
@@ -76,6 +78,8 @@ export interface Tab {
   /** For `kind: 'git-diff'` tabs: whether to show the staged (index) diff
    *  (`true`) or the working-tree (unstaged) diff (`false`, default). */
   staged?: boolean
+  /** For `kind: 'git-commit-diff'` tabs: the commit to inspect. */
+  commitOid?: string
 }
 
 /** A registered AI agent (Blueprint Sec 5 — agent registration). */

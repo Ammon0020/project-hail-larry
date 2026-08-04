@@ -14,6 +14,7 @@ import { SettingsPanel, type SettingsSection } from '@/components/SettingsPanel'
 import { FileViewer } from '@/components/FileViewer'
 import { BrowsePreview } from '@/components/BrowsePreview'
 import { GitDiffTab } from '@/components/git/GitDiffTab'
+import { GitCommitDiffTab } from '@/components/git/GitCommitDiffTab'
 import { StatusBar } from '@/components/StatusBar'
 import { useResolvedTheme } from '@/hooks/useTheme'
 import { TabBar } from './TabBar'
@@ -593,7 +594,19 @@ export function EditorPane({
           </div>
         ))}
 
-        {tabs.filter(t => t.kind !== 'settings' && t.kind !== 'preview' && t.kind !== 'git-diff').map(tab => {
+        {tabs.filter(t => t.kind === 'git-commit-diff').map(tab => (
+          <div
+            key={tab.id}
+            className={cn('absolute inset-0', activeTabId === tab.id ? 'block' : 'hidden')}
+          >
+            <GitCommitDiffTab
+              workspaceId={tab.workspaceId ?? ''}
+              commitOid={tab.commitOid ?? ''}
+            />
+          </div>
+        ))}
+
+        {tabs.filter(t => t.kind !== 'settings' && t.kind !== 'preview' && t.kind !== 'git-diff' && t.kind !== 'git-commit-diff').map(tab => {
           // Binary files always go to FileViewer. Text-preview files (SVG,
           // CSV, HTML, OBJ, etc.) go to FileViewer only when the user has
           // toggled to preview mode; otherwise they edit in CodeMirror.

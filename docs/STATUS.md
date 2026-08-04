@@ -78,6 +78,15 @@
   implemented with `gix::Repository::rev_walk()` for the commit graph, branch
   labels, and ISO 8601 UTC author timestamps. 7 unit tests. See
   `docs/plans/git-history-graph/done-git-log-api-medium.md`.
+- **Git history graph (S-GIT-GRAPH-VIEWER)** — collapsible/resizable bottom pane
+  in the Source Control panel rendering an SVG commit graph (greedy lane
+  layout in `gitGraphLayout.ts`, 6 vitest cases) with a graph/flat-list toggle,
+  `@tanstack/react-virtual` virtualization, and `Load more history` pagination.
+  Clicking a row opens `GitCommitDiffTab` (read-only multi-file diff reusing
+  `GitDiffViewer`) backed by the new `GET /api/workspaces/{id}/git/commit-diff?
+  oid=` endpoint (`commit_diff()` with validated commit ids and bounded Git CLI
+  ref/tree reads, 2 unit tests). See
+  `docs/plans/git-history-graph/done-git-graph-viewer-medium.md`.
 - **Git discard button** — client-side discard (untracked → delete, tracked →
   restore base via readFile/getGitDiff/saveFile). Backend discard endpoint
   still pending (`pending-git-discard-endpoint-med-high.md`).

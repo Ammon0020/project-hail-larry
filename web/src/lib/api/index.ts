@@ -15,7 +15,17 @@ export { getDeviceCredential, previewFileUrl, ApiError } from './client'
 
 // Domain types
 export type { WorkspaceInfo } from './workspaces'
-export type { GitRepoInfo, FileStatus, StatusResult, GitDiffResult } from './git'
+export type {
+  GitRepoInfo,
+  FileStatus,
+  StatusResult,
+  GitDiffResult,
+  CommitAuthor,
+  LogCommit,
+  LogResult,
+  CommitDiffFile,
+  CommitDiffResult,
+} from './git'
 export type { SessionHistoryCapabilities, EditorSelectionInfo, UploadResult } from './sessions'
 export type { PermissionOptionInfo, PendingPermission, DeviceCredential, PairingSession } from './permissions'
 export type { McpServerStatus } from './mcp'

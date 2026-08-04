@@ -3,7 +3,7 @@ use std::process::Command;
 
 use super::cli::{configure_default_identity, git_file, git_output, output_text, run_git};
 use super::repo::{contained_path, head_ref_info, open_repo, status};
-use super::{DiffResult, GitError};
+use super::{CommitDiffFile, CommitDiffResult, DiffResult, GitError};
 use crate::pathutil::strip_verbatim_prefix;
 
 /// Maximum unified-diff bytes returned for a single file before truncation.
@@ -46,28 +46,109 @@ pub fn diff(root: &Path, rel_path: &str, staged: bool) -> Result<DiffResult, Git
     } else {
         std::fs::read(path).unwrap_or_default()
     };
+    Ok(snapshot_diff(&base, &head))
+}
+
+/// Return the changed file snapshots for one commit against its first parent.
+/// Commit ids are restricted to hexadecimal object-id syntax before being
+/// passed to Git, and the response is bounded to keep history browsing cheap.
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository and
+/// [`GitError::Operation`] when `oid` is invalid, missing, or Git cannot read it.
+pub fn commit_diff(root: &Path, oid: &str) -> Result<CommitDiffResult, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    if !(7..=64).contains(&oid.len()) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(GitError::Operation("invalid commit id".to_string()));
+    }
+    let verified = format!("{oid}^{{commit}}");
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", "--verify", "--quiet", &verified])
+        .output()
+        .map_err(|err| GitError::Operation(format!("verify commit: {err}")))?;
+    if !output.status.success() {
+        return Err(GitError::Operation("commit not found".to_string()));
+    }
+    let resolved_oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let parent_oid = git_parent(root, &resolved_oid);
+    let paths = git_output(
+        root,
+        [
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "-z",
+            &resolved_oid,
+        ],
+    )?;
+    let files = paths
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .take(MAX_COMMIT_DIFF_FILES)
+        .map(|path| {
+            let path = String::from_utf8_lossy(path).replace('\\', "/");
+            let base = parent_oid
+                .as_deref()
+                .map(|parent| git_file(root, &format!("{parent}:{path}")))
+                .transpose()?
+                .unwrap_or_default();
+            let head = git_file(root, &format!("{resolved_oid}:{path}"))?;
+            Ok(CommitDiffFile {
+                path,
+                diff: snapshot_diff(&base, &head),
+            })
+        })
+        .collect::<Result<Vec<_>, GitError>>()?;
+    Ok(CommitDiffResult {
+        oid: resolved_oid,
+        parent_oid,
+        files,
+    })
+}
+
+const MAX_COMMIT_DIFF_FILES: usize = 100;
+
+fn git_parent(root: &Path, oid: &str) -> Option<String> {
+    let spec = format!("{oid}^");
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", "--verify", "--quiet", &spec])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn snapshot_diff(base: &[u8], head: &[u8]) -> DiffResult {
     if base[..base.len().min(8192)].contains(&0) || head[..head.len().min(8192)].contains(&0) {
-        return Ok(DiffResult {
+        return DiffResult {
             unified: String::new(),
             base: "[binary file]".to_string(),
             head: "[binary file]".to_string(),
             truncated: false,
-        });
+        };
     }
-    let mut base = String::from_utf8_lossy(&base).into_owned();
-    let mut head = String::from_utf8_lossy(&head).into_owned();
+    let mut base = String::from_utf8_lossy(base).into_owned();
+    let mut head = String::from_utf8_lossy(head).into_owned();
     let truncated = base.len().saturating_add(head.len()) > MAX_DIFF_BYTES;
     if truncated {
         base = truncate_utf8(&base, MAX_DIFF_BYTES / 2);
         head = truncate_utf8(&head, MAX_DIFF_BYTES / 2);
     }
-    // CodeMirror's merge view consumes base/head and computes its own diff.
-    Ok(DiffResult {
+    DiffResult {
         unified: String::new(),
         base,
         head,
         truncated,
-    })
+    }
 }
 
 /// `POST /api/workspaces/{id}/git/stage`. Validates each path against the

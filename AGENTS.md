@@ -58,47 +58,19 @@ Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
 
 ## Development
 
-- Use `./build.sh` on Linux/macOS or `.\build.ps1` on Windows → `bin/local_agent`.
-- For frontend dev with HMR, use `make dev` (or `scripts/dev.sh`) — starts the
-  Rust daemon and Vite dev server together. Open http://localhost:5173;
-  Vite proxies `/api` and `/ws` to the daemon. Ctrl+C stops both. Requires
-  `web/dist/index.html` (run `cd web && npm run build` once after `make clean`).
-  If `cargo-watch` is installed, the daemon auto-rebuilds on `src/` changes;
-  otherwise Rust edits need a manual restart. Install: `cargo install cargo-watch`.
-- During active development, use `make qcheck` to automatically fix formatting/lints and quietly run the full test suite.
-- Before completion, run the verbose unified gate: `make check` (fmt + clippy + cargo
-  test + frontend eslint/build + contract suite). For a fast style/correctness
-  pass use `make lint` (fmt + clippy + eslint). Individual targets (`make test`,
-  `make test-contract`, `make lint-rust`, `make lint-frontend`, `make fix`) remain available.
-- For Rust-only changes, `cargo test -q --all-targets`,
-  `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt -q --check`
-  suffice; `make check` adds the frontend + contract bar for full CI parity.
-- Frontend unit tests (vitest) cover pure utility functions in `web/src/lib/`.
-  Run with `make test-frontend` (or `cd web && npm test -- --run`). Tests are
-  pure-function only — no React rendering, no DOM mocking. Add tests for new
-  pure functions; skip hooks/components that couple to `useBackend` or the DOM.
-- Release builds use fat LTO + `codegen-units = 1` for maximum runtime
-  performance (see `[profile.release]` in `Cargo.toml`). The first cold release
-  compile is slower (~6 min) but produces a faster binary; incremental rebuilds
-  are much faster via sccache. On x86_64 Linux, mold is used as the linker
-  to offset LTO link time. sccache and mold are local-dev optimizations only —
-  the repo's `.cargo/config.toml` is intentionally empty so CI runners without
-  these tools build out of the box. `scripts/setup.sh` (and `setup.ps1` for
-  sccache) write the optimization config to the user-level `~/.cargo/config.toml`;
-  `setup.sh --verify` checks for the tools. `make check` and `make qcheck` use
-  the debug profile and are unaffected by LTO.
-- Record unrelated test failures in `docs/known-issues.md`; do not expand scope.
-- For planning work, follow `.agents/skills/plan-management/SKILL.md`.
-- Discover work by listing `docs/plans/`, then the chosen epic folder. Use status-prefixed filenames; rename them when status changes. Keep plans concise and executable in one branch.
-- Suggest a commit message and tests when handing work off.
-- Add brief comments for non-obvious intent, constraints, and security-sensitive behavior. Do not comment code that is already self-explanatory.
-- Avoid megafiles. Break up files when they get too large. 
-- Avoid creating tests that overcomplicate the code. If a test is too specific or would make the code harder to maintain, consider if it's really necessary.
+- Build with `./build.sh` (Linux/macOS) or `.\build.ps1` (Windows); output is `bin/local_agent` (or `.exe` on Windows).
+- Run frontend HMR with `make dev` (or `scripts/dev.sh`) and open `http://localhost:5173`. It starts the daemon and Vite, which proxies `/api` and `/ws`. If `web/dist/index.html` is missing after `make clean`, run `cd web && npm run build`. `cargo-watch` is optional; without it, restart the daemon after Rust changes.
+- During development, use `make qcheck` to auto-fix formatting/lints and run the full test suite.
+- Before handoff, run `make check` for the full gate (Rust fmt/clippy/tests, frontend lint/build, and contracts). Use `make lint` for a faster style pass.
+- For Rust-only changes, run `cargo fmt -q --check`, `cargo clippy -q --all-targets -- -D warnings`, and `cargo test -q --all-targets`.
+- Frontend tests are pure utility tests in `web/src/lib/`; run `make test-frontend` and avoid React/DOM-coupled tests.
+- See `docs/development/building.md` for release and toolchain details. Record unrelated failures in `docs/known-issues.md` instead of expanding scope.
+- Keep code small: comment non-obvious or security-sensitive intent, avoid megafiles and overcomplicated tests, and include tests plus a suggested commit message when handing off.
 
 ## Plans
 List relevant folder to see task status. Review after milestones. Task reviewer deletes tasks after review, or updates status if work is not complete. Add action items from review as stories unless they are immediately fixable. 
 
-**Folder hierarchy**
+**Plan Folder**
 ```
 docs/plans/
 ├── Blueprint.md  # summary of the app. Ignore for now - needs updating. 

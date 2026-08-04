@@ -49,6 +49,37 @@ export interface GitDiffResult {
   truncated: boolean
 }
 
+export interface CommitAuthor {
+  name: string
+  email: string
+  time: string
+}
+
+export interface LogCommit {
+  oid: string
+  parents: string[]
+  message: string
+  author: CommitAuthor
+  branchLabels: string[]
+  isHead: boolean
+}
+
+export interface LogResult {
+  commits: LogCommit[]
+  total: number
+  hasMore: boolean
+}
+
+export interface CommitDiffFile extends GitDiffResult {
+  path: string
+}
+
+export interface CommitDiffResult {
+  oid: string
+  parentOid: string | null
+  files: CommitDiffFile[]
+}
+
 export function getGitState(workspaceId: string) {
   return apiFetch<GitRepoInfo>(`/workspaces/${workspaceId}/git`)
 }
@@ -149,5 +180,17 @@ export function gitDiscard(workspaceId: string, paths: string[]) {
 export function getGitDiff(workspaceId: string, path: string, staged: boolean) {
   return apiFetch<GitDiffResult>(
     `/workspaces/${workspaceId}/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`,
+  )
+}
+
+export function getGitLog(workspaceId: string, limit = 100, offset = 0) {
+  return apiFetch<LogResult>(
+    `/workspaces/${workspaceId}/git/log?limit=${limit}&offset=${offset}`,
+  )
+}
+
+export function getGitCommitDiff(workspaceId: string, oid: string) {
+  return apiFetch<CommitDiffResult>(
+    `/workspaces/${workspaceId}/git/commit-diff?oid=${encodeURIComponent(oid)}`,
   )
 }

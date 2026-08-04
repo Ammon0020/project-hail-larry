@@ -32,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { BranchPicker, type BranchOption } from '@/components/git/BranchPicker'
+import { GitHistorySection } from '@/components/git/GitHistorySection'
 
 const statusStyles: Record<FileStatus['status'], { label: string; className: string }> = {
   added: { label: 'A', className: 'text-green-500' },
@@ -347,11 +348,13 @@ function ChangeSection({
 export function GitPanel({
   workspaceId,
   onOpenDiff,
+  onOpenCommitDiff,
   onRepoChanged,
   onFileSelect,
 }: {
   workspaceId: string | null
   onOpenDiff: (path: string, staged: boolean) => void
+  onOpenCommitDiff: (commitOid: string) => void
   onRepoChanged: () => Promise<void>
   onFileSelect?: (path: string) => void
 }) {
@@ -360,6 +363,7 @@ export function GitPanel({
   const [message, setMessage] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
+  const [historyRefresh, setHistoryRefresh] = useState(0)
   // Single scroll parent for both sections; each ChangeSection's virtualizer
   // reads this ref as its scroll element. One shared scroll keeps the UX
   // (Staged + Changes scroll together) and avoids two competing containers.
@@ -393,6 +397,7 @@ export function GitPanel({
     try {
       await mutation()
       await refreshStatus()
+      setHistoryRefresh((value) => value + 1)
     } catch (err) {
       setError(errorMessage(err))
       if (action === 'commit') await refreshStatus()
@@ -533,9 +538,6 @@ export function GitPanel({
                 <GitPullRequest className="w-3.5 h-3.5" />
                 Pull from remote
               </DropdownMenuItem>
-              <DropdownMenuItem disabled>
-                View Git Graph (Coming Soon)
-              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -569,7 +571,7 @@ export function GitPanel({
 
       {error && <div className="mx-3 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">{error}</div>}
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto pb-2">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pb-2">
         <ChangeSection title="Staged Changes" files={stagedFiles} staged onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })} onFileSelect={onFileSelect} busy={busy} scrollRef={scrollRef} menuPath={menuPath} setMenuPath={setMenuPath} />
         <ChangeSection
           title="Changes"
@@ -598,6 +600,7 @@ export function GitPanel({
         />
         {status && status.files.length === 0 && <div className="p-6 text-center text-xs text-muted-foreground">No changes.</div>}
       </div>
+      <GitHistorySection workspaceId={workspaceId} onOpenCommitDiff={onOpenCommitDiff} refreshKey={historyRefresh} />
     </div>
   )
 }
