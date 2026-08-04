@@ -1,8 +1,19 @@
-.PHONY: all build-frontend build test test-contract lint lint-rust lint-frontend check clean mockagent setup
+.PHONY: all build-frontend build test test-contract lint lint-rust lint-frontend check clean mockagent setup dev test-frontend
 
 # Verify/install prerequisites (tools, versions, frontend deps).
 setup:
 	./scripts/setup.sh
+
+# All-in-one dev mode: Rust daemon (cargo run) + Vite HMR dev server.
+# Open http://localhost:5173 — Vite proxies /api and /ws to the daemon.
+# Ctrl+C stops both. Requires web/dist/index.html (run `npm run build` once
+# if missing after `make clean`).
+dev:
+	./scripts/dev.sh
+
+# Run frontend unit tests (vitest, pure-function tests only).
+test-frontend:
+	cd web && npm test -- --run
 
 # Build the frontend into web/dist (required by Rust build.rs / rust-embed).
 build-frontend:
@@ -20,7 +31,11 @@ test:
 
 # Black-box contract suite against the Rust backend.
 # The `contract` feature gate keeps this out of `cargo test --all-targets`.
-test-contract:
+# Depends on `build-frontend`: the contract harness invokes
+# `cargo build --bin local_agent`, whose `build.rs` requires `web/dist/index.html`
+# (rust-embed). Without this dependency, parallel `cargo build` invocations can
+# race on a missing/stale `web/dist` and fail with a confusing build error.
+test-contract: build-frontend
 	CONTRACT_BACKEND=rust cargo test --test contract_runner --features contract -- --nocapture
 
 # Run cargo clippy (Rust). Deny levels come from [lints] in Cargo.toml;

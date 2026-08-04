@@ -153,3 +153,17 @@ expected embedded SPA, not fallback` (HTTP 503 vs 200). The test expects the
 SPA HTML to be embedded at compile time via `build.rs`; when `web/dist` is
 stale or absent at `cargo test` time it serves the fallback instead. Pure
 build-ordering issue, not caused by the frontend-only EditorPane change.
+
+## Contract tests `rest_*` — fixed (2026-07-29)
+
+The contract harness calls `cargo build --bin local_agent`, whose `build.rs`
+requires `web/dist/index.html` (rust-embed). When invoked without first building
+the frontend (e.g. a bare `cargo test --test contract_runner`), or when multiple
+concurrent `cargo build` processes race on a missing/stale `web/dist`, the build
+failed with a confusing `error: web/dist/index.html is missing.` instead of a
+clear prerequisite message.
+
+**Fix:** `make test-contract` now depends on `build-frontend`, and the harness
+pre-checks `web/dist/index.html` before invoking cargo, panicking with a clear
+"run `make build-frontend` first" message if it's absent. The underlying
+concurrent-build race is also documented in `build.rs`.

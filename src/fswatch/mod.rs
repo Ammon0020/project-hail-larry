@@ -15,14 +15,14 @@
 //!   [`DebouncedEvent`] per path, then invokes our callback. The callback
 //!   applies ignore/suppression/throttle rules and emits to a bounded channel.
 //! - **Worker thread**: owns the [`Debouncer`] and services watch/unwatch
-//!   commands ([`Command`]) from the public API and `WatchNewDir` requests
+//!   commands (`Command`) from the public API and `WatchNewDir` requests
 //!   from the callback (recursive coverage for newly created directories).
 //! - **Emit thread**: drains the bounded emit channel and invokes the user
 //!   callback, so a slow callback (WebSocket broadcast, event store append)
 //!   never blocks the watcher.
 //!
 //! Shared mutable state (workspace roots, app-write suppression set, per-path
-//! emit throttle) lives behind a single [`Mutex`] in [`SharedState`]. The
+//! emit throttle) lives behind a single [`Mutex`] in `SharedState`. The
 //! suppression and throttle maps are bounded [`LruCache`]s so they cannot grow
 //! unbounded between cleanup passes.
 //!

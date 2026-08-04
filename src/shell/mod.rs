@@ -11,7 +11,7 @@
 //!   forwarded to caller-supplied callbacks (mirroring Go's `RunAsync` /
 //!   `RunAsyncArgs` `onStdout`/`onStderr` callbacks).
 //! - The current working directory is enforced against the workspace root via
-//!   [`pathutil::clean_path`]; path traversal in a caller-supplied `cwd` is
+//!   [`crate::pathutil::clean_path`]; path traversal in a caller-supplied `cwd` is
 //!   rejected before the process is spawned.
 //! - Each command owns a [`tokio_util::sync::CancellationToken`]. On cancel
 //!   (or timeout) the entire process *group* is signalled, not just the
@@ -21,7 +21,7 @@
 //!   Windows Job Object with `KILL_ON_JOB_CLOSE`).
 //! - Each command has a configurable timeout ([`Executor::with_command_timeout`],
 //!   default 30 min). On expiry the process group is killed just as on cancel.
-//! - Captured/streamed output is bounded by [`Executor::max_output_bytes`]
+//! - Captured/streamed output is bounded by `Executor::max_output_bytes`
 //!   per stream so a noisy command cannot exhaust daemon memory.
 //!
 //! All public functions return `std::result::Result`; none panic.
@@ -95,9 +95,9 @@ pub enum ShellError {
 /// for normal exits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommandResult {
-    /// Captured stdout (truncated to [`Executor::max_output_bytes`]).
+    /// Captured stdout (truncated to `Executor::max_output_bytes`).
     pub stdout: String,
-    /// Captured stderr (truncated to [`Executor::max_output_bytes`]).
+    /// Captured stderr (truncated to `Executor::max_output_bytes`).
     pub stderr: String,
     /// Exit code. `0` on success; non-zero on failure; `-1` when the command
     /// could not start or was cancelled before producing an exit status.
@@ -124,7 +124,7 @@ impl Executor {
     ///
     /// `workspace_path` should be an absolute, canonicalised directory; if it
     /// is not, [`Executor::run`] will still attempt to spawn but per-command
-    /// CWD containment uses the canonicalised root (see [`pathutil::clean_path`]).
+    /// CWD containment uses the canonicalised root (see [`crate::pathutil::clean_path`],).
     pub fn new<P: Into<PathBuf>>(workspace_path: P) -> Self {
         Self {
             workspace_path: workspace_path.into(),

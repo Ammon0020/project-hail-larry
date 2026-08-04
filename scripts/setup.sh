@@ -115,6 +115,48 @@ else
     fi
 fi
 
+# --- sccache -----------------------------------------------------------------
+if ! command -v sccache >/dev/null 2>&1; then
+    if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+        fail "ERROR: 'sccache' is not installed or not on PATH." \
+             "  Required: sccache for build and test caching." \
+             "  Install: \`cargo install sccache\` or via package manager (e.g., \`apt install sccache\` / \`brew install sccache\`)"
+    else
+        if command -v cargo >/dev/null 2>&1; then
+            echo "${CYAN}Installing sccache via cargo...${RESET}"
+            cargo install sccache --quiet || fail "ERROR: Failed to install sccache via cargo."
+        fi
+    fi
+fi
+
+# --- mold + clang (Linux x86_64 only) ----------------------------------------
+# .cargo/config.toml wires mold as the linker via clang's -fuse-ld=mold for
+# fat-LTO release builds. Mold is 2–5x faster than GNU ld and significantly
+# offsets the link-time cost of whole-program optimization. On non-x86_64
+# Linux or other platforms, .cargo/config.toml does not activate mold, so
+# this check is scoped to x86_64 Linux only.
+if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
+    if ! command -v mold >/dev/null 2>&1; then
+        if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+            fail "ERROR: 'mold' is not installed or not on PATH." \
+                 "  Required: mold linker for fast LTO release builds on x86_64 Linux." \
+                 "  Install: \`sudo apt install mold\` or \`brew install mold\`"
+        else
+            echo "${CYAN}mold is not installed — release builds will use the default linker.${RESET}" >&2
+            echo "${CYAN}For 2–5x faster linking, install mold: \`sudo apt install mold\`${RESET}" >&2
+        fi
+    fi
+    if ! command -v clang >/dev/null 2>&1; then
+        if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+            fail "ERROR: 'clang' is not installed or not on PATH." \
+                 "  Required: clang linker driver (passes -fuse-ld=mold to the linker)." \
+                 "  Install: \`sudo apt install clang\`"
+        else
+            echo "${CYAN}clang is not installed — required as the linker driver for mold.${RESET}" >&2
+        fi
+    fi
+fi
+
 # --- web/node_modules --------------------------------------------------------
 NODE_MODULES_DIR="$ROOT_DIR/web/node_modules"
 if [[ ! -d "$NODE_MODULES_DIR" ]]; then

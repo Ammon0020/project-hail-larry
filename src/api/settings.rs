@@ -7,7 +7,27 @@ use tracing::error;
 
 use crate::config::PromptContextSettings;
 
-use super::{decode_json_body, ApiResponseError, AppState, ServerSettings};
+use super::{decode_json_body, ApiResponseError, AppState};
+
+/// Read-only projection of server/network/pairing/security config fields
+/// exposed by `GET /api/settings/server` for the frontend settings panel.
+///
+/// These settings require a daemon restart to change (edit `config.toml` and
+/// restart), so the endpoint is read-only — the frontend displays them with
+/// "edit config.toml and restart" guidance rather than mutating them.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ServerSettings {
+    port: i64,
+    host: String,
+    tls_enabled: bool,
+    https_port: i64,
+    tls_cert_dir: String,
+    pairing_ttl_seconds: i64,
+    credential_inactivity_ttl_seconds: i64,
+    allow_remote_workspace_registration: bool,
+    revocation_grace_period_seconds: i64,
+}
 
 /// `GET /api/settings/prompt-context` — current bounded prompt-path settings.
 pub async fn get_prompt_context(State(state): State<AppState>) -> Json<PromptContextSettings> {

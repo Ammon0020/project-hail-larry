@@ -17,48 +17,34 @@ Self-hosted, cross-platform web IDE with built-in AI. A Rust daemon serves thin 
 - Configuration is stored in `~/.local-agent`; events use an append-only SQLite WAL store. Clients receive authenticated WebSocket sync, reconnection, and event replay.
 - Pairing issues expiring device credentials. Any paired device can answer a pending file-write or shell-command permission prompt.
 
-## Layout
+## File Map
 
+```text
+src/                 Rust daemon, library, and CLI (See src/AGENTS.md)
+├── acp/             ACP engine (See src/acp/AGENTS.md)
+├── api/             REST/WS API (See src/api/AGENTS.md)
+├── app/             daemon lifecycle/TLS (See src/app/AGENTS.md)
+├── cli/             commands and service installers
+├── config/          config model/store
+├── interfaces/      wire types and traits
+├── pairing/         device pairing/credentials
+├── workspace/       workspace/path containment
+└── ...              domain services and utilities
+web/                 React/Vite client (See web/AGENTS.md)
+└── src/
+    ├── components/  UI (See web/src/components/AGENTS.md)
+    ├── hooks/       state and backend hooks
+    ├── lib/         API client and utilities
+    └── types/       frontend wire types
+tests/               integration/contract tests (See tests/AGENTS.md)
+└── contract_runner/ REST/WS runner (See tests/contract_runner/AGENTS.md)
+docs/                specs, plans, status, reviews (See docs/AGENTS.md)
+└── plans/           epics and stories (See docs/plans/AGENTS.md)
+configs/             bundled runtime defaults (See configs/AGENTS.md)
+scripts/             setup and smoke utilities (See scripts/AGENTS.md)
 ```
-src/
-  acp/                # the only agent integration boundary
-    core/             # session actor, lifecycle, handlers/, ops, registry
-    autodetect/       # harness discovery: claude_code, codex, cursor, devin, vibe
-    profile*.rs       # agent profiles + registry
-    store.rs          # session persistence
-  api/                # REST handlers (embed, mcp, profiles, providers, settings)
-  app/                # daemon: listen, tls, rate_limit, logging, process
-  cli/                # CLI + per-OS service installers
-  config/             # config model + store (~/.local-agent)
-  events/             # append-only SQLite event store + publisher + replay
-  files/              # client-side file read/write surface
-  shell/              # scoped shell execution surface
-  permissions/        # permission manager + sink (file-write/shell prompts)
-  workspace/          # workspace registration + path containment
-  sync/               # WebSocket sync + three-way merge
-  pairing/            # QR/mnemonic device pairing + expiring credentials
-  interfaces/         # ACP wire types, traits, DTOs shared with web
-  mcp/ migrate/       # MCP integration; config migration
-  bin/mockagent.rs    # mock ACP agent for tests
-web/src/
-  components/         # editor/, chat/, settings/, chrome, ui/ (radix primitives)
-  hooks/              # useBackend, useChatTabs, useEditorSettings, useTheme, ...
-  lib/                # api.ts (REST/WS client), errors, modelPrefs, theme, utils
-  types/              # mirror of src/interfaces/
-tests/
-  contract/           # source-of-truth contract suite (fixtures, golden, scripts)
-  contract_runner/    # harness: rest, ws, compare, redactor
-docs/
-  STATUS.md           # current task status (<100 lines, <90 cols)
-  known-issues.md     # deferred gaps
-  plans/              # epics + stories (status-prefixed filenames) + Blueprint.md
-  specs/              # backend-spec, ui-spec, chat-panel-spec
-  reference/          # acp/, mcp/ protocol reference
-  reviews/<date>/     # audit findings
-configs/              # shipped runtime config (system-messages.json)
-scripts/              # setup, spa-smoke, exec-guard
-build.sh / build.ps1 / Makefile / build.rs   # build + `make check` gate
-```
+
+Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
 
 ## Architecture
 
@@ -73,6 +59,10 @@ build.sh / build.ps1 / Makefile / build.rs   # build + `make check` gate
 ## Development
 
 - Use `./build.sh` on Linux/macOS or `.\build.ps1` on Windows → `bin/local_agent`.
+- For frontend dev with HMR, use `make dev` (or `scripts/dev.sh`) — starts the
+  Rust daemon and Vite dev server together. Open http://localhost:5173;
+  Vite proxies `/api` and `/ws` to the daemon. Ctrl+C stops both. Requires
+  `web/dist/index.html` (run `cd web && npm run build` once after `make clean`).
 - During active development, use `make qcheck` to automatically fix formatting/lints and quietly run the full test suite.
 - Before completion, run the verbose unified gate: `make check` (fmt + clippy + cargo
   test + frontend eslint/build + contract suite). For a fast style/correctness
@@ -81,6 +71,17 @@ build.sh / build.ps1 / Makefile / build.rs   # build + `make check` gate
 - For Rust-only changes, `cargo test -q --all-targets`,
   `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt -q --check`
   suffice; `make check` adds the frontend + contract bar for full CI parity.
+- Frontend unit tests (vitest) cover pure utility functions in `web/src/lib/`.
+  Run with `make test-frontend` (or `cd web && npm test -- --run`). Tests are
+  pure-function only — no React rendering, no DOM mocking. Add tests for new
+  pure functions; skip hooks/components that couple to `useBackend` or the DOM.
+- Release builds use fat LTO + `codegen-units = 1` for maximum runtime
+  performance (see `[profile.release]` in `Cargo.toml`). The first cold release
+  compile is slower (~6 min) but produces a faster binary; incremental rebuilds
+  are much faster via sccache. On x86_64 Linux, mold is used as the linker
+  (configured in `.cargo/config.toml`) to offset LTO link time — `setup.sh
+  --verify` checks for it. `make check` and `make qcheck` use the debug profile
+  and are unaffected by LTO.
 - Record unrelated test failures in `docs/known-issues.md`; do not expand scope.
 - For planning work, follow `.agents/skills/plan-management/SKILL.md`.
 - Discover work by listing `docs/plans/`, then the chosen epic folder. Use status-prefixed filenames; rename them when status changes. Keep plans concise and executable in one branch.

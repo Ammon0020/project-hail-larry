@@ -140,6 +140,7 @@ export function LeftSidebar({
           workspaceId={activeWorkspace?.id ?? null}
           onOpenDiff={onOpenDiff}
           onRepoChanged={onRepoChanged}
+          onFileSelect={onFileSelect}
         />
       )}
     </aside>

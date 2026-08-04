@@ -142,6 +142,15 @@ ERROR: 'rustc' is not installed or not on PATH.
 "@
 }
 
+# sccache
+if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) {
+    $failures += @"
+ERROR: 'sccache' is not installed or not on PATH.
+  Required: sccache for build and test caching.
+  Install: ``cargo install sccache`` or via package manager (e.g. ``winget install Mozilla.sccache`` / ``choco install sccache``)
+"@
+}
+
 # web\node_modules
 $nodeModulesPath = Join-Path $RootDir 'web\node_modules'
 $nodeModulesOk = Test-Path $nodeModulesPath

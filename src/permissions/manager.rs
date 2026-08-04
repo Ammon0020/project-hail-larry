@@ -22,7 +22,7 @@
 //! ## Cancellation
 //!
 //! The [`PermissionManager::request`] trait method has no cancellation token
-//! parameter; cancellation is future-drop. A [`PendingCleanup`] guard removes
+//! parameter; cancellation is future-drop. A `PendingCleanup` guard removes
 //! the pending entry when the `request` future is dropped (e.g. the agent's RPC
 //! deadline elapses), so the prompt does not linger in the map. The stale
 //! sweeper is the backstop for any prompt whose future is *not* dropped but
@@ -198,7 +198,7 @@ impl Manager {
     /// The sweeper is the backstop for prompts whose `request` future is *not*
     /// dropped but whose responding device went away (Wi-Fi drop). Prompts whose
     /// `request` future is cancelled are cleaned up immediately by the
-    /// [`PendingCleanup`] guard.
+    /// `PendingCleanup` guard.
     #[must_use]
     pub fn start_sweeper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let weak = Arc::downgrade(self);
@@ -324,7 +324,7 @@ impl PermissionManager for Manager {
     ///
     /// Cancellation is future-drop: if the caller drops the returned future
     /// (e.g. via `tokio::time::timeout`), the pending entry is removed by the
-    /// [`PendingCleanup`] guard and an error is surfaced to the caller through
+    /// `PendingCleanup` guard and an error is surfaced to the caller through
     /// the dropped future. On a successful decision the audit log is appended
     /// and durable policies (`allow_always` / `allow_session` / `reject_always`)
     /// are cached.
@@ -345,11 +345,27 @@ impl PermissionManager for Manager {
         let key = policy_key_for(&req);
         let mut global_key = key.clone();
         global_key.session_id = String::new();
+        // Tool-kind-scoped key: blanks session_id, target, and command so it
+        // matches any request with the same `tool` title regardless of target
+        // or command. This is the broadest allow tier — "always allow this tool
+        // kind" (e.g. all `move` operations). SECURITY TRADE-OFF: this is
+        // intentionally coarser than `allow_always` (which pins to one exact
+        // target/command). The ACP handler only offers this option for a
+        // conservative allowlist of tool kinds (`move`, `edit`, `read`,
+        // `search` — never `execute`), and the frontend requires an explicit
+        // confirm step with warning language before recording it.
+        let tool_kind_key = PolicyKey {
+            session_id: String::new(),
+            tool_kind: req.tool.clone(),
+            target: String::new(),
+            command: String::new(),
+        };
 
         // Check caches + register pending under one lock acquisition. A cached
         // durable decision auto-resolves immediately (no broadcast, no block).
         let rx = {
             let mut inner = self.lock();
+            // 1. Exact-key (session-scoped) then global-key (allow_always).
             if let Some(&d) = inner
                 .policy
                 .get(&key)
@@ -359,6 +375,12 @@ impl PermissionManager for Manager {
                     Self::push_audit_locked(&mut inner, &req, d);
                     return Ok(d);
                 }
+            }
+            // 2. Tool-kind-scoped fallback (allow_tool_kind). Checked after the
+            // exact/global keys so a narrower grant still wins.
+            if let Some(&PermissionDecision::AllowToolKind) = inner.policy.get(&tool_kind_key) {
+                Self::push_audit_locked(&mut inner, &req, PermissionDecision::AllowToolKind);
+                return Ok(PermissionDecision::AllowToolKind);
             }
             if inner.denied.contains(&key) || inner.denied.contains(&global_key) {
                 Self::push_audit_locked(&mut inner, &req, PermissionDecision::Deny);
@@ -413,6 +435,14 @@ impl PermissionManager for Manager {
                 }
                 PermissionDecision::AllowAlways => {
                     inner.policy.insert(global_key, decision);
+                }
+                // Tool-kind-scoped allow: stored under the global tool_kind_key
+                // (session_id, target, command all blanked) so it matches any
+                // future request with the same `tool` title regardless of
+                // target/command. Like `allow_always`, this is global (survives
+                // `clear_session`).
+                PermissionDecision::AllowToolKind => {
+                    inner.policy.insert(tool_kind_key, decision);
                 }
                 PermissionDecision::RejectAlways => {
                     inner.denied.insert(global_key);

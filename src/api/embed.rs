@@ -6,6 +6,7 @@
 //! `rust-embed` at compile time.
 
 use axum::body::Body;
+use axum::extract::OriginalUri;
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use rust_embed::{EmbeddedFile, RustEmbed};
@@ -14,6 +15,23 @@ use rust_embed::{EmbeddedFile, RustEmbed};
 #[derive(RustEmbed)]
 #[folder = "$CARGO_MANIFEST_DIR/web/dist/"]
 struct Frontend;
+
+/// SPA fallback serving embedded frontend assets. Uses `OriginalUri` rather
+/// than `Path<String>` so the root path `/` (zero segments) is handled without
+/// a `Path` extraction error.
+///
+/// Paths under `/preview/` never fall through to the SPA: browsers/clients
+/// may normalize `../` out of a preview URL (e.g. `/preview/id/../../../etc/passwd`
+/// → `/etc/passwd` or similar), and serving the IDE shell there would mask
+/// traversal attempts. Unmatched preview URLs are 404.
+pub(super) async fn spa_fallback(OriginalUri(uri): OriginalUri) -> Response {
+    let path = uri.path();
+    if path == "/preview" || path.starts_with("/preview/") {
+        return super::ApiResponseError::not_found("preview path not found").into_response();
+    }
+    let path = path.trim_start_matches('/');
+    serve(path.to_string()).await
+}
 
 /// Serve a static asset or fall back to the SPA entry point.
 #[allow(clippy::unused_async)]

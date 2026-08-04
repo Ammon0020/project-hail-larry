@@ -25,7 +25,7 @@ use serde_json::json;
 use std::path::PathBuf;
 use tracing::{debug, error};
 
-use crate::git::{self, detect, DiffResult, GitError, GitRepoInfo, StatusResult};
+use crate::git::{self, detect, DiffResult, GitError, GitRepoInfo, LogResult, StatusResult};
 use crate::interfaces::WorkspaceManager;
 
 use super::{app_error, decode_json_body, required_query, ApiResponseError, AppState};
@@ -56,7 +56,7 @@ pub async fn get_git_state(
         })?
         .map_err(|err| {
             debug!(%err, "git detect failed");
-            // GitError → AppError via the From impl in src/git/mod.rs.
+            // GitError → AppError via its From impl.
             app_error(err.into())
         })?;
     Ok(Json(info))
@@ -66,6 +66,17 @@ pub async fn get_git_state(
 pub(crate) struct DiffQuery {
     path: Option<String>,
     staged: Option<bool>,
+}
+
+/// `GET /api/workspaces/{id}/git/log` query params (S-GIT-LOG-API).
+#[derive(Deserialize)]
+pub(crate) struct LogQuery {
+    /// Max commits to return (clamped to 200 by the backend). Defaults to 100.
+    #[serde(default)]
+    limit: Option<u32>,
+    /// Number of commits to skip (for pagination). Defaults to 0.
+    #[serde(default)]
+    offset: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -100,6 +111,11 @@ pub(crate) struct IgnoreRequest {
     patterns: Vec<String>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct DiscardRequest {
+    paths: Vec<String>,
+}
+
 /// `GET /api/workspaces/{id}/git/status`.
 pub async fn get_git_status(
     State(state): State<AppState>,
@@ -120,6 +136,23 @@ pub async fn get_git_diff(
     let staged = query.staged.unwrap_or(false);
     let root = workspace_root(&state, &id).await?;
     let result = run_git_blocking("diff", move || git::diff(&root, &path, staged)).await?;
+    Ok(Json(result))
+}
+
+/// `GET /api/workspaces/{id}/git/log?limit=...&offset=...` (S-GIT-LOG-API).
+///
+/// Returns a paginated commit list with parent refs, branch labels, and the
+/// HEAD marker. Defaults: `limit=100`, `offset=0`. `limit` is clamped to 200
+/// by the backend. An unborn repo returns an empty list, not an error.
+pub async fn get_git_log(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<LogQuery>,
+) -> Result<Json<LogResult>, ApiResponseError> {
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
+    let root = workspace_root(&state, &id).await?;
+    let result = run_git_blocking("log", move || git::log(&root, limit, offset)).await?;
     Ok(Json(result))
 }
 
@@ -230,6 +263,24 @@ pub async fn ignore_paths(
     })
     .await?;
     Ok(Json(json!({ "added": added })))
+}
+
+/// `POST /api/workspaces/{id}/git/discard` — restore tracked files to their
+/// index state and delete untracked files. Same trust model as stage/unstage
+/// (paired device or loopback, workspace-scoped path containment).
+pub async fn discard(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<DiscardRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    if request.paths.is_empty() {
+        return Err(ApiResponseError::bad_request("paths required"));
+    }
+    let root = workspace_root(&state, &id).await?;
+    let discarded =
+        run_git_blocking("discard", move || git::discard(&root, &request.paths)).await?;
+    Ok(Json(json!({ "discarded": discarded })))
 }
 
 async fn workspace_root(state: &AppState, id: &str) -> Result<PathBuf, ApiResponseError> {

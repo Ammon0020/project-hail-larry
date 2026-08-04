@@ -6,8 +6,8 @@
 //! stale prompts, and records an ephemeral audit log for the running daemon.
 //!
 //! Layout:
-//! - [`sink`] — narrow notification sink (replaces Go's `SetCallback`)
-//! - [`manager`] — [`Manager`] + [`AuditEntry`] + stale sweeper
+//! - `sink` — narrow notification sink (replaces Go's `SetCallback`)
+//! - `manager` — [`Manager`] + [`AuditEntry`] + stale sweeper
 //!
 //! Durable policy / audit storage is post-parity work; the in-memory maps are
 //! the initial port. See `docs/plans/rust-port/complete-S-PERMISSIONS-permissions-med.md`.

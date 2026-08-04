@@ -3,20 +3,23 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   ArrowDown,
   ArrowUp,
-  Circle,
-  CircleDot,
   Copy,
   Eye,
+  File,
   Folder,
   GitBranch,
   Loader2,
   Minus,
   Plus,
   RefreshCw,
+  RotateCcw,
   Send,
+  MoreHorizontal,
 } from 'lucide-react'
+import { FileIcon } from '@/lib/fileIcon'
 import { api, type FileStatus, type StatusResult } from '@/lib/api'
 import { useGitState } from '@/hooks/useGitState'
+import { useLongPressHandlers } from '@/hooks/useLongPressHandlers'
 import { cn } from '@/lib/utils'
 import {
   DropdownMenu,
@@ -42,42 +45,14 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-/**
- * Long-press (500ms) → open context menu; move/end/cancel clears the timer.
- * Mirrors the hook in `FileTree.tsx` — duplicated here rather than extracted to
- * a shared hook to keep this change focused (the FileTree version is the
- * canonical one; consolidate on a follow-up).
- */
-function useLongPressHandlers(onOpen: () => void, enabled = true) {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const clear = useCallback(() => {
-    if (timer.current) {
-      clearTimeout(timer.current)
-      timer.current = null
-    }
-  }, [])
-  const handlers = useMemo(
-    () => ({
-      onTouchStart: () => {
-        if (!enabled) return
-        clear()
-        timer.current = setTimeout(onOpen, 500)
-      },
-      onTouchEnd: clear,
-      onTouchMove: clear,
-      onTouchCancel: clear,
-    }),
-    [onOpen, enabled, clear],
-  )
-  return { handlers, timer, clear }
-}
-
 function GitFileRow({
   file,
   onOpenDiff,
   onStage,
   onUnstage,
   onIgnore,
+  onFileSelect,
+  onDiscard,
   busy,
   menuOpen,
   onOpenMenu,
@@ -88,6 +63,8 @@ function GitFileRow({
   onStage: (path: string) => void
   onUnstage: (path: string) => void
   onIgnore: (path: string) => void
+  onFileSelect?: (path: string) => void
+  onDiscard?: (file: FileStatus) => void
   busy: boolean
   menuOpen: boolean
   onOpenMenu: () => void
@@ -95,17 +72,40 @@ function GitFileRow({
 }) {
   const style = statusStyles[file.status]
   const isFolder = file.status === 'untracked' && file.path.endsWith('/')
-  const displayPath = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path
+  
+  const newSegments = file.path.replace(/\/$/, '').split('/')
+  const newFilename = newSegments.pop() || ''
+  const newDirname = newSegments.join('/')
+  
+  let displayName = newFilename + (isFolder ? '/' : '')
+  let displayDirname = newDirname
+
+  if (file.oldPath) {
+    const oldSegments = file.oldPath.replace(/\/$/, '').split('/')
+    const oldFilename = oldSegments.pop() || ''
+    const oldDirname = oldSegments.join('/')
+    
+    if (oldDirname === newDirname) {
+      displayName = `${oldFilename} → ${newFilename}`
+    } else {
+      displayName = newFilename
+      displayDirname = `${file.oldPath} → ${newDirname}`
+    }
+  }
+
   const stageLabel = isFolder ? `Stage folder contents: ${file.path}` : file.staged ? `Unstage ${file.path}` : `Stage ${file.path}`
   const { handlers: touchHandlers } = useLongPressHandlers(onOpenMenu)
 
   const row = (
     <div
       className={cn(
-        'group flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent',
+        'group flex items-center gap-1.5 px-3 h-7 text-xs hover:bg-accent cursor-pointer select-none',
         menuOpen && 'ring-1 ring-primary outline-none',
       )}
-      title={displayPath}
+      title={`${file.oldPath ? `${file.oldPath} → ${file.path}` : file.path} • ${file.status}`}
+      onClick={() => {
+        if (!isFolder) onOpenDiff(file.path, file.staged)
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -113,29 +113,70 @@ function GitFileRow({
       }}
       {...touchHandlers}
     >
-      <button
-        type="button"
-        className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        onClick={() => !isFolder && onOpenDiff(file.path, file.staged)}
-      >
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
         {isFolder
-          ? <Folder className={cn('h-3.5 w-3.5 shrink-0', style.className)} />
-          : file.status === 'untracked'
-            ? <Circle className={cn('h-3.5 w-3.5 shrink-0', style.className)} />
-            : <CircleDot className={cn('h-3.5 w-3.5 shrink-0', style.className)} />}
-        <span className="min-w-0 flex-1 truncate">{displayPath}</span>
-        <span className={cn('shrink-0 font-semibold', style.className)}>{style.label}</span>
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => file.staged ? onUnstage(file.path) : onStage(file.path)}
-        className="shrink-0 rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-        aria-label={stageLabel}
-        title={stageLabel}
+          ? <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          : <FileIcon name={newFilename} className="h-3.5 w-3.5 shrink-0" />}
+        <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+          <span className="shrink-0 truncate max-w-full text-xs">{displayName}</span>
+          {displayDirname && <span className="min-w-0 truncate text-[10px] text-muted-foreground">{displayDirname}</span>}
+        </div>
+      </div>
+      <div
+        className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
       >
-        {file.staged ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-      </button>
+        {!isFolder && onFileSelect && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={(e) => {
+              e.preventDefault()
+              onFileSelect(file.path)
+            }}
+            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-primary hover:text-primary-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            title="Open File"
+            aria-label={`Open ${file.path}`}
+          >
+            <File className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {!file.staged && onDiscard && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={(e) => {
+              e.preventDefault()
+              onDiscard(file)
+            }}
+            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            title="Discard Changes"
+            aria-label={`Discard changes in ${file.path}`}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={(e) => {
+            e.preventDefault()
+            if (file.staged) {
+              onUnstage(file.path)
+            } else {
+              onStage(file.path)
+            }
+          }}
+          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-primary hover:text-primary-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={stageLabel}
+          title={stageLabel}
+        >
+          {file.staged ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+        </button>
+      </div>
+      <span className={cn('shrink-0 font-semibold text-xs ml-1', style.className)}>{style.label}</span>
     </div>
   )
 
@@ -204,6 +245,8 @@ function ChangeSection({
   onUnstage,
   onOpenDiff,
   onIgnore,
+  onFileSelect,
+  onDiscard,
   busy,
   scrollRef,
   menuPath,
@@ -217,6 +260,8 @@ function ChangeSection({
   onUnstage: (paths: string[]) => void
   onOpenDiff: (path: string, staged: boolean) => void
   onIgnore: (path: string) => void
+  onFileSelect?: (path: string) => void
+  onDiscard?: (file: FileStatus) => void
   busy: boolean
   scrollRef: React.RefObject<HTMLDivElement | null>
   menuPath: string | null
@@ -228,6 +273,11 @@ function ChangeSection({
   // list and scroll with it because they live in the same scroll parent.
   // The hook must run on every render (no early return before it) to satisfy
   // the rules-of-hooks; the empty-list short-circuit happens after.
+  // TanStack Virtual's useVirtualizer returns functions that the React Compiler
+  // cannot memoize safely (it would close over stale scroll/size state); the
+  // hook is called unconditionally here and its values stay local to this
+  // component, so skipping compiler memoization is intentional and safe.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: files.length,
     getScrollElement: () => scrollRef.current,
@@ -274,6 +324,8 @@ function ChangeSection({
                 onStage={(path) => onStage([path], false)}
                 onUnstage={(path) => onUnstage([path])}
                 onIgnore={onIgnore}
+                onFileSelect={onFileSelect}
+                onDiscard={onDiscard}
                 busy={busy}
                 menuOpen={menuPath === file.path}
                 onOpenMenu={() => setMenuPath(file.path)}
@@ -292,10 +344,12 @@ export function GitPanel({
   workspaceId,
   onOpenDiff,
   onRepoChanged,
+  onFileSelect,
 }: {
   workspaceId: string | null
   onOpenDiff: (path: string, staged: boolean) => void
   onRepoChanged: () => Promise<void>
+  onFileSelect?: (path: string) => void
 }) {
   const { gitState, loading: gitStateLoading, refresh: refreshGitState } = useGitState(workspaceId)
   const [status, setStatus] = useState<StatusResult | null>(null)
@@ -405,9 +459,23 @@ export function GitPanel({
             </div>
           )}
         </div>
-        <button type="button" disabled={busy} onClick={() => void runMutation('refresh', async () => { /* refreshStatus runs as runMutation's trailing reload */ })} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-label="Refresh source control" title="Refresh">
-          <RefreshCw className={cn('h-3.5 w-3.5', busyAction === 'refresh' && 'animate-spin')} />
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button type="button" disabled={busy} onClick={() => void runMutation('refresh', async () => { /* refreshStatus runs as runMutation's trailing reload */ })} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-label="Refresh source control" title="Refresh">
+            <RefreshCw className={cn('h-3.5 w-3.5', busyAction === 'refresh' && 'animate-spin')} />
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground outline-none" aria-label="More actions" title="More actions">
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem disabled>
+                View Git Graph (Coming Soon)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </header>
 
       <div className="border-b border-border p-3">
@@ -439,8 +507,32 @@ export function GitPanel({
       {error && <div className="mx-3 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">{error}</div>}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto pb-2">
-        <ChangeSection title="Staged Changes" files={stagedFiles} staged onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })} busy={busy} scrollRef={scrollRef} menuPath={menuPath} setMenuPath={setMenuPath} />
-        <ChangeSection title="Changes" files={unstagedFiles} staged={false} hint={allUntrackedHint} onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })} busy={busy} scrollRef={scrollRef} menuPath={menuPath} setMenuPath={setMenuPath} />
+        <ChangeSection title="Staged Changes" files={stagedFiles} staged onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })} onFileSelect={onFileSelect} busy={busy} scrollRef={scrollRef} menuPath={menuPath} setMenuPath={setMenuPath} />
+        <ChangeSection
+          title="Changes"
+          files={unstagedFiles}
+          staged={false}
+          hint={allUntrackedHint}
+          onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })}
+          onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })}
+          onOpenDiff={onOpenDiff}
+          onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })}
+          onFileSelect={onFileSelect}
+          onDiscard={(file) => {
+            if (!workspaceId) return
+            const label = file.status === 'untracked'
+              ? `Delete untracked file "${file.path}"? This cannot be undone.`
+              : `Discard changes to "${file.path}"? This cannot be undone.`
+            if (!window.confirm(label)) return
+            void runMutation('discard', async () => {
+              await api.gitDiscard(workspaceId, [file.path])
+            })
+          }}
+          busy={busy}
+          scrollRef={scrollRef}
+          menuPath={menuPath}
+          setMenuPath={setMenuPath}
+        />
         {status && status.files.length === 0 && <div className="p-6 text-center text-xs text-muted-foreground">No changes.</div>}
       </div>
     </div>

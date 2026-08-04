@@ -60,12 +60,15 @@ export function McpServersSettings() {
     setMcpOriginal(mcpText)
     setMcpSaved(true)
     setTimeout(() => setMcpSaved(false), 2000)
+    // Notify other settings sections (e.g. ProfilesSettings) that the MCP
+    // server list changed so they can refetch without reopening Settings.
+    window.dispatchEvent(new CustomEvent('mcp-changed'))
   }
   function handleRevert() { setMcpError(null); setMcpText(mcpOriginal) }
   async function handleToggle(name: string, enabled: boolean) {
     if (mcpText !== mcpOriginal && !window.confirm('Discard unsaved editor changes to toggle this server?')) return
     setTogglingServer(name)
-    try { await patchMcpServer(name, enabled); await loadMcp() } catch (error: unknown) { setMcpError(error instanceof Error ? error.message : String(error)) } finally { setTogglingServer(null) }
+    try { await patchMcpServer(name, enabled); await loadMcp(); window.dispatchEvent(new CustomEvent('mcp-changed')) } catch (error: unknown) { setMcpError(error instanceof Error ? error.message : String(error)) } finally { setTogglingServer(null) }
   }
   return <section id="mcp-servers" className="scroll-mt-4 flex flex-col gap-4">
     <div className="flex items-center justify-between shrink-0"><h3 className="text-base font-semibold text-foreground">MCP Servers</h3><button type="button" title="See docs/reference/mcp/" aria-label="MCP documentation" className="p-1 text-muted-foreground hover:text-foreground rounded-md transition"><HelpCircle className="w-4 h-4" /></button></div>
