@@ -5,6 +5,13 @@ on:
     branches: [main, master]
   pull_request:
 
+# Cancel superseded runs on the same ref so a rapid second push doesn't
+# queue behind a stale first run. PR runs and main runs are grouped
+# separately so an open PR doesn't cancel main (or vice versa).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   # Pin the toolchain via rust-toolchain.toml (channel 1.92.0).
