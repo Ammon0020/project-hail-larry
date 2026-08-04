@@ -67,6 +67,13 @@ Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
 - For Rust-only changes, `cargo test -q --all-targets`,
   `cargo clippy -q --all-targets -- -D warnings`, and `cargo fmt -q --check`
   suffice; `make check` adds the frontend + contract bar for full CI parity.
+- Release builds use fat LTO + `codegen-units = 1` for maximum runtime
+  performance (see `[profile.release]` in `Cargo.toml`). The first cold release
+  compile is slower (~6 min) but produces a faster binary; incremental rebuilds
+  are much faster via sccache. On x86_64 Linux, mold is used as the linker
+  (configured in `.cargo/config.toml`) to offset LTO link time — `setup.sh
+  --verify` checks for it. `make check` and `make qcheck` use the debug profile
+  and are unaffected by LTO.
 - Record unrelated test failures in `docs/known-issues.md`; do not expand scope.
 - For planning work, follow `.agents/skills/plan-management/SKILL.md`.
 - Discover work by listing `docs/plans/`, then the chosen epic folder. Use status-prefixed filenames; rename them when status changes. Keep plans concise and executable in one branch.
