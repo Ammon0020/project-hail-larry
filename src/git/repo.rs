@@ -192,14 +192,66 @@ pub fn status(root: &Path) -> Result<StatusResult, GitError> {
         }
         index += 1;
     }
-    // Upstream/ahead/behind needs reference configuration traversal. Keep this
-    // MVP deterministic until that gix plumbing is added.
+    // Upstream/ahead/behind needs reference configuration traversal. gix's
+    // ref-config API is still awkward to use here; shell out to the CLI for
+    // the small, well-defined `@{u}` + `rev-list --left-right --count` pair.
+    // Errors are swallowed so status still works for repos without upstreams.
+    let (upstream, ahead, behind) = match &head_branch {
+        Some(_) => upstream_ahead_behind(root),
+        None => (None, 0, 0),
+    };
     Ok(StatusResult {
         head_branch,
         head_oid,
-        upstream: None,
-        ahead: 0,
-        behind: 0,
+        upstream,
+        ahead,
+        behind,
         files,
     })
+}
+
+/// Resolve the upstream tracking branch and ahead/behind counts for `root`.
+///
+/// - `git rev-parse --abbrev-ref --symbolic-full-name @{u}` → upstream name
+///   (fails when no upstream is configured).
+/// - `git rev-list --left-right --count <upstream>...HEAD` → `behind\tahead`.
+///
+/// Any failure (no upstream, parse error, git missing) collapses to
+/// `(None, 0, 0)` so [`status`] never breaks for a repo that simply lacks
+/// tracking configuration.
+fn upstream_ahead_behind(root: &Path) -> (Option<String>, u64, u64) {
+    let Ok(upstream_bytes) = git_output(
+        root,
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    ) else {
+        return (None, 0, 0);
+    };
+    let upstream = String::from_utf8_lossy(&upstream_bytes).trim().to_string();
+    if upstream.is_empty() {
+        return (None, 0, 0);
+    }
+    let Ok(count_bytes) = git_output(
+        root,
+        [
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("{upstream}...HEAD"),
+        ],
+    ) else {
+        return (None, 0, 0);
+    };
+    let count = String::from_utf8_lossy(&count_bytes);
+    // `--left-right --count` prints `<left>\t<right>` where left = commits in
+    // upstream only (behind) and right = commits in HEAD only (ahead).
+    let mut parts = count.split_whitespace();
+    let behind = parts
+        .next()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    let ahead = parts
+        .next()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    (Some(upstream), ahead, behind)
 }

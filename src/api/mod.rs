@@ -188,6 +188,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/git/unstage", post(git::unstage))
         .route("/api/workspaces/{id}/git/commit", post(git::commit))
         .route("/api/workspaces/{id}/git/push", post(git::push))
+        .route("/api/workspaces/{id}/git/fetch", post(git::fetch))
+        .route("/api/workspaces/{id}/git/pull", post(git::pull))
         .route("/api/workspaces/{id}/git/init", post(git::init_repo))
         .route("/api/workspaces/{id}/git/ignore", post(git::ignore_paths))
         .route("/api/workspaces/{id}/git/discard", post(git::discard))

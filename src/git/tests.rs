@@ -484,3 +484,142 @@ fn discard_handles_mixed_tracked_and_untracked() {
     );
     assert!(!dir.path().join("new.txt").exists());
 }
+
+/// Point `main` at an upstream `origin/main` ref backed by `remote_oid`, then
+/// record the tracking configuration so `@{u}` resolves. A dummy `origin`
+/// remote must be registered because `git rev-parse @{u}` validates that the
+/// remote exists in the repo config, not just that the remote-tracking ref is
+/// present. `git branch --set-upstream-to` is rejected for the same reason.
+fn set_upstream(dir: &Path, remote_oid: &str) {
+    // Register a dummy remote so `@{u}` resolution accepts the tracking config.
+    // The URL is never fetched — only the remote-tracking ref matters.
+    Command::new("git")
+        .args(["remote", "add", "origin", "file:///dummy"])
+        .current_dir(dir)
+        .status()
+        .expect("remote add");
+    Command::new("git")
+        .args(["update-ref", "refs/remotes/origin/main", remote_oid])
+        .current_dir(dir)
+        .status()
+        .expect("update-ref");
+    Command::new("git")
+        .args(["config", "branch.main.remote", "origin"])
+        .current_dir(dir)
+        .status()
+        .expect("config remote");
+    Command::new("git")
+        .args(["config", "branch.main.merge", "refs/heads/main"])
+        .current_dir(dir)
+        .status()
+        .expect("config merge");
+}
+
+#[test]
+fn status_returns_none_upstream_when_no_tracking() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let result = status(dir.path()).expect("status");
+    assert_eq!(result.upstream, None);
+    assert_eq!(result.ahead, 0);
+    assert_eq!(result.behind, 0);
+}
+
+#[test]
+fn status_returns_upstream_ahead_behind() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    // Capture the initial commit oid, then add a second commit so HEAD is
+    // one ahead of the soon-to-be-configured upstream.
+    let base_oid = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir.path())
+            .output()
+            .expect("rev-parse")
+            .stdout,
+    )
+    .expect("utf8")
+    .trim()
+    .to_string();
+    add_commit(dir.path(), "a.txt", "second");
+    set_upstream(dir.path(), &base_oid);
+    let result = status(dir.path()).expect("status");
+    assert_eq!(result.upstream.as_deref(), Some("origin/main"));
+    assert_eq!(result.ahead, 1, "HEAD has one commit not on upstream");
+    assert_eq!(result.behind, 0);
+}
+
+#[test]
+fn status_reports_behind_when_upstream_ahead() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let base_oid = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir.path())
+            .output()
+            .expect("rev-parse")
+            .stdout,
+    )
+    .expect("utf8")
+    .trim()
+    .to_string();
+    // Move the upstream ref forward by one commit without advancing HEAD, so
+    // HEAD is behind. Add the commit on a throwaway branch then point the
+    // remote ref at it.
+    Command::new("git")
+        .args(["branch", "tmp-upstream"])
+        .current_dir(dir.path())
+        .status()
+        .expect("branch");
+    add_commit(dir.path(), "upstream.txt", "upstream commit");
+    let upstream_oid = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir.path())
+            .output()
+            .expect("rev-parse")
+            .stdout,
+    )
+    .expect("utf8")
+    .trim()
+    .to_string();
+    // Reset HEAD back to the base so it's behind the upstream ref.
+    Command::new("git")
+        .args(["reset", "--hard", &base_oid])
+        .current_dir(dir.path())
+        .status()
+        .expect("reset");
+    set_upstream(dir.path(), &upstream_oid);
+    let result = status(dir.path()).expect("status");
+    assert_eq!(result.upstream.as_deref(), Some("origin/main"));
+    assert_eq!(result.ahead, 0);
+    assert_eq!(result.behind, 1, "upstream has one commit not on HEAD");
+}
+
+#[test]
+fn fetch_returns_not_a_repo_for_plain_dir() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let err = fetch(dir.path(), None).expect_err("should error");
+    assert!(matches!(err, GitError::NotARepo));
+}
+
+#[test]
+fn pull_returns_not_a_repo_for_plain_dir() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let err = pull(dir.path(), None).expect_err("should error");
+    assert!(matches!(err, GitError::NotARepo));
+}
+
+#[test]
+fn pull_refuses_dirty_tree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+    let err = pull(dir.path(), None).expect_err("dirty tree should be refused");
+    assert!(
+        matches!(err, GitError::DirtyTree(ref msg) if msg.contains("README.md")),
+        "expected DirtyTree mentioning README.md, got {err:?}"
+    );
+}

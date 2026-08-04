@@ -204,6 +204,72 @@ pub fn push(root: &Path, remote: Option<&str>, set_upstream: bool) -> Result<Str
     Ok(text)
 }
 
+/// `POST /api/workspaces/{id}/git/fetch`. Shells out to `git fetch` so the
+/// user's existing git credentials apply. `stderr` is returned verbatim for
+/// the UI to stream. Same credential model as `push` (agent environment, no
+/// storage).
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository and
+/// [`GitError::Operation`] when Git cannot fetch.
+pub fn fetch(root: &Path, remote: Option<&str>) -> Result<String, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    let mut command = Command::new("git");
+    command.current_dir(root).arg("fetch");
+    command.arg(remote.unwrap_or("origin"));
+    let output = command
+        .output()
+        .map_err(|err| GitError::Operation(format!("fetch: {err}")))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Operation(text));
+    }
+    Ok(text)
+}
+
+/// `POST /api/workspaces/{id}/git/pull`. Shells out to `git pull` so the
+/// user's existing git credentials apply. Refuses if the working tree is
+/// dirty (returns [`GitError::DirtyTree`], mapped to 409 by the API layer)
+/// because a merge would conflict with uncommitted changes. `stderr` is
+/// returned verbatim for the UI to stream.
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository,
+/// [`GitError::DirtyTree`] when the working tree has uncommitted changes, and
+/// [`GitError::Operation`] when Git cannot pull.
+pub fn pull(root: &Path, remote: Option<&str>) -> Result<String, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    // Refuse if the working tree has uncommitted changes — pull would create
+    // conflicts. Reuse the status() check to detect any changed files.
+    let current = status(root)?;
+    if !current.files.is_empty() {
+        let file_list = current
+            .files
+            .iter()
+            .map(|f| f.path.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(GitError::DirtyTree(file_list));
+    }
+    let mut command = Command::new("git");
+    command.current_dir(root).arg("pull");
+    command.arg(remote.unwrap_or("origin"));
+    let output = command
+        .output()
+        .map_err(|err| GitError::Operation(format!("pull: {err}")))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Operation(text));
+    }
+    Ok(text)
+}
+
 /// `POST /api/workspaces/{id}/git/init`. Creates a repo at the workspace root
 /// with `main` as the initial branch. Refuses if `.git` already exists.
 ///

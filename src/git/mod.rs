@@ -29,7 +29,8 @@ pub use types::{
     CommitAuthor, DiffResult, FileStatus, GitError, GitRepoInfo, LogCommit, LogResult, StatusResult,
 };
 pub use worktree::{
-    add_to_gitignore, commit, diff, discard, init, push, stage, unstage, MAX_DIFF_BYTES,
+    add_to_gitignore, commit, diff, discard, fetch, init, pull, push, stage, unstage,
+    MAX_DIFF_BYTES,
 };
 
 #[cfg(test)]

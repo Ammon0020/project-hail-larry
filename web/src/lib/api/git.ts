@@ -97,6 +97,20 @@ export function gitPush(workspaceId: string, remote: string | null = null, setUp
   })
 }
 
+export function gitFetch(workspaceId: string, remote: string | null = null) {
+  return apiFetch<{ ok: true; stderr: string }>(`/workspaces/${workspaceId}/git/fetch`, {
+    method: 'POST',
+    body: JSON.stringify({ remote }),
+  })
+}
+
+export function gitPull(workspaceId: string, remote: string | null = null) {
+  return apiFetch<{ ok: true; stderr: string }>(`/workspaces/${workspaceId}/git/pull`, {
+    method: 'POST',
+    body: JSON.stringify({ remote }),
+  })
+}
+
 export function gitInit(workspaceId: string) {
   return apiFetch<{ oid: string }>(`/workspaces/${workspaceId}/git/init`, { method: 'POST' })
 }

@@ -138,6 +138,12 @@
   `src/bin/mockagent.rs`.
 - **Security/runtime** — temp-config poison guard, dual listeners, request caps,
   process-group cleanup, and workspace registration gate.
+- **S-GIT-FETCH-PULL** — `POST /git/fetch` and `POST /git/pull` endpoints
+  complete the remote sync loop; `status()` now returns real
+  `upstream`/`ahead`/`behind` via `git rev-parse @{u}` + `rev-list --count`;
+  pull refuses dirty trees (409). GitPanel header has a Fetch button and a
+  "Pull from remote" dropdown action. See
+  `docs/plans/git-history-graph/done-git-fetch-pull-small.md`.
 
 ## Known Gaps
 

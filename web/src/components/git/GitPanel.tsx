@@ -4,10 +4,12 @@ import {
   ArrowDown,
   ArrowUp,
   Copy,
+  DownloadCloud,
   Eye,
   File,
   Folder,
   GitBranch,
+  GitPullRequest,
   Loader2,
   Minus,
   Plus,
@@ -463,6 +465,9 @@ export function GitPanel({
           <button type="button" disabled={busy} onClick={() => void runMutation('refresh', async () => { /* refreshStatus runs as runMutation's trailing reload */ })} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-label="Refresh source control" title="Refresh">
             <RefreshCw className={cn('h-3.5 w-3.5', busyAction === 'refresh' && 'animate-spin')} />
           </button>
+          <button type="button" disabled={busy} onClick={() => void runMutation('fetch', async () => { await api.gitFetch(workspaceId) })} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-label="Fetch from remote" title="Fetch">
+            {busyAction === 'fetch' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <DownloadCloud className="h-3.5 w-3.5" />}
+          </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button type="button" className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground outline-none" aria-label="More actions" title="More actions">
@@ -470,6 +475,18 @@ export function GitPanel({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                disabled={busy}
+                onSelect={() => {
+                  void runMutation('pull', async () => {
+                    await api.gitPull(workspaceId)
+                    await onRepoChanged()
+                  })
+                }}
+              >
+                <GitPullRequest className="w-3.5 h-3.5" />
+                Pull from remote
+              </DropdownMenuItem>
               <DropdownMenuItem disabled>
                 View Git Graph (Coming Soon)
               </DropdownMenuItem>

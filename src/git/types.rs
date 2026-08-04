@@ -131,6 +131,9 @@ pub enum GitError {
     /// Spawning `git push` failed, or it exited non-zero.
     #[error("git push failed: {0}")]
     Push(String),
+    /// Working tree has uncommitted changes; pull/checkout refused.
+    #[error("working tree is dirty: {0}")]
+    DirtyTree(String),
 }
 
 impl From<GitError> for AppError {
@@ -140,6 +143,7 @@ impl From<GitError> for AppError {
             GitError::SymlinkedGitDir | GitError::PathEscapes(_) => {
                 AppError::validation(error.to_string())
             }
+            GitError::DirtyTree(_) => AppError::conflict(error.to_string()),
             GitError::Open(_) | GitError::Operation(_) | GitError::Push(_) => {
                 AppError::internal(error.to_string())
             }
