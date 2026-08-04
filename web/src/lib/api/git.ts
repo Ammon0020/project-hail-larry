@@ -110,6 +110,17 @@ export function gitIgnore(workspaceId: string, patterns: string[]) {
   })
 }
 
+/** POST /api/workspaces/{id}/git/discard — restore tracked files to their
+ *  index state and delete untracked files. Returns the count of paths
+ *  processed. Replaces the fragile readFile→diff→saveFile workaround that
+ *  failed on deleted/binary files and revision conflicts. */
+export function gitDiscard(workspaceId: string, paths: string[]) {
+  return apiFetch<{ discarded: number }>(`/workspaces/${workspaceId}/git/discard`, {
+    method: 'POST',
+    body: JSON.stringify({ paths }),
+  })
+}
+
 /** GET /api/workspaces/{id}/git/diff?path=<rel>&staged=<bool> — fetches the
  *  base/head contents and unified diff for a single file. `staged` selects
  *  the index (staged) diff vs. the working-tree (unstaged) diff. */

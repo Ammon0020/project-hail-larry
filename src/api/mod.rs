@@ -190,6 +190,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/git/push", post(git::push))
         .route("/api/workspaces/{id}/git/init", post(git::init_repo))
         .route("/api/workspaces/{id}/git/ignore", post(git::ignore_paths))
+        .route("/api/workspaces/{id}/git/discard", post(git::discard))
         .route("/api/events", get(events::events))
         .route("/api/events/{session_id}", get(events::session_events))
         .route(

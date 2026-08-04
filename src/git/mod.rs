@@ -28,7 +28,9 @@ pub use repo::{detect, status};
 pub use types::{
     CommitAuthor, DiffResult, FileStatus, GitError, GitRepoInfo, LogCommit, LogResult, StatusResult,
 };
-pub use worktree::{add_to_gitignore, commit, diff, init, push, stage, unstage, MAX_DIFF_BYTES};
+pub use worktree::{
+    add_to_gitignore, commit, diff, discard, init, push, stage, unstage, MAX_DIFF_BYTES,
+};
 
 #[cfg(test)]
 mod tests;

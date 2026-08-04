@@ -410,3 +410,71 @@ fn log_reports_parent_oids() {
     assert_eq!(head.parents, vec![init.oid.clone()]);
     assert!(init.parents.is_empty());
 }
+
+#[test]
+fn discard_restores_modified_tracked_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let file = dir.path().join("README.md");
+    std::fs::write(&file, "changed\n").expect("write");
+    assert_eq!(
+        discard(dir.path(), &["README.md".into()]).expect("discard"),
+        1
+    );
+    assert_eq!(std::fs::read_to_string(&file).expect("read"), "hello\n");
+}
+
+#[test]
+fn discard_deletes_untracked_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let file = dir.path().join("new.txt");
+    std::fs::write(&file, "untracked\n").expect("write");
+    assert!(file.exists());
+    assert_eq!(
+        discard(dir.path(), &["new.txt".into()]).expect("discard"),
+        1
+    );
+    assert!(!file.exists());
+}
+
+#[test]
+fn discard_restores_deleted_tracked_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let file = dir.path().join("README.md");
+    std::fs::remove_file(&file).expect("remove");
+    assert!(!file.exists());
+    assert_eq!(
+        discard(dir.path(), &["README.md".into()]).expect("discard"),
+        1
+    );
+    assert!(file.exists());
+    assert_eq!(std::fs::read_to_string(&file).expect("read"), "hello\n");
+}
+
+#[test]
+fn discard_rejects_path_escaping_workspace() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let err = discard(dir.path(), &["../outside".into()]).expect_err("should reject");
+    assert!(matches!(err, GitError::PathEscapes(_)));
+}
+
+#[test]
+fn discard_handles_mixed_tracked_and_untracked() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    // Modify a tracked file and create an untracked file.
+    std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+    std::fs::write(dir.path().join("new.txt"), "untracked\n").expect("write");
+    assert_eq!(
+        discard(dir.path(), &["README.md".into(), "new.txt".into()]).expect("discard"),
+        2
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("README.md")).expect("read"),
+        "hello\n"
+    );
+    assert!(!dir.path().join("new.txt").exists());
+}

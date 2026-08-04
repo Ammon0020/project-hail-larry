@@ -220,6 +220,85 @@ pub fn init(root: &Path) -> Result<String, GitError> {
     )
 }
 
+/// `POST /api/workspaces/{id}/git/discard`. Restores tracked files to their
+/// index/HEAD state via `git checkout -- <paths>` and deletes untracked files
+/// via `std::fs::remove_file` (cross-platform, no `rm` spawn). Path containment
+/// is pre-validated for every path before any mutation, so a batch with one
+/// escaping path fails atomically without side effects.
+///
+/// Returns the count of paths processed (tracked + untracked).
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository,
+/// [`GitError::PathEscapes`] when any path escapes the workspace, and
+/// [`GitError::Operation`] for git CLI or filesystem failures.
+pub fn discard(root: &Path, paths: &[String]) -> Result<usize, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    // Pre-validate every path before any mutation so a bad path in a batch
+    // fails atomically. `contained_path` supports non-existent final components
+    // (deleted tracked files), validating the parent chain instead.
+    for path in paths {
+        contained_path(root, path)?;
+    }
+
+    // Classify each path as tracked or untracked. `git ls-files --error-unmatch`
+    // exits non-zero for untracked paths, which is the expected classification
+    // signal — not an error in this context.
+    let mut tracked: Vec<&String> = Vec::new();
+    let mut untracked: Vec<&String> = Vec::new();
+    for path in paths {
+        if is_tracked(root, path)? {
+            tracked.push(path);
+        } else {
+            untracked.push(path);
+        }
+    }
+
+    // Restore tracked files from the index in a single checkout command.
+    if !tracked.is_empty() {
+        let mut command = Command::new("git");
+        command
+            .current_dir(root)
+            .arg("checkout")
+            .arg("--")
+            .args(&tracked);
+        run_git(command)?;
+    }
+
+    // Delete untracked files via the filesystem (cross-platform, no shell `rm`).
+    for path in &untracked {
+        let full = contained_path(root, path)?;
+        if full.exists() {
+            if full.is_dir() {
+                std::fs::remove_dir_all(&full)
+                    .map_err(|err| GitError::Operation(format!("remove {path}: {err}")))?;
+            } else {
+                std::fs::remove_file(&full)
+                    .map_err(|err| GitError::Operation(format!("remove {path}: {err}")))?;
+            }
+        }
+    }
+
+    Ok(tracked.len() + untracked.len())
+}
+
+/// Checks whether `path` is tracked by git (exists in the index).
+/// `git ls-files --error-unmatch -- <path>` exits non-zero for untracked paths.
+fn is_tracked(root: &Path, path: &str) -> Result<bool, GitError> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .arg("ls-files")
+        .arg("--error-unmatch")
+        .arg("--")
+        .arg(path)
+        .output()
+        .map_err(|err| GitError::Operation(format!("ls-files: {err}")))?;
+    Ok(output.status.success())
+}
+
 fn truncate_utf8(value: &str, limit: usize) -> String {
     let mut end = limit.min(value.len());
     while end > 0 && !value.is_char_boundary(end) {

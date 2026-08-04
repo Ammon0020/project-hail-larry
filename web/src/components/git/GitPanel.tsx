@@ -518,18 +518,16 @@ export function GitPanel({
           onOpenDiff={onOpenDiff}
           onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })}
           onFileSelect={onFileSelect}
-          onDiscard={(file) => void runMutation('discard', async () => {
+          onDiscard={(file) => {
             if (!workspaceId) return
-            if (file.status === 'untracked') {
-              await api.deleteFile(workspaceId, file.path)
-            } else {
-              const fileData = await api.readFile(workspaceId, file.path).catch(() => ({ revision: 0 }))
-              const diff = await api.getGitDiff(workspaceId, file.path, false)
-              if (diff && diff.base !== undefined) {
-                await api.saveFile(workspaceId, file.path, diff.base, fileData.revision)
-              }
-            }
-          })}
+            const label = file.status === 'untracked'
+              ? `Delete untracked file "${file.path}"? This cannot be undone.`
+              : `Discard changes to "${file.path}"? This cannot be undone.`
+            if (!window.confirm(label)) return
+            void runMutation('discard', async () => {
+              await api.gitDiscard(workspaceId, [file.path])
+            })
+          }}
           busy={busy}
           scrollRef={scrollRef}
           menuPath={menuPath}
