@@ -19,6 +19,7 @@ import {
 import { FileIcon } from '@/lib/fileIcon'
 import { api, type FileStatus, type StatusResult } from '@/lib/api'
 import { useGitState } from '@/hooks/useGitState'
+import { useLongPressHandlers } from '@/hooks/useLongPressHandlers'
 import { cn } from '@/lib/utils'
 import {
   DropdownMenu,
@@ -42,36 +43,6 @@ const ROW_HEIGHT = 28
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
-}
-
-/**
- * Long-press (500ms) → open context menu; move/end/cancel clears the timer.
- * Mirrors the hook in `FileTree.tsx` — duplicated here rather than extracted to
- * a shared hook to keep this change focused (the FileTree version is the
- * canonical one; consolidate on a follow-up).
- */
-function useLongPressHandlers(onOpen: () => void, enabled = true) {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const clear = useCallback(() => {
-    if (timer.current) {
-      clearTimeout(timer.current)
-      timer.current = null
-    }
-  }, [])
-  const handlers = useMemo(
-    () => ({
-      onTouchStart: () => {
-        if (!enabled) return
-        clear()
-        timer.current = setTimeout(onOpen, 500)
-      },
-      onTouchEnd: clear,
-      onTouchMove: clear,
-      onTouchCancel: clear,
-    }),
-    [onOpen, enabled, clear],
-  )
-  return { handlers, timer, clear }
 }
 
 function GitFileRow({
@@ -162,12 +133,9 @@ function GitFileRow({
             type="button"
             disabled={busy}
             onClick={(e) => {
-              e.stopPropagation()
               e.preventDefault()
               onFileSelect(file.path)
             }}
-            onMouseDown={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
             className="shrink-0 rounded p-1 text-muted-foreground hover:bg-primary hover:text-primary-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
             title="Open File"
             aria-label={`Open ${file.path}`}
@@ -180,12 +148,9 @@ function GitFileRow({
             type="button"
             disabled={busy}
             onClick={(e) => {
-              e.stopPropagation()
               e.preventDefault()
               onDiscard(file)
             }}
-            onMouseDown={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
             className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
             title="Discard Changes"
             aria-label={`Discard changes in ${file.path}`}
@@ -197,7 +162,6 @@ function GitFileRow({
           type="button"
           disabled={busy}
           onClick={(e) => {
-            e.stopPropagation()
             e.preventDefault()
             if (file.staged) {
               onUnstage(file.path)
@@ -205,8 +169,6 @@ function GitFileRow({
               onStage(file.path)
             }
           }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
           className="shrink-0 rounded p-1 text-muted-foreground hover:bg-primary hover:text-primary-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           aria-label={stageLabel}
           title={stageLabel}
