@@ -78,6 +78,10 @@ pub struct DiffResult {
 #[serde(rename_all = "camelCase")]
 pub struct CommitDiffFile {
     pub path: String,
+    /// `added` | `modified` | `deleted` | `renamed` (mirrors `FileStatus`).
+    pub status: String,
+    /// For renames/copies, the path before the commit; otherwise `None`.
+    pub old_path: Option<String>,
     #[serde(flatten)]
     pub diff: DiffResult,
 }

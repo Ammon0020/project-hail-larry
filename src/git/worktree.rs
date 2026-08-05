@@ -75,24 +75,29 @@ pub fn commit_diff(root: &Path, oid: &str) -> Result<CommitDiffResult, GitError>
     }
     let resolved_oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let parent_oid = git_parent(root, &resolved_oid);
-    let paths = git_output(
+    let raw = git_output(
         root,
         [
             "diff-tree",
             "--root",
             "--no-commit-id",
-            "--name-only",
+            "--name-status",
             "-r",
             "-z",
+            "-M",
             &resolved_oid,
         ],
     )?;
-    let files = paths
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
+    // `--name-status -z` emits NUL-separated records. For plain statuses
+    // (A/M/D) the record is `STATUS\0PATH\0`; for renames/copies (`Rxx`/`Cxx`)
+    // it is `STATUS\0OLDPATH\0NEWPATH\0` (Git emits old-then-new). Split on NUL
+    // and consume the tokens as a record stream so each file keeps its status
+    // and (for renames) its previous path.
+    let tokens: Vec<&[u8]> = raw.split(|byte| *byte == 0).collect();
+    let files = parse_name_status_records(&tokens)
         .take(MAX_COMMIT_DIFF_FILES)
-        .map(|path| {
-            let path = String::from_utf8_lossy(path).replace('\\', "/");
+        .map(|record| {
+            let path = record.path.replace('\\', "/");
             let base = parent_oid
                 .as_deref()
                 .map(|parent| git_file(root, &format!("{parent}:{path}")))
@@ -101,6 +106,8 @@ pub fn commit_diff(root: &Path, oid: &str) -> Result<CommitDiffResult, GitError>
             let head = git_file(root, &format!("{resolved_oid}:{path}"))?;
             Ok(CommitDiffFile {
                 path,
+                status: record.status,
+                old_path: record.old_path,
                 diff: snapshot_diff(&base, &head),
             })
         })
@@ -113,6 +120,73 @@ pub fn commit_diff(root: &Path, oid: &str) -> Result<CommitDiffResult, GitError>
 }
 
 const MAX_COMMIT_DIFF_FILES: usize = 100;
+
+/// One parsed `--name-status -z` record. `path` is the post-commit path
+/// (the new path for renames); `old_path` is set only for renames/copies.
+struct NameStatusRecord {
+    status: String,
+    path: String,
+    old_path: Option<String>,
+}
+
+/// Iterate `--name-status -z` records from the NUL-split `tokens`. The trailing
+/// empty token produced by the final NUL is skipped. Unknown status letters
+/// fall back to `modified` with a single path so a future Git status code never
+/// silently drops a file from the diff.
+fn parse_name_status_records<'a>(
+    tokens: &'a [&'a [u8]],
+) -> impl Iterator<Item = NameStatusRecord> + 'a {
+    // Index into `tokens`; the closure advances it record-by-record. Each
+    // record consumes a status token plus one or two path tokens depending on
+    // the status letter.
+    let mut idx = 0usize;
+    std::iter::from_fn(move || {
+        // Skip any leading empty tokens (e.g. when the output begins with a
+        // NUL or after trailing empties from the final terminator).
+        while idx < tokens.len() && tokens[idx].is_empty() {
+            idx += 1;
+        }
+        if idx >= tokens.len() {
+            return None;
+        }
+        let status_bytes = tokens[idx];
+        idx += 1;
+        let status_str = String::from_utf8_lossy(status_bytes).into_owned();
+        let (status, is_rename) = match status_str.as_bytes().first() {
+            Some(b'A') => ("added".to_string(), false),
+            Some(b'D') => ("deleted".to_string(), false),
+            Some(b'R' | b'C') => ("renamed".to_string(), true),
+            // `M` and any unknown status letter fall back to `modified` so a
+            // future Git status code never silently drops a file from the diff.
+            _ => ("modified".to_string(), false),
+        };
+        if idx >= tokens.len() {
+            return None;
+        }
+        // For renames/copies Git emits the old path first, then the new path;
+        // for A/M/D there is a single path token. `path` is always the
+        // post-commit path (the new path for renames).
+        let (path, old_path) = if is_rename {
+            let old = String::from_utf8_lossy(tokens[idx]).into_owned();
+            idx += 1;
+            if idx >= tokens.len() {
+                return None;
+            }
+            let new = String::from_utf8_lossy(tokens[idx]).into_owned();
+            idx += 1;
+            (new, Some(old))
+        } else {
+            let path = String::from_utf8_lossy(tokens[idx]).into_owned();
+            idx += 1;
+            (path, None)
+        };
+        Some(NameStatusRecord {
+            status,
+            path,
+            old_path,
+        })
+    })
+}
 
 fn git_parent(root: &Path, oid: &str) -> Option<String> {
     let spec = format!("{oid}^");

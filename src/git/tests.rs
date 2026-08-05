@@ -222,6 +222,72 @@ fn commit_diff_rejects_invalid_oid() {
     ));
 }
 
+/// Helper: capture the HEAD oid of the current repo.
+fn head_oid(dir: &Path) -> String {
+    detect(dir).expect("detect").head_oid.expect("head oid")
+}
+
+/// Helper: stage everything and create a commit, returning the new HEAD oid.
+fn commit_all(dir: &Path, message: &str) -> String {
+    let prev = head_oid(dir);
+    stage(dir, &[]).expect("stage all");
+    commit(dir, message, Some(&prev), false).expect("commit")
+}
+
+#[test]
+fn commit_diff_name_status_parses_add_modify_delete_rename() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+
+    // Commit 2: add a new file.
+    std::fs::write(dir.path().join("added.txt"), "added\n").expect("write");
+    let add_oid = commit_all(dir.path(), "add");
+    let add_files = commit_diff(dir.path(), &add_oid).expect("diff").files;
+    let added = add_files
+        .iter()
+        .find(|f| f.path == "added.txt")
+        .expect("added.txt present");
+    assert_eq!(added.status, "added");
+    assert_eq!(added.old_path, None);
+
+    // Commit 3: modify the added file.
+    std::fs::write(dir.path().join("added.txt"), "added and changed\n").expect("write");
+    let mod_oid = commit_all(dir.path(), "modify");
+    let mod_files = commit_diff(dir.path(), &mod_oid).expect("diff").files;
+    let modified = mod_files
+        .iter()
+        .find(|f| f.path == "added.txt")
+        .expect("added.txt present");
+    assert_eq!(modified.status, "modified");
+    assert_eq!(modified.old_path, None);
+
+    // Commit 4: rename the file. `git mv` stages the rename directly.
+    std::process::Command::new("git")
+        .args(["mv", "added.txt", "renamed.txt"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git mv");
+    let rename_oid = commit_all(dir.path(), "rename");
+    let rename_files = commit_diff(dir.path(), &rename_oid).expect("diff").files;
+    let renamed = rename_files
+        .iter()
+        .find(|f| f.path == "renamed.txt")
+        .expect("renamed.txt present");
+    assert_eq!(renamed.status, "renamed");
+    assert_eq!(renamed.old_path.as_deref(), Some("added.txt"));
+
+    // Commit 5: delete the renamed file.
+    std::fs::remove_file(dir.path().join("renamed.txt")).expect("remove");
+    let del_oid = commit_all(dir.path(), "delete");
+    let del_files = commit_diff(dir.path(), &del_oid).expect("diff").files;
+    let deleted = del_files
+        .iter()
+        .find(|f| f.path == "renamed.txt")
+        .expect("renamed.txt present");
+    assert_eq!(deleted.status, "deleted");
+    assert_eq!(deleted.old_path, None);
+}
+
 #[test]
 fn commit_rejects_stale_expected_head() {
     let dir = tempfile::tempdir().expect("tempdir");

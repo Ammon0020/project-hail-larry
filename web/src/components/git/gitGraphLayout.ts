@@ -42,6 +42,14 @@ export interface GitGraphNode {
   lane: number
   /** One entry per parent in `LogCommit.parents`, in order. */
   edges: GitGraphEdge[]
+  /** Lane indices occupied coming *into* this row (from previous rows / child
+   *  pre-placement). The SVG draws verticals from y=0 to the dot for these. */
+  lanesAbove: number[]
+  /** Lane indices occupied *after* this row (continuing to future rows). The
+   *  SVG draws verticals from the dot to y=ROW_HEIGHT for these. Lanes in
+   *  `lanesBelow` but not `lanesAbove` are newly initiated by this commit
+   *  (merge second-parent) and get a curve from the dot to the lane bottom. */
+  lanesBelow: number[]
 }
 
 export interface GitGraphLayout {
@@ -70,6 +78,8 @@ export function layoutGitGraph(commits: LogCommit[]): GitGraphLayout {
   const lanes: (string | null)[] = []
   const nodeLane = new Array<number>(commits.length).fill(-1)
   const edges: GitGraphEdge[][] = Array.from({ length: commits.length }, () => [])
+  const lanesAbove: number[][] = Array.from({ length: commits.length }, () => [])
+  const lanesBelow: number[][] = Array.from({ length: commits.length }, () => [])
 
   const findFreeLane = (): number => {
     for (let k = 0; k < lanes.length; k++) {
@@ -79,8 +89,21 @@ export function layoutGitGraph(commits: LogCommit[]): GitGraphLayout {
     return lanes.length - 1
   }
 
+  /** Snapshot of currently occupied lane indices (non-null entries). */
+  const occupiedLanes = (): number[] => {
+    const result: number[] = []
+    for (let k = 0; k < lanes.length; k++) {
+      if (lanes[k] !== null) result.push(k)
+    }
+    return result
+  }
+
   for (let i = 0; i < commits.length; i++) {
     const commit = commits[i]
+
+    // Snapshot lanes occupied *before* this commit's dot is drawn — these are
+    // the lines coming from above (pre-placed by children or carried forward).
+    lanesAbove[i] = occupiedLanes()
 
     // Locate or assign this commit's lane. A child may have pre-placed it.
     let lane = lanes.indexOf(commit.oid)
@@ -120,6 +143,9 @@ export function layoutGitGraph(commits: LogCommit[]): GitGraphLayout {
     // Free this commit's lane unless a parent was placed on top of it (in which
     // case the lane is now owned by that upcoming parent).
     if (!placedOnCurrent) lanes[lane] = null
+
+    // Snapshot lanes occupied *after* this commit — these continue downward.
+    lanesBelow[i] = occupiedLanes()
   }
 
   const nodes: GitGraphNode[] = commits.map((commit, i) => ({
@@ -127,6 +153,8 @@ export function layoutGitGraph(commits: LogCommit[]): GitGraphLayout {
     oid: commit.oid,
     lane: nodeLane[i],
     edges: edges[i],
+    lanesAbove: lanesAbove[i],
+    lanesBelow: lanesBelow[i],
   }))
 
   // `lanes.length` is the high-water mark: we only grow the array when every

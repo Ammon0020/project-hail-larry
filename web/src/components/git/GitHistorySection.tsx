@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, GitBranch, GitCommit, List, Loader2, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, GitBranch, GitCommit, List, Loader2, RefreshCw, SquareArrowOutUpRight } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { api, type LogCommit } from '@/lib/api'
+import { api, type CommitDiffResult, type LogCommit } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { layoutGitGraph } from './gitGraphLayout'
+import { layoutGitGraph, type GitGraphLayout } from './gitGraphLayout'
+import {
+  buildRowSegments,
+  DOT_Y,
+  DOT_RADIUS,
+  HEAD_DOT_RADIUS,
+  MERGE_DOT_RADIUS,
+  graphWidth,
+  laneX,
+} from './gitGraphSvg'
+import { CommitFileList } from './CommitFileList'
+import { CommitContextMenu, type CommitContextMenuItem } from './CommitContextMenu'
 
 const ROW_HEIGHT = 44
 const DEFAULT_HEIGHT = 260
@@ -26,68 +37,181 @@ function relativeTime(iso: string): string {
   return `${Math.floor(months / 12)}y ago`
 }
 
-function GraphRow({ commit, lane, laneCount, edges, onOpen, flatMode }: {
+/** Stable color class per lane index — cycled from a small semantic palette. */
+const LANE_COLORS = [
+  'text-primary',
+  'text-sky-500',
+  'text-emerald-500',
+  'text-amber-500',
+  'text-violet-500',
+  'text-rose-500',
+  'text-cyan-500',
+  'text-orange-500',
+]
+function laneColor(lane: number): string {
+  return LANE_COLORS[lane % LANE_COLORS.length]
+}
+
+function GraphRow({
+  commit,
+  nodeIndex,
+  layout,
+  isExpanded,
+  flatMode,
+  onToggle,
+  contextItems,
+}: {
   commit: LogCommit
-  lane: number
-  laneCount: number
-  edges: ReturnType<typeof layoutGitGraph>['nodes'][number]['edges']
-  onOpen: (oid: string) => void
+  nodeIndex: number
+  layout: GitGraphLayout
+  isExpanded: boolean
   flatMode: boolean
+  onToggle: () => void
+  contextItems: CommitContextMenuItem[]
 }) {
-  const laneWidth = 16
-  const graphWidth = Math.max(28, laneCount * laneWidth + 12)
-  const x = lane * laneWidth + 8
+  const graphNode = layout.nodes[nodeIndex]
+  const segments = useMemo(
+    () => (graphNode ? buildRowSegments(graphNode, ROW_HEIGHT) : null),
+    [graphNode],
+  )
+  const gWidth = graphWidth(layout.laneCount)
+  const dotX = graphNode ? laneX(graphNode.lane) : laneX(0)
+  const dotR = commit.isHead
+    ? HEAD_DOT_RADIUS
+    : segments?.dot.isMerge
+      ? MERGE_DOT_RADIUS
+      : DOT_RADIUS
+
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(commit.oid)}
-      className="group flex w-full items-center gap-2 border-b border-border/40 px-2 text-left hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:outline-none"
-      style={{ height: ROW_HEIGHT }}
-      title={`${commit.message} (${commit.oid})`}
-    >
-      {!flatMode && <svg width={graphWidth} height={ROW_HEIGHT} className="shrink-0 overflow-visible" aria-hidden="true">
-        {edges.map((edge, index) => {
-          const parentX = edge.parentLane === null ? x : edge.parentLane * laneWidth + 8
-          const key = `${commit.oid}:${index}:${edge.parentIndex}`
-          return edge.parentLane === lane ? (
-            <line key={key} x1={x} y1="16" x2={parentX} y2={ROW_HEIGHT} stroke="currentColor" strokeWidth="1.5" className="text-primary/70" />
-          ) : (
-            <path
-              key={key}
-              d={`M ${x} 16 C ${x} 25, ${parentX} 25, ${parentX} ${ROW_HEIGHT}`}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeDasharray={edge.offscreen ? '3 3' : undefined}
-              className={edge.offscreen ? 'text-muted-foreground/50' : 'text-primary/70'}
+    <CommitContextMenu items={contextItems}>
+      <div
+        role="row"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onToggle()
+          }
+        }}
+        className="group flex w-full items-center gap-2 border-b border-border/40 px-2 text-left hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
+        style={{ height: ROW_HEIGHT }}
+        title={`${commit.message} (${commit.oid})`}
+      >
+        {flatMode && <div style={{ width: 12 }} className="shrink-0" />}
+        {!flatMode && segments && (
+          <svg
+            width={gWidth}
+            height={ROW_HEIGHT}
+            className="shrink-0 overflow-visible"
+            aria-hidden="true"
+          >
+            {/* Through-lane and commit-lane verticals */}
+            {segments.verticals.map((v, idx) => (
+              <line
+                key={`v-${idx}-${v.lane}`}
+                x1={laneX(v.lane)}
+                y1={v.y0}
+                x2={laneX(v.lane)}
+                y2={v.y1}
+                stroke="currentColor"
+                strokeWidth="1.5"
+                className={cn('opacity-70', laneColor(v.lane))}
+              />
+            ))}
+            {/* Merge curves and offscreen stubs */}
+            {segments.curves.map((c, idx) => {
+              const fromX = laneX(c.fromLane)
+              const toX = laneX(c.toLane)
+              const key = `c-${idx}-${c.fromLane}-${c.toLane}`
+              if (c.dashed) {
+                return (
+                  <line
+                    key={key}
+                    x1={fromX}
+                    y1={c.y0}
+                    x2={toX}
+                    y2={c.y1}
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeDasharray="3 3"
+                    className="text-muted-foreground/50"
+                  />
+                )
+              }
+              // Bezier curve from dot to parent lane at row bottom
+              const midY = (c.y0 + c.y1) / 2
+              return (
+                <path
+                  key={key}
+                  d={`M ${fromX} ${c.y0} C ${fromX} ${midY}, ${toX} ${midY}, ${toX} ${c.y1}`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  className={cn('opacity-70', laneColor(c.toLane))}
+                />
+              )
+            })}
+            {/* Commit dot */}
+            <circle
+              cx={dotX}
+              cy={DOT_Y}
+              r={dotR}
+              fill="currentColor"
+              className={commit.isHead ? 'text-primary' : laneColor(graphNode?.lane ?? 0)}
             />
-          )
-        })}
-        <circle cx={x} cy="16" r={commit.isHead ? 4.5 : 3.5} fill="currentColor" className={commit.isHead ? 'text-primary' : 'text-sky-500'} />
-        {commit.isHead && <circle cx={x} cy="16" r="7" fill="none" stroke="currentColor" strokeWidth="1" className="text-primary/50" />}
-      </svg>}
-      <div className="min-w-0 flex-1 py-1">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-xs font-medium text-foreground">{commit.message || '(no subject)'}</span>
-          {commit.branchLabels.map((label) => (
-            <span key={label} className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">{label}</span>
-          ))}
+            {commit.isHead && (
+              <circle
+                cx={dotX}
+                cy={DOT_Y}
+                r={HEAD_DOT_RADIUS + 2.5}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1"
+                className="text-primary/50"
+              />
+            )}
+          </svg>
+        )}
+        <div className="min-w-0 flex-1 py-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-xs font-medium text-foreground">
+              {commit.message || '(no subject)'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            <span className="font-mono">{commit.oid.slice(0, 7)}</span>
+            <span>·</span>
+            <span className="truncate">{relativeTime(commit.author.time)}</span>
+            {commit.branchLabels.map((label) => (
+              <span
+                key={label}
+                className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-          <span className="font-mono">{commit.oid.slice(0, 7)}</span>
-          <span>·</span>
-          <span className="truncate">{relativeTime(commit.author.time)}</span>
-        </div>
+        <ChevronRight
+          className={cn(
+            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform',
+            isExpanded && 'rotate-90',
+          )}
+        />
       </div>
-      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
-    </button>
+    </CommitContextMenu>
   )
 }
 
 /** Collapsible, resizable, virtualized history pane below current changes. */
-export function GitHistorySection({ workspaceId, onOpenCommitDiff, refreshKey = 0 }: {
+export function GitHistorySection({
+  workspaceId,
+  onOpenCommitDiff,
+  refreshKey = 0,
+}: {
   workspaceId: string
-  onOpenCommitDiff: (oid: string) => void
+  onOpenCommitDiff: (commitOid: string) => void
   refreshKey?: string | number
 }) {
   const [expanded, setExpanded] = useState(true)
@@ -98,14 +222,18 @@ export function GitHistorySection({ workspaceId, onOpenCommitDiff, refreshKey = 
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [expandedOid, setExpandedOid] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fetchToken = useRef(0)
   const resizing = useRef(false)
+  const diffCache = useRef<Map<string, CommitDiffResult>>(new Map())
 
   const refresh = useCallback(async () => {
     const token = ++fetchToken.current
     setLoading(true)
     setError(null)
+    setExpandedOid(null)
+    diffCache.current.clear()
     try {
       const result = await api.getGitLog(workspaceId)
       if (token !== fetchToken.current) return
@@ -129,14 +257,15 @@ export function GitHistorySection({ workspaceId, onOpenCommitDiff, refreshKey = 
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return
-    // Guard against stale appends if the workspace changes mid-fetch; the
-    // refresh effect bumps fetchToken on workspace change and resets commits.
     const token = fetchToken.current
     setLoadingMore(true)
     try {
       const result = await api.getGitLog(workspaceId, 100, commits.length)
       if (token !== fetchToken.current) return
-      setCommits((current) => [...current, ...result.commits.filter((commit) => !current.some((item) => item.oid === commit.oid))])
+      setCommits((current) => [
+        ...current,
+        ...result.commits.filter((commit) => !current.some((item) => item.oid === commit.oid)),
+      ])
       setHasMore(result.hasMore)
     } catch (err) {
       if (token === fetchToken.current) setError(err instanceof Error ? err.message : String(err))
@@ -145,11 +274,23 @@ export function GitHistorySection({ workspaceId, onOpenCommitDiff, refreshKey = 
     }
   }, [commits.length, hasMore, loadingMore, workspaceId])
 
+  // When a row is expanded, render the file list as a non-virtualized block
+  // right after it. We adjust the virtualizer's count to account for the extra
+  // "slot" so the total height stays correct. The expanded slot uses the same
+  // absolute positioning as regular rows.
+  const expandedIndex = expandedOid ? commits.findIndex((c) => c.oid === expandedOid) : -1
+  const hasExpandedSlot = expandedIndex >= 0
+  // Estimate the expanded file list height (capped at 160px).
+  const expandedSlotHeight = 160
+
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
-    count: commits.length + (hasMore ? 1 : 0),
+    count: commits.length + (hasMore ? 1 : 0) + (hasExpandedSlot ? 1 : 0),
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: (index: number) => {
+      if (hasExpandedSlot && index === expandedIndex + 1) return expandedSlotHeight
+      return ROW_HEIGHT
+    },
     overscan: 8,
   })
   const layout = useMemo(() => layoutGitGraph(commits), [commits])
@@ -161,7 +302,9 @@ export function GitHistorySection({ workspaceId, onOpenCommitDiff, refreshKey = 
       const next = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, window.innerHeight - event.clientY))
       setHeight(next)
     }
-    const stopResize = () => { resizing.current = false }
+    const stopResize = () => {
+      resizing.current = false
+    }
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', stopResize)
     return () => {
@@ -170,8 +313,43 @@ export function GitHistorySection({ workspaceId, onOpenCommitDiff, refreshKey = 
     }
   }, [])
 
+  const buildContextItems = useCallback(
+    (commit: LogCommit): CommitContextMenuItem[] => [
+      {
+        label: 'Copy SHA',
+        icon: <Copy className="h-3.5 w-3.5" />,
+        onClick: () => void navigator.clipboard.writeText(commit.oid),
+      },
+      {
+        label: 'Open diff in tab',
+        icon: <SquareArrowOutUpRight className="h-3.5 w-3.5" />,
+        onClick: () => onOpenCommitDiff(commit.oid),
+      },
+      ...(commit.branchLabels.length > 0
+        ? [
+            {
+              label: `Checkout ${commit.branchLabels[0]}`,
+              icon: <GitBranch className="h-3.5 w-3.5" />,
+              onClick: () => {
+                void api.gitCheckout(workspaceId, commit.branchLabels[0]).then(() => void refresh())
+              },
+            },
+          ]
+        : []),
+      {
+        label: 'Refresh',
+        icon: <RefreshCw className="h-3.5 w-3.5" />,
+        onClick: () => void refresh(),
+      },
+    ],
+    [onOpenCommitDiff, refresh, workspaceId],
+  )
+
   return (
-    <section className="flex shrink-0 flex-col border-t border-border bg-background" style={{ height: expanded ? height : 34 }}>
+    <section
+      className="flex shrink-0 flex-col border-t border-border bg-background"
+      style={{ height: expanded ? height : 34 }}
+    >
       {expanded && (
         <div
           role="separator"
@@ -179,7 +357,9 @@ export function GitHistorySection({ workspaceId, onOpenCommitDiff, refreshKey = 
           aria-label="Resize history pane"
           tabIndex={0}
           className="h-1 shrink-0 cursor-row-resize border-b border-border/50 hover:bg-primary/30 focus-visible:bg-primary/30 focus-visible:outline-none"
-          onPointerDown={() => { resizing.current = true }}
+          onPointerDown={() => {
+            resizing.current = true
+          }}
           onKeyDown={(event) => {
             if (event.key === 'ArrowUp') {
               event.preventDefault()
@@ -192,35 +372,113 @@ export function GitHistorySection({ workspaceId, onOpenCommitDiff, refreshKey = 
         />
       )}
       <header className="flex h-8 shrink-0 items-center gap-1 border-b border-border px-2">
-        <button type="button" onClick={() => setExpanded((value) => !value)} className="flex min-w-0 flex-1 items-center gap-1 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground" aria-expanded={expanded} aria-controls="git-history-content">
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="flex min-w-0 flex-1 items-center gap-1 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+          aria-expanded={expanded}
+          aria-controls="git-history-content"
+        >
           {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           <GitBranch className="h-3 w-3" />
           <span>Graph</span>
           {!loading && <span className="font-normal normal-case tracking-normal">({commits.length})</span>}
         </button>
-        <button type="button" onClick={() => setFlatMode((value) => !value)} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label={flatMode ? 'Show graph view' : 'Show flat history'} title={flatMode ? 'Show graph view' : 'Show flat history'}>
+        <button
+          type="button"
+          onClick={() => setFlatMode((value) => !value)}
+          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
+          aria-label={flatMode ? 'Show graph view' : 'Show flat history'}
+          title={flatMode ? 'Show graph view' : 'Show flat history'}
+        >
           {flatMode ? <GitBranch className="h-3 w-3" /> : <List className="h-3 w-3" />}
         </button>
-        <button type="button" onClick={() => void refresh()} disabled={loading} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50" aria-label="Refresh history" title="Refresh history">
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          disabled={loading}
+          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+          aria-label="Refresh history"
+          title="Refresh history"
+        >
           <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} />
         </button>
       </header>
       {expanded && (
         <div ref={scrollRef} id="git-history-content" className="min-h-0 flex-1 overflow-y-auto">
           {loading ? (
-            <div className="flex h-full items-center justify-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading history…</div>
+            <div className="flex h-full items-center justify-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading history…
+            </div>
           ) : error ? (
-            <div className="flex h-full items-center justify-center px-3 text-center text-xs text-destructive">Failed to load history: {error}</div>
+            <div className="flex h-full items-center justify-center px-3 text-center text-xs text-destructive">
+              Failed to load history: {error}
+            </div>
           ) : commits.length === 0 ? (
-            <div className="flex h-full items-center justify-center gap-1.5 text-xs text-muted-foreground"><GitCommit className="h-3.5 w-3.5" /> No commits yet.</div>
+            <div className="flex h-full items-center justify-center gap-1.5 text-xs text-muted-foreground">
+              <GitCommit className="h-3.5 w-3.5" /> No commits yet.
+            </div>
           ) : (
             <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
               {items.map((item) => {
-                if (item.index >= commits.length) {
-                  return <div key="load-more" className="absolute inset-x-0 flex h-11 items-center justify-center" style={{ transform: `translateY(${item.start}px)` }}><button type="button" onClick={() => void loadMore()} disabled={loadingMore} className="text-[10px] text-primary hover:underline disabled:opacity-50">{loadingMore ? 'Loading…' : 'Load more history'}</button></div>
+                // "Load more" sentinel row
+                if (hasMore && item.index === commits.length + (hasExpandedSlot ? 1 : 0)) {
+                  return (
+                    <div
+                      key="load-more"
+                      className="absolute inset-x-0 flex h-11 items-center justify-center"
+                      style={{ transform: `translateY(${item.start}px)` }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void loadMore()}
+                        disabled={loadingMore}
+                        className="text-[10px] text-primary hover:underline disabled:opacity-50"
+                      >
+                        {loadingMore ? 'Loading…' : 'Load more history'}
+                      </button>
+                    </div>
+                  )
                 }
-                const node = layout.nodes[item.index]
-                return <div key={commits[item.index].oid} className="absolute inset-x-0 top-0" style={{ transform: `translateY(${item.start}px)` }}><GraphRow commit={commits[item.index]} lane={node.lane} laneCount={layout.laneCount} edges={node.edges} onOpen={onOpenCommitDiff} flatMode={flatMode} /></div>
+                // Expanded file-list slot (inserted after the expanded commit row)
+                if (hasExpandedSlot && item.index === expandedIndex + 1) {
+                  if (!expandedOid) return null
+                  return (
+                    <div
+                      key="expanded-files"
+                      className="absolute inset-x-0 top-0"
+                      style={{ transform: `translateY(${item.start}px)` }}
+                    >
+                      <CommitFileList
+                        workspaceId={workspaceId}
+                        commitOid={expandedOid}
+                        cache={diffCache}
+                        onOpenFile={onOpenCommitDiff}
+                      />
+                    </div>
+                  )
+                }
+                // Regular commit row — adjust index if we're past the expanded slot
+                const commitIndex = hasExpandedSlot && item.index > expandedIndex ? item.index - 1 : item.index
+                const commit = commits[commitIndex]
+                if (!commit) return null
+                return (
+                  <div
+                    key={commit.oid}
+                    className="absolute inset-x-0 top-0"
+                    style={{ transform: `translateY(${item.start}px)` }}
+                  >
+                    <GraphRow
+                      commit={commit}
+                      nodeIndex={commitIndex}
+                      layout={layout}
+                      isExpanded={expandedOid === commit.oid}
+                      flatMode={flatMode}
+                      onToggle={() => setExpandedOid((cur) => (cur === commit.oid ? null : commit.oid))}
+                      contextItems={buildContextItems(commit)}
+                    />
+                  </div>
+                )
               })}
             </div>
           )}

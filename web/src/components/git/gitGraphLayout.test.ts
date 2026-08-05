@@ -117,4 +117,61 @@ describe('layoutGitGraph', () => {
     // All three parents are in-window.
     expect(merge.edges.every((e) => !e.offscreen)).toBe(true)
   })
+
+  describe('lanesAbove / lanesBelow', () => {
+    it('reports no active lanes for a single-commit window', () => {
+      const { nodes } = layoutGitGraph([commit('c1', [])])
+      expect(nodes[0].lanesAbove).toEqual([])
+      expect(nodes[0].lanesBelow).toEqual([])
+    })
+
+    it('shows the commit lane in both above and below for linear history', () => {
+      // c3 -> c2 -> c1 (root)
+      const commits = [commit('c3', ['c2']), commit('c2', ['c1']), commit('c1', [])]
+      const { nodes } = layoutGitGraph(commits)
+      // c3: lane 0 pre-placed by nothing (first commit), but c2 pre-placed by c3.
+      // After c3: lane 0 has c2 (first parent). So below = [0].
+      expect(nodes[0].lanesAbove).toEqual([]) // nothing above the first row
+      expect(nodes[0].lanesBelow).toEqual([0]) // c2 continues on lane 0
+      // c2: lane 0 was pre-placed by c3. Above = [0]. After c2: c1 on lane 0. Below = [0].
+      expect(nodes[1].lanesAbove).toEqual([0])
+      expect(nodes[1].lanesBelow).toEqual([0])
+      // c1: lane 0 was pre-placed by c2. Above = [0]. After c1: no parents, lane freed. Below = [].
+      expect(nodes[2].lanesAbove).toEqual([0])
+      expect(nodes[2].lanesBelow).toEqual([])
+    })
+
+    it('shows two active lanes during a merge with a side branch', () => {
+      //   c4 (main)
+      //   c3 (merge: c1 + c2')
+      //   c2' (side) -> c1
+      //   c1 (root)
+      const commits = [
+        commit('c4', ['c3']),
+        commit('c3', ['c1', "c2'"]),
+        commit("c2'", ['c1']),
+        commit('c1', []),
+      ]
+      const { nodes } = layoutGitGraph(commits)
+
+      // c4 (lane 0): above=[], below=[0] (c3 continues on lane 0)
+      expect(nodes[0].lanesAbove).toEqual([])
+      expect(nodes[0].lanesBelow).toEqual([0])
+
+      // c3 merge (lane 0): above=[0], below=[0,1] (c1 on lane 0, c2' on lane 1)
+      expect(nodes[1].lanesAbove).toEqual([0])
+      expect(nodes[1].lanesBelow).toContain(0)
+      expect(nodes[1].lanesBelow).toContain(1)
+
+      // c2' (lane 1): above includes lane 0 (c1 continuing) and lane 1 (c2' itself)
+      expect(nodes[2].lanesAbove).toContain(0)
+      expect(nodes[2].lanesAbove).toContain(1)
+      // After c2': c1 on lane 0 (first parent of c2'). Lane 1 freed.
+      expect(nodes[2].lanesBelow).toEqual([0])
+
+      // c1 (lane 0): above=[0], below=[] (root, no parents)
+      expect(nodes[3].lanesAbove).toEqual([0])
+      expect(nodes[3].lanesBelow).toEqual([])
+    })
+  })
 })

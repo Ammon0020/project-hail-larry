@@ -70,8 +70,14 @@ export interface LogResult {
   hasMore: boolean
 }
 
+export type CommitFileStatus = 'added' | 'modified' | 'deleted' | 'renamed'
+
 export interface CommitDiffFile extends GitDiffResult {
   path: string
+  /** `added` | `modified` | `deleted` | `renamed` (mirrors backend `--name-status`). */
+  status: CommitFileStatus
+  /** Previous path for renames/copies; `null` otherwise. */
+  oldPath: string | null
 }
 
 export interface CommitDiffResult {
