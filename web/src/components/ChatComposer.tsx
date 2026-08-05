@@ -287,7 +287,7 @@ export function ChatComposer({
               the send button) showing context-window fill from ACP
               `usage_update` events. Send/Stop is the circular button. */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <ContextUsageRing usage={contextUsage ?? null} active={agentRunning} />
+            <ContextUsageRing usage={contextUsage ?? null} />
             {agentRunning ? (
               <button
                 onClick={onStop}

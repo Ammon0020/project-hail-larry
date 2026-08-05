@@ -10,12 +10,9 @@ import {
 
 interface ContextUsageRingProps {
   /** Latest context usage for the active session, or null when no
-   *  `UsageUpdated` event has been received yet. When null, a faint dashed
+   *  `UsageUpdated` event has been received yet. When null, a dashed
    *  placeholder ring is shown so the indicator is always discoverable. */
   usage: ContextUsage | null
-  /** True while the agent is running a turn — brightens the placeholder
-   *  ring so the user can see the indicator is live during a turn. */
-  active: boolean
 }
 
 /**
@@ -27,16 +24,16 @@ interface ContextUsageRingProps {
  * popout shows the percentage, token count, and cumulative cost.
  *
  * Two visual states:
- *  - **No data yet** (`usage` is null): a faint dashed placeholder ring so
+ *  - **No data yet** (`usage` is null): a dashed placeholder ring so
  *    the user can see the indicator exists even before the agent reports
- *    usage. Brightens slightly while a turn is active.
+ *    usage. Slowly swirls to indicate it's waiting for data.
  *  - **Data flowing** (`usage` is non-null): a solid fill ring that grows
  *    clockwise. Color shifts muted → primary → destructive at 50% / 90%.
  *
  * The popout follows the McpPopout pattern: outside-click and Escape close
  * it, and it is anchored above the ring via `absolute bottom-full`.
  */
-export function ContextUsageRing({ usage, active }: ContextUsageRingProps) {
+export function ContextUsageRing({ usage }: ContextUsageRingProps) {
   const [showPopout, setShowPopout] = useState(false)
   const popoutRef = useRef<HTMLDivElement>(null)
   const ringRef = useRef<HTMLDivElement>(null)
@@ -90,32 +87,41 @@ export function ContextUsageRing({ usage, active }: ContextUsageRingProps) {
       ref={ringRef}
       data-usage-ring
       className="relative shrink-0 cursor-pointer"
+      style={{ width: ringSize, height: ringSize }}
       onMouseEnter={() => setShowPopout(true)}
       onMouseLeave={() => setShowPopout(false)}
       onClick={() => setShowPopout((v) => !v)}
       title={hasUsage ? contextFillPercent(usage) : 'Context usage (waiting for agent)'}
     >
+      {/* Base ring — solid gray circle representing the full context
+          capacity. Always visible at the same gray, never animates.
+          The fill arc sits on top as usage grows. */}
       <svg
         width={ringSize}
         height={ringSize}
         viewBox={`0 0 ${ringSize} ${ringSize}`}
+        className="absolute inset-0"
         aria-hidden="true"
       >
-        {/* Track — always present as the base ring. Dashed when no data,
-            solid faint when data is flowing. */}
         <circle
           cx={ringSize / 2}
           cy={ringSize / 2}
           r={radius}
           fill="none"
           strokeWidth={stroke}
-          className={hasUsage ? 'stroke-border' : cn('stroke-muted-foreground/50', active && 'stroke-muted-foreground/70')}
-          strokeDasharray={hasUsage ? undefined : '6 7'}
+          className="stroke-muted-foreground/40"
         />
-        {/* Fill — clockwise from 12 o'clock via dashoffset + transform.
-            Only rendered once we have real usage data; the dashed track
-            above serves as the placeholder when no data has arrived. */}
-        {hasUsage && (
+      </svg>
+      {/* Overlay — dashed swirl (no data) or fill arc (has data). The
+          dashed overlay slowly rotates to indicate it's waiting. */}
+      <svg
+        width={ringSize}
+        height={ringSize}
+        viewBox={`0 0 ${ringSize} ${ringSize}`}
+        className={cn('absolute inset-0', !hasUsage && 'animate-[spin_8s_linear_infinite]')}
+        aria-hidden="true"
+      >
+        {hasUsage ? (
           <circle
             cx={ringSize / 2}
             cy={ringSize / 2}
@@ -127,6 +133,16 @@ export function ContextUsageRing({ usage, active }: ContextUsageRingProps) {
             strokeDashoffset={dashOffset}
             className={cn(ringColor, 'transition-all duration-300')}
             transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
+          />
+        ) : (
+          <circle
+            cx={ringSize / 2}
+            cy={ringSize / 2}
+            r={radius}
+            fill="none"
+            strokeWidth={stroke}
+            className="stroke-muted-foreground"
+            strokeDasharray="6 7"
           />
         )}
       </svg>

@@ -58,7 +58,7 @@ Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
 
 ## Development
 
-- Build with `./build.sh` (Linux/macOS) or `.\build.ps1` (Windows); output is `bin/local_agent` (or `.exe` on Windows).
+- Build with `./build.sh` or `.\build.ps1` (Windows); output is `bin/local_agent`(.exe if Windows).
 - Run frontend HMR with `make dev` (or `scripts/dev.sh`) and open `http://localhost:5173`. It starts the daemon and Vite, which proxies `/api` and `/ws`. If `web/dist/index.html` is missing after `make clean`, run `cd web && npm run build`. `cargo-watch` is optional; without it, restart the daemon after Rust changes.
 - During development, use `make qcheck` to auto-fix formatting/lints and run the full test suite.
 - Before handoff, run `make check` for the full gate (Rust fmt/clippy/tests, frontend lint/build, and contracts). Use `make lint` for a faster style pass.
@@ -80,8 +80,6 @@ docs/plans/
 └── other_tasks/ # bugs, chores, etc.
     └── status-task-difficulty-urgency.md
 ```
-
-
 
 ## Security
 
