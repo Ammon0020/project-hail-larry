@@ -121,16 +121,16 @@ export interface McpServerConfig {
   [key: string]: unknown
 }
 
-/** Session lifecycle states (Blueprint Sec 10). */
+/** Session lifecycle states — mirrors the backend `SessionState` enum
+ *  (`src/acp/core/registry.rs`). The daemon sends exactly these 6 values;
+ *  no phantom states. */
 export type SessionStatus =
   | 'created'
-  | 'starting'
+  | 'idle'
   | 'running'
-  | 'waiting_permission'
   | 'interrupted'
-  | 'completed'
   | 'failed'
-  | 'archived'
+  | 'closed'
 
 /** A chat session with an agent (Blueprint Sec 4 — session). */
 export interface Session {

@@ -31,8 +31,7 @@ import type { FileNode, FileTreeNode, AppEvent, Attachment, SessionStatus } from
  * ChatHistory's statusDotClass map (AGENTS.md — type safety).
  */
 const VALID_SESSION_STATUSES: readonly SessionStatus[] = [
-  'created', 'starting', 'running', 'waiting_permission',
-  'interrupted', 'completed', 'failed', 'archived',
+  'created', 'idle', 'running', 'interrupted', 'failed', 'closed',
 ]
 function narrowStatus(raw: string): SessionStatus {
   return (VALID_SESSION_STATUSES as readonly string[]).includes(raw)

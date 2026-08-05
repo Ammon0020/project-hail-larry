@@ -4,16 +4,15 @@ import { cn } from '@/lib/utils'
 import type { SessionHistoryCapabilities } from '@/lib/api'
 import type { Session, SessionStatus } from '@/types'
 
-/** Maps session status to status dot styling. */
+/** Maps session status to status dot styling. Mirrors backend
+ *  `SessionState` — 6 real states, no phantoms. */
 const statusDotClass: Record<SessionStatus, string> = {
   created: 'bg-gray-600',
-  starting: 'bg-yellow-400 animate-pulse',
+  idle: 'bg-gray-400',
   running: 'bg-blue-400 animate-pulse',
-  waiting_permission: 'bg-yellow-400 animate-pulse',
   interrupted: 'bg-orange-400',
-  completed: 'bg-gray-600',
   failed: 'bg-red-400',
-  archived: 'bg-gray-600',
+  closed: 'bg-gray-700',
 }
 
 /** Cap for the "recent" preview list. The full list (with search) is shown
