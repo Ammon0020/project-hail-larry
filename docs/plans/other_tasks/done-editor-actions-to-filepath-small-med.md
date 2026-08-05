@@ -1,6 +1,6 @@
 # Move editor action buttons to filepath line
 
-> **Status:** pending | **Difficulty:** small | **Urgency:** medium
+> **Status:** done | **Difficulty:** small | **Urgency:** medium
 > **Source:** user-noted improvements — UI section
 
 ## Goal
@@ -19,7 +19,7 @@ tabs, especially on mobile.
 
 ## Acceptance
 
-- [ ] Preview, wrap, and save buttons moved from TabBar to filepath line
-- [ ] Buttons remain visible and accessible on desktop and mobile
-- [ ] Tab bar has more space for tabs
-- [ ] `make check` passes
+- [x] Preview, wrap, and save buttons moved from TabBar to filepath line
+- [x] Buttons remain visible and accessible on desktop and mobile
+- [x] Tab bar has more space for tabs
+- [x] `make check` passes

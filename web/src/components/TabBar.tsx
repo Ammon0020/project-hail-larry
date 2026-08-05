@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Circle, X, Save, ChevronLeft, ChevronRight, WrapText, RefreshCw, Settings as SettingsIcon, Eye } from 'lucide-react'
+import { Circle, X, ChevronLeft, ChevronRight, RefreshCw, Settings as SettingsIcon, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from '@/lib/fileIcon'
 import type { Tab } from '@/types'
@@ -11,21 +11,15 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 /**
- * TabBar — open editor tabs, scroll controls, and editor actions
- * (Wrap, Preview, Save). Reused in the desktop header and mobile EditorPane.
+ * TabBar — open editor tabs and scroll controls. Reused in the desktop
+ * header and the mobile EditorPane. Editor action buttons (Wrap / Preview /
+ * Save) live in the BreadcrumbBar below the tabs.
  */
 export function TabBar({
   tabs,
   activeTabId,
   onTabSelect,
   onTabClose,
-  onSave,
-  wrap = false,
-  onToggleWrap,
-  showPreview = false,
-  previewActive = false,
-  onPreview,
-  showEditorActions = true,
   onCloseOthers,
   onCloseSaved,
   onCloseToRight,
@@ -37,15 +31,6 @@ export function TabBar({
   activeTabId: string | null
   onTabSelect: (id: string) => void
   onTabClose: (id: string) => void
-  onSave?: () => void
-  wrap?: boolean
-  onToggleWrap?: () => void
-  /** Show Preview for previewable text files (SVG/CSV/HTML/…) or HTML browse. */
-  showPreview?: boolean
-  /** True when single-file FileViewer preview mode is active (pressed state). */
-  previewActive?: boolean
-  onPreview?: () => void
-  showEditorActions?: boolean
   onCloseOthers?: (id: string) => void
   onCloseSaved?: (id: string) => void
   onCloseToRight?: (id: string) => void
@@ -53,9 +38,6 @@ export function TabBar({
   onCopyRelativePath?: (path: string) => void
   onKeepOpen?: (id: string) => void
 }) {
-  const activeTab = tabs.find((t) => t.id === activeTabId) || null
-  const canSave = !!activeTab?.unsaved
-
   const scrollRef = useRef<HTMLDivElement>(null)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
@@ -308,62 +290,6 @@ export function TabBar({
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
-      
-      {/* Editor Actions — Wrap, Preview (supported types), Save */}
-      {showEditorActions && activeTab && activeTab.kind !== 'settings' && activeTab.kind !== 'preview' && (
-        <div className="flex gap-1.5 px-3 py-1 @xl:py-0 @xl:pl-1.5 items-center justify-end w-full @xl:w-auto shrink-0 border-t border-border @xl:border-t-0 bg-panel @xl:bg-transparent">
-          {onToggleWrap && (
-            <button
-              type="button"
-              aria-label="Toggle line wrapping"
-              aria-pressed={wrap}
-              title="Toggle line wrapping"
-              onClick={onToggleWrap}
-              className={cn(
-                'flex items-center justify-center w-7 h-6 rounded transition',
-                wrap
-                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                  : 'bg-secondary text-secondary-foreground hover:bg-accent',
-              )}
-            >
-              <WrapText className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {showPreview && onPreview && (
-            <button
-              type="button"
-              aria-label={previewActive ? 'View raw source' : 'Preview'}
-              aria-pressed={previewActive}
-              title={previewActive ? 'View Raw' : 'Preview'}
-              onClick={onPreview}
-              className={cn(
-                'flex items-center gap-1 h-6 px-2 rounded text-xs font-semibold transition',
-                previewActive
-                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                  : 'bg-secondary text-secondary-foreground hover:bg-accent',
-              )}
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span className="hidden @md:inline">{previewActive ? 'Raw' : 'Preview'}</span>
-            </button>
-          )}
-          {onSave && (
-            <button
-              type="button"
-              onClick={canSave ? onSave : undefined}
-              aria-disabled={!canSave}
-              className={cn(
-                'text-xs font-semibold px-2.5 py-1 rounded flex items-center gap-1.5 transition',
-                canSave
-                  ? 'bg-primary hover:bg-primary/90 text-primary-foreground'
-                  : 'bg-secondary text-muted-foreground cursor-default opacity-60',
-              )}
-            >
-              <Save className="w-3 h-3" /> Save
-            </button>
-          )}
-        </div>
-      )}
     </div>
   )
 }

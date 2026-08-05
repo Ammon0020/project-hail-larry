@@ -156,14 +156,12 @@ export default function App() {
   })
   const {
     searchResultLine,
-    previewUi,
     handleFileSelect,
     handleOpenPreview,
     handleOpenDiff,
     handleOpenCommitDiff,
     handleTreeNewFile,
     handleTreeNewFolder,
-    handleTabBarPreview,
     handleSearchResultSelect,
   } = useEditorTabHandlers({
     openTabs,
@@ -470,12 +468,6 @@ export default function App() {
                 activeTabId={activeTabId}
                 onTabSelect={handleTabSelect}
                 onTabClose={handleTabClose}
-                onSave={handleSave}
-                wrap={wrap}
-                onToggleWrap={() => setWrap(!wrap)}
-                showPreview={previewUi.show}
-                previewActive={previewUi.active}
-                onPreview={handleTabBarPreview}
                 onCloseOthers={handleCloseOthers}
                 onCloseSaved={handleCloseSaved}
                 onCloseToRight={handleCloseToRight}

@@ -510,12 +510,6 @@ export function EditorPane({
           activeTabId={activeTabId}
           onTabSelect={onTabSelect}
           onTabClose={onTabClose}
-          onSave={onSave}
-          wrap={wrap}
-          onToggleWrap={onToggleWrap}
-          showPreview={previewUi.show}
-          previewActive={previewUi.active}
-          onPreview={handlePreviewAction}
           onCloseOthers={onCloseOthers}
           onCloseSaved={onCloseSaved}
           onCloseToRight={onCloseToRight}
@@ -526,11 +520,20 @@ export function EditorPane({
       )}
 
       {/* Breadcrumb bar — shows the active file's path relative to the
-          workspace root, between the tab bar and the editor content. */}
+          workspace root, between the tab bar and the editor content.
+          Editor action buttons (Wrap / Preview / Save) are rendered on the
+          right side here, freeing up space in the tab bar. */}
       {activeTab && activeTab.kind !== 'settings' && activeTab.kind !== 'preview' && (
         <BreadcrumbBar
           path={activeTab.path}
           workspaceName={workspaceName ?? 'workspace'}
+          wrap={wrap}
+          onToggleWrap={onToggleWrap}
+          showPreview={previewUi.show}
+          previewActive={previewUi.active}
+          onPreview={handlePreviewAction}
+          canSave={!!activeTab?.unsaved}
+          onSave={onSave}
         />
       )}
 

@@ -43,7 +43,8 @@ TODO: Break this down into individual stories.
 ---
 
 ## UI
-- [ ] Move preview, line wrap, and save buttons from the tabs bar at the top of the main canvas to the right side of the line below in the editor, the one where the filepath is shown. This keeps it visible without taking space for tabs, especially on mobile. 
+- [x] Move preview, line wrap, and save buttons from the tabs bar at the top of the main canvas to the right side of the line below in the editor, the one where the filepath is shown. This keeps it visible without taking space for tabs, especially on mobile. 
+  - *Done 2026-08-05 — `BreadcrumbBar.tsx` now hosts wrap/preview/save buttons on the right side. `TabBar.tsx` is tabs-only. Both desktop (App.tsx) and mobile (EditorPane.tsx) pass action props through EditorPane to BreadcrumbBar.*
 - [x] x buttons on tabs should have a clearer, slightly larger hitbox when hovered over.
   - *Done 2026-08-05 — `TabBar.tsx` close button now wrapped in a `<button>` with `w-4 h-4` base that grows to `w-5 h-5` on hover with `hover:bg-muted` background.*
 - [x] When scroll arrows for tab scroll disappear, tabs should not shift. Absolute position, hide and unhide, unless you find a more elegant method.
