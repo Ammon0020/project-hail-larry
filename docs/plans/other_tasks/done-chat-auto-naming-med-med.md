@@ -1,6 +1,6 @@
 # Chat auto-naming
 
-> **Status:** pending | **Difficulty:** medium | **Urgency:** medium
+> **Status:** done | **Difficulty:** medium | **Urgency:** medium
 > **Source:** user-noted improvements — Agent Chat section
 
 ## Goal
@@ -21,7 +21,7 @@ conversations.
 
 ## Acceptance
 
-- [ ] New chats get an auto-generated name after first message exchange
-- [ ] Name is editable by the user
-- [ ] Name appears in chat list and session history
-- [ ] `make check` passes
+- [x] New chats get an auto-generated name after first message exchange
+- [x] Name is editable by the user
+- [x] Name appears in chat list and session history
+- [x] `make check` passes

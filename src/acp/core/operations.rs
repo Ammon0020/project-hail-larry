@@ -107,6 +107,20 @@ impl Client {
         attachments: &[Attachment],
     ) -> Result<(), AppError> {
         self.ensure_live_session(session_id).await?;
+
+        // Auto-name the session from the first prompt if it still has the
+        // default "New chat" name. The user can rename it later from the
+        // chat history panel. Best-effort — a failure here must not block
+        // the prompt.
+        if let Ok(info) = self.sessions.info(session_id) {
+            if info.name == "New chat" {
+                let derived = derive_session_name(content);
+                if let Err(error) = self.sessions.rename(session_id, &derived) {
+                    tracing::warn!(%session_id, %error, "auto-name failed");
+                }
+            }
+        }
+
         let (sender, caps, workspace_id, include_profile) =
             self.sessions.begin_prompt(session_id)?;
         let workspace = self.resolve_workspace(&workspace_id).await?;
@@ -352,5 +366,82 @@ impl Client {
         result_rx
             .await
             .map_err(|_| AppError::internal("ACP disable_provider actor exited"))?
+    }
+}
+
+/// Derive a short session name from the first prompt content.
+///
+/// Takes the first ~6 words of the prompt, truncates to 60 chars, and appends
+/// "…" if there's more. Newlines and excess whitespace are collapsed. The
+/// result is capped to fit within `MAX_SESSION_NAME_CHARS` (128) but is
+/// typically much shorter.
+fn derive_session_name(content: &str) -> String {
+    const MAX_WORDS: usize = 6;
+    const MAX_CHARS: usize = 60;
+
+    let cleaned: String = content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let words: Vec<&str> = cleaned.split_whitespace().take(MAX_WORDS).collect();
+    let mut title = words.join(" ");
+
+    // If there were more words, append ellipsis.
+    let total_words = cleaned.split_whitespace().count();
+    if total_words > MAX_WORDS {
+        title.push('…');
+    }
+
+    // Truncate by character count if still too long.
+    if title.chars().count() > MAX_CHARS {
+        let truncated: String = title.chars().take(MAX_CHARS - 1).collect();
+        title = format!("{truncated}…");
+    }
+
+    if title.is_empty() {
+        "New chat".to_string()
+    } else {
+        title
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derive_session_name;
+
+    #[test]
+    fn derive_from_short_prompt() {
+        assert_eq!(derive_session_name("Fix the auth bug"), "Fix the auth bug");
+    }
+
+    #[test]
+    fn derive_from_long_prompt_truncates_words() {
+        let prompt = "Please help me refactor the authentication module to use async await patterns throughout the codebase";
+        let name = derive_session_name(prompt);
+        assert!(name.ends_with('…'));
+        assert!(name.chars().count() <= 61); // 60 chars + ellipsis
+    }
+
+    #[test]
+    fn derive_collapses_newlines_and_whitespace() {
+        let prompt = "Fix the\n\n  auth  bug\n  in the router";
+        assert_eq!(derive_session_name(prompt), "Fix the auth bug in the…");
+    }
+
+    #[test]
+    fn derive_empty_prompt_falls_back() {
+        assert_eq!(derive_session_name(""), "New chat");
+        assert_eq!(derive_session_name("   \n  \n  "), "New chat");
+    }
+
+    #[test]
+    fn derive_truncates_by_chars_when_words_are_long() {
+        let prompt = "supercalifragilisticexpialidocious_is_a_very_long_word_that_exceeds_the_character_limit_easily";
+        let name = derive_session_name(prompt);
+        assert!(name.ends_with('…'));
+        assert!(name.chars().count() <= 61);
     }
 }

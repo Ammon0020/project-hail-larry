@@ -59,7 +59,8 @@ TODO: Break this down into individual stories.
   - *Verified 2026-08-05 — Devin ACP auth + `session/new` → `configOptions` probe works. Returns 30+ models including SWE-1.7, Claude Opus 5, Sonnet 5, GPT-5.6 Sol, etc.*
 - [x] Fix Cursor Agent auto-detect models
   - *Verified 2026-08-05 — `agent --list-models` parser works. Returns 100+ models including Codex 5.3 variants, Grok 4.5, Composer 2.5, Opus/sonnet/fable variants, etc.*
-- [ ] Chat auto-naming
+- [x] Chat auto-naming
+  - *Done 2026-08-05 — `derive_session_name()` in `src/acp/core/operations.rs` takes the first 6 words of the initial prompt (max 60 chars + ellipsis). Triggered in `send_prompt_inner` when the session name is still "New chat". User rename already existed via ChatHistory inline edit → `PATCH /api/sessions/:id`.*
 - [x] **[Medium/Medium]** Permission approvals: show exact grant scope before
       resolving "Always allow" / "Allow for session", and add an optional
       broader "always allow this tool kind" scope tier.
