@@ -13,7 +13,6 @@ docs/plans/
 ├── acp-core-modularization/ ACP core stories
 ├── acp-crate-extraction/    crate-boundary stories
 ├── acp-session-history/     history stories
-├── git-history-graph/       Git history stories
 ├── multi-client-acp-gateway gateway stories
 └── other_tasks/             bugs/chores/standalone work
     └── {pending,active,done}-*.md

@@ -22,8 +22,8 @@ returns **zero** matches — the broker is completely unwired.
 
 ## What the polyfill crate offers
 
-`agent-client-protocol-polyfill` (published 1.3.0) provides
-`McpOverAcpPolyfill` — a proxy that:
+`agent-client-protocol-polyfill` (published 2.0.0, aligned with SDK 2.0)
+provides `McpOverAcpPolyfill` — a proxy that:
 
 1. **Adapts native MCP-over-ACP to HTTP** for agents that don't support
    `mcpCapabilities.acp`. Intercepts `NewSessionRequest`, rewrites
@@ -41,7 +41,7 @@ are transparently bridged via HTTP.
 
 1. **Add the dependency**:
    ```toml
-   agent-client-protocol-polyfill = "1.3.0"
+   agent-client-protocol-polyfill = "2.0.0"
    ```
 
 2. **Insert the polyfill in the client→agent chain**: When creating a session,
@@ -51,8 +51,9 @@ are transparently bridged via HTTP.
 
 3. **Wire the MCP-over-ACP relay methods**: With the polyfill in place, wire
    `mcp/connect`, `mcp/message`, `mcp/disconnect` in the actor loop
-   (`src/acp/core.rs`). The `unstable_mcp_over_acp` feature already generates
-   the types; they just need handlers.
+   (`src/acp/core.rs`). The `unstable_mcp_over_acp` feature generates the
+   schema-native types (`McpServer::Acp`, `mcp/connect`, `mcp/message`,
+   request/response `mcp/disconnect`) — they just need handlers.
 
 4. **Update the profile MCP server policy**: The active
    `active-profile-mcp-transition-hard-high.md` story selects complete MCP
@@ -73,7 +74,7 @@ are transparently bridged via HTTP.
 - **Stdio bridge mode untested upstream**: Use `BridgeMode::Http` (default).
   Avoid `BridgeMode::Stdio` until upstream test coverage improves.
 - **`unstable_mcp_over_acp` is unstable**: The API may change between SDK
-  versions. Pin to 1.3.0 and monitor for breaking changes.
+  versions. Pin to 2.0.0 and monitor for breaking changes.
 - **Interaction with profile transition story**: The
   `active-profile-mcp-transition-hard-high.md` story assumes MCP servers are
   fixed at session creation. If the polyfill enables live changes, the
@@ -81,8 +82,7 @@ are transparently bridged via HTTP.
 
 ## Dependencies
 
-- Requires `agent-client-protocol` 1.3.0 (done — see
-  `complete-acp-sdk-bump-easy-low.md`).
+- Requires `agent-client-protocol` 2.0.0 (done — upgraded 2026-08-05).
 - Coordinate with `active-profile-mcp-transition-hard-high.md` — the polyfill
   may change the transition dialog's assumptions.
 
