@@ -31,29 +31,34 @@ describe('layoutGitGraph', () => {
     expect(laneCount).toBe(1)
     expect(nodes.map((n) => n.lane)).toEqual([0, 0, 0])
     // c3 -> c2 (in-window), c2 -> c1 (in-window), c1 has no edges (root).
-    expect(nodes[0].edges).toEqual([{ parentIndex: 1, parentLane: 0, offscreen: false }])
-    expect(nodes[1].edges).toEqual([{ parentIndex: 2, parentLane: 0, offscreen: false }])
-    expect(nodes[2].edges).toEqual([])
+    expect(nodes[0].parentEdges).toHaveLength(1)
+    expect(nodes[0].parentEdges[0]).toMatchObject({ parentIndex: 1, parentLane: 0, visibility: 'visible' })
+    expect(nodes[1].parentEdges).toHaveLength(1)
+    expect(nodes[1].parentEdges[0]).toMatchObject({ parentIndex: 2, parentLane: 0, visibility: 'visible' })
+    expect(nodes[2].parentEdges).toEqual([])
   })
 
-  it('marks paginated-out parents as offscreen', () => {
+  it('marks paginated-out parents as truncated with an assigned lane', () => {
     // Only c2 is in the window; its parent c1 was not fetched.
     const commits = [commit('c2', ['c1'])]
     const { nodes, laneCount } = layoutGitGraph(commits)
 
     expect(laneCount).toBe(1)
     expect(nodes[0].lane).toBe(0)
-    expect(nodes[0].edges).toEqual([{ parentIndex: -1, parentLane: null, offscreen: true }])
+    expect(nodes[0].parentEdges).toHaveLength(1)
+    expect(nodes[0].parentEdges[0]).toMatchObject({
+      parentOid: 'c1',
+      parentIndex: null,
+      parentLane: 0,
+      visibility: 'truncated',
+    })
   })
 
   it('branches a side branch onto a second lane and frees it when it ends', () => {
     //   c4 (main)
-    //   |
-    //   c3 (main) -- merge -- c2' (side, merged)
-    //   |___________________/
-    // main: c4 -> c3 -> c1
-    // side: c2' -> c1
-    // c3 is a merge with parents [c1, c2']
+    //   c3 (merge: c1 + c2')
+    //   c2' (side) -> c1
+    //   c1 (root)
     const commits = [
       commit('c4', ['c3']),
       commit('c3', ['c1', "c2'"]),
@@ -62,11 +67,7 @@ describe('layoutGitGraph', () => {
     ]
     const { nodes, laneCount } = layoutGitGraph(commits)
 
-    // Two lanes are needed concurrently (during the merge row).
     expect(laneCount).toBe(2)
-
-    // c4 and c3 stay on lane 0 (first-parent line); the side branch c2' is on
-    // lane 1; c1 returns to lane 0 after the side branch rejoins.
     const lanes = nodes.map((n) => n.lane)
     expect(lanes[0]).toBe(0) // c4
     expect(lanes[1]).toBe(0) // c3 (merge, first parent)
@@ -74,13 +75,14 @@ describe('layoutGitGraph', () => {
     expect(lanes[3]).toBe(0) // c1
 
     // Merge commit c3 has two edges: to c1 (lane 0) and to c2' (lane 1).
-    const mergeEdges = nodes[1].edges
+    const mergeEdges = nodes[1].parentEdges
     expect(mergeEdges).toHaveLength(2)
-    expect(mergeEdges[0]).toEqual({ parentIndex: 3, parentLane: 0, offscreen: false })
-    expect(mergeEdges[1]).toEqual({ parentIndex: 2, parentLane: 1, offscreen: false })
+    expect(mergeEdges[0]).toMatchObject({ parentIndex: 3, parentLane: 0, visibility: 'visible' })
+    expect(mergeEdges[1]).toMatchObject({ parentIndex: 2, parentLane: 1, visibility: 'visible' })
 
-    // Side branch c2' connects back to c1 on lane 0.
-    expect(nodes[2].edges).toEqual([{ parentIndex: 3, parentLane: 0, offscreen: false }])
+    // Side branch c2' connects back to c1 on lane 0 — the convergence edge.
+    expect(nodes[2].parentEdges).toHaveLength(1)
+    expect(nodes[2].parentEdges[0]).toMatchObject({ parentIndex: 3, parentLane: 0, visibility: 'visible' })
   })
 
   it('is deterministic: same input yields identical lane assignments', () => {
@@ -97,8 +99,6 @@ describe('layoutGitGraph', () => {
   })
 
   it('keeps octopus (3-parent) merges connected to three distinct lanes', () => {
-    // m merges c1, c2, c3 (all visible). First parent stays on m's lane; the
-    // other two branch out to free lanes.
     const commits = [
       commit('m', ['c1', 'c2', 'c3']),
       commit('c1', []),
@@ -109,43 +109,29 @@ describe('layoutGitGraph', () => {
 
     expect(laneCount).toBe(3)
     const merge = nodes[0]
-    expect(merge.edges).toHaveLength(3)
-    // First parent reuses the merge's lane; others fan out.
-    expect(merge.edges[0].parentLane).toBe(merge.lane)
-    expect(merge.edges[1].parentLane).not.toBe(merge.lane)
-    expect(merge.edges[2].parentLane).not.toBe(merge.lane)
-    // All three parents are in-window.
-    expect(merge.edges.every((e) => !e.offscreen)).toBe(true)
+    expect(merge.parentEdges).toHaveLength(3)
+    expect(merge.parentEdges[0].parentLane).toBe(merge.lane)
+    expect(merge.parentEdges[1].parentLane).not.toBe(merge.lane)
+    expect(merge.parentEdges[2].parentLane).not.toBe(merge.lane)
+    expect(merge.parentEdges.every((e) => e.visibility === 'visible')).toBe(true)
   })
 
-  describe('lanesAbove / lanesBelow', () => {
-    it('reports no active lanes for a single-commit window', () => {
+  describe('incomingLanes', () => {
+    it('reports no incoming lanes for the first row', () => {
       const { nodes } = layoutGitGraph([commit('c1', [])])
-      expect(nodes[0].lanesAbove).toEqual([])
-      expect(nodes[0].lanesBelow).toEqual([])
+      expect(nodes[0].incomingLanes).toEqual([])
     })
 
-    it('shows the commit lane in both above and below for linear history', () => {
-      // c3 -> c2 -> c1 (root)
+    it('shows the commit lane as incoming for linear history after the first row', () => {
       const commits = [commit('c3', ['c2']), commit('c2', ['c1']), commit('c1', [])]
       const { nodes } = layoutGitGraph(commits)
-      // c3: lane 0 pre-placed by nothing (first commit), but c2 pre-placed by c3.
-      // After c3: lane 0 has c2 (first parent). So below = [0].
-      expect(nodes[0].lanesAbove).toEqual([]) // nothing above the first row
-      expect(nodes[0].lanesBelow).toEqual([0]) // c2 continues on lane 0
-      // c2: lane 0 was pre-placed by c3. Above = [0]. After c2: c1 on lane 0. Below = [0].
-      expect(nodes[1].lanesAbove).toEqual([0])
-      expect(nodes[1].lanesBelow).toEqual([0])
-      // c1: lane 0 was pre-placed by c2. Above = [0]. After c1: no parents, lane freed. Below = [].
-      expect(nodes[2].lanesAbove).toEqual([0])
-      expect(nodes[2].lanesBelow).toEqual([])
+      // c3: no incoming. c2: lane 0 incoming (pre-placed by c3). c1: lane 0 incoming.
+      expect(nodes[0].incomingLanes).toEqual([])
+      expect(nodes[1].incomingLanes).toEqual([0])
+      expect(nodes[2].incomingLanes).toEqual([0])
     })
 
-    it('shows two active lanes during a merge with a side branch', () => {
-      //   c4 (main)
-      //   c3 (merge: c1 + c2')
-      //   c2' (side) -> c1
-      //   c1 (root)
+    it('shows two incoming lanes during a merge with a side branch', () => {
       const commits = [
         commit('c4', ['c3']),
         commit('c3', ['c1', "c2'"]),
@@ -153,25 +139,80 @@ describe('layoutGitGraph', () => {
         commit('c1', []),
       ]
       const { nodes } = layoutGitGraph(commits)
+      // c3 merge row: lane 0 incoming (from c4's first-parent pre-placement).
+      expect(nodes[1].incomingLanes).toContain(0)
+      // c2' row: both lanes incoming (lane 0 for c1, lane 1 for c2' itself).
+      expect(nodes[2].incomingLanes).toContain(0)
+      expect(nodes[2].incomingLanes).toContain(1)
+    })
+  })
 
-      // c4 (lane 0): above=[], below=[0] (c3 continues on lane 0)
-      expect(nodes[0].lanesAbove).toEqual([])
-      expect(nodes[0].lanesBelow).toEqual([0])
+  describe('convergence edges (the regression guard)', () => {
+    it('side branch commit has a visible edge to the main lane', () => {
+      // C → B(merge) → A, B → D → A
+      const commits = [
+        commit('C', ['B']),
+        commit('B', ['A', 'D']),
+        commit('D', ['A']),
+        commit('A', []),
+      ]
+      const { nodes } = layoutGitGraph(commits)
 
-      // c3 merge (lane 0): above=[0], below=[0,1] (c1 on lane 0, c2' on lane 1)
-      expect(nodes[1].lanesAbove).toEqual([0])
-      expect(nodes[1].lanesBelow).toContain(0)
-      expect(nodes[1].lanesBelow).toContain(1)
+      // D is on lane 1, its parent A is on lane 0 (pre-placed by merge B).
+      const dNode = nodes[2]
+      expect(dNode.lane).toBe(1)
+      expect(dNode.parentEdges).toHaveLength(1)
+      const edge = dNode.parentEdges[0]
+      expect(edge.visibility).toBe('visible')
+      expect(edge.parentLane).toBe(0) // convergence to main lane
+      expect(edge.parentIndex).toBe(3) // A is at row 3
+    })
 
-      // c2' (lane 1): above includes lane 0 (c1 continuing) and lane 1 (c2' itself)
-      expect(nodes[2].lanesAbove).toContain(0)
-      expect(nodes[2].lanesAbove).toContain(1)
-      // After c2': c1 on lane 0 (first parent of c2'). Lane 1 freed.
-      expect(nodes[2].lanesBelow).toEqual([0])
+    it('layout contract: parent lane matches the parent node\'s lane', () => {
+      const commits = [
+        commit('C', ['B']),
+        commit('B', ['A', 'D']),
+        commit('D', ['A']),
+        commit('A', []),
+      ]
+      const { nodes } = layoutGitGraph(commits)
+      for (const node of nodes) {
+        for (const edge of node.parentEdges) {
+          if (edge.visibility === 'visible') {
+            expect(nodes[edge.parentIndex].lane).toBe(edge.parentLane)
+          }
+        }
+      }
+    })
+  })
 
-      // c1 (lane 0): above=[0], below=[] (root, no parents)
-      expect(nodes[3].lanesAbove).toEqual([0])
-      expect(nodes[3].lanesBelow).toEqual([])
+  describe('truncated edges', () => {
+    it('assigns distinct lanes to distinct truncated parents', () => {
+      // Merge with two parents, both outside the window.
+      const commits = [commit('m', ['a', 'b'])]
+      const { nodes, laneCount } = layoutGitGraph(commits)
+
+      expect(laneCount).toBe(2)
+      const edges = nodes[0].parentEdges
+      expect(edges).toHaveLength(2)
+      expect(edges[0].parentLane).toBe(0) // first parent on merge's lane
+      expect(edges[1].parentLane).toBe(1) // second parent on a free lane
+      expect(edges.every((e) => e.visibility === 'truncated')).toBe(true)
+    })
+
+    it('reuses lane for the same truncated parent oid (convergence)', () => {
+      // Two commits share the same truncated parent.
+      const commits = [
+        commit('c2', ['c1']),
+        commit('c3', ['c1']),
+      ]
+      const { nodes } = layoutGitGraph(commits)
+      // Both should reference the same parent oid on the same lane.
+      const edge1 = nodes[0].parentEdges[0]
+      const edge2 = nodes[1].parentEdges[0]
+      expect(edge1.parentOid).toBe('c1')
+      expect(edge2.parentOid).toBe('c1')
+      expect(edge1.parentLane).toBe(edge2.parentLane)
     })
   })
 })

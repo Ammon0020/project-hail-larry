@@ -1,6 +1,6 @@
 # Epic: Git History Graph, Branch Switching, and Remote Sync
 
-> **Status:** Pending. **Difficulty:** large. **Urgency:** medium.
+> **Status:** Pending (7 of 14 stories done). **Difficulty:** large. **Urgency:** medium.
 > **Source:** user request (2026-07-28). **Created:** 2026-07-28.
 > **Depends on:** `done-git-action-bar-large.md` (git API + panel surface).
 
@@ -20,7 +20,7 @@ The git panel handles status/stage/commit/push, but there's no way to:
 Users currently need a terminal for these, breaking the self-contained IDE
 promise. The graph is the most-requested remaining git feature.
 
-## Architecture decisions (proposed)
+## Architecture decisions
 
 - **Graph rendering:** SVG-based commit graph (not a third-party library).
   The topology is simple enough — vertical column per branch, dots for
@@ -28,102 +28,82 @@ promise. The graph is the most-requested remaining git feature.
   controllable. Compare: git-log-graph libs (e.g. `gitgraph.js`) add ~50KB
   and have stale maintenance; a custom SVG is ~200 lines and matches the
   app's token system.
-- **History data:** new backend endpoint `GET /api/workspaces/{id}/git/log`
+- **Edge-driven rendering:** the layout emits a `ParentEdge` discriminated
+  union (visible | truncated) and the SVG builder renders one outgoing
+  segment per parent edge. This replaced the earlier lane-set-difference
+  inference and fixed missing convergence curves and offscreen stub
+  direction. See `done-git-graph-edge-render-medium.md`.
+- **History data:** backend endpoint `GET /api/workspaces/{id}/git/log`
   returns a paginated commit list with parent refs, branch labels, and HEAD.
   The frontend computes the column layout from the parent graph. No `git log
   --graph` parsing — the topology is derived from parent SHAs, which is more
   reliable than parsing ASCII graph output.
 - **Branch switching:** `POST /api/workspaces/{id}/git/checkout` with branch
   name. Refuses if working tree is dirty (returns 409 with the dirty file
-  list). No remote branch creation — checkout existing local branches only
-  for v1.
+  list). Detached-HEAD checkout of a specific SHA is a separate endpoint
+  (pending, S-GIT-DETACHED-CHECKOUT).
 - **Fetch/pull:** `POST /api/workspaces/{id}/git/fetch` and `.../git/pull`.
   Streams stderr like the existing push handler. No credential storage —
   uses the agent's environment git credentials (same model as push).
-- **Virtualization:** the graph list virtualizes rows (e.g. `react-window`
-  or a simple intersection-observer lazy-render) to handle repos with
+- **Virtualization:** the graph list virtualizes rows to handle repos with
   thousands of commits without rendering all rows.
 
 ## Stories
 
-### S-GIT-LOG-API — Backend git log endpoint (medium)
+### Done
 
-`GET /api/workspaces/{id}/git/log?limit=100&offset=0` returns:
-```json
-{
-  "commits": [
-    {
-      "oid": "abc123",
-      "parents": ["def456"],
-      "message": "commit subject",
-      "author": { "name": "...", "email": "...", "time": "2026-07-28T..." },
-      "branch_labels": ["main"],
-      "is_head": true
-    }
-  ],
-  "total": 1234,
-  "has_more": true
-}
-```
+- **S-GIT-LOG-API** — `done-git-log-api-medium.md`. Backend
+  `GET /api/workspaces/{id}/git/log` returns paginated commits with parents,
+  author, message, branch labels, and `is_head`. Uses `gix` rev-walk seeded
+  from local branch heads + detached HEAD.
+- **S-GIT-GRAPH-VIEWER** — `done-git-graph-viewer-medium.md`. Initial SVG
+  commit graph component with virtualized rows, branch chips, and click-to-
+  diff. Superseded by v2.
+- **S-GIT-CHECKOUT** — `done-git-checkout-small.md`. Branch switching via
+  `POST .../git/checkout`; searchable Radix branch picker in the GitPanel
+  header; dirty-tree refusal (409).
+- **S-GIT-FETCH-PULL** — `done-git-fetch-pull-small.md`. `POST .../git/fetch`
+  and `.../git/pull` with stderr streaming; ahead/behind chips populated.
+- **S-GIT-COMMIT-DIFF-STATUS** — `done-git-commit-diff-status-small.md`.
+  `commit_diff()` uses `git diff-tree --name-status -r -z -M`; `CommitDiffFile`
+  gains `status` and `old_path` (frontend mirrors with `status`/`oldPath`).
+- **S-GIT-GRAPH-VIEWER-V2** — `done-git-graph-viewer-v2-medium.md`. VS
+  Code-style upgrade: per-row SVG with edge continuity, per-lane color
+  palette, inline expansion with A/M/D/R status badges, right-click context
+  menu (Copy SHA / Open diff / Checkout / Refresh), HEAD ring, merge dot
+  sizing, pure `gitGraphSvg.ts` segment builder.
+- **S-GIT-GRAPH-EDGE-RENDER** — `done-git-graph-edge-render-medium.md`.
+  Refactored rendering to edge-driven segment generation via a `ParentEdge`
+  discriminated union; fixes convergence curves and offscreen stub
+  direction.
 
-- Uses `gix` to walk the commit graph (no `git log` CLI spawn, matching the
-  existing architecture decision).
-- `limit` capped at 200; `offset` for pagination.
-- Branch labels: resolve which branches point at each commit (scan refs).
-- HEAD: mark the commit HEAD points at.
-- Out of scope: tag labels (separate story), search/filter.
+### Pending
 
-### S-GIT-GRAPH-VIEWER — Commit graph component (medium)
-
-New `web/src/components/git/GitHistoryTab.tsx`:
-- SVG commit graph: one column per branch, dots for commits, curved lines
-  for parent edges. Column assignment computed from the parent graph
-  (greedy: assign each commit to its parent's column, or a new column for
-  branch points).
-- Each row: graph segment + short hash + message (truncated) + relative
-  time + branch labels as colored chips.
-- Click a commit → open `GitDiffViewer` with the commit's diff (parent vs
-  commit). Reuses the existing diff tab infrastructure.
-- Virtualized list for performance.
-- Mode toggle: graph vs. flat list (for narrow mobile viewports).
-- Reached from a "History" button in the GitPanel header.
-
-### S-GIT-CHECKOUT — Branch switching (small)
-
-- `POST /api/workspaces/{id}/git/checkout` with `{ branch: string }`.
-- Backend: `git checkout <branch>` via CLI (gix doesn't support checkout
-  write ops). Refuses if working tree dirty (409 + file list).
-- Frontend: branch dropdown in GitPanel header (replaces the static branch
-  display). Shows local branches, highlights current. On select → checkout
-  → refresh status + file tree.
-- No remote branch creation, no new branch creation for v1.
-
-### S-GIT-FETCH-PULL — Fetch and pull from remote (small)
-
-- `POST /api/workspaces/{id}/git/fetch` — `git fetch`, streams stderr.
-- `POST /api/workspaces/{id}/git/pull` — `git pull`, streams stderr, refuses
-  if dirty (409).
-- Frontend: "Fetch" button in GitPanel header. Pull is a dropdown option on
-  the fetch button (or a separate button if the ahead/behind chips indicate
-  behind).
-- Update `status()` to populate `upstream`/`ahead`/`behind` (currently
-  returns zeros by design — this story implements the reference traversal).
-- Same credential model as push (agent environment, no storage).
-
-### S-GIT-TAGS — Tag display in graph (small, optional)
-
-- Extend `S-GIT-LOG-API` to include tag labels in `branch_labels`.
-- Render tags with a distinct chip color in the graph.
-- No tag creation for v1 (display only).
-
-### S-GIT-STASH — Stash support (small, optional)
-
-- `POST /api/workspaces/{id}/git/stash` — `git stash push` with optional
-  message.
-- `POST /api/workspaces/{id}/git/stash/pop` — `git stash pop`.
-- `GET /api/workspaces/{id}/git/stash/list` — list stash entries.
-- Frontend: stash section in GitPanel (below the commit input), with
-  stash/pop/drop actions per entry.
+- **S-GIT-DETACHED-CHECKOUT** — `pending-git-detached-checkout-small.md`.
+  `POST .../git/checkout-commit` for detached-HEAD checkout of any SHA;
+  context menu Checkout enabled for all commits; "detached HEAD" indicator.
+- **S-GIT-CONTEXT-MENU-KB** — `pending-git-context-menu-kb-small.md`.
+  Replace the custom context menu with `@radix-ui/react-context-menu` for
+  built-in arrow-key navigation, focus management, and Escape-to-close.
+- **S-GIT-GRAPH-FILTER** — `pending-git-graph-filter-medium.md`. Search bar
+  in the graph pane header filtering by author, message substring, and SHA
+  prefix; debounced; "X of Y commits" count; clear button.
+- **S-GIT-SCROLL-TO-HEAD** — `pending-git-scroll-to-head-small.md`. "Scroll
+  to HEAD" button that virtualizer-scrolls to the HEAD row, fetching pages
+  if needed, and briefly highlights it.
+- **S-GIT-DYNAMIC-EXPANSION** — `pending-git-dynamic-expansion-small.md`.
+  Replace the fixed 160px expansion slot with `measureElement`-based dynamic
+  height; re-measure on load; support multiple simultaneous expansions.
+- **S-GIT-GRAPH-COLORS** — `pending-git-graph-colors-small.md`. Color edges
+  and verticals by `ParentEdge` lineage id, not lane index, so colors stay
+  stable across lane reuse and pagination appends.
+- **S-GIT-LOG-PERF** — `pending-git-log-perf-medium.md`. Apply offset/limit
+  during the rev walk so skipped commits aren't decoded; keep `total` and
+  `has_more` accurate.
+- **S-GIT-TAGS** — `pending-git-tags-small.md` (optional). Tag labels in the
+  graph with a distinct chip color; display only.
+- **S-GIT-STASH** — `pending-git-stash-small.md` (optional). Stash
+  push/pop/drop/list with a GitPanel stash section.
 
 ## Out of scope
 
@@ -131,27 +111,52 @@ New `web/src/components/git/GitHistoryTab.tsx`:
 - Merge conflict resolution UI (complex, rare in this workflow).
 - Force push / history rewriting.
 - Cherry-pick / revert from graph.
-- Commit search/filter (can be added later as a search bar in the graph).
 - Blame (separate surface — editor integration, not git panel).
 - Remote management (add/remove/edit remotes).
 - PR/MR integration.
 
-## Acceptance (per story)
+## Acceptance (epic-level)
 
 Each story has its own acceptance criteria in its story file. Epic-level:
-- [ ] Commit history visible as a graph with branch topology.
-- [ ] Clicking a commit opens its diff.
-- [ ] Branch switching works from the UI.
-- [ ] Fetch/pull works and updates ahead/behind chips.
-- [ ] Graph virtualizes for repos with 1000+ commits.
+- [x] Commit history visible as a graph with branch topology.
+- [x] Clicking a commit opens its diff.
+- [x] Branch switching works from the UI.
+- [x] Fetch/pull works and updates ahead/behind chips.
+- [x] Graph virtualizes for repos with 1000+ commits.
+- [x] Per-file A/M/D/R status shown on commit diffs and inline expansion.
+- [x] Right-click context menu on commits (Copy SHA / Open diff / Checkout /
+      Refresh).
+- [ ] Detached-HEAD checkout from the context menu (S-GIT-DETACHED-CHECKOUT).
+- [ ] Keyboard-navigable context menu (S-GIT-CONTEXT-MENU-KB).
+- [ ] Filter/search the history by author, message, or SHA (S-GIT-GRAPH-FILTER).
+- [ ] Scroll-to-HEAD button (S-GIT-SCROLL-TO-HEAD).
+- [ ] Dynamic inline expansion height + multiple expansions
+      (S-GIT-DYNAMIC-EXPANSION).
+- [ ] Stable branch colors across pagination (S-GIT-GRAPH-COLORS).
+- [ ] Backend log pagination doesn't decode skipped commits (S-GIT-LOG-PERF).
 - [ ] Mobile: graph collapses to flat list on narrow viewports.
 - [ ] `make check` passes for all stories.
 
 ## Suggested order
 
+Done:
 1. S-GIT-LOG-API (backend, no UI)
 2. S-GIT-GRAPH-VIEWER (frontend, depends on log API)
 3. S-GIT-CHECKOUT (small, high value)
 4. S-GIT-FETCH-PULL (small, completes the remote loop)
-5. S-GIT-TAGS (optional)
-6. S-GIT-STASH (optional)
+5. S-GIT-COMMIT-DIFF-STATUS (small, unblocks v2 expansion badges)
+6. S-GIT-GRAPH-VIEWER-V2 (medium, VS Code-style upgrade)
+7. S-GIT-GRAPH-EDGE-RENDER (medium, edge-driven refactor + fixes)
+
+Next (in suggested order):
+8. S-GIT-DETACHED-CHECKOUT (small — unblocks Checkout on all commits)
+9. S-GIT-CONTEXT-MENU-KB (small — a11y polish on the v2 menu)
+10. S-GIT-SCROLL-TO-HEAD (small — quick UX win)
+11. S-GIT-DYNAMIC-EXPANSION (small — fixes the fixed-height expansion slot)
+12. S-GIT-GRAPH-COLORS (small — builds on the edge-driven layout)
+13. S-GIT-GRAPH-FILTER (medium — client-side filter, no backend change)
+14. S-GIT-LOG-PERF (medium — backend perf, independent of UI work)
+
+Optional:
+15. S-GIT-TAGS (optional)
+16. S-GIT-STASH (optional)

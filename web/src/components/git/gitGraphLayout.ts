@@ -1,9 +1,9 @@
 /**
  * Pure layout utility for the Git history graph.
  *
- * Turns a `LogCommit[]` (newest-first, as returned by `git log`) into a set of
- * lane/column assignments plus parent-edge metadata suitable for rendering an
- * SVG graph. The algorithm mirrors the classic `gitk`/`tig` lane layout:
+ * Turns a `LogCommit[]` (newest-first, as returned by `git log`) into lane
+ * assignments and parent-edge metadata for SVG rendering. The algorithm mirrors
+ * the classic `gitk`/`tig` lane layout:
  *
  *  - Each commit occupies one lane (column). A child pre-places its parents on
  *    lanes so the parent commit, once reached, reuses that lane — this keeps
@@ -13,9 +13,14 @@
  *    parents branch out to the first free lane.
  *  - Lanes are freed once the commit sitting on them has been drawn and no
  *    parent was placed on top of it, so columns compact downward.
- *  - Parents that are not in the visible window (paginated out, or a true
- *    root reached via `--max-count`) produce an `offscreen` edge so the view
- *    can render a stub running off the top of the graph.
+ *  - Parents outside the visible window (paginated out) produce `truncated`
+ *    edges with an assigned lane, so the renderer draws a dashed stub going
+ *    downward toward older history.
+ *
+ * **Edge-driven model:** `parentEdges` is the sole source of truth for outgoing
+ * graph segments. The SVG helper renders exactly one segment per edge. Lane
+ * occupancy (`incomingLanes`) is used only for through-verticals — lines that
+ * pass through a row without a commit dot.
  *
  * The function is deterministic: identical input order yields identical lane
  * numbers, so React can memoize the result and SVG keys stay stable across
@@ -24,15 +29,30 @@
 
 import type { LogCommit } from '@/lib/api/git'
 
-export interface GitGraphEdge {
-  /** Index into the input `commits` array of the parent, or -1 when the parent
-   *  is missing from the visible window. */
+/** A parent edge that is visible within the current commit window. */
+export interface VisibleParentEdge {
+  /** Stable ID for React keys and future hover/selection: `${childOid}:${parentOid}:${ordinal}`. */
+  id: string
+  parentOid: string
+  /** Row index of the parent in the input array. */
   parentIndex: number
-  /** Lane of the parent commit when present, otherwise `null`. */
-  parentLane: number | null
-  /** True when the parent is outside the visible window (pagination / root). */
-  offscreen: boolean
+  /** Lane the parent commit occupies (or will occupy when reached). */
+  parentLane: number
+  visibility: 'visible'
 }
+
+/** A parent edge whose target is outside the visible window (paginated out). */
+export interface TruncatedParentEdge {
+  id: string
+  parentOid: string
+  parentIndex: null
+  /** Lane assigned for the stub. Distinct truncated parents get distinct lanes
+   *  so a truncated merge shows separate dashed paths. */
+  parentLane: number
+  visibility: 'truncated'
+}
+
+export type ParentEdge = VisibleParentEdge | TruncatedParentEdge
 
 export interface GitGraphNode {
   /** Position of the commit in the input array (row in the graph). */
@@ -40,16 +60,13 @@ export interface GitGraphNode {
   oid: string
   /** Column the commit's dot is drawn in. */
   lane: number
-  /** One entry per parent in `LogCommit.parents`, in order. */
-  edges: GitGraphEdge[]
-  /** Lane indices occupied coming *into* this row (from previous rows / child
-   *  pre-placement). The SVG draws verticals from y=0 to the dot for these. */
-  lanesAbove: number[]
-  /** Lane indices occupied *after* this row (continuing to future rows). The
-   *  SVG draws verticals from the dot to y=ROW_HEIGHT for these. Lanes in
-   *  `lanesBelow` but not `lanesAbove` are newly initiated by this commit
-   *  (merge second-parent) and get a curve from the dot to the lane bottom. */
-  lanesBelow: number[]
+  /** One entry per parent in `LogCommit.parents`, in order. The SVG helper
+   *  renders exactly one outgoing segment per edge. */
+  parentEdges: ParentEdge[]
+  /** Lane indices occupied coming *into* this row (pre-placed by children or
+   *  carried forward from above). The SVG draws through-verticals for these,
+   *  excluding the commit's own lane (which gets an upper segment to the dot). */
+  incomingLanes: number[]
 }
 
 export interface GitGraphLayout {
@@ -64,7 +81,7 @@ export interface GitGraphLayout {
  *
  * @param commits Newest-first log entries (as returned by `getGitLog`).
  *                Pagination windows are fine: parents missing from the array
- *                become `offscreen` edges rather than errors.
+ *                become `truncated` edges with assigned lanes.
  */
 export function layoutGitGraph(commits: LogCommit[]): GitGraphLayout {
   // oid -> row index, for resolving parent references within the window.
@@ -77,9 +94,8 @@ export function layoutGitGraph(commits: LogCommit[]): GitGraphLayout {
   // `null` marks a free, reusable lane.
   const lanes: (string | null)[] = []
   const nodeLane = new Array<number>(commits.length).fill(-1)
-  const edges: GitGraphEdge[][] = Array.from({ length: commits.length }, () => [])
-  const lanesAbove: number[][] = Array.from({ length: commits.length }, () => [])
-  const lanesBelow: number[][] = Array.from({ length: commits.length }, () => [])
+  const parentEdges: ParentEdge[][] = Array.from({ length: commits.length }, () => [])
+  const incomingLanes: number[][] = Array.from({ length: commits.length }, () => [])
 
   const findFreeLane = (): number => {
     for (let k = 0; k < lanes.length; k++) {
@@ -103,7 +119,7 @@ export function layoutGitGraph(commits: LogCommit[]): GitGraphLayout {
 
     // Snapshot lanes occupied *before* this commit's dot is drawn — these are
     // the lines coming from above (pre-placed by children or carried forward).
-    lanesAbove[i] = occupiedLanes()
+    incomingLanes[i] = occupiedLanes()
 
     // Locate or assign this commit's lane. A child may have pre-placed it.
     let lane = lanes.indexOf(commit.oid)
@@ -118,43 +134,66 @@ export function layoutGitGraph(commits: LogCommit[]): GitGraphLayout {
     for (let p = 0; p < commit.parents.length; p++) {
       const parentOid = commit.parents[p]
       const parentIndex = oidToIndex.get(parentOid)
+      const edgeId = `${commit.oid}:${parentOid}:${p}`
 
       if (parentIndex === undefined) {
-        // Parent outside the visible window: edge runs off the top.
-        edges[i].push({ parentIndex: -1, parentLane: null, offscreen: true })
+        // Parent outside the visible window: assign a lane for the dashed stub
+        // so truncated merges show distinct paths. Check if the same parent oid
+        // was already placed by another child (lane reuse for convergence).
+        let truncLane = lanes.indexOf(parentOid)
+        if (truncLane < 0) {
+          // First parent reuses the commit's lane (straight line down); subsequent
+          // parents branch out to a free lane — same rule as visible parents.
+          if (p === 0) {
+            truncLane = lane
+          } else {
+            truncLane = findFreeLane()
+          }
+          lanes[truncLane] = parentOid
+          if (truncLane === lane) placedOnCurrent = true
+        }
+        parentEdges[i].push({
+          id: edgeId,
+          parentOid,
+          parentIndex: null,
+          parentLane: truncLane,
+          visibility: 'truncated',
+        })
         continue
       }
 
-      let parentLane = lanes.indexOf(parentOid)
-      if (parentLane < 0) {
+      let pLane = lanes.indexOf(parentOid)
+      if (pLane < 0) {
         // First parent continues on the current lane (straight line / merge
         // first-parent); subsequent parents branch out to a free lane.
         if (p === 0) {
-          parentLane = lane
+          pLane = lane
         } else {
-          parentLane = findFreeLane()
+          pLane = findFreeLane()
         }
-        lanes[parentLane] = parentOid
-        if (parentLane === lane) placedOnCurrent = true
+        lanes[pLane] = parentOid
+        if (pLane === lane) placedOnCurrent = true
       }
-      edges[i].push({ parentIndex, parentLane, offscreen: false })
+      parentEdges[i].push({
+        id: edgeId,
+        parentOid,
+        parentIndex,
+        parentLane: pLane,
+        visibility: 'visible',
+      })
     }
 
     // Free this commit's lane unless a parent was placed on top of it (in which
     // case the lane is now owned by that upcoming parent).
     if (!placedOnCurrent) lanes[lane] = null
-
-    // Snapshot lanes occupied *after* this commit — these continue downward.
-    lanesBelow[i] = occupiedLanes()
   }
 
   const nodes: GitGraphNode[] = commits.map((commit, i) => ({
     index: i,
     oid: commit.oid,
     lane: nodeLane[i],
-    edges: edges[i],
-    lanesAbove: lanesAbove[i],
-    lanesBelow: lanesBelow[i],
+    parentEdges: parentEdges[i],
+    incomingLanes: incomingLanes[i],
   }))
 
   // `lanes.length` is the high-water mark: we only grow the array when every

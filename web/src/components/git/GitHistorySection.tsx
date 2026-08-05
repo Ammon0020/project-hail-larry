@@ -119,15 +119,14 @@ function GraphRow({
                 className={cn('opacity-70', laneColor(v.lane))}
               />
             ))}
-            {/* Merge curves and offscreen stubs */}
-            {segments.curves.map((c, idx) => {
+            {/* Parent-edge curves and truncated stubs — one per parent edge */}
+            {segments.curves.map((c) => {
               const fromX = laneX(c.fromLane)
               const toX = laneX(c.toLane)
-              const key = `c-${idx}-${c.fromLane}-${c.toLane}`
               if (c.dashed) {
                 return (
                   <line
-                    key={key}
+                    key={c.edgeId}
                     x1={fromX}
                     y1={c.y0}
                     x2={toX}
@@ -143,7 +142,7 @@ function GraphRow({
               const midY = (c.y0 + c.y1) / 2
               return (
                 <path
-                  key={key}
+                  key={c.edgeId}
                   d={`M ${fromX} ${c.y0} C ${fromX} ${midY}, ${toX} ${midY}, ${toX} ${c.y1}`}
                   fill="none"
                   stroke="currentColor"
