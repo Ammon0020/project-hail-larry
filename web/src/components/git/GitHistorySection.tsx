@@ -13,6 +13,7 @@ import {
   MERGE_DOT_RADIUS,
   graphWidth,
   laneX,
+  type GraphVertical,
 } from './gitGraphSvg'
 import { CommitFileList } from './CommitFileList'
 import { CommitContextMenu, type CommitContextMenuItem } from './CommitContextMenu'
@@ -21,6 +22,19 @@ const ROW_HEIGHT = 44
 const DEFAULT_HEIGHT = 260
 const MIN_HEIGHT = 160
 const MAX_HEIGHT = 480
+
+const ICON_BTN = 'rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground'
+
+/** A flat virtual item: either a commit row or an expanded file-list slot. */
+type FlatItem =
+  | { type: 'commit'; commitIndex: number }
+  | { type: 'slot'; oid: string }
+
+/** Append `incoming` commits to `current`, dropping any whose oid is already present. */
+const mergeUniqueCommits = (current: LogCommit[], incoming: LogCommit[]): LogCommit[] => [
+  ...current,
+  ...incoming.filter((c) => !current.some((x) => x.oid === c.oid)),
+]
 
 function relativeTime(iso: string): string {
   const timestamp = Date.parse(iso)
@@ -53,6 +67,23 @@ const LANE_COLORS = [
 ]
 function lineageColor(lineageId: number): string {
   return LANE_COLORS[lineageId % LANE_COLORS.length]
+}
+
+/** Renders the through-lane vertical segments inside an SVG. Shared by commit
+ *  rows and expanded file-list slots so the styling stays consistent. */
+function GraphVerticals({ verticals, keyPrefix }: { verticals: GraphVertical[]; keyPrefix: string }) {
+  return verticals.map((v, idx) => (
+    <line
+      key={`${keyPrefix}-${idx}-${v.lane}`}
+      x1={laneX(v.lane)}
+      y1={v.y0}
+      x2={laneX(v.lane)}
+      y2={v.y1}
+      stroke="currentColor"
+      strokeWidth="1.5"
+      className={cn('opacity-70', lineageColor(v.lineageId))}
+    />
+  ))
 }
 
 function GraphRow({
@@ -110,18 +141,7 @@ function GraphRow({
             aria-hidden="true"
           >
             {/* Through-lane and commit-lane verticals */}
-            {segments.verticals.map((v, idx) => (
-              <line
-                key={`v-${idx}-${v.lane}`}
-                x1={laneX(v.lane)}
-                y1={v.y0}
-                x2={laneX(v.lane)}
-                y2={v.y1}
-                stroke="currentColor"
-                strokeWidth="1.5"
-                className={cn('opacity-70', lineageColor(v.lineageId))}
-              />
-            ))}
+            <GraphVerticals verticals={segments.verticals} keyPrefix="v" />
             {/* Parent-edge curves and truncated stubs — one per parent edge */}
             {segments.curves.map((c) => {
               const fromX = laneX(c.fromLane)
@@ -224,7 +244,9 @@ export function GitHistorySection({
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [expandedOid, setExpandedOid] = useState<string | null>(null)
+  // Multiple commits can be expanded at once — each inserts a file-list slot
+  // after it in the virtualized list. Stored as a Set so toggling is O(1).
+  const [expandedOids, setExpandedOids] = useState<Set<string>>(() => new Set())
   const [headFlash, setHeadFlash] = useState(false)
   const [headNotice, setHeadNotice] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -237,7 +259,7 @@ export function GitHistorySection({
     const token = ++fetchToken.current
     setLoading(true)
     setError(null)
-    setExpandedOid(null)
+    setExpandedOids(new Set())
     diffCache.current.clear()
     try {
       const result = await api.getGitLog(workspaceId)
@@ -267,10 +289,7 @@ export function GitHistorySection({
     try {
       const result = await api.getGitLog(workspaceId, 100, commits.length)
       if (token !== fetchToken.current) return
-      setCommits((current) => [
-        ...current,
-        ...result.commits.filter((commit) => !current.some((item) => item.oid === commit.oid)),
-      ])
+      setCommits((current) => mergeUniqueCommits(current, result.commits))
       setHasMore(result.hasMore)
     } catch (err) {
       if (token === fetchToken.current) setError(err instanceof Error ? err.message : String(err))
@@ -279,21 +298,46 @@ export function GitHistorySection({
     }
   }, [commits.length, hasMore, loadingMore, workspaceId])
 
-  // When a row is expanded, render the file list as a non-virtualized block
-  // right after it. We adjust the virtualizer's count to account for the extra
-  // "slot" so the total height stays correct. The expanded slot uses the same
-  // absolute positioning as regular rows.
-  const expandedIndex = expandedOid ? commits.findIndex((c) => c.oid === expandedOid) : -1
-  const hasExpandedSlot = expandedIndex >= 0
-  // Estimate the expanded file list height (capped at 160px).
-  const expandedSlotHeight = 160
+  // Interleave commits and expanded file-list slots into a single flat array
+  // of virtual items. Each expanded commit inserts a `{ type: 'slot' }` item
+  // right after its commit row. The virtualizer indexes directly into this
+  // array, so multiple simultaneous expansions are supported without any
+  // index arithmetic in the render loop.
+  const flatItems = useMemo<FlatItem[]>(() => {
+    const items: FlatItem[] = []
+    for (let i = 0; i < commits.length; i++) {
+      items.push({ type: 'commit', commitIndex: i })
+      if (expandedOids.has(commits[i].oid)) {
+        items.push({ type: 'slot', oid: commits[i].oid })
+      }
+    }
+    return items
+  }, [commits, expandedOids])
+
+  // Map a commit index to its virtual (flat) index, accounting for any
+  // expanded slots inserted before it. Used by scroll-to-HEAD, which works in
+  // commit indices but must scroll the virtualizer.
+  const commitIndexToVirtualIndex = useCallback(
+    (commitIndex: number) => {
+      let slotsBefore = 0
+      for (let i = 0; i < commitIndex; i++) {
+        if (expandedOids.has(commits[i].oid)) slotsBefore++
+      }
+      return commitIndex + slotsBefore
+    },
+    [commits, expandedOids],
+  )
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
-    count: commits.length + (hasMore ? 1 : 0) + (hasExpandedSlot ? 1 : 0),
+    count: flatItems.length + (hasMore ? 1 : 0),
     getScrollElement: () => scrollRef.current,
     estimateSize: (index: number) => {
-      if (hasExpandedSlot && index === expandedIndex + 1) return expandedSlotHeight
+      // The "load more" sentinel sits at flatItems.length and uses ROW_HEIGHT.
+      // Slots fall back to 160px until the real content is measured by
+      // `virtualizer.measureElement` (wired up via the ref callback below).
+      const flatItem = flatItems[index]
+      if (flatItem?.type === 'slot') return 160
       return ROW_HEIGHT
     },
     overscan: 8,
@@ -302,18 +346,20 @@ export function GitHistorySection({
   const items = virtualizer.getVirtualItems()
 
   // Once commits update and a scroll is pending, jump to the index and flash.
+  // `pendingScrollHead` holds a commit index, which we translate to a virtual
+  // (flat) index since expanded slots shift commit positions in the list.
   useEffect(() => {
     if (pendingScrollHead.current == null) return
-    const index = pendingScrollHead.current
+    const commitIndex = pendingScrollHead.current
     pendingScrollHead.current = null
     const run = () => {
-      virtualizer.scrollToIndex(index, { align: 'center' })
+      virtualizer.scrollToIndex(commitIndexToVirtualIndex(commitIndex), { align: 'center' })
       setHeadFlash(true)
       window.setTimeout(() => setHeadFlash(false), 1500)
     }
     const raf = requestAnimationFrame(run)
     return () => cancelAnimationFrame(raf)
-  }, [commits, virtualizer])
+  }, [commits, virtualizer, commitIndexToVirtualIndex])
 
   // Scroll the virtualizer to the HEAD commit, fetching more pages if the
   // HEAD is outside the currently loaded window. Capped at 10 pages to avoid
@@ -329,12 +375,12 @@ export function GitHistorySection({
         if (current === commits) {
           // HEAD already loaded — scroll directly (setCommits would be a no-op
           // since it's the same array reference, so the effect won't fire).
-          virtualizer.scrollToIndex(headIndex, { align: 'center' })
+          virtualizer.scrollToIndex(commitIndexToVirtualIndex(headIndex), { align: 'center' })
           setHeadFlash(true)
           window.setTimeout(() => setHeadFlash(false), 1500)
         } else {
           // HEAD found after fetching more pages — setCommits triggers the
-          // effect above which handles the scroll.
+          // effect above which handles the scroll (and the index translation).
           pendingScrollHead.current = headIndex
           setCommits(current)
         }
@@ -347,15 +393,12 @@ export function GitHistorySection({
       }
       const result = await api.getGitLog(workspaceId, 100, current.length)
       if (token !== fetchToken.current) return
-      current = [
-        ...current,
-        ...result.commits.filter((c) => !current.some((x) => x.oid === c.oid)),
-      ]
+      current = mergeUniqueCommits(current, result.commits)
       canLoad = result.hasMore
       setCommits(current)
       setHasMore(canLoad)
     }
-  }, [commits, hasMore, loading, virtualizer, workspaceId])
+  }, [commits, hasMore, loading, virtualizer, workspaceId, commitIndexToVirtualIndex])
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -375,42 +418,39 @@ export function GitHistorySection({
   }, [])
 
   const buildContextItems = useCallback(
-    (commit: LogCommit): CommitContextMenuItem[] => [
-      {
-        label: 'Copy SHA',
-        icon: <Copy className="h-3.5 w-3.5" />,
-        onClick: () => void navigator.clipboard.writeText(commit.oid),
-      },
-      {
-        label: 'Open diff in tab',
-        icon: <SquareArrowOutUpRight className="h-3.5 w-3.5" />,
-        onClick: () => onOpenCommitDiff(commit.oid),
-      },
-      ...(commit.branchLabels.length > 0
-        ? [
-            {
-              label: `Checkout ${commit.branchLabels[0]}`,
-              icon: <GitBranch className="h-3.5 w-3.5" />,
-              onClick: () => {
-                void api.gitCheckout(workspaceId, commit.branchLabels[0]).then(() => void refresh())
-              },
-            },
-          ]
-        : [
-            {
-              label: `Checkout ${commit.oid.slice(0, 7)} (detached)`,
-              icon: <GitBranch className="h-3.5 w-3.5" />,
-              onClick: () => {
-                void api.gitCheckoutCommit(workspaceId, commit.oid).then(() => void refresh())
-              },
-            },
-          ]),
-      {
-        label: 'Refresh',
-        icon: <RefreshCw className="h-3.5 w-3.5" />,
-        onClick: () => void refresh(),
-      },
-    ],
+    (commit: LogCommit): CommitContextMenuItem[] => {
+      // Checkout the branch by name when present, otherwise detach at the SHA.
+      const branch = commit.branchLabels[0]
+      const checkoutItem: CommitContextMenuItem = branch
+        ? {
+            label: `Checkout ${branch}`,
+            icon: <GitBranch className="h-3.5 w-3.5" />,
+            onClick: () => void api.gitCheckout(workspaceId, branch).then(() => void refresh()),
+          }
+        : {
+            label: `Checkout ${commit.oid.slice(0, 7)} (detached)`,
+            icon: <GitBranch className="h-3.5 w-3.5" />,
+            onClick: () => void api.gitCheckoutCommit(workspaceId, commit.oid).then(() => void refresh()),
+          }
+      return [
+        {
+          label: 'Copy SHA',
+          icon: <Copy className="h-3.5 w-3.5" />,
+          onClick: () => void navigator.clipboard.writeText(commit.oid),
+        },
+        {
+          label: 'Open diff in tab',
+          icon: <SquareArrowOutUpRight className="h-3.5 w-3.5" />,
+          onClick: () => onOpenCommitDiff(commit.oid),
+        },
+        checkoutItem,
+        {
+          label: 'Refresh',
+          icon: <RefreshCw className="h-3.5 w-3.5" />,
+          onClick: () => void refresh(),
+        },
+      ]
+    },
     [onOpenCommitDiff, refresh, workspaceId],
   )
 
@@ -461,7 +501,7 @@ export function GitHistorySection({
         <button
           type="button"
           onClick={() => setFlatMode((value) => !value)}
-          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
+          className={ICON_BTN}
           aria-label={flatMode ? 'Show graph view' : 'Show flat history'}
           title={flatMode ? 'Show graph view' : 'Show flat history'}
         >
@@ -471,7 +511,7 @@ export function GitHistorySection({
           type="button"
           onClick={() => void scrollToHead()}
           disabled={loading || !commits.some((c) => c.isHead) && !hasMore}
-          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+          className={cn(ICON_BTN, 'disabled:opacity-50')}
           aria-label="Scroll to HEAD"
           title="Scroll to HEAD"
         >
@@ -481,7 +521,7 @@ export function GitHistorySection({
           type="button"
           onClick={() => void refresh()}
           disabled={loading}
-          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+          className={cn(ICON_BTN, 'disabled:opacity-50')}
           aria-label="Refresh history"
           title="Refresh history"
         >
@@ -505,8 +545,8 @@ export function GitHistorySection({
           ) : (
             <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
               {items.map((item) => {
-                // "Load more" sentinel row
-                if (hasMore && item.index === commits.length + (hasExpandedSlot ? 1 : 0)) {
+                // "Load more" sentinel row sits just past the last flat item.
+                if (hasMore && item.index === flatItems.length) {
                   return (
                     <div
                       key="load-more"
@@ -524,44 +564,54 @@ export function GitHistorySection({
                     </div>
                   )
                 }
-                // Expanded file-list slot (inserted after the expanded commit row)
-                if (hasExpandedSlot && item.index === expandedIndex + 1) {
-                  if (!expandedOid) return null
-                  // The next node's incoming lanes are the active lines that
-                  // must bridge the expanded file-list row.
-                  const continuationLanes = layout.nodes[expandedIndex + 1]?.incomingLanes ?? []
-                  const continuationVerticals = buildContinuationVerticals(continuationLanes, expandedSlotHeight)
+                const flatItem = flatItems[item.index]
+                // Expanded file-list slot (inserted after its expanded commit row).
+                // `virtualizer.measureElement` is wired as the ref so TanStack
+                // auto-measures the slot on mount and whenever the file list
+                // grows after its async load completes (via internal
+                // ResizeObserver). `item.size` reflects the measured height.
+                if (flatItem?.type === 'slot') {
+                  // The next commit's incoming lanes are the active lines that
+                  // must bridge the expanded file-list row. Scan forward past
+                  // any consecutive slots (e.g. when two adjacent commits are
+                  // both expanded) to find the next commit row.
+                  let nextCommitIndex: number | undefined
+                  for (let j = item.index + 1; j < flatItems.length; j++) {
+                    const candidate = flatItems[j]
+                    if (candidate?.type === 'commit') {
+                      nextCommitIndex = candidate.commitIndex
+                      break
+                    }
+                  }
+                  const continuationLanes =
+                    nextCommitIndex != null ? (layout.nodes[nextCommitIndex]?.incomingLanes ?? []) : []
+                  const slotHeight = item.size
+                  const continuationVerticals = buildContinuationVerticals(continuationLanes, slotHeight)
                   return (
                     <div
-                      key="expanded-files"
-                      className={cn('absolute inset-x-0 top-0 flex gap-2', !flatMode && 'px-2')}
+                      key={`slot-${flatItem.oid}`}
+                      ref={virtualizer.measureElement}
+                      data-index={item.index}
+                      className="absolute inset-x-0 top-0"
                       style={{ transform: `translateY(${item.start}px)` }}
                     >
                       {!flatMode && (
                         <svg
                           width={graphWidth(layout.laneCount)}
-                          height={expandedSlotHeight}
-                          className="shrink-0 overflow-visible"
+                          className="pointer-events-none absolute left-2 top-0 overflow-visible"
+                          style={{ height: '100%' }}
                           aria-hidden="true"
                         >
-                          {continuationVerticals.map((vertical) => (
-                            <line
-                              key={vertical.lane}
-                              x1={laneX(vertical.lane)}
-                              y1={vertical.y0}
-                              x2={laneX(vertical.lane)}
-                              y2={vertical.y1}
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              className={cn('opacity-70', lineageColor(vertical.lineageId))}
-                            />
-                          ))}
+                          <GraphVerticals verticals={continuationVerticals} keyPrefix="cv" />
                         </svg>
                       )}
-                      <div className="min-w-0 flex-1">
+                      <div
+                        className="min-w-0"
+                        style={!flatMode ? { marginLeft: graphWidth(layout.laneCount) + 8 } : undefined}
+                      >
                         <CommitFileList
                           workspaceId={workspaceId}
-                          commitOid={expandedOid}
+                          commitOid={flatItem.oid}
                           cache={diffCache}
                           onOpenFile={onOpenCommitDiff}
                         />
@@ -569,8 +619,9 @@ export function GitHistorySection({
                     </div>
                   )
                 }
-                // Regular commit row — adjust index if we're past the expanded slot
-                const commitIndex = hasExpandedSlot && item.index > expandedIndex ? item.index - 1 : item.index
+                // Regular commit row.
+                if (flatItem?.type !== 'commit') return null
+                const commitIndex = flatItem.commitIndex
                 const commit = commits[commitIndex]
                 if (!commit) return null
                 return (
@@ -586,9 +637,16 @@ export function GitHistorySection({
                       commit={commit}
                       nodeIndex={commitIndex}
                       layout={layout}
-                      isExpanded={expandedOid === commit.oid}
+                      isExpanded={expandedOids.has(commit.oid)}
                       flatMode={flatMode}
-                      onToggle={() => setExpandedOid((cur) => (cur === commit.oid ? null : commit.oid))}
+                      onToggle={() =>
+                        setExpandedOids((cur) => {
+                          const next = new Set(cur)
+                          if (next.has(commit.oid)) next.delete(commit.oid)
+                          else next.add(commit.oid)
+                          return next
+                        })
+                      }
                       contextItems={buildContextItems(commit)}
                     />
                   </div>

@@ -13,11 +13,17 @@ export function CommitFileList({
   commitOid,
   cache,
   onOpenFile,
+  maxHeight = 400,
 }: {
   workspaceId: string
   commitOid: string
   cache: React.MutableRefObject<Map<string, CommitDiffResult>>
   onOpenFile: (oid: string) => void
+  /** Maximum visible height of the file list in pixels. The container scrolls
+   * internally past this height so very large diffs don't dominate the pane.
+   * The parent virtualizer measures the actual rendered height (clamped to
+   * this max), so small commits render shorter than the cap. */
+  maxHeight?: number
 }) {
   const cached = cache.current.get(commitOid)
   const [result, setResult] = useState<CommitDiffResult | null>(cached ?? null)
@@ -63,7 +69,10 @@ export function CommitFileList({
   }
 
   return (
-    <div className="max-h-40 overflow-y-auto border-b border-border/40 bg-muted/20 py-1">
+    <div
+      className="overflow-y-auto border-b border-border/40 bg-muted/20 py-1"
+      style={{ maxHeight }}
+    >
       {result.files.map((file) => (
         <button
           key={file.path}
