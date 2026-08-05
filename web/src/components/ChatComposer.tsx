@@ -1,14 +1,9 @@
-import { type KeyboardEvent, useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Plus, ArrowUp, Square, X, Loader2, Wrench, Users, Star } from 'lucide-react'
+import { type KeyboardEvent, useState, useRef, useEffect, useCallback } from 'react'
+import { Plus, ArrowUp, Square, X, Loader2, Wrench, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import {
-  getModelPrefs,
-  groupModelsForSelect,
-  toggleFavoriteModel,
-  type ModelOption,
-  type ModelPrefs,
-} from '@/lib/modelPrefs'
+import { type ModelOption } from '@/lib/modelPrefs'
 import { McpPopout } from './chat/McpPopout'
+import { ModelSelector } from './chat/ModelSelector'
 
 interface ChatComposerProps {
   /** Available models for the current agent (derived in ChatPanel from currentAgent?.models). */
@@ -108,29 +103,6 @@ export function ChatComposer({
   const handleMcpPopoutClose = useCallback(() => {
     setShowMcpPopout(false)
   }, [])
-
-  // Favorites are client-only; re-read when agent changes or user toggles star.
-  // Syncing state to the agentId prop during render (React's "adjusting state
-  // when a prop changes" pattern) avoids a cascading setState-in-effect render.
-  const [prefs, setPrefs] = useState<ModelPrefs>(() => getModelPrefs(agentId))
-  const [prevAgentId, setPrevAgentId] = useState(agentId)
-  if (agentId !== prevAgentId) {
-    setPrevAgentId(agentId)
-    setPrefs(getModelPrefs(agentId))
-  }
-
-  const modelGroups = useMemo(
-    () => groupModelsForSelect(models, prefs),
-    [models, prefs],
-  )
-
-  const currentModel = models.find((m) => m.id === effectiveModelId)
-  const isFavorite = !!effectiveModelId && prefs.favorites.includes(effectiveModelId)
-
-  const handleToggleFavorite = useCallback(() => {
-    if (!agentId || !effectiveModelId) return
-    setPrefs(toggleFavoriteModel(agentId, effectiveModelId))
-  }, [agentId, effectiveModelId])
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -294,54 +266,14 @@ export function ChatComposer({
               </select>
             </div>
 
-            {/* Model selector: favorites / recent / preferred / all via <optgroup>. */}
-            <div className="flex items-center">
-              <button
-                type="button"
-                onClick={handleToggleFavorite}
-                disabled={!effectiveModelId || !agentId}
-                className={cn(
-                  'flex items-center justify-center w-7 h-7 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
-                  isFavorite
-                    ? 'text-amber-400 hover:bg-white/[0.04]'
-                    : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground',
-                )}
-                title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                aria-pressed={isFavorite}
-              >
-                <Star
-                  className="w-3.5 h-3.5"
-                  strokeWidth={2}
-                  fill={isFavorite ? 'currentColor' : 'none'}
-                />
-              </button>
-              <div
-                className="relative flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer text-muted-foreground hover:bg-white/[0.04] hover:text-foreground transition-colors"
-                title={currentModel?.description ?? 'Model'}
-              >
-                <span className="text-[13px] pointer-events-none max-w-[10rem] truncate">
-                  {currentModel?.name ?? 'Model'}
-                </span>
-                <select
-                  value={effectiveModelId}
-                  onChange={(e) => onModelChange(e.target.value)}
-                  disabled={disabled || models.length === 0}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent disabled:cursor-not-allowed"
-                >
-                  {modelGroups.map((group) => (
-                    <optgroup key={group.id} label={group.label}>
-                      {group.models.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                          {m.preferred ? ' ★' : ''}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </div>
-            </div>
+            {/* Model selector: popover with search, base-model grouping, thinking pills, pin. */}
+            <ModelSelector
+              models={models}
+              agentId={agentId}
+              selectedModelId={effectiveModelId}
+              onModelChange={onModelChange}
+              disabled={disabled || models.length === 0}
+            />
           </div>
 
           {/* Send / Stop — circular button in the actions row. Idle state is

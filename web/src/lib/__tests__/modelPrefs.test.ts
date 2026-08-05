@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest'
-import { groupModelsForSelect, pickDefaultModelId } from '@/lib/modelPrefs'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import {
+  groupModelsForSelect,
+  pickDefaultModelId,
+  getModelPrefs,
+} from '@/lib/modelPrefs'
 import type { ModelOption, ModelPrefs } from '@/lib/modelPrefs'
 
 /** Build a ModelOption with a sane default shape. */
@@ -8,7 +12,7 @@ function mo(id: string, overrides: Partial<ModelOption> = {}): ModelOption {
 }
 
 /** Empty prefs convenience. */
-const noPrefs: ModelPrefs = { favorites: [], recent: [] }
+const noPrefs: ModelPrefs = { pinned: [], recent: [] }
 
 describe('groupModelsForSelect', () => {
   it('returns no groups when models is empty', () => {
@@ -22,21 +26,38 @@ describe('groupModelsForSelect', () => {
     expect(groups[0]).toEqual({ id: 'all', label: 'Models', models })
   })
 
-  it('places favorites first and the rest in "All models"', () => {
+  it('places pinned first and the rest in "All models"', () => {
     const models = [mo('a'), mo('b'), mo('c'), mo('d')]
-    const prefs: ModelPrefs = { favorites: ['b', 'd'], recent: [] }
+    const prefs: ModelPrefs = { pinned: ['b', 'd'], recent: [] }
     const groups = groupModelsForSelect(models, prefs)
-    expect(groups.map((g) => g.id)).toEqual(['favorites', 'all'])
+    expect(groups.map((g) => g.id)).toEqual(['pinned', 'all'])
     expect(groups[0].models.map((m) => m.id)).toEqual(['b', 'd'])
     expect(groups[1].label).toBe('All models')
     expect(groups[1].models.map((m) => m.id)).toEqual(['a', 'c'])
   })
 
-  it('emits a recent group deduped against favorites', () => {
-    const models = [mo('a'), mo('b'), mo('c')]
-    const prefs: ModelPrefs = { favorites: ['a'], recent: ['c', 'a', 'b'] }
+  it('surfaces all variants of a pinned base in the pinned group', () => {
+    // Pinned is per-base: pinning "gpt-5.3-codex" pulls in every variant.
+    const models = [
+      mo('gpt-5.3-codex-low-fast'),
+      mo('gpt-5.3-codex-high'),
+      mo('other'),
+    ]
+    const prefs: ModelPrefs = { pinned: ['gpt-5.3-codex'], recent: [] }
     const groups = groupModelsForSelect(models, prefs)
-    // 'a' is a favorite, so it must not also appear in recent.
+    expect(groups.map((g) => g.id)).toEqual(['pinned', 'all'])
+    expect(groups[0].models.map((m) => m.id)).toEqual([
+      'gpt-5.3-codex-low-fast',
+      'gpt-5.3-codex-high',
+    ])
+    expect(groups[1].models.map((m) => m.id)).toEqual(['other'])
+  })
+
+  it('emits a recent group deduped against pinned', () => {
+    const models = [mo('a'), mo('b'), mo('c')]
+    const prefs: ModelPrefs = { pinned: ['a'], recent: ['c', 'a', 'b'] }
+    const groups = groupModelsForSelect(models, prefs)
+    // 'a' is pinned, so it must not also appear in recent.
     const recent = groups.find((g) => g.id === 'recent')
     expect(recent?.models.map((m) => m.id)).toEqual(['c', 'b'])
   })
@@ -48,17 +69,17 @@ describe('groupModelsForSelect', () => {
     expect(preferred?.models.map((m) => m.id)).toEqual(['b'])
   })
 
-  it('orders favorites → recent → preferred → all, each id once', () => {
+  it('orders pinned → recent → preferred → all, each id once', () => {
     const models = [
       mo('fav'),
       mo('rec'),
       mo('pref', { preferred: true }),
       mo('other'),
     ]
-    const prefs: ModelPrefs = { favorites: ['fav'], recent: ['rec'] }
+    const prefs: ModelPrefs = { pinned: ['fav'], recent: ['rec'] }
     const groups = groupModelsForSelect(models, prefs)
     expect(groups.map((g) => g.id)).toEqual([
-      'favorites',
+      'pinned',
       'recent',
       'preferred',
       'all',
@@ -69,24 +90,24 @@ describe('groupModelsForSelect', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('keeps a model in favorites only when it is also recent (first group wins)', () => {
+  it('keeps a model in pinned only when it is also recent (first group wins)', () => {
     const models = [mo('a'), mo('b')]
-    const prefs: ModelPrefs = { favorites: ['a'], recent: ['a', 'b'] }
+    const prefs: ModelPrefs = { pinned: ['a'], recent: ['a', 'b'] }
     const groups = groupModelsForSelect(models, prefs)
-    const favIds = groups.find((g) => g.id === 'favorites')?.models.map((m) => m.id)
+    const pinnedIds = groups.find((g) => g.id === 'pinned')?.models.map((m) => m.id)
     const recentIds = groups.find((g) => g.id === 'recent')?.models.map((m) => m.id)
-    expect(favIds).toEqual(['a'])
+    expect(pinnedIds).toEqual(['a'])
     expect(recentIds).toEqual(['b']) // 'a' already used
   })
 
-  it('surfaces a "Favorites" group when every model is a favorite', () => {
-    // Every model is a favorite, so the "rest" bucket is empty. The favorites
-    // group is non-empty, so the fallback (which only fires when groups is
-    // empty) does not trigger — the single favorites group is the output.
+  it('surfaces a "Pinned" group when every model is pinned', () => {
+    // Every model is pinned, so the "rest" bucket is empty. The pinned group
+    // is non-empty, so the fallback (which only fires when groups is empty)
+    // does not trigger — the single pinned group is the output.
     const models = [mo('a'), mo('b')]
-    const prefs: ModelPrefs = { favorites: ['a', 'b'], recent: [] }
+    const prefs: ModelPrefs = { pinned: ['a', 'b'], recent: [] }
     const groups = groupModelsForSelect(models, prefs)
-    expect(groups).toEqual([{ id: 'favorites', label: 'Favorites', models }])
+    expect(groups).toEqual([{ id: 'pinned', label: 'Pinned', models }])
   })
 })
 
@@ -114,5 +135,66 @@ describe('pickDefaultModelId', () => {
   it('treats an empty stored id as absent and falls through to preferred/first', () => {
     const models = [mo('a'), mo('b', { preferred: true })]
     expect(pickDefaultModelId(models, '')).toBe('b')
+  })
+})
+
+describe('getModelPrefs migration', () => {
+  beforeEach(() => {
+    // Provide a fresh localStorage mock for each test.
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+      clear: () => store.clear(),
+      key: (i: number) => Array.from(store.keys())[i] ?? null,
+      get length() {
+        return store.size
+      },
+    })
+  })
+
+  it('returns empty prefs when nothing is stored', () => {
+    expect(getModelPrefs('agent-1')).toEqual({ pinned: [], recent: [] })
+  })
+
+  it('migrates legacy favorites (per-variant) to pinned (per-base)', () => {
+    // Legacy shape: favorites holds full variant ids.
+    const legacy = {
+      'agent-1': {
+        favorites: ['gpt-5.3-codex-low-fast', 'gpt-5.3-codex-high'],
+        recent: ['gpt-5.3-codex-low-fast'],
+      },
+    }
+    localStorage.setItem('lai:modelPrefs', JSON.stringify(legacy))
+
+    const prefs = getModelPrefs('agent-1')
+    // Two variants of the same base collapse to one pinned base id.
+    expect(prefs.pinned).toEqual(['gpt-5.3-codex'])
+    expect(prefs.recent).toEqual(['gpt-5.3-codex-low-fast'])
+  })
+
+  it('dedupes multiple bases in legacy favorites preserving first-seen order', () => {
+    const legacy = {
+      'agent-1': {
+        favorites: ['gpt-5.3-codex-low-fast', 'claude-opus-5-high', 'gpt-5.3-codex-max'],
+        recent: [],
+      },
+    }
+    localStorage.setItem('lai:modelPrefs', JSON.stringify(legacy))
+
+    const prefs = getModelPrefs('agent-1')
+    expect(prefs.pinned).toEqual(['gpt-5.3-codex', 'claude-opus-5'])
+  })
+
+  it('reads pinned directly when the new shape is already stored', () => {
+    const next = {
+      'agent-1': { pinned: ['gpt-5.3-codex'], recent: ['gpt-5.3-codex-low-fast'] },
+    }
+    localStorage.setItem('lai:modelPrefs', JSON.stringify(next))
+    expect(getModelPrefs('agent-1')).toEqual({
+      pinned: ['gpt-5.3-codex'],
+      recent: ['gpt-5.3-codex-low-fast'],
+    })
   })
 })

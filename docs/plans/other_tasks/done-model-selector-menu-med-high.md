@@ -1,6 +1,6 @@
 # Model selector menu with thinking levels and pin
 
-> **Status:** pending | **Difficulty:** medium | **Urgency:** high
+> **Status:** done | **Difficulty:** medium | **Urgency:** high
 > **Source:** user-noted improvements — Chat section
 
 ## Goal
@@ -28,9 +28,9 @@ model traits. Support any of these we can.
 
 ## Acceptance
 
-- [ ] Model selector is a menu (not a dropdown) with search
-- [ ] Models grouped by base name with thinking level sub-options
-- [ ] Pin replaces favorite; pinned models at top
-- [ ] Fast variant toggle for models that support it
-- [ ] ACP model_config traits supported where possible
-- [ ] `make check` passes
+- [x] Model selector is a menu (not a dropdown) with search
+- [x] Models grouped by base name with thinking level sub-options
+- [x] Pin replaces favorite; pinned models at top
+- [x] Fast variant toggle for models that support it
+- [ ] ACP model_config traits supported where possible *(deferred — backend AgentModel has no structured traits yet; parseModelId is the fallback)*
+- [x] `make check` passes

@@ -1,40 +1,57 @@
 /**
  * Per-agent model preferences stored in localStorage.
  *
- * - favorites: user-pinned model ids (order preserved)
- * - recent: most-recently-used model ids (newest first)
+ * - pinned: user-pinned base model ids (order preserved). A pinned base means
+ *   every variant of that base model is surfaced in the "Pinned" group.
+ * - recent: most-recently-used full variant ids (newest first). Recent is kept
+ *   as the exact variant the user last selected.
  *
  * Specific model catalogs churn across agents; this module never hardcodes
  * model ids — it only tracks ids the user actually selected.
  */
 
+import { parseModelId } from '@/lib/modelGrouping'
+
 export interface ModelPrefs {
-  favorites: string[]
+  /** Base model ids (e.g. "gpt-5.3-codex"), order preserved. */
+  pinned: string[]
+  /** Full variant ids (e.g. "gpt-5.3-codex-low-fast"), newest first. */
   recent: string[]
 }
 
 const STORAGE_KEY = 'lai:modelPrefs'
 const MAX_RECENT = 8
-const MAX_FAVORITES = 20
+const MAX_PINNED = 20
 
-type PrefsByAgent = Record<string, ModelPrefs>
-
-function emptyPrefs(): ModelPrefs {
-  return { favorites: [], recent: [] }
+/**
+ * Raw stored shape. We accept legacy entries that still carry `favorites`
+ * (per-variant ids) so we can migrate them on read. `favorites` is preserved
+ * in storage for backward compat but never read after migration.
+ */
+interface StoredPrefs {
+  pinned?: string[]
+  favorites?: string[]
+  recent?: string[]
 }
 
-function readAll(): PrefsByAgent {
+type StoredByAgent = Record<string, StoredPrefs>
+
+function emptyPrefs(): ModelPrefs {
+  return { pinned: [], recent: [] }
+}
+
+function readAll(): StoredByAgent {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return {}
-    const parsed = JSON.parse(raw) as PrefsByAgent
+    const parsed = JSON.parse(raw) as StoredByAgent
     return parsed && typeof parsed === 'object' ? parsed : {}
   } catch {
     return {}
   }
 }
 
-function writeAll(all: PrefsByAgent): void {
+function writeAll(all: StoredByAgent): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(all))
   } catch {
@@ -42,13 +59,46 @@ function writeAll(all: PrefsByAgent): void {
   }
 }
 
-/** Load prefs for one agent harness id. */
+/**
+ * Migrate a legacy `favorites` array (per-variant ids) to `pinned` (base ids).
+ * Deduplicates: multiple variants of the same base collapse to one entry.
+ * Order is preserved by first occurrence of each base.
+ */
+function migrateFavoritesToFavorites(favorites: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const id of favorites) {
+    if (!id) continue
+    const base = parseModelId(id).base
+    if (!base || seen.has(base)) continue
+    seen.add(base)
+    out.push(base)
+  }
+  return out
+}
+
+/** Load prefs for one agent harness id, migrating legacy `favorites` on read. */
 export function getModelPrefs(agentId: string): ModelPrefs {
   if (!agentId) return emptyPrefs()
   const entry = readAll()[agentId]
   if (!entry) return emptyPrefs()
+
+  const pinned = Array.isArray(entry.pinned)
+    ? entry.pinned.filter(Boolean)
+    : Array.isArray(entry.favorites)
+      ? migrateFavoritesToFavorites(entry.favorites)
+      : []
+
+  // If we migrated from favorites, persist the new shape (keep favorites for
+  // backward compat in case other code still reads it).
+  if (!Array.isArray(entry.pinned) && Array.isArray(entry.favorites) && pinned.length) {
+    const all = readAll()
+    all[agentId] = { ...entry, pinned, favorites: entry.favorites }
+    writeAll(all)
+  }
+
   return {
-    favorites: Array.isArray(entry.favorites) ? entry.favorites.filter(Boolean) : [],
+    pinned,
     recent: Array.isArray(entry.recent) ? entry.recent.filter(Boolean) : [],
   }
 }
@@ -70,15 +120,20 @@ export function pushRecentModel(agentId: string, modelId: string): ModelPrefs {
   return next
 }
 
-/** Toggle a model in the favorites list. Returns the updated prefs. */
-export function toggleFavoriteModel(agentId: string, modelId: string): ModelPrefs {
+/**
+ * Toggle a base model id in the pinned list. Returns the updated prefs.
+ * Caller is expected to pass a base id (e.g. "gpt-5.3-codex"); passing a full
+ * variant id will still work but is discouraged — only the exact string match
+ * is toggled.
+ */
+export function togglePinnedModel(agentId: string, baseModelId: string): ModelPrefs {
   const prefs = getModelPrefs(agentId)
-  if (!modelId) return prefs
-  const isFav = prefs.favorites.includes(modelId)
-  const favorites = isFav
-    ? prefs.favorites.filter((id) => id !== modelId)
-    : [...prefs.favorites, modelId].slice(0, MAX_FAVORITES)
-  const next = { ...prefs, favorites }
+  if (!baseModelId) return prefs
+  const isPinned = prefs.pinned.includes(baseModelId)
+  const pinned = isPinned
+    ? prefs.pinned.filter((id) => id !== baseModelId)
+    : [...prefs.pinned, baseModelId].slice(0, MAX_PINNED)
+  const next = { ...prefs, pinned }
   saveAgent(agentId, next)
   return next
 }
@@ -91,7 +146,7 @@ export interface ModelOption {
   description?: string
 }
 
-export type ModelGroupId = 'favorites' | 'recent' | 'preferred' | 'all'
+export type ModelGroupId = 'pinned' | 'recent' | 'preferred' | 'all'
 
 export interface ModelGroup {
   id: ModelGroupId
@@ -103,6 +158,8 @@ export interface ModelGroup {
  * Build ordered dropdown groups for a model list.
  * Models already shown in an earlier group are omitted from later ones so each
  * id appears once. Empty groups are dropped.
+ *
+ * The "pinned" group matches every variant whose base id is in `prefs.pinned`.
  */
 export function groupModelsForSelect(
   models: ModelOption[],
@@ -125,8 +182,24 @@ export function groupModelsForSelect(
 
   const groups: ModelGroup[] = []
 
-  const fav = take(prefs.favorites)
-  if (fav.length) groups.push({ id: 'favorites', label: 'Favorites', models: fav })
+  // Pinned: every variant whose base id is pinned. Preserve the order of
+  // `models` so variants of the same base stay grouped together, and pinned
+  // bases appear in the order they were pinned (first variant encountered).
+  const pinnedSet = new Set(prefs.pinned)
+  // Walk pinned bases in order; for each, emit all matching variants in
+  // `models` order. Models whose base isn't pinned are skipped here.
+  const pinnedModels: ModelOption[] = []
+  for (const base of prefs.pinned) {
+    if (!pinnedSet.has(base)) continue
+    for (const m of models) {
+      if (used.has(m.id)) continue
+      if (parseModelId(m.id).base === base) {
+        used.add(m.id)
+        pinnedModels.push(m)
+      }
+    }
+  }
+  if (pinnedModels.length) groups.push({ id: 'pinned', label: 'Pinned', models: pinnedModels })
 
   const recent = take(prefs.recent)
   if (recent.length) groups.push({ id: 'recent', label: 'Recent', models: recent })
