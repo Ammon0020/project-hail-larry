@@ -1036,3 +1036,72 @@ fn log_includes_annotated_tag_labels() {
         .expect("head commit");
     assert!(head.tag_labels.contains(&"v2.0.0".to_string()));
 }
+
+#[test]
+fn stash_push_and_pop() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    // Create a file, stage it, then stash.
+    std::fs::write(dir.path().join("file.txt"), "content").expect("write");
+    Command::new("git")
+        .args(["add", "file.txt"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git add");
+    let output = stash_push(dir.path(), Some("test stash")).expect("stash push");
+    assert!(
+        !output.contains("No local changes to save"),
+        "expected changes to be stashed, got: {output}"
+    );
+    // Working tree should be clean after stash.
+    let st = status(dir.path()).expect("status");
+    assert!(
+        st.files.is_empty(),
+        "working tree should be clean after stash"
+    );
+    // List should show 1 entry.
+    let list = stash_list(dir.path()).expect("stash list");
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].index, 0);
+    // Pop restores the changes.
+    stash_pop(dir.path()).expect("stash pop");
+    let st = status(dir.path()).expect("status");
+    assert!(
+        !st.files.is_empty(),
+        "working tree should have changes after pop"
+    );
+}
+
+#[test]
+fn stash_drop_removes_entry() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    std::fs::write(dir.path().join("a.txt"), "a").expect("write");
+    Command::new("git")
+        .args(["add", "a.txt"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git add");
+    stash_push(dir.path(), Some("first")).expect("stash push");
+    std::fs::write(dir.path().join("b.txt"), "b").expect("write");
+    Command::new("git")
+        .args(["add", "b.txt"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git add");
+    stash_push(dir.path(), Some("second")).expect("stash push");
+    let list = stash_list(dir.path()).expect("stash list");
+    assert_eq!(list.len(), 2);
+    // Drop the most recent (index 0).
+    stash_drop(dir.path(), 0).expect("stash drop");
+    let list = stash_list(dir.path()).expect("stash list");
+    assert_eq!(list.len(), 1);
+}
+
+#[test]
+fn stash_list_empty() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let list = stash_list(dir.path()).expect("stash list");
+    assert!(list.is_empty());
+}

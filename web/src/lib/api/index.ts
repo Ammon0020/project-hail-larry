@@ -25,6 +25,7 @@ export type {
   LogResult,
   CommitDiffFile,
   CommitDiffResult,
+  StashEntry,
 } from './git'
 export type { SessionHistoryCapabilities, EditorSelectionInfo, UploadResult } from './sessions'
 export type { PermissionOptionInfo, PendingPermission, DeviceCredential, PairingSession } from './permissions'

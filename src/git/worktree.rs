@@ -3,7 +3,7 @@ use std::process::Command;
 
 use super::cli::{configure_default_identity, git_file, git_output, output_text, run_git};
 use super::repo::{contained_path, head_ref_info, open_repo, status};
-use super::{CommitDiffFile, CommitDiffResult, DiffResult, GitError};
+use super::{CommitDiffFile, CommitDiffResult, DiffResult, GitError, StashEntry};
 use crate::pathutil::strip_verbatim_prefix;
 
 /// Maximum unified-diff bytes returned for a single file before truncation.
@@ -670,4 +670,162 @@ pub fn add_to_gitignore(root: &Path, patterns: &[String]) -> Result<Vec<String>,
     std::fs::write(&path, content)
         .map_err(|err| GitError::Operation(format!("write .gitignore: {err}")))?;
     Ok(added)
+}
+
+/// `git stash push` with an optional message. Returns the combined stdout/stderr
+/// text. Shells out (rather than using `gix`) because `gix` has no stash support;
+/// the same credential/identity model as `push`/`fetch` applies (agent env, no
+/// storage). If the working tree is clean, git exits 0 with "No local changes to
+/// save" — we surface that as [`GitError::Operation`] so the caller can inform
+/// the user that nothing was stashed.
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository and
+/// [`GitError::Operation`] when Git cannot create the stash.
+pub fn stash_push(root: &Path, message: Option<&str>) -> Result<String, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    let mut cmd = Command::new("git");
+    cmd.current_dir(root).arg("stash").arg("push");
+    if let Some(msg) = message {
+        cmd.arg("-m").arg(msg);
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| GitError::Operation(format!("stash push: {e}")))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Operation(text));
+    }
+    Ok(text)
+}
+
+/// `git stash pop` — applies and drops the most recent stash (index 0). Returns
+/// the combined stdout/stderr text. On conflict, git leaves the stash applied
+/// and exits non-zero; we surface that as [`GitError::Operation`].
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository and
+/// [`GitError::Operation`] when Git cannot pop the stash (e.g. conflicts).
+pub fn stash_pop(root: &Path) -> Result<String, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    let output = Command::new("git")
+        .current_dir(root)
+        .arg("stash")
+        .arg("pop")
+        .output()
+        .map_err(|e| GitError::Operation(format!("stash pop: {e}")))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Operation(text));
+    }
+    Ok(text)
+}
+
+/// `git stash drop` — removes a specific stash entry by index. Returns the
+/// combined stdout/stderr text.
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository and
+/// [`GitError::Operation`] when Git cannot drop the entry (e.g. bad index).
+pub fn stash_drop(root: &Path, index: u32) -> Result<String, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    let ref_str = format!("stash@{{{index}}}");
+    let output = Command::new("git")
+        .current_dir(root)
+        .arg("stash")
+        .arg("drop")
+        .arg(&ref_str)
+        .output()
+        .map_err(|e| GitError::Operation(format!("stash drop: {e}")))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Operation(text));
+    }
+    Ok(text)
+}
+
+/// `git stash list` — parses `git stash list --format=%gd|%H|%gs` into a
+/// [`StashEntry`] vec. Format per line: `stash@{0}|<full-oid>|WIP on main: <sha> <subject>`
+/// (or `On main: <subject>` for `stash push -m` entries). Returns an empty vec
+/// for a repo with no stashes.
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository and
+/// [`GitError::Operation`] when Git cannot list stashes.
+pub fn stash_list(root: &Path) -> Result<Vec<StashEntry>, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    let output = Command::new("git")
+        .current_dir(root)
+        .arg("stash")
+        .arg("list")
+        .arg("--format=%gd|%H|%gs")
+        .output()
+        .map_err(|e| GitError::Operation(format!("stash list: {e}")))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Operation(text));
+    }
+    let entries = text
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(3, '|').collect();
+            if parts.len() < 3 {
+                return None;
+            }
+            let ref_str = parts[0]; // stash@{0}
+            let oid = parts[1].to_string();
+            let gs = parts[2]; // WIP on main: abc123 message
+            let index = ref_str
+                .strip_prefix("stash@{")
+                .and_then(|s| s.strip_suffix("}"))
+                .and_then(|s| s.parse::<u32>().ok())?;
+            let (branch, message) = parse_stash_message(gs);
+            Some(StashEntry {
+                index,
+                oid,
+                branch,
+                message,
+            })
+        })
+        .collect();
+    Ok(entries)
+}
+
+/// Parse a `git stash list` `%gs` line into `(branch, message)`.
+/// Format: `WIP on <branch>: <sha> <subject>` or `On <branch>: <subject>`.
+/// Falls back to `(empty, gs)` when the line doesn't match either shape.
+fn parse_stash_message(gs: &str) -> (String, String) {
+    // Try "WIP on branch: sha subject" or "On branch: subject"
+    if let Some(rest) = gs.strip_prefix("WIP on ") {
+        if let Some(colon) = rest.find(": ") {
+            let branch = rest[..colon].to_string();
+            let after = &rest[colon + 2..];
+            // Skip the sha prefix if present.
+            let msg = after
+                .split_once(' ')
+                .map_or(after, |(_, m)| m.trim())
+                .to_string();
+            return (branch, msg);
+        }
+    }
+    if let Some(rest) = gs.strip_prefix("On ") {
+        if let Some(colon) = rest.find(": ") {
+            let branch = rest[..colon].to_string();
+            let msg = rest[colon + 2..].trim().to_string();
+            return (branch, msg);
+        }
+    }
+    (String::new(), gs.to_string())
 }

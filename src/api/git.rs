@@ -139,6 +139,17 @@ pub(crate) struct DiscardRequest {
     paths: Vec<String>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct StashPushRequest {
+    #[serde(default)]
+    message: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct StashDropRequest {
+    index: u32,
+}
+
 /// `GET /api/workspaces/{id}/git/status`.
 pub async fn get_git_status(
     State(state): State<AppState>,
@@ -383,6 +394,56 @@ pub async fn discard(
     let discarded =
         run_git_blocking("discard", move || git::discard(&root, &request.paths)).await?;
     Ok(Json(json!({ "discarded": discarded })))
+}
+
+/// `POST /api/workspaces/{id}/git/stash` — `git stash push` with an optional
+/// message. Same trust model as the other write paths (paired device or
+/// loopback, workspace-scoped).
+pub async fn stash_push(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<StashPushRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    let root = workspace_root(&state, &id).await?;
+    let output = run_git_blocking("stash-push", move || {
+        git::stash_push(&root, request.message.as_deref())
+    })
+    .await?;
+    Ok(Json(json!({ "ok": true, "stderr": output })))
+}
+
+/// `POST /api/workspaces/{id}/git/stash/pop` — `git stash pop`.
+pub async fn stash_pop(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiResponseError> {
+    let root = workspace_root(&state, &id).await?;
+    let output = run_git_blocking("stash-pop", move || git::stash_pop(&root)).await?;
+    Ok(Json(json!({ "ok": true, "stderr": output })))
+}
+
+/// `POST /api/workspaces/{id}/git/stash/drop` — `git stash drop` by index.
+pub async fn stash_drop(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<StashDropRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    let root = workspace_root(&state, &id).await?;
+    let output =
+        run_git_blocking("stash-drop", move || git::stash_drop(&root, request.index)).await?;
+    Ok(Json(json!({ "ok": true, "stderr": output })))
+}
+
+/// `GET /api/workspaces/{id}/git/stash/list` — list stash entries.
+pub async fn stash_list(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<git::StashEntry>>, ApiResponseError> {
+    let root = workspace_root(&state, &id).await?;
+    let entries = run_git_blocking("stash-list", move || git::stash_list(&root)).await?;
+    Ok(Json(entries))
 }
 
 async fn workspace_root(state: &AppState, id: &str) -> Result<PathBuf, ApiResponseError> {

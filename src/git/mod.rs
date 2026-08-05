@@ -27,11 +27,11 @@ pub use history::{log, MAX_LOG_LIMIT};
 pub use repo::{detect, status};
 pub use types::{
     CommitAuthor, CommitDiffFile, CommitDiffResult, DiffResult, FileStatus, GitError, GitRepoInfo,
-    LogCommit, LogResult, StatusResult,
+    LogCommit, LogResult, StashEntry, StatusResult,
 };
 pub use worktree::{
     add_to_gitignore, checkout, checkout_commit, commit, commit_diff, diff, discard, fetch, init,
-    pull, push, stage, unstage, MAX_DIFF_BYTES,
+    pull, push, stage, stash_drop, stash_list, stash_pop, stash_push, unstage, MAX_DIFF_BYTES,
 };
 
 #[cfg(test)]

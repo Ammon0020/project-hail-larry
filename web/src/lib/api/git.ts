@@ -210,3 +210,44 @@ export function getGitCommitDiff(workspaceId: string, oid: string) {
     `/workspaces/${workspaceId}/git/commit-diff?oid=${encodeURIComponent(oid)}`,
   )
 }
+
+/** A single entry from `git stash list` (parsed from `stash@{i}` refs).
+ *  `index` is the stash position (0 = most recent), `oid` is the commit SHA,
+ *  `branch` is the branch the stash was created on, and `message` is the
+ *  user-supplied or auto-generated stash message. */
+export interface StashEntry {
+  index: number
+  oid: string
+  branch: string
+  message: string
+}
+
+/** POST /api/workspaces/{id}/git/stash — git stash push with optional message.
+ *  `stderr` carries any warnings git wrote to stderr (e.g. "Saved working directory
+ *  and index state WIP on main"). */
+export function gitStashPush(workspaceId: string, message?: string) {
+  return apiFetch<{ ok: true; stderr: string }>(`/workspaces/${workspaceId}/git/stash`, {
+    method: 'POST',
+    body: JSON.stringify({ message: message ?? null }),
+  })
+}
+
+/** POST /api/workspaces/{id}/git/stash/pop — git stash pop (most recent entry). */
+export function gitStashPop(workspaceId: string) {
+  return apiFetch<{ ok: true; stderr: string }>(`/workspaces/${workspaceId}/git/stash/pop`, {
+    method: 'POST',
+  })
+}
+
+/** POST /api/workspaces/{id}/git/stash/drop — git stash drop by index. */
+export function gitStashDrop(workspaceId: string, index: number) {
+  return apiFetch<{ ok: true; stderr: string }>(`/workspaces/${workspaceId}/git/stash/drop`, {
+    method: 'POST',
+    body: JSON.stringify({ index }),
+  })
+}
+
+/** GET /api/workspaces/{id}/git/stash/list — list stash entries (newest first). */
+export function getStashList(workspaceId: string) {
+  return apiFetch<StashEntry[]>(`/workspaces/${workspaceId}/git/stash/list`)
+}

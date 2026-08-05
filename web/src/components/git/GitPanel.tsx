@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
+  Archive,
   ArrowDown,
   ArrowUp,
   ChevronDown,
+  ChevronRight,
   Copy,
   DownloadCloud,
   Eye,
@@ -17,10 +19,16 @@ import {
   RefreshCw,
   RotateCcw,
   Send,
+  Trash2,
   MoreHorizontal,
 } from 'lucide-react'
 import { FileIcon } from '@/lib/fileIcon'
-import { api, type FileStatus, type StatusResult } from '@/lib/api'
+import {
+  api,
+  type FileStatus,
+  type StashEntry,
+  type StatusResult,
+} from '@/lib/api'
 import { useGitState } from '@/hooks/useGitState'
 import { useLongPressHandlers } from '@/hooks/useLongPressHandlers'
 import { cn } from '@/lib/utils'
@@ -372,6 +380,10 @@ export function GitPanel({
   // null. Shared by both sections so only one menu is open at a time.
   const [menuPath, setMenuPath] = useState<string | null>(null)
   const [branchPickerOpen, setBranchPickerOpen] = useState(false)
+  // Stash list + collapsible state. The stash section only renders when
+  // `stashes.length > 0`, so `stashExpanded` only matters once entries exist.
+  const [stashes, setStashes] = useState<StashEntry[]>([])
+  const [stashExpanded, setStashExpanded] = useState(false)
 
   const refreshStatus = useCallback(async () => {
     if (!workspaceId || !gitState?.repoDetected) {
@@ -386,10 +398,26 @@ export function GitPanel({
     }
   }, [gitState?.repoDetected, workspaceId])
 
+  /** Fetch the stash list. Silently clears on error so a transient backend
+   *  hiccup doesn't surface as a noisy banner; mutations still surface errors
+   *  via `runMutation`. */
+  const refreshStashes = useCallback(async () => {
+    if (!workspaceId || !gitState?.repoDetected) {
+      setStashes([])
+      return
+    }
+    try {
+      setStashes(await api.getStashList(workspaceId))
+    } catch {
+      setStashes([])
+    }
+  }, [gitState?.repoDetected, workspaceId])
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refreshStatus()
-  }, [refreshStatus])
+    void refreshStashes()
+  }, [refreshStatus, refreshStashes])
 
   const runMutation = useCallback(async (action: string, mutation: () => Promise<void>) => {
     setBusyAction(action)
@@ -397,6 +425,7 @@ export function GitPanel({
     try {
       await mutation()
       await refreshStatus()
+      await refreshStashes()
       setHistoryRefresh((value) => value + 1)
     } catch (err) {
       setError(errorMessage(err))
@@ -404,7 +433,7 @@ export function GitPanel({
     } finally {
       setBusyAction(null)
     }
-  }, [refreshStatus])
+  }, [refreshStatus, refreshStashes])
 
   const stagedFiles = useMemo(() => status?.files.filter((file) => file.staged) ?? [], [status])
   const unstagedFiles = useMemo(() => status?.files.filter((file) => !file.staged) ?? [], [status])
@@ -444,6 +473,30 @@ export function GitPanel({
       await onRepoChanged()
     })
   }, [busy, canCommit, message, onRepoChanged, runMutation, status?.headOid, workspaceId])
+
+  // Stash actions. Each routes through `runMutation` so busy state, error
+  // surfacing, and the trailing status/stash refresh are handled uniformly.
+  const stashPush = useCallback(() => {
+    if (!workspaceId || busy) return
+    void runMutation('stash', async () => {
+      await api.gitStashPush(workspaceId)
+    })
+  }, [busy, workspaceId, runMutation])
+
+  const stashPop = useCallback(() => {
+    if (!workspaceId || busy) return
+    void runMutation('stash-pop', async () => {
+      await api.gitStashPop(workspaceId)
+      await onRepoChanged()
+    })
+  }, [busy, workspaceId, runMutation, onRepoChanged])
+
+  const stashDrop = useCallback((index: number) => {
+    if (!workspaceId || busy) return
+    void runMutation('stash-drop', async () => {
+      await api.gitStashDrop(workspaceId, index)
+    })
+  }, [busy, workspaceId, runMutation])
 
   if (!workspaceId) {
     return <div className="p-6 text-center text-sm text-muted-foreground">Select a workspace to use source control.</div>
@@ -568,10 +621,70 @@ export function GitPanel({
           <button type="button" disabled={busy} onClick={() => void runMutation('push', async () => { await api.gitPush(workspaceId) })} className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50">
             {busyAction === 'push' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Push
           </button>
+          <button
+            type="button"
+            disabled={busy || (status?.files.length ?? 0) === 0}
+            onClick={stashPush}
+            className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+            title="Stash changes"
+          >
+            {busyAction === 'stash' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />} Stash
+          </button>
         </div>
       </div>
 
       {error && <div className="mx-3 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">{error}</div>}
+
+      {stashes.length > 0 && (
+        <div className="border-b border-border">
+          <button
+            type="button"
+            onClick={() => setStashExpanded((v) => !v)}
+            className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+          >
+            {stashExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <Archive className="h-3 w-3" />
+            <span>Stashes</span>
+            <span className="font-normal normal-case tracking-normal">({stashes.length})</span>
+          </button>
+          {stashExpanded && (
+            <div className="pb-1">
+              {stashes.map((stash) => (
+                <div
+                  key={stash.index}
+                  className="flex items-center gap-2 px-3 py-1 text-xs hover:bg-accent/40"
+                >
+                  <span className="shrink-0 font-mono text-muted-foreground">{stash.index}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate">{stash.message}</div>
+                    <div className="truncate text-[10px] text-muted-foreground">{stash.branch}</div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => stashPop()}
+                    className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                    title="Pop stash"
+                    aria-label="Pop stash"
+                  >
+                    {busyAction === 'stash-pop' ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowDown className="h-3 w-3" />}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => stashDrop(stash.index)}
+                    className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                    title="Drop stash"
+                    aria-label="Drop stash"
+                  >
+                    {busyAction === 'stash-drop' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pb-2">
         <ChangeSection title="Staged Changes" files={stagedFiles} staged onStage={(paths, all) => void runMutation('stage', async () => { await api.gitStage(workspaceId, paths, all) })} onUnstage={(paths) => void runMutation('unstage', async () => { await api.gitUnstage(workspaceId, paths) })} onOpenDiff={onOpenDiff} onIgnore={(path) => void runMutation('ignore', async () => { await api.gitIgnore(workspaceId, [path]) })} onFileSelect={onFileSelect} busy={busy} scrollRef={scrollRef} menuPath={menuPath} setMenuPath={setMenuPath} />

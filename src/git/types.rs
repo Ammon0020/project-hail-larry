@@ -137,6 +137,20 @@ pub struct LogResult {
     pub has_more: bool,
 }
 
+/// One entry from `git stash list`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StashEntry {
+    /// Stash index (0 = most recent), e.g. `stash@{0}`.
+    pub index: u32,
+    /// Short commit oid of the stash commit.
+    pub oid: String,
+    /// Branch name the stash was created on.
+    pub branch: String,
+    /// Stash message (the subject line after `WIP on` / `On`).
+    pub message: String,
+}
+
 /// Typed errors for git operations. Mapped to [`AppError`] by callers so the
 /// API layer surfaces stable HTTP status codes without re-parsing strings.
 #[derive(Debug, Error)]
