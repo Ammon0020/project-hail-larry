@@ -19,6 +19,10 @@
       "Exec(npm list)",
       "Exec(npx eslint)",
       "Exec(npx tsc)",
+      "Exec(npx repomix@latest)",
+      "Exec(npx repomix@latest *)",
+      "Exec(repomix)",
+      "Exec(repomix *)",
       "Exec(./build.sh)",
       "Exec(./build.ps1)"
     ],

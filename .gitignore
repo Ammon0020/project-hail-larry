@@ -14,3 +14,6 @@ target/
 
 # Local rustup toolchain config (per-developer, not shared).
 .rustup/
+
+# Repomix packed output (regenerated on demand; never commit the artifact).
+repomix-output*.xml
