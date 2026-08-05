@@ -403,11 +403,7 @@ fn newest_log(log_dir: &Path) -> Result<Option<std::path::PathBuf>> {
     };
     let mut files = entries
         .filter_map(std::result::Result::ok)
-        .filter(|entry| {
-            entry
-                .file_type()
-                .is_ok_and(|type_| type_.is_file())
-        })
+        .filter(|entry| entry.file_type().is_ok_and(|type_| type_.is_file()))
         .filter(|entry| {
             entry
                 .file_name()

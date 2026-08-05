@@ -130,6 +130,13 @@ thiserror = "2.0"
 # so 1.6.0 is blocked until a newer ACP release supports it. Verified 2026-08-05.
 agent-client-protocol = { version = "2.0.0", features = ["unstable", "unstable_mcp_over_acp"] }
 agent-client-protocol-schema = { version = "1.5.0", features = ["unstable_llm_providers"] }
+# agent-client-protocol-conductor: orchestrates proxy chains between client and
+# agent. Used to insert the MCP-over-ACP polyfill transparently. Verified 2026-08-05.
+agent-client-protocol-conductor = "2.0.0"
+# agent-client-protocol-polyfill: MCP-over-ACP compatibility proxy. Adapts
+# schema-native McpServer::Acp declarations for agents that don't support
+# mcpCapabilities.acp by bridging via loopback HTTP. Verified 2026-08-05.
+agent-client-protocol-polyfill = "2.0.0"
 # async-process owns ACP agent children while exposing futures-compatible stdio
 # streams for the SDK's ByteStreams transport. Production ACP needs explicit
 # cwd, stderr-tail, and child lifecycle control, which AcpAgent intentionally

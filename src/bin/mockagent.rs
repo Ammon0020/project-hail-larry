@@ -159,8 +159,7 @@ async fn main() {
     // Default to advertising the mode/profile capability; suppress only when
     // the no-cap env var is explicitly set, so contract tests can exercise the
     // client's prompt-injection fallback branch.
-    let mode_cap = std::env::var(ENV_NO_MODE_CAP)
-        .map_or(true, |v| v.is_empty());
+    let mode_cap = std::env::var(ENV_NO_MODE_CAP).map_or(true, |v| v.is_empty());
     let profiles: Profiles = Arc::new(Mutex::new(HashMap::new()));
 
     let result = Agent

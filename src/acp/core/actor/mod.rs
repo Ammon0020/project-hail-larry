@@ -18,6 +18,8 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ByteStreams, Client as SdkClient, ConnectionTo};
+use agent_client_protocol_conductor::{ConductorImpl, ProxiesAndAgent};
+use agent_client_protocol_polyfill::mcp_over_acp::McpOverAcpPolyfill;
 use async_process::Command;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -244,6 +246,19 @@ async fn run_actor_inner(
         spawn_stderr_drain(stderr, Arc::clone(&config.stderr_tail));
     }
     let transport = ByteStreams::new(stdin, stdout);
+    // Insert a conductor with the MCP-over-ACP polyfill between the client and
+    // the agent. For agents that support HTTP MCP but not native ACP, the
+    // polyfill advertises mcpCapabilities.acp = true and bridges any
+    // McpServer::Acp declarations through a loopback HTTP listener, relaying
+    // mcp/connect / mcp/message / mcp/disconnect over ACP. Stdio/Http/Sse
+    // servers and native-ACP agents pass through unchanged.
+    // TODO: client-side handlers for mcp/connect / message / disconnect are not
+    // yet wired, and ServerConfig::to_acp does not yet emit McpServer::Acp.
+    // The polyfill is inert until both are addressed (see follow-up story).
+    let conductor = ConductorImpl::new_agent(
+        "local-agent-conductor",
+        ProxiesAndAgent::new(transport).proxy(McpOverAcpPolyfill::http()),
+    );
     let terminals = Arc::new(Mutex::new(HashMap::new()));
     let handler_cancel = CancellationToken::new();
     let event_bus = Arc::clone(&config.event_bus);
@@ -410,7 +425,7 @@ async fn run_actor_inner(
             },
             agent_client_protocol::on_receive_request!(),
         )
-        .connect_with(transport, move |cx: ConnectionTo<Agent>| async move {
+        .connect_with(conductor, move |cx: ConnectionTo<Agent>| async move {
             // clientInfo is required by agents that forward name/version into
             // upstream provider metadata (Mistral rejects empty strings).
             let initialize = InitializeRequest::new(ProtocolVersion::V1)
