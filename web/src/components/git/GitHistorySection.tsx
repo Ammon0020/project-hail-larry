@@ -128,7 +128,10 @@ function GraphRow({
             onToggle()
           }
         }}
-        className="group flex w-full items-center gap-2 border-b border-border/40 px-2 text-left hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none data-[state=open]:bg-accent/60"
+        className={cn(
+          'group flex w-full items-center gap-2 px-2 text-left hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none data-[state=open]:bg-accent/60',
+          !isExpanded && 'border-b border-border/40',
+        )}
         style={{ height: ROW_HEIGHT }}
         title={`${commit.message} (${commit.oid})`}
       >
