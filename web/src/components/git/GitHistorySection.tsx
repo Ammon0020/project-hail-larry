@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, Copy, Crosshair, GitBranch, GitCommit, List, Loader2, RefreshCw, SquareArrowOutUpRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, Crosshair, GitBranch, GitCommit, List, Loader2, RefreshCw, Search, SquareArrowOutUpRight } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { api, type CommitDiffResult, type LogCommit } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -260,9 +260,15 @@ export function GitHistorySection({
   const [expandedOids, setExpandedOids] = useState<Set<string>>(() => new Set())
   const [headFlash, setHeadFlash] = useState(false)
   const [headNotice, setHeadNotice] = useState<string | null>(null)
+  // Client-side filter for the graph pane. `filter` tracks the input directly
+  // (so typing feels responsive) while `debouncedFilter` is the value actually
+  // applied to the commit list, updated 200ms after typing settles. This keeps
+  // the virtualizer from recomputing layout on every keystroke.
+  const [filter, setFilter] = useState('')
+  const [debouncedFilter, setDebouncedFilter] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const fetchToken = useRef(0)
-  const pendingScrollHead = useRef<number | null>(null)
+  const pendingScrollHead = useRef<string | null>(null)
   const resizing = useRef(false)
   const diffCache = useRef<Map<string, CommitDiffResult>>(new Map())
 
@@ -309,6 +315,30 @@ export function GitHistorySection({
     }
   }, [commits.length, hasMore, loadingMore, workspaceId])
 
+  // Debounce the filter input so the virtualizer doesn't recompute layout on
+  // every keystroke. 200ms is short enough to feel instant while typing but
+  // coalesces rapid edits.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedFilter(filter), 200)
+    return () => clearTimeout(timer)
+  }, [filter])
+
+  // Commits visible in the graph after applying the (debounced) filter. Matches
+  // are case-insensitive against author name, author email, commit message
+  // substring, or SHA prefix. Pagination (`loadMore`, `scrollToHead`) keeps
+  // using the full `commits` array; this only controls what's rendered.
+  const filteredCommits = useMemo(() => {
+    if (!debouncedFilter) return commits
+    const q = debouncedFilter.toLowerCase()
+    return commits.filter(
+      (c) =>
+        c.message.toLowerCase().includes(q) ||
+        c.author.name.toLowerCase().includes(q) ||
+        c.author.email.toLowerCase().includes(q) ||
+        c.oid.toLowerCase().startsWith(q),
+    )
+  }, [commits, debouncedFilter])
+
   // Interleave commits and expanded file-list slots into a single flat array
   // of virtual items. Each expanded commit inserts a `{ type: 'slot' }` item
   // right after its commit row. The virtualizer indexes directly into this
@@ -316,27 +346,28 @@ export function GitHistorySection({
   // index arithmetic in the render loop.
   const flatItems = useMemo<FlatItem[]>(() => {
     const items: FlatItem[] = []
-    for (let i = 0; i < commits.length; i++) {
+    for (let i = 0; i < filteredCommits.length; i++) {
       items.push({ type: 'commit', commitIndex: i })
-      if (expandedOids.has(commits[i].oid)) {
-        items.push({ type: 'slot', oid: commits[i].oid })
+      if (expandedOids.has(filteredCommits[i].oid)) {
+        items.push({ type: 'slot', oid: filteredCommits[i].oid })
       }
     }
     return items
-  }, [commits, expandedOids])
+  }, [filteredCommits, expandedOids])
 
   // Map a commit index to its virtual (flat) index, accounting for any
   // expanded slots inserted before it. Used by scroll-to-HEAD, which works in
-  // commit indices but must scroll the virtualizer.
+  // commit indices but must scroll the virtualizer. Operates on the filtered
+  // list since that's what the virtualizer renders.
   const commitIndexToVirtualIndex = useCallback(
     (commitIndex: number) => {
       let slotsBefore = 0
       for (let i = 0; i < commitIndex; i++) {
-        if (expandedOids.has(commits[i].oid)) slotsBefore++
+        if (expandedOids.has(filteredCommits[i].oid)) slotsBefore++
       }
       return commitIndex + slotsBefore
     },
-    [commits, expandedOids],
+    [filteredCommits, expandedOids],
   )
 
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -350,7 +381,7 @@ export function GitHistorySection({
       if (index === flatItems.length) return 'load-more'
       const flatItem = flatItems[index]
       if (flatItem?.type === 'slot') return `slot-${flatItem.oid}`
-      if (flatItem?.type === 'commit') return `commit-${commits[flatItem.commitIndex]?.oid ?? index}`
+      if (flatItem?.type === 'commit') return `commit-${filteredCommits[flatItem.commitIndex]?.oid ?? index}`
       return index
     },
     estimateSize: (index: number) => {
@@ -363,48 +394,70 @@ export function GitHistorySection({
     },
     overscan: 8,
   })
-  const layout = useMemo(() => layoutGitGraph(commits), [commits])
+  const layout = useMemo(() => layoutGitGraph(filteredCommits), [filteredCommits])
   const items = virtualizer.getVirtualItems()
 
-  // Once commits update and a scroll is pending, jump to the index and flash.
-  // `pendingScrollHead` holds a commit index, which we translate to a virtual
-  // (flat) index since expanded slots shift commit positions in the list.
+  // Once commits update and a scroll is pending, jump to HEAD and flash.
+  // `pendingScrollHead` holds the HEAD oid (not an index) so it stays correct
+  // when a filter is active — we resolve it against `filteredCommits` here,
+  // since that's what the virtualizer renders. If the filter hides HEAD, we
+  // surface a notice instead of scrolling to the wrong row.
   useEffect(() => {
     if (pendingScrollHead.current == null) return
-    const commitIndex = pendingScrollHead.current
+    const headOid = pendingScrollHead.current
     pendingScrollHead.current = null
+    const filteredIndex = filteredCommits.findIndex((c) => c.oid === headOid)
+    if (filteredIndex < 0) {
+      setHeadNotice('HEAD hidden by filter')
+      window.setTimeout(() => setHeadNotice(null), 1800)
+      return
+    }
     const run = () => {
-      virtualizer.scrollToIndex(commitIndexToVirtualIndex(commitIndex), { align: 'center' })
+      virtualizer.scrollToIndex(commitIndexToVirtualIndex(filteredIndex), { align: 'center' })
       setHeadFlash(true)
       window.setTimeout(() => setHeadFlash(false), 1500)
     }
     const raf = requestAnimationFrame(run)
     return () => cancelAnimationFrame(raf)
-  }, [commits, virtualizer, commitIndexToVirtualIndex])
+  }, [filteredCommits, virtualizer, commitIndexToVirtualIndex])
 
   // Scroll the virtualizer to the HEAD commit, fetching more pages if the
   // HEAD is outside the currently loaded window. Capped at 10 pages to avoid
   // unbounded fetching. Uses fetchToken so a concurrent `refresh` cancels us.
+  // Pagination decisions use the full `commits` array (so we don't re-fetch
+  // already-loaded pages), but the scroll target is resolved against
+  // `filteredCommits` since that's what's rendered.
   const scrollToHead = useCallback(async () => {
     if (loading) return
     const token = fetchToken.current
+    // HEAD already loaded — try to scroll within the currently rendered
+    // (filtered) list. If the filter hides HEAD, tell the user rather than
+    // jumping to the wrong row.
+    const headInCommits = commits.findIndex((c) => c.isHead)
+    if (headInCommits >= 0) {
+      const headOid = commits[headInCommits].oid
+      const filteredIndex = filteredCommits.findIndex((c) => c.oid === headOid)
+      if (filteredIndex >= 0) {
+        virtualizer.scrollToIndex(commitIndexToVirtualIndex(filteredIndex), { align: 'center' })
+        setHeadFlash(true)
+        window.setTimeout(() => setHeadFlash(false), 1500)
+      } else {
+        setHeadNotice('HEAD hidden by filter')
+        window.setTimeout(() => setHeadNotice(null), 1800)
+      }
+      return
+    }
+    // HEAD not yet loaded — fetch more pages until we find it. We search the
+    // full `current` list (not filtered) for HEAD, then defer the scroll to
+    // the effect above which resolves the oid against `filteredCommits` after
+    // the state update lands.
     let current = commits
     let canLoad = hasMore
     for (let page = 0; page < 10; page++) {
       const headIndex = current.findIndex((c) => c.isHead)
       if (headIndex >= 0) {
-        if (current === commits) {
-          // HEAD already loaded — scroll directly (setCommits would be a no-op
-          // since it's the same array reference, so the effect won't fire).
-          virtualizer.scrollToIndex(commitIndexToVirtualIndex(headIndex), { align: 'center' })
-          setHeadFlash(true)
-          window.setTimeout(() => setHeadFlash(false), 1500)
-        } else {
-          // HEAD found after fetching more pages — setCommits triggers the
-          // effect above which handles the scroll (and the index translation).
-          pendingScrollHead.current = headIndex
-          setCommits(current)
-        }
+        pendingScrollHead.current = current[headIndex].oid
+        setCommits(current)
         return
       }
       if (!canLoad) {
@@ -419,7 +472,7 @@ export function GitHistorySection({
       setCommits(current)
       setHasMore(canLoad)
     }
-  }, [commits, hasMore, loading, virtualizer, workspaceId, commitIndexToVirtualIndex])
+  }, [commits, filteredCommits, hasMore, loading, virtualizer, workspaceId, commitIndexToVirtualIndex])
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -512,13 +565,27 @@ export function GitHistorySection({
           {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           <GitBranch className="h-3 w-3" />
           <span>Graph</span>
-          {!loading && <span className="font-normal normal-case tracking-normal">({commits.length})</span>}
+          {!loading && (
+            <span className="font-normal normal-case tracking-normal">
+              {debouncedFilter ? `(${filteredCommits.length}/${commits.length})` : `(${commits.length})`}
+            </span>
+          )}
           {headNotice && (
             <span className="ml-1 truncate text-[10px] font-normal normal-case tracking-normal text-muted-foreground">
               {headNotice}
             </span>
           )}
         </button>
+        {expanded && (
+          <input
+            type="search"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter…"
+            className="h-5 w-24 rounded-sm border border-border bg-background px-1.5 text-[10px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            aria-label="Filter commits"
+          />
+        )}
         <button
           type="button"
           onClick={() => setFlatMode((value) => !value)}
@@ -558,6 +625,10 @@ export function GitHistorySection({
           ) : error ? (
             <div className="flex h-full items-center justify-center px-3 text-center text-xs text-destructive">
               Failed to load history: {error}
+            </div>
+          ) : debouncedFilter && filteredCommits.length === 0 ? (
+            <div className="flex h-full items-center justify-center gap-1.5 text-xs text-muted-foreground">
+              <Search className="h-3.5 w-3.5" /> No commits match "{debouncedFilter}".
             </div>
           ) : commits.length === 0 ? (
             <div className="flex h-full items-center justify-center gap-1.5 text-xs text-muted-foreground">
@@ -643,7 +714,7 @@ export function GitHistorySection({
                 // Regular commit row.
                 if (flatItem?.type !== 'commit') return null
                 const commitIndex = flatItem.commitIndex
-                const commit = commits[commitIndex]
+                const commit = filteredCommits[commitIndex]
                 if (!commit) return null
                 return (
                   <div
