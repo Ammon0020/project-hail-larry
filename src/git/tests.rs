@@ -995,3 +995,44 @@ fn checkout_commit_enters_detached_head() {
     assert_eq!(result.head_branch, None);
     assert_eq!(result.head_oid.as_deref(), Some(oid.as_str()));
 }
+
+#[test]
+fn log_includes_tag_labels() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let oid = head_oid(dir.path());
+    // Create a lightweight tag at HEAD.
+    Command::new("git")
+        .args(["tag", "v1.0.0"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git tag");
+    let result = log(dir.path(), 100, 0).expect("log");
+    let head = result
+        .commits
+        .iter()
+        .find(|c| c.oid == oid)
+        .expect("head commit");
+    assert!(head.tag_labels.contains(&"v1.0.0".to_string()));
+}
+
+#[test]
+fn log_includes_annotated_tag_labels() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let oid = head_oid(dir.path());
+    // Create an annotated tag at HEAD (points at a tag object that points at
+    // the commit — exercises the peel-to-commit path).
+    Command::new("git")
+        .args(["tag", "-a", "v2.0.0", "-m", "release 2.0"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git tag -a");
+    let result = log(dir.path(), 100, 0).expect("log");
+    let head = result
+        .commits
+        .iter()
+        .find(|c| c.oid == oid)
+        .expect("head commit");
+    assert!(head.tag_labels.contains(&"v2.0.0".to_string()));
+}

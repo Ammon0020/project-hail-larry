@@ -120,6 +120,8 @@ pub struct LogCommit {
     pub author: CommitAuthor,
     /// Short names of local branches pointing at this commit (e.g. `main`).
     pub branch_labels: Vec<String>,
+    /// Short names of tags pointing at this commit (e.g. `v1.0.0`).
+    pub tag_labels: Vec<String>,
     /// `true` when this is the commit HEAD points at.
     pub is_head: bool,
 }

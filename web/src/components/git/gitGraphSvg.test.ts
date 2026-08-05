@@ -16,6 +16,7 @@ function commit(oid: string, parents: string[] = []): LogCommit {
     message: `${oid} message`,
     author: { name: 'n', email: 'e', time: '0' },
     branchLabels: [],
+    tagLabels: [],
     isHead: false,
   }
 }

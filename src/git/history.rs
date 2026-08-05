@@ -46,6 +46,10 @@ pub fn log(root: &Path, limit: u32, offset: u32) -> Result<LogResult, GitError> 
     // commit oid → short branch names map (for per-commit labels) and the set
     // of branch-head oids to seed the union walk. Cheap; refs are a small list.
     let (branch_map, mut tips) = build_branch_refs(&repo)?;
+    // Tag labels: scan `refs/tags/*` once and build the commit oid → short tag
+    // names map. Tags don't seed the rev_walk tips (only branches + HEAD do);
+    // they just add labels to commits that already appear in the walk.
+    let tag_map = build_tag_refs(&repo)?;
 
     // Seed the walk with HEAD too, so a detached HEAD's commit (which no local
     // branch points at) still appears and `is_head` always has a match. When
@@ -96,6 +100,7 @@ pub fn log(root: &Path, limit: u32, offset: u32) -> Result<LogResult, GitError> 
             .unwrap_or_default();
 
         let labels = branch_map.get(&oid_hex).cloned().unwrap_or_default();
+        let tags = tag_map.get(&oid_hex).cloned().unwrap_or_default();
 
         all.push(LogCommit {
             oid: oid_hex,
@@ -107,6 +112,7 @@ pub fn log(root: &Path, limit: u32, offset: u32) -> Result<LogResult, GitError> 
                 time: format_iso8601_utc(author_time),
             },
             branch_labels: labels,
+            tag_labels: tags,
             is_head: oid == head_oid,
         });
     }
@@ -194,6 +200,57 @@ fn build_branch_refs(
     }
 
     Ok((map, tips))
+}
+
+/// Build the tag label map: commit hex oid → short tag names pointing at it.
+///
+/// Mirrors [`build_branch_refs`] but for `refs/tags/*`. Tags don't seed the
+/// `rev_walk` tips — they only add labels to commits that already appear in the
+/// walk — so this returns just the map (no tips). Annotated tags (which point
+/// at a tag object that points at a commit) are peeled to their target commit
+/// via `peel_to_id()`; multiple tags can point at the same commit, so the
+/// value is a `Vec`. Broken refs are skipped rather than failing the log call.
+fn build_tag_refs(repo: &gix::Repository) -> Result<BranchLabelMap, GitError> {
+    let mut map: BranchLabelMap = std::collections::HashMap::new();
+    let refs = repo
+        .references()
+        .map_err(|e| GitError::Operation(format!("references: {e}")))?;
+    let tags = refs
+        .tags()
+        .map_err(|e| GitError::Operation(format!("tags: {e}")))?;
+    // `peeled()` resolves packed-refs entries up front; without it the packed
+    // buffer would be held across the consumer's peel calls and panic.
+    let tags = tags
+        .peeled()
+        .map_err(|e| GitError::Operation(format!("peel tag refs: {e}")))?;
+
+    for tag in tags {
+        let Ok(mut tag) = tag else {
+            // Skip unreadable refs rather than failing the whole log.
+            continue;
+        };
+        let full_name = tag.name();
+        // Shorten `refs/tags/v1.0.0` → `v1.0.0`.
+        let short = full_name
+            .as_bstr()
+            .to_string()
+            .strip_prefix("refs/tags/")
+            .map_or_else(
+                || full_name.as_bstr().to_string(),
+                std::string::ToString::to_string,
+            );
+
+        // Peel to the target commit oid. Annotated tags point at a tag object
+        // that points at a commit; `peel_to_id()` follows the chain. A tag that
+        // doesn't peel to a commit is skipped.
+        if let Ok(id) = tag.peel_to_id() {
+            let oid = id.detach();
+            let hex = oid.to_hex().to_string();
+            map.entry(hex).or_default().push(short);
+        }
+    }
+
+    Ok(map)
 }
 
 /// Format a `gix::date::Time` as an RFC 3339 / ISO 8601 UTC string.

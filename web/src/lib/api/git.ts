@@ -61,6 +61,7 @@ export interface LogCommit {
   message: string
   author: CommitAuthor
   branchLabels: string[]
+  tagLabels: string[]
   isHead: boolean
 }
 

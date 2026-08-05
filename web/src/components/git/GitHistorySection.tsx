@@ -216,6 +216,14 @@ function GraphRow({
                 {label}
               </span>
             ))}
+            {(commit.tagLabels ?? []).map((label) => (
+              <span
+                key={`tag-${label}`}
+                className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium text-amber-600 dark:text-amber-400"
+              >
+                {label}
+              </span>
+            ))}
           </div>
         </div>
         <ChevronRight

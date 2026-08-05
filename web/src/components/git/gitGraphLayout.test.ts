@@ -14,6 +14,7 @@ function commit(
     message: extra.message ?? `${oid} message`,
     author: extra.author ?? { name: 'n', email: 'e', time: '0' },
     branchLabels: extra.branchLabels ?? [],
+    tagLabels: extra.tagLabels ?? [],
     isHead: extra.isHead ?? false,
   }
 }
