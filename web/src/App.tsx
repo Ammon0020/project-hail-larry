@@ -12,6 +12,7 @@ import { Banner } from '@/components/ui/Banner'
 import { joinWorkspacePath } from '@/lib/tabPath'
 import { cn } from '@/lib/utils'
 import { ChatPanel } from '@/components/ChatPanel'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { MobileNav } from '@/components/MobileNav'
 import { StatusBar } from '@/components/StatusBar'
 import { useBackend } from '@/hooks/useBackend'
@@ -536,7 +537,10 @@ export default function App() {
         }}
       />
 
-      {/* Left Sidebar — workspace switcher + explorer, search, or source control */}
+      {/* Left Sidebar — workspace switcher + explorer, search, or source control.
+       * Wrapped in a compact error boundary so a render crash here doesn't
+       * unmount the editor or chat. */}
+      <ErrorBoundary compact name="Sidebar">
       <LeftSidebar
         activePanel={leftPanel}
         onSwitchPanel={setLeftPanel}
@@ -560,6 +564,7 @@ export default function App() {
         style={isDesktop ? { width: leftPanelWidth } : undefined}
         connected={backend.connected}
       />
+      </ErrorBoundary>
 
       {/* Resize handle between left sidebar and editor (desktop only) */}
       {isDesktop && showLeftSidebar && (
@@ -582,6 +587,8 @@ export default function App() {
         />
       )}
 
+      {/* Compact error boundary isolates editor crashes from the rest of the app. */}
+      <ErrorBoundary compact name="Editor">
       <EditorPane
         tabs={openTabs}
         activeTabId={activeTabId}
@@ -634,6 +641,7 @@ export default function App() {
         autoIndent={editorSettings.autoIndent}
         closeBrackets={editorSettings.closeBrackets}
       />
+      </ErrorBoundary>
 
       {/* Resize handle between editor and right chat panel (desktop only) */}
       {isDesktop && showChat && (
@@ -658,7 +666,9 @@ export default function App() {
         />
       )}
 
-      {/* Right Sidebar — agent chat */}
+      {/* Right Sidebar — agent chat. Compact boundary keeps a chat crash from
+       * taking down the editor/sidebar. */}
+      <ErrorBoundary compact name="Chat">
       <ChatPanel
         events={sessionEvents}
         allEvents={backend.events as AppEvent[]}
@@ -709,6 +719,7 @@ export default function App() {
           if (!isDesktop) setMobileView('editor')
         }}
       />
+      </ErrorBoundary>
 
       </div>
 

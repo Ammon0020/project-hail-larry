@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, Copy, GitBranch, GitCommit, List, Loader2, RefreshCw, SquareArrowOutUpRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, Crosshair, GitBranch, GitCommit, List, Loader2, RefreshCw, SquareArrowOutUpRight } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { api, type CommitDiffResult, type LogCommit } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -225,8 +225,11 @@ export function GitHistorySection({
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedOid, setExpandedOid] = useState<string | null>(null)
+  const [headFlash, setHeadFlash] = useState(false)
+  const [headNotice, setHeadNotice] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fetchToken = useRef(0)
+  const pendingScrollHead = useRef<number | null>(null)
   const resizing = useRef(false)
   const diffCache = useRef<Map<string, CommitDiffResult>>(new Map())
 
@@ -297,6 +300,62 @@ export function GitHistorySection({
   })
   const layout = useMemo(() => layoutGitGraph(commits), [commits])
   const items = virtualizer.getVirtualItems()
+
+  // Once commits update and a scroll is pending, jump to the index and flash.
+  useEffect(() => {
+    if (pendingScrollHead.current == null) return
+    const index = pendingScrollHead.current
+    pendingScrollHead.current = null
+    const run = () => {
+      virtualizer.scrollToIndex(index, { align: 'center' })
+      setHeadFlash(true)
+      window.setTimeout(() => setHeadFlash(false), 1500)
+    }
+    const raf = requestAnimationFrame(run)
+    return () => cancelAnimationFrame(raf)
+  }, [commits, virtualizer])
+
+  // Scroll the virtualizer to the HEAD commit, fetching more pages if the
+  // HEAD is outside the currently loaded window. Capped at 10 pages to avoid
+  // unbounded fetching. Uses fetchToken so a concurrent `refresh` cancels us.
+  const scrollToHead = useCallback(async () => {
+    if (loading) return
+    const token = fetchToken.current
+    let current = commits
+    let canLoad = hasMore
+    for (let page = 0; page < 10; page++) {
+      const headIndex = current.findIndex((c) => c.isHead)
+      if (headIndex >= 0) {
+        if (current === commits) {
+          // HEAD already loaded — scroll directly (setCommits would be a no-op
+          // since it's the same array reference, so the effect won't fire).
+          virtualizer.scrollToIndex(headIndex, { align: 'center' })
+          setHeadFlash(true)
+          window.setTimeout(() => setHeadFlash(false), 1500)
+        } else {
+          // HEAD found after fetching more pages — setCommits triggers the
+          // effect above which handles the scroll.
+          pendingScrollHead.current = headIndex
+          setCommits(current)
+        }
+        return
+      }
+      if (!canLoad) {
+        setHeadNotice('HEAD not in recent history')
+        window.setTimeout(() => setHeadNotice(null), 1800)
+        return
+      }
+      const result = await api.getGitLog(workspaceId, 100, current.length)
+      if (token !== fetchToken.current) return
+      current = [
+        ...current,
+        ...result.commits.filter((c) => !current.some((x) => x.oid === c.oid)),
+      ]
+      canLoad = result.hasMore
+      setCommits(current)
+      setHasMore(canLoad)
+    }
+  }, [commits, hasMore, loading, virtualizer, workspaceId])
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -385,6 +444,11 @@ export function GitHistorySection({
           <GitBranch className="h-3 w-3" />
           <span>Graph</span>
           {!loading && <span className="font-normal normal-case tracking-normal">({commits.length})</span>}
+          {headNotice && (
+            <span className="ml-1 truncate text-[10px] font-normal normal-case tracking-normal text-muted-foreground">
+              {headNotice}
+            </span>
+          )}
         </button>
         <button
           type="button"
@@ -394,6 +458,16 @@ export function GitHistorySection({
           title={flatMode ? 'Show graph view' : 'Show flat history'}
         >
           {flatMode ? <GitBranch className="h-3 w-3" /> : <List className="h-3 w-3" />}
+        </button>
+        <button
+          type="button"
+          onClick={() => void scrollToHead()}
+          disabled={loading || !commits.some((c) => c.isHead) && !hasMore}
+          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+          aria-label="Scroll to HEAD"
+          title="Scroll to HEAD"
+        >
+          <Crosshair className="h-3 w-3" />
         </button>
         <button
           type="button"
@@ -494,7 +568,10 @@ export function GitHistorySection({
                 return (
                   <div
                     key={commit.oid}
-                    className="absolute inset-x-0 top-0"
+                    className={cn(
+                      'absolute inset-x-0 top-0',
+                      commit.isHead && headFlash && 'bg-primary/20',
+                    )}
                     style={{ transform: `translateY(${item.start}px)` }}
                   >
                     <GraphRow
