@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Send,
   Trash2,
+  X,
   MoreHorizontal,
 } from 'lucide-react'
 import { FileIcon } from '@/lib/fileIcon'
@@ -384,6 +385,10 @@ export function GitPanel({
   // `stashes.length > 0`, so `stashExpanded` only matters once entries exist.
   const [stashes, setStashes] = useState<StashEntry[]>([])
   const [stashExpanded, setStashExpanded] = useState(false)
+  // Inline confirmation for destructive stash actions (pop/drop). Holds the
+  // action key ("pop" | "drop:N") so the buttons transform in-place to
+  // confirm/cancel without moving the mouse.
+  const [confirmStash, setConfirmStash] = useState<string | null>(null)
 
   const refreshStatus = useCallback(async () => {
     if (!workspaceId || !gitState?.repoDetected) {
@@ -621,15 +626,36 @@ export function GitPanel({
           <button type="button" disabled={busy} onClick={() => void runMutation('push', async () => { await api.gitPush(workspaceId) })} className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50">
             {busyAction === 'push' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Push
           </button>
-          <button
-            type="button"
-            disabled={busy || (status?.files.length ?? 0) === 0}
-            onClick={stashPush}
-            className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-            title="Stash changes"
-          >
-            {busyAction === 'stash' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />} Stash
-          </button>
+          {confirmStash === 'push' ? (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => { setConfirmStash(null); stashPush() }}
+                className="flex items-center justify-center gap-1.5 rounded-md bg-primary px-2 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busyAction === 'stash' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />} Stash?
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmStash(null)}
+                className="rounded-md border border-border px-1.5 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+                title="Cancel"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={busy || (status?.files.length ?? 0) === 0}
+              onClick={() => setConfirmStash('push')}
+              className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+              title="Stash changes"
+            >
+              {busyAction === 'stash' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />} Stash
+            </button>
+          )}
         </div>
       </div>
 
@@ -659,26 +685,70 @@ export function GitPanel({
                     <div className="truncate">{stash.message}</div>
                     <div className="truncate text-[10px] text-muted-foreground">{stash.branch}</div>
                   </div>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => stashPop()}
-                    className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
-                    title="Pop stash"
-                    aria-label="Pop stash"
-                  >
-                    {busyAction === 'stash-pop' ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowDown className="h-3 w-3" />}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => stashDrop(stash.index)}
-                    className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
-                    title="Drop stash"
-                    aria-label="Drop stash"
-                  >
-                    {busyAction === 'stash-drop' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                  </button>
+                  {/* Pop — inline confirm to prevent accidental restore+drop */}
+                  {confirmStash === 'pop' ? (
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => { setConfirmStash(null); stashPop() }}
+                        className="rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                      >
+                        Pop?
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmStash(null)}
+                        className="rounded p-1 text-muted-foreground hover:bg-secondary"
+                        title="Cancel"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setConfirmStash('pop')}
+                      className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                      title="Pop stash"
+                      aria-label="Pop stash"
+                    >
+                      {busyAction === 'stash-pop' ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowDown className="h-3 w-3" />}
+                    </button>
+                  )}
+                  {/* Drop — inline confirm since this is irreversible */}
+                  {confirmStash === `drop:${stash.index}` ? (
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => { setConfirmStash(null); stashDrop(stash.index) }}
+                        className="rounded bg-destructive px-1.5 py-0.5 text-[10px] font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+                      >
+                        Drop?
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmStash(null)}
+                        className="rounded p-1 text-muted-foreground hover:bg-secondary"
+                        title="Cancel"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setConfirmStash(`drop:${stash.index}`)}
+                      className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                      title="Drop stash"
+                      aria-label="Drop stash"
+                    >
+                      {busyAction === 'stash-drop' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
