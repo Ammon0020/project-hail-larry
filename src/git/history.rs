@@ -1,7 +1,7 @@
 use std::path::Path;
+use std::process::Command;
 
-use gix::bstr::ByteSlice;
-
+use super::cli::output_text;
 use super::repo::open_repo;
 use super::{CommitAuthor, GitError, LogCommit, LogResult};
 
@@ -11,15 +11,21 @@ pub const MAX_LOG_LIMIT: u32 = 200;
 
 /// `GET /api/workspaces/{id}/git/log?limit=100&offset=0` (S-GIT-LOG-API).
 ///
-/// Walks the commit graph from every local branch head (plus the checked-out
-/// HEAD, in case it is detached) using `gix` (no `git log` CLI spawn),
-/// returning a paginated list with parent refs, branch labels, and the HEAD
-/// marker. An unborn repo (no commits) returns an empty list, not an error.
+/// Returns a paginated slice of the commit history reachable from every local
+/// branch head (plus the checked-out HEAD, in case it is detached). An unborn
+/// repo (no commits) returns an empty list, not an error.
 ///
 /// Walking the union of branch heads — not just `HEAD` — means a diverged
 /// local branch's unique commits appear in the log even when it isn't
 /// checked out, so the frontend can render the full branch topology. The
 /// `is_head` flag is still set only on the commit `HEAD` actually points at.
+///
+/// Unlike a pure-`gix` walk that would have to decode every reachable commit
+/// before applying `offset`/`limit`, this shells out to `git log` so the C
+/// implementation (mmap + commitgraph) does the heavy lifting and native
+/// `--skip`/`--max-count` pagination means only the visible page's author and
+/// message metadata is ever decoded. On a 10k-commit repo a single page load
+/// decodes ~100 commit objects instead of 10k.
 ///
 /// `limit` is clamped to [`MAX_LOG_LIMIT`]; `offset` skips commits (for
 /// pagination). `total` is the full count of commits reachable from the
@@ -41,96 +47,68 @@ pub fn log(root: &Path, limit: u32, offset: u32) -> Result<LogResult, GitError> 
         return Ok(LogResult::default());
     };
     let head_oid = head_commit.id;
+    let head_hex = head_oid.to_hex().to_string();
 
-    // Branch labels and walk tips: scan local refs once and build both the
-    // commit oid → short branch names map (for per-commit labels) and the set
-    // of branch-head oids to seed the union walk. Cheap; refs are a small list.
-    let (branch_map, mut tips) = build_branch_refs(&repo)?;
-    // Tag labels: scan `refs/tags/*` once and build the commit oid → short tag
-    // names map. Tags don't seed the rev_walk tips (only branches + HEAD do);
-    // they just add labels to commits that already appear in the walk.
+    // Branch labels and tag labels are still built via gix refs — these are
+    // small, cheap scans over `refs/heads/*` and `refs/tags/*` and don't touch
+    // any commit objects. Only the visible page's commit metadata is decoded
+    // (by `git log`, below); the label maps are looked up by oid.
+    let branch_map = build_branch_refs(&repo)?;
     let tag_map = build_tag_refs(&repo)?;
 
-    // Seed the walk with HEAD too, so a detached HEAD's commit (which no local
-    // branch points at) still appears and `is_head` always has a match. When
-    // HEAD sits on a branch the oid is already in `tips`; dedup keeps it cheap.
-    if !tips.contains(&head_oid) {
-        tips.push(head_oid);
+    // Total count of commits reachable from local branches + HEAD, for the
+    // pager. `git rev-list --count --branches` counts commits reachable from
+    // local branch heads; if HEAD is detached (not on any branch) it is added
+    // explicitly so its unique commits are counted too.
+    let total = count_reachable(root, &head_hex, &branch_map)?;
+
+    let limit = limit.min(MAX_LOG_LIMIT);
+
+    // Fetch the visible page via `git log --date-order --skip=N --max-count=L`.
+    // `--date-order` orders by commit date (newest first) while respecting
+    // parent topology, so recent commits from all branches surface first.
+    //
+    // Format: %H|%P|%an|%ae|%at|%s  →  oid|parents|name|email|unix-seconds|subject.
+    // We emit the author date as a unix timestamp (`%at`) and render UTC (`Z`
+    // suffix) in Rust — matching the previous gix-based output and the
+    // frontend's `new Date()` expectation. The subject is the final field
+    // (splitn(6, '|')) so it may contain `|`. `--format=<value>` (not
+    // `--format <value>`) is required so git doesn't treat the `%`-string as
+    // a pathspec.
+    let format = "--format=%H|%P|%an|%ae|%at|%s";
+    let mut cmd = Command::new("git");
+    cmd.current_dir(root)
+        .arg("log")
+        .arg("--date-order")
+        .arg(format)
+        .arg("--skip")
+        .arg(offset.to_string())
+        .arg("--max-count")
+        .arg(limit.to_string());
+
+    // `--branches` walks from all local branch heads. If HEAD is detached
+    // (its oid isn't pointed to by any local branch), add `HEAD` as an extra
+    // tip so its commits appear and `is_head` always has a match.
+    cmd.arg("--branches");
+    let head_on_branch = branch_map.contains_key(&head_hex);
+    if !head_on_branch {
+        cmd.arg("HEAD");
     }
 
-    // Walk all commits reachable from the union of branch heads + HEAD,
-    // topological breadth-first. We collect the full walk into a Vec so we can
-    // report `total` for pagination — repos with huge histories may want a
-    // streaming approach later, but for the MVP this is simple and correct.
-    let walk = repo
-        .rev_walk(tips)
-        .all()
-        .map_err(|e| GitError::Operation(format!("rev walk: {e}")))?;
-
-    let mut all: Vec<LogCommit> = Vec::new();
-    for item in walk {
-        let info = item.map_err(|e| GitError::Operation(format!("walk item: {e}")))?;
-        let oid = info.id;
-        let oid_hex = oid.to_hex().to_string();
-
-        // `info.parent_ids` gives the parent oids directly (no object read).
-        let parents: Vec<String> = info
-            .parent_ids
-            .iter()
-            .map(|p| p.to_hex().to_string())
-            .collect();
-
-        // Reading the full commit object for author/message. This is the
-        // expensive path noted in the gix docs — acceptable for a paginated
-        // log where we only decode the visible page after applying offset/limit.
-        let commit = repo
-            .find_commit(oid)
-            .map_err(|e| GitError::Operation(format!("find commit {oid_hex}: {e}")))?;
-
-        let author = commit
-            .author()
-            .map_err(|e| GitError::Operation(format!("decode author: {e}")))?;
-        let author_time = author
-            .time()
-            .map_err(|e| GitError::Operation(format!("decode author time: {e}")))?;
-
-        let message = commit
-            .message()
-            .map(|m| m.title.trim().to_str_lossy().to_string())
-            .unwrap_or_default();
-
-        let labels = branch_map.get(&oid_hex).cloned().unwrap_or_default();
-        let tags = tag_map.get(&oid_hex).cloned().unwrap_or_default();
-
-        all.push(LogCommit {
-            oid: oid_hex,
-            parents,
-            message,
-            author: CommitAuthor {
-                name: author.name.to_string(),
-                email: author.email.to_string(),
-                time: format_iso8601_utc(author_time),
-            },
-            branch_labels: labels,
-            tag_labels: tags,
-            is_head: oid == head_oid,
-        });
+    let output = cmd
+        .output()
+        .map_err(|e| GitError::Operation(format!("git log: {e}")))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Operation(text));
     }
 
-    // Sort by author time descending (newest first). The rev_walk produces
-    // topological order, but with many branch heads the BFS interleaves commits
-    // from all branches — pushing divergence points beyond the visible window.
-    // Sorting by time puts recent commits from all branches first, matching
-    // `git log --all --date-order` and keeping branch divergence points in view.
-    all.sort_by(|a, b| b.author.time.cmp(&a.author.time));
+    let commits: Vec<LogCommit> = text
+        .lines()
+        .filter_map(|line| parse_log_line(line, &branch_map, &tag_map, &head_hex))
+        .collect();
 
-    let total = all.len() as u64;
-    let limit = limit.min(MAX_LOG_LIMIT) as usize;
-    let offset = offset as usize;
-
-    let commits: Vec<LogCommit> = all.into_iter().skip(offset).take(limit).collect();
-
-    let has_more = ((offset + commits.len()) as u64) < total;
+    let has_more = (u64::from(offset) + commits.len() as u64) < total;
 
     Ok(LogResult {
         commits,
@@ -139,24 +117,110 @@ pub fn log(root: &Path, limit: u32, offset: u32) -> Result<LogResult, GitError> 
     })
 }
 
-/// Build the branch label map and the set of local branch-head oids used to
-/// seed the union walk.
+/// Count commits reachable from local branches + HEAD via `git rev-list --count`.
 ///
-/// Scans `refs/heads/*` once and peels each to its target commit, returning:
-/// - a map of commit hex oid → short branch names (multiple branches can point
-///   at the same commit, e.g. after a fast-forward, so the value is a `Vec`);
-/// - the detached oids of every local branch head, for `rev_walk` tips.
+/// `--branches` counts commits reachable from all local branch heads. When HEAD
+/// is detached (its oid isn't any branch head) it is added as an extra tip so
+/// its unique commits are included in the total — matching the walk the
+/// `git log` page query performs.
+fn count_reachable(
+    root: &Path,
+    head_hex: &str,
+    branch_map: &BranchLabelMap,
+) -> Result<u64, GitError> {
+    let head_on_branch = branch_map.contains_key(head_hex);
+    let mut cmd = Command::new("git");
+    cmd.current_dir(root)
+        .arg("rev-list")
+        .arg("--count")
+        .arg("--branches");
+    if !head_on_branch {
+        cmd.arg("HEAD");
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| GitError::Operation(format!("rev-list count: {e}")))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Operation(text));
+    }
+    text.trim()
+        .parse::<u64>()
+        .map_err(|e| GitError::Operation(format!("parse count: {e}")))
+}
+
+/// Parse one `git log --format` line into a [`LogCommit`].
 ///
-/// Errors are non-fatal: a broken ref is skipped rather than failing the whole
-/// log call.
-/// Commit hex oid → short local branch names pointing at it.
+/// Expected format: `%H|%P|%an|%ae|%at|%s` →
+/// `oid|parents|name|email|unix-seconds|subject`. The subject is the final
+/// field and is allowed to contain `|` (we split into at most 6 parts). The
+/// unix-seconds field is rendered to ISO 8601 UTC (`Z` suffix) via
+/// [`format_iso8601_utc`]. Branch and tag labels are looked up by oid in the
+/// prebuilt maps; `is_head` is set when the oid matches HEAD. Returns `None`
+/// for malformed/truncated lines.
+fn parse_log_line(
+    line: &str,
+    branch_map: &BranchLabelMap,
+    tag_map: &BranchLabelMap,
+    head_hex: &str,
+) -> Option<LogCommit> {
+    let parts: Vec<&str> = line.splitn(6, '|').collect();
+    if parts.len() < 6 {
+        return None;
+    }
+    let oid = parts[0].to_string();
+    let parents = if parts[1].is_empty() {
+        Vec::new()
+    } else {
+        parts[1].split(' ').map(String::from).collect()
+    };
+    let name = parts[2].to_string();
+    let email = parts[3].to_string();
+    // `%at` is unix seconds; render as UTC ISO 8601 to match the previous
+    // gix-based output. A non-numeric timestamp falls back to the raw field
+    // rather than dropping the commit.
+    let time = parts[4]
+        .parse::<i64>()
+        .map_or_else(|_| parts[4].to_string(), format_iso8601_utc);
+    let message = parts[5].trim().to_string();
+    let labels = branch_map.get(&oid).cloned().unwrap_or_default();
+    let tags = tag_map.get(&oid).cloned().unwrap_or_default();
+    let is_head = oid == *head_hex;
+    Some(LogCommit {
+        oid,
+        parents,
+        message,
+        author: CommitAuthor { name, email, time },
+        branch_labels: labels,
+        tag_labels: tags,
+        is_head,
+    })
+}
+
+/// Format a unix-seconds timestamp as an RFC 3339 / ISO 8601 UTC string (`Z`).
+///
+/// The frontend localizes with `new Date()`, which accepts the `Z` form. Uses
+/// `chrono` (already a dep) for the calendar math. Out-of-range timestamps
+/// (negative, far future) fall back to the raw seconds value rather than
+/// panicking.
+fn format_iso8601_utc(seconds: i64) -> String {
+    use chrono::{TimeZone, Utc};
+    match Utc.timestamp_opt(seconds, 0) {
+        chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        _ => seconds.to_string(),
+    }
+}
+
+/// Build the branch label map: commit hex oid → short local branch names.
+///
+/// Scans `refs/heads/*` once and peels each to its target commit. Multiple
+/// branches can point at the same commit (e.g. after a fast-forward), so the
+/// value is a `Vec`. Errors are non-fatal: a broken ref is skipped rather than
+/// failing the whole log call.
 type BranchLabelMap = std::collections::HashMap<String, Vec<String>>;
 
-fn build_branch_refs(
-    repo: &gix::Repository,
-) -> Result<(BranchLabelMap, Vec<gix::ObjectId>), GitError> {
-    let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    let mut tips: Vec<gix::ObjectId> = Vec::new();
+fn build_branch_refs(repo: &gix::Repository) -> Result<BranchLabelMap, GitError> {
+    let mut map: BranchLabelMap = std::collections::HashMap::new();
     let refs = repo
         .references()
         .map_err(|e| GitError::Operation(format!("references: {e}")))?;
@@ -186,20 +250,16 @@ fn build_branch_refs(
             );
 
         // Peel to the commit oid. Symbolic refs (e.g. HEAD) resolve through;
-        // a branch that doesn't peel to a commit is skipped. The detached oid
-        // seeds the union walk; its hex string keys the label map.
+        // a branch that doesn't peel to a commit is skipped.
         let mut branch = branch;
         if let Ok(id) = branch.peel_to_id() {
             let oid = id.detach();
             let hex = oid.to_hex().to_string();
             map.entry(hex).or_default().push(short);
-            if !tips.contains(&oid) {
-                tips.push(oid);
-            }
         }
     }
 
-    Ok((map, tips))
+    Ok(map)
 }
 
 /// Build the tag label map: commit hex oid → short tag names pointing at it.
@@ -251,20 +311,4 @@ fn build_tag_refs(repo: &gix::Repository) -> Result<BranchLabelMap, GitError> {
     }
 
     Ok(map)
-}
-
-/// Format a `gix::date::Time` as an RFC 3339 / ISO 8601 UTC string.
-///
-/// `gix` stores seconds-since-epoch + offset; we render UTC (`Z` suffix) so
-/// the frontend can localize with `new Date()`. Uses `chrono` (already a dep)
-/// for formatting to avoid hand-rolling the calendar math. The original
-/// commit's offset is dropped — the frontend renders in the viewer's timezone.
-fn format_iso8601_utc(time: gix::date::Time) -> String {
-    use chrono::{TimeZone, Utc};
-    match Utc.timestamp_opt(time.seconds, 0) {
-        chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        // Out-of-range timestamps (negative, far future) fall back to the
-        // raw seconds value rather than panicking.
-        _ => time.seconds.to_string(),
-    }
 }
