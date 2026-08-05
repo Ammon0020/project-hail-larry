@@ -160,8 +160,7 @@ async fn main() {
     // the no-cap env var is explicitly set, so contract tests can exercise the
     // client's prompt-injection fallback branch.
     let mode_cap = std::env::var(ENV_NO_MODE_CAP)
-        .map(|v| v.is_empty())
-        .unwrap_or(true);
+        .map_or(true, |v| v.is_empty());
     let profiles: Profiles = Arc::new(Mutex::new(HashMap::new()));
 
     let result = Agent
@@ -201,7 +200,7 @@ async fn main() {
                     // the session to Failed and append an AgentExited event.
                     // Exit BEFORE responding, matching the Go mock's
                     // `os.Exit(1)` at main.go:142-144.
-                    if std::env::var(ENV_EXIT_AFTER_INIT).map(|v| !v.is_empty()).unwrap_or(false)
+                    if std::env::var(ENV_EXIT_AFTER_INIT).is_ok_and(|v| !v.is_empty())
                     {
                         std::process::exit(1);
                     }

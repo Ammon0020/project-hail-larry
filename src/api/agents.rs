@@ -26,7 +26,7 @@ const MAX_AGENT_MODELS_COUNT: usize = 256;
 
 /// Cooldown for autodetect probe spawning to prevent resource exhaustion from
 /// repeated calls. Each autodetect spawns up to 5 child processes.
-const AUTODETECT_COOLDOWN: Duration = Duration::from_secs(60);
+const AUTODETECT_COOLDOWN: Duration = Duration::from_mins(1);
 
 pub(super) async fn list_agents(
     State(state): State<AppState>,

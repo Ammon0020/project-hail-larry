@@ -29,12 +29,12 @@ pub use crate::interfaces::{
 };
 
 const DEVICES_FILE: &str = "devices.json";
-const DEFAULT_SESSION_TTL: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_SESSION_TTL: Duration = Duration::from_mins(5);
 const MAX_VERIFY_ATTEMPTS: usize = 5;
-const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(5 * 60);
+const RATE_LIMIT_WINDOW: Duration = Duration::from_mins(5);
 const BASE_LOCKOUT: Duration = Duration::from_secs(1);
-const MAX_LOCKOUT: Duration = Duration::from_secs(5 * 60);
-const PERSIST_THROTTLE: Duration = Duration::from_secs(60);
+const MAX_LOCKOUT: Duration = Duration::from_mins(5);
+const PERSIST_THROTTLE: Duration = Duration::from_mins(1);
 
 /// Dependency used for grace-delayed workspace registration. It is injected at
 /// construction so pairing has no mutable post-construction callback slot.
@@ -900,7 +900,7 @@ mod tests {
     #[test]
     fn token_pairing_and_sliding_expiry_work() {
         let (_dir, manager) = manager();
-        manager.set_inactivity_ttl(Duration::from_secs(60));
+        manager.set_inactivity_ttl(Duration::from_mins(1));
         let session = manager.create_session("localhost", 7337).expect("session");
         let credential = manager
             .verify_token(&session.token, "laptop", None)
@@ -946,7 +946,7 @@ mod tests {
         let (_dir, manager) = manager();
         let credential = pair(&manager);
         let pending = manager
-            .request_revocation(&credential.id, "other", Duration::from_secs(60))
+            .request_revocation(&credential.id, "other", Duration::from_mins(1))
             .expect("pending");
         assert_eq!(manager.list_pending_actions(), vec![pending.clone()]);
         manager.cancel_revocation(&pending.id).expect("cancel");

@@ -292,7 +292,7 @@ impl SessionRegistry {
             by_id.insert(entry.info.id.clone(), entry.info.clone());
         }
         let mut sessions: Vec<_> = by_id.into_values().collect();
-        sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
         Ok(sessions)
     }
 

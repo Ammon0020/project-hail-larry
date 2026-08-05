@@ -10,6 +10,7 @@
 //! S-CONTRACT captures the exact Go limits. This stub exposes the builder
 //! shape so downstream stories can wire it without redesign.
 
+use axum::body::Body;
 use governor::middleware::NoOpMiddleware;
 use std::time::Duration;
 use tower_governor::governor::GovernorConfigBuilder;
@@ -29,7 +30,9 @@ pub const DEFAULT_BURST: u32 = 8;
 
 /// A configured `GovernorLayer` keyed by peer IP with the no-op middleware
 /// (stateless rate limiting — we don't need per-key state headers here).
-pub type IpGovernorLayer = GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware>;
+/// `RespBody` is pinned to axum's `Body` so the layer can produce standard
+/// 429 responses via the crate's `From<GovernorError>` impl.
+pub type IpGovernorLayer = GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware, Body>;
 
 /// Build a `GovernorLayer` keyed by client IP with a per-second allowance.
 ///
@@ -44,9 +47,7 @@ pub fn build_ip_rate_limit_layer(per_second: u64, burst: u32) -> Option<IpGovern
         .per_second(per_second)
         .burst_size(burst)
         .finish()?;
-    Some(IpGovernorLayer {
-        config: std::sync::Arc::new(config),
-    })
+    Some(IpGovernorLayer::new(std::sync::Arc::new(config)))
 }
 
 /// Convenience: the default governor layer for unauthenticated endpoints.
@@ -57,7 +58,7 @@ pub fn default_unauthenticated_layer() -> Option<IpGovernorLayer> {
 
 /// Placeholder for the Go-equivalent idle timeout. Documented here so
 /// S-SERVER can wire it without re-deriving the constant.
-pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
 
 #[cfg(test)]
 mod tests {

@@ -726,7 +726,7 @@ async fn policy_same_shell_command_auto_resolves() {
 async fn cleanup_stale_denies_expired_request() {
     // 100ms stale timeout — short enough for a fast test, long enough that the
     // request registers before going stale.
-    let m = Manager::with_timeout(None, Duration::from_millis(100), Duration::from_secs(60));
+    let m = Manager::with_timeout(None, Duration::from_millis(100), Duration::from_mins(1));
 
     let m_clone = m.clone();
     let task = tokio::spawn(async move {
@@ -769,7 +769,7 @@ async fn cleanup_stale_denies_expired_request() {
 #[tokio::test]
 async fn cleanup_stale_keeps_fresh_request() {
     // Long stale timeout so the prompt is always fresh during the test.
-    let m = Manager::with_timeout(None, Duration::from_secs(60), Duration::from_secs(60));
+    let m = Manager::with_timeout(None, Duration::from_mins(1), Duration::from_mins(1));
 
     let m_clone = m.clone();
     let task = tokio::spawn(async move {

@@ -35,7 +35,7 @@ pub const DEFAULT_PRUNE_MAX_ROWS: i64 = 100_000;
 
 /// Default interval between automatic prune passes.
 /// Matches Go `DefaultPruneInterval`.
-pub const DEFAULT_PRUNE_INTERVAL: Duration = Duration::from_secs(3600);
+pub const DEFAULT_PRUNE_INTERVAL: Duration = Duration::from_hours(1);
 
 /// DDL matching Go `events.New` schema creation byte-for-byte in structure.
 const SCHEMA_SQL: &str = r"

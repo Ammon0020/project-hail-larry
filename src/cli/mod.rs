@@ -406,8 +406,7 @@ fn newest_log(log_dir: &Path) -> Result<Option<std::path::PathBuf>> {
         .filter(|entry| {
             entry
                 .file_type()
-                .map(|type_| type_.is_file())
-                .unwrap_or(false)
+                .is_ok_and(|type_| type_.is_file())
         })
         .filter(|entry| {
             entry

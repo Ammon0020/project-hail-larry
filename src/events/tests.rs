@@ -289,7 +289,7 @@ async fn prune_older_than() {
     store.append(recent).await.unwrap();
 
     let deleted = store
-        .prune_older_than(Duration::from_secs(3600))
+        .prune_older_than(Duration::from_hours(1))
         .await
         .unwrap();
     assert_eq!(deleted, 1);

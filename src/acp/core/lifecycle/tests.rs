@@ -186,8 +186,7 @@ pub(crate) async fn wait_until_running(client: &Client, session_id: &str) {
         loop {
             if client
                 .get_session_info(session_id)
-                .map(|session| session.status == "running")
-                .unwrap_or(false)
+                .is_ok_and(|session| session.status == "running")
             {
                 return;
             }
@@ -299,8 +298,7 @@ async fn unexpected_post_startup_exit_marks_session_failed() {
         loop {
             if client
                 .get_session_info(&session_id)
-                .map(|s| s.status == "failed")
-                .unwrap_or(false)
+                .is_ok_and(|s| s.status == "failed")
             {
                 return;
             }

@@ -2,8 +2,8 @@
 name = "local_agent"
 version = "0.1.0"
 edition = "2021"
-# MSRV — verified against installed stable 2025-12-08 (S-ARCH).
-rust-version = "1.92.0"
+# MSRV — verified against installed stable 2026-07-14 (S-ARCH).
+rust-version = "1.97.1"
 description = "Self-hosted web code editor with AI built in (Rust port of the Go daemon)."
 license = "AGPL-3.0"
 publish = false
@@ -28,11 +28,11 @@ path = "src/bin/mockagent.rs"
 [dependencies]
 # --- Async runtime ---
 # tokio: multi-threaded runtime maps to Go's GOMAXPROCS scheduler; required by
-# axum, tower-http, and the ACP Rust SDK. Verified 2026-07-15.
-tokio = { version = "1.47", features = ["full"] }
+# axum, tower-http, and the ACP Rust SDK. Verified 2026-08-05.
+tokio = { version = "1.53.1", features = ["full"] }
 # tokio-util: CancellationToken replaces Go context.Context cancellation
-# (data-and-concurrency.md). Verified 2026-07-15.
-tokio-util = { version = "0.7.16", features = ["rt"] }
+# (data-and-concurrency.md). Verified 2026-08-05.
+tokio-util = { version = "0.7.19", features = ["rt"] }
 
 # --- Web framework ---
 # axum: routing, middleware, and built-in WebSocket (replaces net/http +
@@ -42,16 +42,16 @@ axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
 # Verified 2026-07-15.
 tower = { version = "0.5", features = ["util"] }
 # tower-http: CORS, limit, trace layers (replaces hand-rolled middleware).
-# Verified 2026-07-15.
-tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+# Verified 2026-08-05.
+tower-http = { version = "0.7", features = ["cors", "trace", "limit"] }
 # tower_governor: IP-keyed rate limiting for unauthenticated endpoints (e.g.
 # pairing). Recommended in web-framework.md over tower::limit::rate.
-# Verified 2026-07-15.
-tower_governor = "0.7"
+# Verified 2026-08-05.
+tower_governor = "0.8"
 # governor: the underlying rate-limit core. Imported directly for the
 # `NoOpMiddleware` type alias used in our `IpGovernorLayer` type alias.
-# Verified 2026-07-15.
-governor = "0.8"
+# Verified 2026-08-05.
+governor = "0.10.4"
 
 # --- TLS ---
 # rustls: TLS serving path. aws-lc-rs provider chosen over ring because it is
@@ -72,26 +72,27 @@ rustls-pemfile = "2.2.0"
 # tokio-rustls. `axum-server` is deliberately not used (S-SERVER decision).
 hyper-util = { version = "0.1.20", features = ["server-auto", "service", "tokio"] }
 # hyper exposes the incoming request service type used by the dual listener.
-hyper = "1.10.1"
+hyper = "1.11.0"
 
 # --- HTTP client ---
 # reqwest: outbound HTTPS for ACP auth (PKCE) and agent provider callbacks.
-# rustls-tls avoids pulling OpenSSL. Verified 2026-07-15.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# rustls enables TLS via rustls (renamed from rustls-tls in reqwest 0.13).
+# Verified 2026-08-05.
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
 
 # --- Serialization ---
 # serde + serde_json: replaces encoding/json. Verified 2026-07-15.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# toml: replaces pelletier/go-toml/v2 for config files. Verified 2026-07-15.
-toml = "0.8"
+# toml: replaces pelletier/go-toml/v2 for config files. Verified 2026-08-05.
+toml = "1.1.4"
 
 # --- Storage ---
 # rusqlite (bundled): SQLite event store. Bundled feature compiles SQLite C
 # source (needs cc at build time, no runtime dep). data-and-concurrency.md
 # recommends rusqlite over sqlx for the append/query event store pattern.
-# Verified 2026-07-15.
-rusqlite = { version = "0.37", features = ["bundled"] }
+# Verified 2026-08-05.
+rusqlite = { version = "0.40.1", features = ["bundled"] }
 
 # --- Logging / tracing ---
 # tracing + tracing-subscriber: structured async-aware logging (replaces
@@ -103,8 +104,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 
 # --- CLI ---
-# clap (derive): replaces spf13/cobra. Verified 2026-07-15.
-clap = { version = "4.5", features = ["derive", "env"] }
+# clap (derive): replaces spf13/cobra. Verified 2026-08-05.
+clap = { version = "4.6.5", features = ["derive", "env"] }
 
 # --- Error handling ---
 # anyhow: ad-hoc error wrapping (Go fmt.Errorf %w). Verified 2026-07-15.
@@ -114,20 +115,21 @@ thiserror = "2.0"
 
 # --- ACP SDK ---
 # agent-client-protocol: official Rust ACP SDK (replaces coder/acp-go-sdk).
-# v1.3.0 bumped from 1.2.0 on 2026-07-21. Default features cover the stable
-# v1 protocol surface (initialize, session lifecycle, streaming, tool
-# callbacks, permission requests). The `unstable_mcp_over_acp` feature is
-# required to code-generate the mcp/connect / mcp/disconnect / mcp/message
+# v2.0.0 bumped from 1.3.0 on 2026-08-05. 2.0 keeps the stable v1 wire schema
+# unchanged but makes coordinated breaking changes to the Rust SDK APIs and
+# low-level transport boundary (Channel/TransportFrame, JSON-RPC routing,
+# MCP-over-ACP schema-native types, AcpAgentConfig). Default features cover
+# the stable v1 protocol surface (initialize, session lifecycle, streaming,
+# tool callbacks, permission requests). The `unstable_mcp_over_acp` feature
+# is required to code-generate the mcp/connect / mcp/disconnect / mcp/message
 # relay methods; `unstable` enables other draft operations used by the Go
 # client (session fork, elicitation). MSRV 1.88.0 compatible.
 #
-# NOTE: 1.2.0 did NOT forward schema feature `unstable_llm_providers`, which
-# required a direct agent-client-protocol-schema dep for Cargo feature
-# unification. Check whether 1.3.0 forwards it; if so, the separate schema
-# dep and the hand-rolled JsonRpcRequest types in src/acp/providers.rs can
-# be removed (see S-ACP-SDK-BUMP story).
-agent-client-protocol = { version = "1.3.0", features = ["unstable", "unstable_mcp_over_acp"] }
-agent-client-protocol-schema = { version = "1.4.0", features = ["unstable_llm_providers"] }
+# agent-client-protocol-schema: pinned directly for the `unstable_llm_providers`
+# feature used by src/acp/providers.rs. ACP 2.0.0 pins schema =1.5.0 exactly,
+# so 1.6.0 is blocked until a newer ACP release supports it. Verified 2026-08-05.
+agent-client-protocol = { version = "2.0.0", features = ["unstable", "unstable_mcp_over_acp"] }
+agent-client-protocol-schema = { version = "1.5.0", features = ["unstable_llm_providers"] }
 # async-process owns ACP agent children while exposing futures-compatible stdio
 # streams for the SDK's ByteStreams transport. Production ACP needs explicit
 # cwd, stderr-tail, and child lifecycle control, which AcpAgent intentionally
@@ -147,8 +149,8 @@ atomic-write-file = "0.3.0"
 
 # --- Shared interfaces (S-INTERFACES) ---
 # async-trait: async methods on service traits (EventStore, WorkspaceManager, …)
-# without boxing futures at every call site. Verified 2026-07-15.
-async-trait = "0.1.89"
+# without boxing futures at every call site. Verified 2026-08-05.
+async-trait = "0.1.91"
 # chrono: DateTime<Utc> for event/session timestamps; serde feature matches Go
 # time.Time RFC3339 JSON. Verified 2026-07-15.
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -165,26 +167,26 @@ notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 # lru: bounded LRU cache for the app-write suppression and per-path emit
 # throttle maps so they cannot grow unbounded between cleanup passes.
-# Verified 2026-07-15.
-lru = "0.18.1"
+# Verified 2026-08-05.
+lru = "0.18.2"
 # infer: magic-byte MIME type detection for the upload store (replaces Go's
 # net/http DetectContentType). Verified 2026-07-15.
 infer = "0.22.0"
 # uuid: v4 opaque upload IDs for the per-session upload store (S-UPLOADS).
-# Verified 2026-07-15.
-uuid = { version = "1.11", features = ["v4"] }
+# Verified 2026-08-05.
+uuid = { version = "1.24.0", features = ["v4"] }
 # libc: Unix process-group management (setpgid, killpg) for the shell executor's
-# cancellation path. Verified 2026-07-15.
-libc = "0.2.186"
+# cancellation path. Verified 2026-08-05.
+libc = "0.2.189"
 # regex: pattern compilation for the workspace content-search fallback
 # (S-SEARCH). Also a transitive dep of `ignore`; pinned as a direct dep so the
-# fallback walker can compile user patterns. Verified 2026-07-16.
-regex = "1.11"
+# fallback walker can compile user patterns. Verified 2026-08-05.
+regex = "1.13.1"
 # ignore: ripgrep's directory walker (BurntSushi/ripgrep) used by the
 # content-search native fallback when `rg` is not on PATH. We configure it with
 # the explicit ignore list only (no .gitignore) to match the Go fallback.
-# Verified 2026-07-16.
-ignore = "0.4.29"
+# Verified 2026-08-05.
+ignore = "0.4.33"
 dashmap = "6.2.1"
 sha2 = "0.11.0"
 qrcode = "0.14.1"
@@ -201,10 +203,10 @@ http-body = "1.1.0"
 # gix: pure-Rust git implementation (no libgit2 C dependency). Used by
 # src/git/ for read-only repo detection and status/diff/stage/commit, and
 # (in S-GIT-API) for everything except `push`, which shells out because gix
-# lacks a credential-aware transport. Verified 2026-07-26. MSRV 1.85 ≤ ours.
+# lacks a credential-aware transport. Verified 2026-08-05. MSRV 1.85 ≤ ours.
 # Features: `basic` (head/refs/index) for S-GIT-DETECT; `status` for the
 # worktree-change probe; `worktree-mutation` for stage/commit (S-GIT-API).
-gix = { version = "0.85.0", default-features = false, features = ["basic", "status", "worktree-mutation", "comfort", "sha1"] }
+gix = { version = "0.86.0", default-features = false, features = ["basic", "status", "worktree-mutation", "comfort", "sha1"] }
 
 [target."cfg(windows)".dependencies]
 # winreg implements the non-admin HKCU Run-key autostart path. It is compiled
@@ -227,12 +229,12 @@ tempfile = "3.27.0"
 # tokio test macro for async unit tests. Verified 2026-07-15.
 tokio-test = "0.4"
 # regex: redaction patterns for the contract differential runner
-# (tests/contract_runner/). Verified 2026-07-16.
-regex = "1.11"
+# (tests/contract_runner/). Verified 2026-08-05.
+regex = "1.13.1"
 # tokio-tungstenite: async WebSocket client for the contract runner's WS tests
 # (origin rejection, auth success, event broadcast). Replaces nhooyr.io/websocket
-# from the Go harness. Verified 2026-07-16.
-tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
+# from the Go harness. Verified 2026-08-05.
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 
 # Lint policy — authoritative levels enforced by `cargo build`/`cargo test`/
 # `cargo clippy` and IDE check-on-save, not just by `cargo clippy -- -D warnings`.

@@ -15,7 +15,7 @@ use super::files::serve_workspace_file;
 use super::{app_error, ApiResponseError, AppState};
 
 /// Preview ticket and cookie lifetime.
-pub(super) const PREVIEW_TOKEN_TTL: Duration = Duration::from_secs(30 * 60);
+pub(super) const PREVIEW_TOKEN_TTL: Duration = Duration::from_mins(30);
 
 pub(super) struct PreviewToken {
     workspace_id: String,

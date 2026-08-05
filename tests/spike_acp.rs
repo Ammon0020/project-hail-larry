@@ -789,7 +789,7 @@ async fn spike_auth_flow_shape() {
 const ACP_E2E_AGENT_ENV: &str = "ACP_E2E_AGENT";
 
 /// Real agents are slower than mockagent; allow up to two minutes per step.
-const REAL_AGENT_STEP_TIMEOUT: Duration = Duration::from_secs(120);
+const REAL_AGENT_STEP_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Resolve `ACP_E2E_AGENT` into an [`AcpAgent`] transport, or `None` to skip.
 fn resolve_real_agent_transport(spec: &str) -> Option<AcpAgent> {
@@ -818,7 +818,10 @@ fn resolve_real_agent_transport(spec: &str) -> Option<AcpAgent> {
             AcpAgent::from_args(["vibe-acp"]).expect("vibe-acp args")
         }
         "claude" => AcpAgent::claude_agent(),
-        "gemini" => AcpAgent::google_gemini(),
+        // AcpAgent::google_gemini() was removed in agent-client-protocol 2.0;
+        // replicate the same launch line the SDK used in 1.3.0.
+        "gemini" => AcpAgent::from_str("npx -y -- @google/gemini-cli@latest --experimental-acp")
+            .expect("valid gemini acp command"),
         other => AcpAgent::from_str(other).unwrap_or_else(|e| {
             panic!("ACP_E2E_AGENT={other:?} is not a valid agent command: {e}")
         }),

@@ -44,9 +44,9 @@ const HTTP_READ_HEADER_TIMEOUT: Duration = Duration::from_secs(5);
 /// Match Go's `http.Server.ReadTimeout` while a handler consumes its body.
 const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Match Go's `http.Server.WriteTimeout` for handler and response-body work.
-const HTTP_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
+const HTTP_WRITE_TIMEOUT: Duration = Duration::from_mins(1);
 /// Match Go's `http.Server.IdleTimeout` for an otherwise inactive connection.
-const HTTP_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+const HTTP_IDLE_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// TCP listeners already bound for a daemon run.
 pub struct Listeners {
@@ -608,7 +608,7 @@ mod tests {
     fn listener_timeouts_match_go_server_defaults() {
         assert_eq!(HTTP_READ_HEADER_TIMEOUT, Duration::from_secs(5));
         assert_eq!(HTTP_READ_TIMEOUT, Duration::from_secs(30));
-        assert_eq!(HTTP_WRITE_TIMEOUT, Duration::from_secs(60));
-        assert_eq!(HTTP_IDLE_TIMEOUT, Duration::from_secs(120));
+        assert_eq!(HTTP_WRITE_TIMEOUT, Duration::from_mins(1));
+        assert_eq!(HTTP_IDLE_TIMEOUT, Duration::from_mins(2));
     }
 }

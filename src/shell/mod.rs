@@ -53,7 +53,7 @@ pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 /// agent can spawn long-running commands (e.g. `sleep 1000000`) that pin a
 /// process slot and consume a PIPED stdout reader task until the session is
 /// closed. Callers may override via [`Executor::with_command_timeout`].
-pub const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+pub const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_mins(30);
 
 /// Errors returned by the shell executor.
 ///

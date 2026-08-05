@@ -46,10 +46,10 @@ use crate::interfaces::{AppError, PermissionManager};
 /// it. A device that drops Wi-Fi mid-session may never respond; without a bound
 /// the agent goroutine blocked in `request` would hang until the agent's own
 /// deadline (or forever). Mirrors Go `pendingRequestTimeout`.
-pub const DEFAULT_STALE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+pub const DEFAULT_STALE_TIMEOUT: Duration = Duration::from_mins(5);
 
 /// Stale-sweeper tick interval. Mirrors Go's 60s sweep cadence.
-pub const DEFAULT_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+pub const DEFAULT_SWEEP_INTERVAL: Duration = Duration::from_mins(1);
 
 /// Bound on the in-memory audit log so a long-running daemon does not grow it
 /// without limit. Only the most recent entries are retained. Mirrors Go

@@ -21,7 +21,7 @@ const PAIR_RATE_PER_MINUTE: f64 = 5.0;
 const PAIR_RATE_BURST: f64 = 5.0;
 /// Idle window after which a per-IP bucket has fully refilled to
 /// `PAIR_RATE_BURST` and can be evicted without changing observable behavior.
-const PAIR_RATE_IDLE_TTL: Duration = Duration::from_secs(60);
+const PAIR_RATE_IDLE_TTL: Duration = Duration::from_mins(1);
 /// Only run eviction after the map grows past this size. This avoids an O(n)
 /// pass for normal traffic while bounding memory under many-source-IP floods.
 const PAIR_RATE_EVICT_THRESHOLD: usize = 1024;

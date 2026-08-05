@@ -26,6 +26,9 @@
       "Exec(./build.sh)",
       "Exec(./build.ps1)"
     ],
+    "ask": [
+      "Exec(git stash)"
+    ],
     "deny": [
       "Exec(sudo)",
       "Exec(rm -rf /)",
