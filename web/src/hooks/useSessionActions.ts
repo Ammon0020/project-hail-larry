@@ -65,6 +65,15 @@ export function useSessionActions(opts: UseSessionActionsOptions): UseSessionAct
 
   const sendPrompt = useCallback(
     async (sessionId: string, content: string, attachments?: Attachment[]) => {
+      // Check if this is the first prompt (session still has default name).
+      // The backend auto-names on first prompt; we need to refresh the session
+      // list so the new name shows up without a page reload.
+      let wasNewChat = false
+      setSessions((prev) => {
+        wasNewChat = prev.some((s) => s.id === sessionId && s.name === 'New chat')
+        return prev
+      })
+
       try {
         await api.sendPrompt(sessionId, content, attachments)
       } catch (err) {
@@ -82,8 +91,15 @@ export function useSessionActions(opts: UseSessionActionsOptions): UseSessionAct
         }
         throw err
       }
+
+      // Refresh session list so the auto-generated name appears in the UI.
+      // Cross-device rename sync will be handled by a future SessionRenamed
+      // event (see pending-per-workspace-tabs story).
+      if (wasNewChat) {
+        await loadSessions()
+      }
     },
-    [],
+    [setSessions, loadSessions],
   )
 
   /** Uploads a file to a session's upload store. Thin wrapper around
