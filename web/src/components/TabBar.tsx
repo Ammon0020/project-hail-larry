@@ -124,16 +124,19 @@ export function TabBar({
     <div className="flex flex-col @xl:flex-row w-full min-w-0 @xl:items-center h-auto @xl:h-9 justify-center bg-panel border-b border-background">
       {/* Top row (tabs) */}
       <div className="flex flex-1 min-w-0 h-9 items-center w-full @xl:w-auto">
-        {canScrollLeft && (
-          <button
-            type="button"
-            aria-label="Scroll tabs left"
-            onClick={() => scrollByTabs(-150)}
-            className="flex items-center justify-center w-5 h-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-editor/50 transition border-r border-background"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-        )}
+        <button
+          type="button"
+          aria-label="Scroll tabs left"
+          aria-hidden={!canScrollLeft}
+          disabled={!canScrollLeft}
+          onClick={() => scrollByTabs(-150)}
+          className={cn(
+            "flex items-center justify-center w-5 h-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-editor/50 transition border-r border-background",
+            !canScrollLeft && "opacity-0 pointer-events-none",
+          )}
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
         <div
           ref={scrollRef}
           onScroll={measureScroll}
@@ -227,23 +230,17 @@ export function TabBar({
                     <span className="sr-only">Changed on disk</span>
                   </>
                 )}
-                <X
-                  className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground cursor-pointer ml-1 shrink-0"
+                <button
+                  type="button"
+                  className="ml-1 shrink-0 flex items-center justify-center w-4 h-4 -mr-0.5 rounded-sm hover:bg-muted hover:w-5 hover:h-5 transition-all"
                   onClick={(e) => {
                     e.stopPropagation()
                     onTabClose(tab.id)
                   }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      onTabClose(tab.id)
-                    }
-                  }}
                   aria-label={`Close ${tab.name}`}
-                  role="button"
-                  tabIndex={0}
-                />
+                >
+                  <X className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
+                </button>
               </div>
             )
             if (!canMenu) return tabDiv
@@ -297,16 +294,19 @@ export function TabBar({
             )
           })}
         </div>
-        {canScrollRight && (
-          <button
-            type="button"
-            aria-label="Scroll tabs right"
-            onClick={() => scrollByTabs(150)}
-            className="flex items-center justify-center w-5 h-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-editor/50 transition"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        )}
+        <button
+          type="button"
+          aria-label="Scroll tabs right"
+          aria-hidden={!canScrollRight}
+          disabled={!canScrollRight}
+          onClick={() => scrollByTabs(150)}
+          className={cn(
+            "flex items-center justify-center w-5 h-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-editor/50 transition",
+            !canScrollRight && "opacity-0 pointer-events-none",
+          )}
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
       </div>
       
       {/* Editor Actions — Wrap, Preview (supported types), Save */}

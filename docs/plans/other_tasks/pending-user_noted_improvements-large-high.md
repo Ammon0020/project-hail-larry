@@ -43,14 +43,20 @@ TODO: Break this down into individual stories.
 
 ## UI
 - [ ] Move preview, line wrap, and save buttons from the tabs bar at the top of the main canvas to the right side of the line below in the editor, the one where the filepath is shown. This keeps it visible without taking space for tabs, especially on mobile. 
-- [ ] x buttons on tabs should have a clearer, slightly larger hitbox when hovered over.
-- [ ] When scroll arrows for tab scroll disappear, tabs should not shift. Absolute position, hide and unhide, unless you find a more elegant method.
+- [x] x buttons on tabs should have a clearer, slightly larger hitbox when hovered over.
+  - *Done 2026-08-05 — `TabBar.tsx` close button now wrapped in a `<button>` with `w-4 h-4` base that grows to `w-5 h-5` on hover with `hover:bg-muted` background.*
+- [x] When scroll arrows for tab scroll disappear, tabs should not shift. Absolute position, hide and unhide, unless you find a more elegant method.
+  - *Done 2026-08-05 — `TabBar.tsx` scroll arrows now always rendered with `opacity-0 pointer-events-none` when not scrollable, reserving their footprint so tabs don't reflow.*
+- [x] Remove the word "online" from the online indicator in the top left and leave it as an icon.
+  - *Done 2026-08-05 — `WorkspaceHeader.tsx` now shows just the Wifi/WifiOff icon without text. Status details remain in the dropdown and `title` attribute.*
 - [ ] When you switch workspace, it switches which tabs are open. When you reopen, they open back up. Keeps tabs associated with workspace. Tabs are remembered per-workspace on the server. 
   - [ ] Next: Tabs are synced between devices, saved to workspace rather than browser, but only when workspace syncing is enabled. Remove the word "online" from the online indicator in the top left and leave it as an icon, then add a button to turn on/off workspace syncing.
 
 ## Agent Chat
-- [ ] Fix Devin auto-detect models
-- [ ] Fix Cursor Agent auto-detect models
+- [x] Fix Devin auto-detect models
+  - *Verified 2026-08-05 — Devin ACP auth + `session/new` → `configOptions` probe works. Returns 30+ models including SWE-1.7, Claude Opus 5, Sonnet 5, GPT-5.6 Sol, etc.*
+- [x] Fix Cursor Agent auto-detect models
+  - *Verified 2026-08-05 — `agent --list-models` parser works. Returns 100+ models including Codex 5.3 variants, Grok 4.5, Composer 2.5, Opus/sonnet/fable variants, etc.*
 - [ ] Chat auto-naming
 - [x] **[Medium/Medium]** Permission approvals: show exact grant scope before
       resolving "Always allow" / "Allow for session", and add an optional

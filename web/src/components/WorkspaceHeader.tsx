@@ -48,15 +48,9 @@ export function WorkspaceHeader({
           title={connected ? 'Connected to backend' : 'Backend offline — reconnecting…'}
         >
           {connected ? (
-            <>
-              <Wifi className="w-4 h-4 shrink-0" />
-              <span className="hidden @[220px]:inline">Online</span>
-            </>
+            <Wifi className="w-4 h-4 shrink-0" />
           ) : (
-            <>
-              <WifiOff className="w-4 h-4 animate-pulse shrink-0" />
-              <span className="hidden @[220px]:inline animate-pulse">Offline</span>
-            </>
+            <WifiOff className="w-4 h-4 animate-pulse shrink-0" />
           )}
         </button>
 
