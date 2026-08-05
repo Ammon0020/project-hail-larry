@@ -125,6 +125,11 @@ pub(crate) struct CheckoutRequest {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct CheckoutCommitRequest {
+    oid: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct IgnoreRequest {
     patterns: Vec<String>,
 }
@@ -308,6 +313,25 @@ pub async fn checkout(
     let root = workspace_root(&state, &id).await?;
     let output =
         run_git_blocking("checkout", move || git::checkout(&root, &request.branch)).await?;
+    Ok(Json(json!({ "ok": true, "stderr": output })))
+}
+
+/// `POST /api/workspaces/{id}/git/checkout-commit`. Checks out a commit SHA
+/// into detached HEAD. Same 409 dirty-tree guard as branch checkout.
+pub async fn checkout_commit(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<CheckoutCommitRequest>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    if request.oid.is_empty() {
+        return Err(ApiResponseError::bad_request("oid required"));
+    }
+    let root = workspace_root(&state, &id).await?;
+    let output = run_git_blocking("checkout-commit", move || {
+        git::checkout_commit(&root, &request.oid)
+    })
+    .await?;
     Ok(Json(json!({ "ok": true, "stderr": output })))
 }
 

@@ -463,6 +463,44 @@ pub fn checkout(root: &Path, branch: &str) -> Result<String, GitError> {
     Ok(text)
 }
 
+/// `POST /api/workspaces/{id}/git/checkout-commit`. Checks out the given commit
+/// SHA into a detached HEAD. Refuses if the working tree is dirty (returns
+/// [`GitError::DirtyTree`], mapped to 409 by the API layer) for the same reason
+/// as branch checkout. `stderr` is returned verbatim.
+///
+/// # Errors
+///
+/// Returns [`GitError::NotARepo`] when `root` is not a repository,
+/// [`GitError::DirtyTree`] when the working tree has uncommitted changes, and
+/// [`GitError::Operation`] when Git cannot checkout.
+pub fn checkout_commit(root: &Path, oid: &str) -> Result<String, GitError> {
+    let Some(_) = open_repo(root)? else {
+        return Err(GitError::NotARepo);
+    };
+    // Same dirty-tree guard as branch checkout — a detached checkout could
+    // conflict with uncommitted changes just like a branch switch.
+    let current = status(root)?;
+    if !current.files.is_empty() {
+        let file_list = current
+            .files
+            .iter()
+            .map(|f| f.path.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(GitError::DirtyTree(file_list));
+    }
+    let mut command = Command::new("git");
+    command.current_dir(root).arg("checkout").arg(oid);
+    let output = command
+        .output()
+        .map_err(|err| GitError::Operation(format!("checkout-commit: {err}")))?;
+    let text = output_text(&output);
+    if !output.status.success() {
+        return Err(GitError::Operation(text));
+    }
+    Ok(text)
+}
+
 /// `POST /api/workspaces/{id}/git/init`. Creates a repo at the workspace root
 /// with `main` as the initial branch. Refuses if `.git` already exists.
 ///

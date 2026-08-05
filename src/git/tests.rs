@@ -963,3 +963,35 @@ fn checkout_switches_branch() {
     let result = status(dir.path()).expect("status");
     assert_eq!(result.head_branch.as_deref(), Some("other"));
 }
+
+#[test]
+fn checkout_commit_returns_not_a_repo_for_plain_dir() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let err = checkout_commit(dir.path(), "deadbeef").expect_err("should error");
+    assert!(matches!(err, GitError::NotARepo));
+}
+
+#[test]
+fn checkout_commit_refuses_dirty_tree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let oid = head_oid(dir.path());
+    std::fs::write(dir.path().join("README.md"), "changed\n").expect("write");
+    let err = checkout_commit(dir.path(), &oid).expect_err("dirty tree should be refused");
+    assert!(
+        matches!(err, GitError::DirtyTree(ref msg) if msg.contains("README.md")),
+        "expected DirtyTree mentioning README.md, got {err:?}"
+    );
+}
+
+#[test]
+fn checkout_commit_enters_detached_head() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fresh_repo(dir.path());
+    let oid = head_oid(dir.path());
+    checkout_commit(dir.path(), &oid).expect("checkout-commit");
+    let result = status(dir.path()).expect("status");
+    // Detached HEAD: head_branch is None, head_oid is the commit we checked out.
+    assert_eq!(result.head_branch, None);
+    assert_eq!(result.head_oid.as_deref(), Some(oid.as_str()));
+}

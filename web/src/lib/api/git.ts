@@ -156,6 +156,15 @@ export function gitCheckout(workspaceId: string, branch: string) {
   })
 }
 
+/** POST /api/workspaces/{id}/git/checkout-commit — check out a commit SHA into
+ *  detached HEAD. Same 409 dirty-tree guard as branch checkout. */
+export function gitCheckoutCommit(workspaceId: string, oid: string) {
+  return apiFetch<{ ok: true; stderr: string }>(
+    `/workspaces/${workspaceId}/git/checkout-commit`,
+    { method: 'POST', body: JSON.stringify({ oid }) },
+  )
+}
+
 export function gitInit(workspaceId: string) {
   return apiFetch<{ oid: string }>(`/workspaces/${workspaceId}/git/init`, { method: 'POST' })
 }

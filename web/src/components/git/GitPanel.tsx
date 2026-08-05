@@ -501,7 +501,9 @@ export function GitPanel({
             className="flex items-center gap-1.5 text-xs font-medium rounded px-1 -mx-1 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50 outline-none"
           >
             <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <span className="truncate">{status?.headBranch ?? gitState.headBranch ?? 'Detached HEAD'}</span>
+            <span className={cn('truncate', !status?.headBranch && !gitState.headBranch && 'text-amber-500')}>
+              {status?.headBranch ?? gitState.headBranch ?? 'Detached HEAD'}
+            </span>
             {branchOptions.length > 1 && <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />}
           </button>
           {status && (status.upstream || status.ahead || status.behind) && (

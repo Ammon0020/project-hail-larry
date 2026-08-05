@@ -396,7 +396,15 @@ export function GitHistorySection({
               },
             },
           ]
-        : []),
+        : [
+            {
+              label: `Checkout ${commit.oid.slice(0, 7)} (detached)`,
+              icon: <GitBranch className="h-3.5 w-3.5" />,
+              onClick: () => {
+                void api.gitCheckoutCommit(workspaceId, commit.oid).then(() => void refresh())
+              },
+            },
+          ]),
       {
         label: 'Refresh',
         icon: <RefreshCw className="h-3.5 w-3.5" />,
