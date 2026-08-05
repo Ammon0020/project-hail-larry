@@ -168,6 +168,30 @@ describe('layoutGitGraph', () => {
       expect(edge.parentIndex).toBe(3) // A is at row 3
     })
 
+    it('keeps a shared ancestor on the first child’s pre-placed lane', () => {
+      // The current branch reaches A first (rows 0–1). The main line appears
+      // later (rows 2–3), so its edge must converge to A's already-selected
+      // lane rather than pre-place A on lane 1.
+      const commits = [
+        commit('current-tip', ['current']),
+        commit('current', ['A']),
+        commit('main-tip', ['main']),
+        commit('main', ['A']),
+        commit('A', []),
+      ]
+      const { nodes, laneCount } = layoutGitGraph(commits)
+
+      expect(laneCount).toBe(2)
+      expect(nodes.map((node) => node.lane)).toEqual([0, 0, 1, 1, 0])
+
+      // main is on lane 1, but its first-parent edge curves into A on lane 0.
+      expect(nodes[3].parentEdges).toMatchObject([
+        { parentOid: 'A', parentIndex: 4, parentLane: 0, visibility: 'visible' },
+      ])
+      // A must not inherit a duplicate lane-1 through-vertical.
+      expect(nodes[4].incomingLanes).toEqual([0])
+    })
+
     it('layout contract: parent lane matches the parent node\'s lane', () => {
       const commits = [
         commit('C', ['B']),
@@ -187,6 +211,24 @@ describe('layoutGitGraph', () => {
   })
 
   describe('truncated edges', () => {
+    it('does not carry a truncated side-parent lane into later rows', () => {
+      // c2's second parent d is outside the window. Its dashed stub ends on
+      // c2's row; c1 must not receive a phantom lane-1 through-vertical.
+      const commits = [
+        commit('c3', ['c2']),
+        commit('c2', ['c1', 'd']),
+        commit('c1', []),
+      ]
+      const { nodes } = layoutGitGraph(commits)
+
+      expect(nodes[1].parentEdges[1]).toMatchObject({
+        parentOid: 'd',
+        parentLane: 1,
+        visibility: 'truncated',
+      })
+      expect(nodes[2].incomingLanes).toEqual([0])
+    })
+
     it('assigns distinct lanes to distinct truncated parents', () => {
       // Merge with two parents, both outside the window.
       const commits = [commit('m', ['a', 'b'])]
@@ -200,19 +242,59 @@ describe('layoutGitGraph', () => {
       expect(edges.every((e) => e.visibility === 'truncated')).toBe(true)
     })
 
-    it('reuses lane for the same truncated parent oid (convergence)', () => {
-      // Two commits share the same truncated parent.
+    it('does not converge separate truncated stubs onto an active lane', () => {
+      // The two "offscreen-shared" edges end on their own rows. Reusing the
+      // first stub's lane for the second would join it to main-root.
       const commits = [
-        commit('c2', ['c1']),
-        commit('c3', ['c1']),
+        commit('shared-child-1', ['offscreen-shared']),
+        commit('main-tip', ['main-root']),
+        commit('shared-child-2', ['offscreen-shared']),
+        commit('main-root', []),
       ]
       const { nodes } = layoutGitGraph(commits)
-      // Both should reference the same parent oid on the same lane.
-      const edge1 = nodes[0].parentEdges[0]
-      const edge2 = nodes[1].parentEdges[0]
-      expect(edge1.parentOid).toBe('c1')
-      expect(edge2.parentOid).toBe('c1')
-      expect(edge1.parentLane).toBe(edge2.parentLane)
+
+      expect(nodes[2].lane).toBe(1)
+      expect(nodes[2].incomingLanes).toEqual([0])
+      expect(nodes[2].parentEdges[0]).toMatchObject({
+        parentOid: 'offscreen-shared',
+        parentLane: 1,
+        visibility: 'truncated',
+      })
     })
+  })
+
+  it('keeps the actual main merge and side branch on their assigned lanes', () => {
+    // First 18 rows from `git log --all --format='%H %P %s'` in this repo.
+    const commits = [
+      commit('2d5d96e', ['18d367e']),
+      commit('18d367e', ['1bfbe5e']),
+      commit('1bfbe5e', ['64b04a0']),
+      commit('64b04a0', ['1a31a48']),
+      commit('1a31a48', ['0bd7952']),
+      commit('0bd7952', ['e9bfb00']),
+      commit('e9bfb00', ['a39565a']),
+      commit('a39565a', ['444d026']),
+      commit('444d026', ['d1fe918']),
+      commit('d1fe918', ['f856504']),
+      commit('f856504', ['b6687e1']),
+      commit('b6687e1', ['b25b357']),
+      commit('b25b357', ['c7e8c19']),
+      commit('c7e8c19', ['cb1475a']),
+      commit('cb1475a', ['dfb60ba']),
+      commit('dfb60ba', ['9dfebdf', 'f4612ff']),
+      commit('f4612ff', ['c339b9d']),
+      commit('c339b9d', ['c7a54b7']),
+    ]
+    const { nodes } = layoutGitGraph(commits)
+
+    expect(nodes[15].lane).toBe(0)
+    expect(nodes[15].parentEdges).toMatchObject([
+      { parentOid: '9dfebdf', parentLane: 0, visibility: 'truncated' },
+      { parentOid: 'f4612ff', parentLane: 1, visibility: 'visible' },
+    ])
+    expect(nodes[16].lane).toBe(1)
+    expect(nodes[16].incomingLanes).toEqual([1])
+    expect(nodes[17].lane).toBe(1)
+    expect(nodes[17].incomingLanes).toEqual([1])
   })
 })

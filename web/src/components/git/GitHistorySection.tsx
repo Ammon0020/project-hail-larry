@@ -5,6 +5,7 @@ import { api, type CommitDiffResult, type LogCommit } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { layoutGitGraph, type GitGraphLayout } from './gitGraphLayout'
 import {
+  buildContinuationVerticals,
   buildRowSegments,
   DOT_Y,
   DOT_RADIUS,
@@ -442,18 +443,45 @@ export function GitHistorySection({
                 // Expanded file-list slot (inserted after the expanded commit row)
                 if (hasExpandedSlot && item.index === expandedIndex + 1) {
                   if (!expandedOid) return null
+                  // The next node's incoming lanes are the active lines that
+                  // must bridge the expanded file-list row.
+                  const continuationLanes = layout.nodes[expandedIndex + 1]?.incomingLanes ?? []
+                  const continuationVerticals = buildContinuationVerticals(continuationLanes, expandedSlotHeight)
                   return (
                     <div
                       key="expanded-files"
-                      className="absolute inset-x-0 top-0"
+                      className={cn('absolute inset-x-0 top-0 flex gap-2', !flatMode && 'px-2')}
                       style={{ transform: `translateY(${item.start}px)` }}
                     >
-                      <CommitFileList
-                        workspaceId={workspaceId}
-                        commitOid={expandedOid}
-                        cache={diffCache}
-                        onOpenFile={onOpenCommitDiff}
-                      />
+                      {!flatMode && (
+                        <svg
+                          width={graphWidth(layout.laneCount)}
+                          height={expandedSlotHeight}
+                          className="shrink-0 overflow-visible"
+                          aria-hidden="true"
+                        >
+                          {continuationVerticals.map((vertical) => (
+                            <line
+                              key={vertical.lane}
+                              x1={laneX(vertical.lane)}
+                              y1={vertical.y0}
+                              x2={laneX(vertical.lane)}
+                              y2={vertical.y1}
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              className={cn('opacity-70', laneColor(vertical.lane))}
+                            />
+                          ))}
+                        </svg>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <CommitFileList
+                          workspaceId={workspaceId}
+                          commitOid={expandedOid}
+                          cache={diffCache}
+                          onOpenFile={onOpenCommitDiff}
+                        />
+                      </div>
                     </div>
                   )
                 }

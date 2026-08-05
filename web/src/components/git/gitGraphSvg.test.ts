@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { layoutGitGraph } from '@/components/git/gitGraphLayout'
-import { buildRowSegments, DOT_Y, laneX, LANE_WIDTH } from '@/components/git/gitGraphSvg'
+import {
+  buildContinuationVerticals,
+  buildRowSegments,
+  DOT_Y,
+  laneX,
+  LANE_WIDTH,
+} from '@/components/git/gitGraphSvg'
 import type { LogCommit } from '@/lib/api/git'
 
 function commit(oid: string, parents: string[] = []): LogCommit {
@@ -85,6 +91,54 @@ describe('buildRowSegments', () => {
     // Truncated stubs go DOWNWARD (toward older history below the window).
     expect(dashed!.y0).toBe(DOT_Y)
     expect(dashed!.y1).toBe(ROW_HEIGHT)
+  })
+
+  it('does not render a through-vertical below a truncated side-parent stub', () => {
+    const commits = [
+      commit('c3', ['c2']),
+      commit('c2', ['c1', 'd']),
+      commit('c1', []),
+    ]
+    const { nodes } = layoutGitGraph(commits)
+    const c1Segments = buildRowSegments(nodes[2], ROW_HEIGHT)
+
+    expect(c1Segments.verticals).not.toContainEqual({ lane: 1, y0: 0, y1: ROW_HEIGHT })
+  })
+
+  it('keeps a truncated stub on its own lane when an unrelated lane passes through', () => {
+    const commits = [
+      commit('shared-child-1', ['offscreen-shared']),
+      commit('main-tip', ['main-root']),
+      commit('shared-child-2', ['offscreen-shared']),
+      commit('main-root', []),
+    ]
+    const { nodes } = layoutGitGraph(commits)
+    const segments = buildRowSegments(nodes[2], ROW_HEIGHT)
+
+    expect(segments.verticals).toContainEqual({ lane: 0, y0: 0, y1: ROW_HEIGHT })
+    expect(segments.curves).toContainEqual(expect.objectContaining({
+      fromLane: 1,
+      toLane: 1,
+      dashed: true,
+    }))
+    expect(segments.curves).not.toContainEqual(expect.objectContaining({
+      fromLane: 1,
+      toLane: 0,
+      dashed: true,
+    }))
+  })
+
+  it('bridges only active incoming lanes across expanded commit details', () => {
+    const commits = [
+      commit('c3', ['c2']),
+      commit('c2', ['c1', 'd']),
+      commit('c1', []),
+    ]
+    const { nodes } = layoutGitGraph(commits)
+
+    expect(buildContinuationVerticals(nodes[2].incomingLanes, 160)).toEqual([
+      { lane: 0, y0: 0, y1: 160 },
+    ])
   })
 
   it('produces no outgoing segment for a root commit (no parents)', () => {

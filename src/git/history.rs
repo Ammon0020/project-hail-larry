@@ -111,6 +111,13 @@ pub fn log(root: &Path, limit: u32, offset: u32) -> Result<LogResult, GitError> 
         });
     }
 
+    // Sort by author time descending (newest first). The rev_walk produces
+    // topological order, but with many branch heads the BFS interleaves commits
+    // from all branches — pushing divergence points beyond the visible window.
+    // Sorting by time puts recent commits from all branches first, matching
+    // `git log --all --date-order` and keeping branch divergence points in view.
+    all.sort_by(|a, b| b.author.time.cmp(&a.author.time));
+
     let total = all.len() as u64;
     let limit = limit.min(MAX_LOG_LIMIT) as usize;
     let offset = offset as usize;
