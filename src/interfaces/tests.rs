@@ -156,8 +156,8 @@ fn assert_matches_golden(name: &str, got: &Value) {
 // ---- Event type exhaustiveness ------------------------------------------------
 
 #[test]
-fn event_type_has_29_variants() {
-    assert_eq!(EventType::all().len(), 29);
+fn event_type_has_30_variants() {
+    assert_eq!(EventType::all().len(), 30);
     // Unique wire strings.
     let mut seen = std::collections::BTreeSet::new();
     for et in EventType::all() {
@@ -219,6 +219,10 @@ fn golden_event_full() {
         }],
         execute_at: ts + chrono::Duration::minutes(5),
         device_name: "fixture-device".into(),
+        tokens_used: None,
+        tokens_size: None,
+        cost_amount: None,
+        cost_currency: String::new(),
     };
     assert_matches_golden("event_full", &to_value(&event));
 }
@@ -252,6 +256,10 @@ fn golden_event_minimal() {
         injected_context: Vec::new(),
         execute_at: go_zero_time(),
         device_name: String::new(),
+        tokens_used: None,
+        tokens_size: None,
+        cost_amount: None,
+        cost_currency: String::new(),
     };
     assert_matches_golden("event_minimal", &to_value(&event));
 }
@@ -505,6 +513,10 @@ fn event_json_roundtrip() {
         }],
         execute_at: ts,
         device_name: "dev".into(),
+        tokens_used: None,
+        tokens_size: None,
+        cost_amount: None,
+        cost_currency: String::new(),
     };
     let json = event_to_json_pretty(&original).expect("ser");
     let back: Event = serde_json::from_str(&json).expect("de");
@@ -709,6 +721,12 @@ fn wire_adapter_roundtrips_all_event_payloads() {
         },
         EventPayload::SessionCreated,
         EventPayload::SessionClosed,
+        EventPayload::UsageUpdated {
+            used: 53_000,
+            size: 200_000,
+            cost_amount: Some(0.045),
+            cost_currency: "USD".into(),
+        },
     ];
 
     assert_eq!(payloads.len(), EventType::all().len());

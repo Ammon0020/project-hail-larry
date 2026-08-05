@@ -18,6 +18,7 @@ import { useChatTabs } from '@/hooks/useChatTabs'
 import { useMcpServers } from '@/hooks/useMcpServers'
 import { useAgentSelection } from '@/hooks/useAgentSelection'
 import { useProfileSelection } from '@/hooks/useProfileSelection'
+import { type ContextUsage } from '@/lib/contextUsage'
 import { useSendingState } from '@/hooks/useSendingState'
 import { pushRecentModel } from '@/lib/modelPrefs'
 import type { AppEvent, Agent, Attachment, Session } from '@/types'
@@ -447,6 +448,24 @@ export function ChatPanel({
     return m
   }, [events])
 
+  // Latest context-usage for the active session, from UsageUpdated events.
+  // ACP agents emit usage_update as the context window fills; we take the
+  // last one so the ring reflects the current state.
+  const contextUsage = useMemo<ContextUsage | null>(() => {
+    let latest: ContextUsage | null = null
+    for (const e of events) {
+      if (e.type === 'UsageUpdated' && e.tokensUsed !== undefined && e.tokensSize !== undefined) {
+        latest = {
+          used: e.tokensUsed,
+          size: e.tokensSize,
+          costAmount: e.costAmount,
+          costCurrency: e.costCurrency,
+        }
+      }
+    }
+    return latest
+  }, [events])
+
   const canSend = Boolean(
     (input.trim() || pendingAttachments.length > 0) &&
       effectiveAgentId &&
@@ -714,6 +733,7 @@ export function ChatPanel({
         profiles={profiles}
         selectedProfileId={selectedProfileId}
         onProfileChange={handleProfileChange}
+        contextUsage={contextUsage}
       />
 
       <WorkspaceBar

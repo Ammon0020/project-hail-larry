@@ -89,6 +89,9 @@ pub enum EventType {
     SessionCreated,
     #[serde(rename = "SessionClosed")]
     SessionClosed,
+    /// Context window usage update from ACP `session/update` (`usage_update`).
+    #[serde(rename = "UsageUpdated")]
+    UsageUpdated,
 }
 
 impl EventType {
@@ -125,6 +128,7 @@ impl EventType {
             Self::WorkspaceRegistrationExecuted => "WorkspaceRegistrationExecuted",
             Self::SessionCreated => "SessionCreated",
             Self::SessionClosed => "SessionClosed",
+            Self::UsageUpdated => "UsageUpdated",
         }
     }
 
@@ -141,7 +145,7 @@ impl std::fmt::Display for EventType {
     }
 }
 
-const ALL_EVENT_TYPES: [EventType; 29] = [
+const ALL_EVENT_TYPES: [EventType; 30] = [
     EventType::PromptSubmitted,
     EventType::ResponseStarted,
     EventType::StreamUpdate,
@@ -171,6 +175,7 @@ const ALL_EVENT_TYPES: [EventType; 29] = [
     EventType::WorkspaceRegistrationExecuted,
     EventType::SessionCreated,
     EventType::SessionClosed,
+    EventType::UsageUpdated,
 ];
 
 /// Flat event entry matching Go `interfaces.Event`.
@@ -236,6 +241,18 @@ pub struct Event {
     pub execute_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub device_name: String,
+    /// Tokens currently in context (ACP `usage_update.used`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_used: Option<u64>,
+    /// Total context window size in tokens (ACP `usage_update.size`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_size: Option<u64>,
+    /// Cumulative session cost amount (ACP `usage_update.cost.amount`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_amount: Option<f64>,
+    /// ISO 4217 currency code for `cost_amount` (e.g. "USD").
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cost_currency: String,
 }
 
 impl Event {
@@ -272,6 +289,10 @@ impl Event {
             injected_context: Vec::new(),
             execute_at: go_zero_time(),
             device_name: String::new(),
+            tokens_used: None,
+            tokens_size: None,
+            cost_amount: None,
+            cost_currency: String::new(),
         }
     }
 }
@@ -457,6 +478,17 @@ pub enum EventPayload {
     },
     SessionCreated,
     SessionClosed,
+    /// Context window usage update from ACP `session/update`.
+    UsageUpdated {
+        /// Tokens currently in context.
+        used: u64,
+        /// Total context window size in tokens.
+        size: u64,
+        /// Cumulative session cost amount (optional — agent may omit).
+        cost_amount: Option<f64>,
+        /// ISO 4217 currency code when `cost_amount` is present.
+        cost_currency: String,
+    },
 }
 
 impl EventPayload {
@@ -495,6 +527,7 @@ impl EventPayload {
             Self::WorkspaceRegistrationExecuted { .. } => EventType::WorkspaceRegistrationExecuted,
             Self::SessionCreated => EventType::SessionCreated,
             Self::SessionClosed => EventType::SessionClosed,
+            Self::UsageUpdated { .. } => EventType::UsageUpdated,
         }
     }
 }

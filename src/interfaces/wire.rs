@@ -41,6 +41,10 @@ pub fn typed_event_to_wire(typed: &TypedEvent) -> Event {
         injected_context: Vec::new(),
         execute_at: go_zero_time(),
         device_name: String::new(),
+        tokens_used: None,
+        tokens_size: None,
+        cost_amount: None,
+        cost_currency: String::new(),
     };
 
     apply_payload(&mut event, &typed.payload);
@@ -205,6 +209,17 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
         | EventPayload::WorkspaceRegistrationExecuted { target } => {
             event.target.clone_from(target);
         }
+        EventPayload::UsageUpdated {
+            used,
+            size,
+            cost_amount,
+            cost_currency,
+        } => {
+            event.tokens_used = Some(*used);
+            event.tokens_size = Some(*size);
+            event.cost_amount = *cost_amount;
+            event.cost_currency.clone_from(cost_currency);
+        }
     }
 }
 
@@ -338,6 +353,12 @@ pub fn wire_to_typed_event(event: &Event) -> TypedEvent {
         },
         EventType::SessionCreated => EventPayload::SessionCreated,
         EventType::SessionClosed => EventPayload::SessionClosed,
+        EventType::UsageUpdated => EventPayload::UsageUpdated {
+            used: event.tokens_used.unwrap_or(0),
+            size: event.tokens_size.unwrap_or(0),
+            cost_amount: event.cost_amount,
+            cost_currency: event.cost_currency.clone(),
+        },
     };
     TypedEvent { meta, payload }
 }

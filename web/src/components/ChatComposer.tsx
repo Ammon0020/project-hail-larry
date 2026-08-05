@@ -2,8 +2,10 @@ import { type KeyboardEvent, useState, useRef, useEffect, useCallback } from 're
 import { Plus, ArrowUp, Square, X, Loader2, Wrench, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { type ModelOption } from '@/lib/modelPrefs'
+import { type ContextUsage } from '@/lib/contextUsage'
 import { McpPopout } from './chat/McpPopout'
 import { ModelSelector } from './chat/ModelSelector'
+import { ContextUsageRing } from './chat/ContextUsageRing'
 
 interface ChatComposerProps {
   /** Available models for the current agent (derived in ChatPanel from currentAgent?.models). */
@@ -53,6 +55,9 @@ interface ChatComposerProps {
   selectedProfileId: string
   /** Callback when the user changes the profile mode. */
   onProfileChange: (profileId: string) => void
+  /** Latest context-usage for the active session (from `UsageUpdated` events).
+   *  Null until the agent reports its first `usage_update`. */
+  contextUsage?: ContextUsage | null
 }
 
 /**
@@ -92,6 +97,7 @@ export function ChatComposer({
   profiles,
   selectedProfileId,
   onProfileChange,
+  contextUsage,
 }: ChatComposerProps) {
   // Tools popout visibility — toggled by the Wrench button, closed by
   // outside-click/Escape inside McpPopout.
@@ -276,29 +282,33 @@ export function ChatComposer({
             />
           </div>
 
-          {/* Send / Stop — circular button in the actions row. Idle state is
-              a transparent circle with a muted up-arrow; running state swaps
-              to a destructive Stop button. */}
-          {agentRunning ? (
-            <button
-              onClick={onStop}
-              className="flex items-center justify-center w-7 h-7 rounded-full bg-destructive hover:bg-destructive/90 transition shrink-0"
-              title="Stop"
-              aria-label="Stop"
-            >
-              <Square className="w-3 h-3 text-destructive-foreground" />
-            </button>
-          ) : (
-            <button
-              onClick={onSend}
-              disabled={!canSend}
-              className="w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:bg-white/[0.06] hover:text-foreground transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Send message"
-              aria-label="Send message"
-            >
-              <ArrowUp className="w-[15px] h-[15px]" strokeWidth={2} />
-            </button>
-          )}
+          {/* Context-usage ring + Send / Stop — grouped at the right of the
+              actions row. The ring is a standalone 28px circle (same size as
+              the send button) showing context-window fill from ACP
+              `usage_update` events. Send/Stop is the circular button. */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <ContextUsageRing usage={contextUsage ?? null} active={agentRunning} />
+            {agentRunning ? (
+              <button
+                onClick={onStop}
+                className="flex items-center justify-center w-7 h-7 rounded-full bg-destructive hover:bg-destructive/90 transition shrink-0"
+                title="Stop"
+                aria-label="Stop"
+              >
+                <Square className="w-3 h-3 text-destructive-foreground" />
+              </button>
+            ) : (
+              <button
+                onClick={onSend}
+                disabled={!canSend}
+                className="w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:bg-white/[0.06] hover:text-foreground transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Send message"
+                aria-label="Send message"
+              >
+                <ArrowUp className="w-[15px] h-[15px]" strokeWidth={2} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

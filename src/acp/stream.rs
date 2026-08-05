@@ -6,7 +6,7 @@
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, Plan, PlanEntryStatus, SessionUpdate, ToolCall, ToolCallContent, ToolCallStatus,
-    ToolKind,
+    ToolKind, UsageUpdate,
 };
 use tracing::warn;
 
@@ -33,7 +33,7 @@ pub fn session_update_to_payload(update: &SessionUpdate) -> Option<EventPayload>
         SessionUpdate::CurrentModeUpdate(_) => unmapped_update("current_mode_update"),
         SessionUpdate::ConfigOptionUpdate(_) => unmapped_update("config_option_update"),
         SessionUpdate::SessionInfoUpdate(_) => unmapped_update("session_info_update"),
-        SessionUpdate::UsageUpdate(_) => unmapped_update("usage_update"),
+        SessionUpdate::UsageUpdate(update) => Some(usage_update(update)),
         _ => unmapped_update("unrecognized"),
     }
 }
@@ -143,6 +143,21 @@ fn plan_summary(plan: &Plan) -> String {
         .map(|entry| format!("{}: {}", plan_status_name(&entry.status), entry.content))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Translate an ACP `usage_update` into a typed app event. The agent reports
+/// cumulative context usage and optional session cost; we forward both so the
+/// client can render a context-fill ring and cost display.
+fn usage_update(update: &UsageUpdate) -> EventPayload {
+    let (cost_amount, cost_currency) = update.cost.as_ref().map_or((None, String::new()), |cost| {
+        (Some(cost.amount), cost.currency.clone())
+    });
+    EventPayload::UsageUpdated {
+        used: update.used,
+        size: update.size,
+        cost_amount,
+        cost_currency,
+    }
 }
 
 fn first_location(locations: &[agent_client_protocol::schema::v1::ToolCallLocation]) -> String {
@@ -311,5 +326,36 @@ mod tests {
         let update = SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new("plan"));
 
         assert_eq!(session_update_to_payload(&update), None);
+    }
+
+    #[test]
+    fn usage_update_becomes_usage_updated_payload() {
+        use agent_client_protocol::schema::v1::{Cost, UsageUpdate as AcpUsageUpdate};
+
+        // With cost — both token counts and cost fields are forwarded.
+        let with_cost = SessionUpdate::UsageUpdate(
+            AcpUsageUpdate::new(53_000, 200_000).cost(Cost::new(0.045, "USD")),
+        );
+        assert_eq!(
+            session_update_to_payload(&with_cost),
+            Some(EventPayload::UsageUpdated {
+                used: 53_000,
+                size: 200_000,
+                cost_amount: Some(0.045),
+                cost_currency: "USD".to_string(),
+            })
+        );
+
+        // Without cost — cost_amount is None and currency is empty.
+        let no_cost = SessionUpdate::UsageUpdate(AcpUsageUpdate::new(1_000, 8_000));
+        assert_eq!(
+            session_update_to_payload(&no_cost),
+            Some(EventPayload::UsageUpdated {
+                used: 1_000,
+                size: 8_000,
+                cost_amount: None,
+                cost_currency: String::new(),
+            })
+        );
     }
 }

@@ -212,6 +212,7 @@ export type EventType =
   | 'ModelChanged'
   | 'SessionCreated'
   | 'SessionClosed'
+  | 'UsageUpdated'
 
 /** A single event in the immutable event log (Blueprint Sec 11). */
 export interface AppEvent {
@@ -243,6 +244,18 @@ export interface AppEvent {
    *  subtly. Mirrors the ACP spec StopReason union — kept as a local type
    *  because the frontend talks to our backend, not to ACP directly. */
   stopReason?: StopReason
+  /** Tokens currently in context (ACP `usage_update.used`). Set on
+   *  `UsageUpdated` events only. */
+  tokensUsed?: number
+  /** Total context window size in tokens (ACP `usage_update.size`). Set on
+   *  `UsageUpdated` events only. */
+  tokensSize?: number
+  /** Cumulative session cost amount (ACP `usage_update.cost.amount`). Set on
+   *  `UsageUpdated` events only when the agent reports cost. */
+  costAmount?: number
+  /** ISO 4217 currency code for `costAmount` (e.g. "USD"). Set on
+   *  `UsageUpdated` events only when the agent reports cost. */
+  costCurrency?: string
 }
 
 /** Left panel view options (Blueprint Sec 17 — activity bar). */
