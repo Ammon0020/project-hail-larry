@@ -70,7 +70,7 @@ export function CommitFileList({
 
   return (
     <div
-      className="overflow-y-auto border-b border-border/40 bg-muted/20 py-1"
+      className="overflow-y-auto bg-muted/20 py-1"
       style={{ maxHeight }}
     >
       {result.files.map((file) => (

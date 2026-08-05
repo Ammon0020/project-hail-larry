@@ -332,6 +332,16 @@ export function GitHistorySection({
   const virtualizer = useVirtualizer({
     count: flatItems.length + (hasMore ? 1 : 0),
     getScrollElement: () => scrollRef.current,
+    // Stable keys so measured sizes track the right item when expansions
+    // shift indices. Without this, a commit row can inherit a former slot's
+    // cached height after collapse, causing overlap.
+    getItemKey: (index: number) => {
+      if (index === flatItems.length) return 'load-more'
+      const flatItem = flatItems[index]
+      if (flatItem?.type === 'slot') return `slot-${flatItem.oid}`
+      if (flatItem?.type === 'commit') return `commit-${commits[flatItem.commitIndex]?.oid ?? index}`
+      return index
+    },
     estimateSize: (index: number) => {
       // The "load more" sentinel sits at flatItems.length and uses ROW_HEIGHT.
       // Slots fall back to 160px until the real content is measured by
