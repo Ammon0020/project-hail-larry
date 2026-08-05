@@ -102,7 +102,7 @@ describe('buildRowSegments', () => {
     const { nodes } = layoutGitGraph(commits)
     const c1Segments = buildRowSegments(nodes[2], ROW_HEIGHT)
 
-    expect(c1Segments.verticals).not.toContainEqual({ lane: 1, y0: 0, y1: ROW_HEIGHT })
+    expect(c1Segments.verticals).not.toContainEqual(expect.objectContaining({ lane: 1, y0: 0, y1: ROW_HEIGHT }))
   })
 
   it('keeps a truncated stub on its own lane when an unrelated lane passes through', () => {
@@ -115,7 +115,7 @@ describe('buildRowSegments', () => {
     const { nodes } = layoutGitGraph(commits)
     const segments = buildRowSegments(nodes[2], ROW_HEIGHT)
 
-    expect(segments.verticals).toContainEqual({ lane: 0, y0: 0, y1: ROW_HEIGHT })
+    expect(segments.verticals).toContainEqual(expect.objectContaining({ lane: 0, y0: 0, y1: ROW_HEIGHT }))
     expect(segments.curves).toContainEqual(expect.objectContaining({
       fromLane: 1,
       toLane: 1,
@@ -137,7 +137,7 @@ describe('buildRowSegments', () => {
     const { nodes } = layoutGitGraph(commits)
 
     expect(buildContinuationVerticals(nodes[2].incomingLanes, 160)).toEqual([
-      { lane: 0, y0: 0, y1: 160 },
+      { lane: 0, lineageId: nodes[0].lineageId, y0: 0, y1: 160 },
     ])
   })
 

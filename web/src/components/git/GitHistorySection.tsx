@@ -38,7 +38,9 @@ function relativeTime(iso: string): string {
   return `${Math.floor(months / 12)}y ago`
 }
 
-/** Stable color class per lane index — cycled from a small semantic palette. */
+/** Stable color class per branch lineage — cycled from a small semantic palette.
+ *  Coloring by lineage (not lane index) keeps colors stable when lanes are
+ *  reused and across pagination appends. */
 const LANE_COLORS = [
   'text-primary',
   'text-sky-500',
@@ -49,8 +51,8 @@ const LANE_COLORS = [
   'text-cyan-500',
   'text-orange-500',
 ]
-function laneColor(lane: number): string {
-  return LANE_COLORS[lane % LANE_COLORS.length]
+function lineageColor(lineageId: number): string {
+  return LANE_COLORS[lineageId % LANE_COLORS.length]
 }
 
 function GraphRow({
@@ -117,7 +119,7 @@ function GraphRow({
                 y2={v.y1}
                 stroke="currentColor"
                 strokeWidth="1.5"
-                className={cn('opacity-70', laneColor(v.lane))}
+                className={cn('opacity-70', lineageColor(v.lineageId))}
               />
             ))}
             {/* Parent-edge curves and truncated stubs — one per parent edge */}
@@ -148,7 +150,7 @@ function GraphRow({
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="1.5"
-                  className={cn('opacity-70', laneColor(c.toLane))}
+                  className={cn('opacity-70', lineageColor(c.lineageId))}
                 />
               )
             })}
@@ -158,7 +160,7 @@ function GraphRow({
               cy={DOT_Y}
               r={dotR}
               fill="currentColor"
-              className={commit.isHead ? 'text-primary' : laneColor(graphNode?.lane ?? 0)}
+              className={commit.isHead ? 'text-primary' : lineageColor(graphNode?.lineageId ?? 0)}
             />
             {commit.isHead && (
               <circle
@@ -469,7 +471,7 @@ export function GitHistorySection({
                               y2={vertical.y1}
                               stroke="currentColor"
                               strokeWidth="1.5"
-                              className={cn('opacity-70', laneColor(vertical.lane))}
+                              className={cn('opacity-70', lineageColor(vertical.lineageId))}
                             />
                           ))}
                         </svg>

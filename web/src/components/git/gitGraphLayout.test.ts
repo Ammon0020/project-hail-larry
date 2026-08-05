@@ -127,8 +127,8 @@ describe('layoutGitGraph', () => {
       const { nodes } = layoutGitGraph(commits)
       // c3: no incoming. c2: lane 0 incoming (pre-placed by c3). c1: lane 0 incoming.
       expect(nodes[0].incomingLanes).toEqual([])
-      expect(nodes[1].incomingLanes).toEqual([0])
-      expect(nodes[2].incomingLanes).toEqual([0])
+      expect(nodes[1].incomingLanes).toEqual([{ lane: 0, lineageId: nodes[0].lineageId }])
+      expect(nodes[2].incomingLanes).toEqual([{ lane: 0, lineageId: nodes[0].lineageId }])
     })
 
     it('shows two incoming lanes during a merge with a side branch', () => {
@@ -140,10 +140,10 @@ describe('layoutGitGraph', () => {
       ]
       const { nodes } = layoutGitGraph(commits)
       // c3 merge row: lane 0 incoming (from c4's first-parent pre-placement).
-      expect(nodes[1].incomingLanes).toContain(0)
+      expect(nodes[1].incomingLanes.map((i) => i.lane)).toContain(0)
       // c2' row: both lanes incoming (lane 0 for c1, lane 1 for c2' itself).
-      expect(nodes[2].incomingLanes).toContain(0)
-      expect(nodes[2].incomingLanes).toContain(1)
+      expect(nodes[2].incomingLanes.map((i) => i.lane)).toContain(0)
+      expect(nodes[2].incomingLanes.map((i) => i.lane)).toContain(1)
     })
   })
 
@@ -189,7 +189,7 @@ describe('layoutGitGraph', () => {
         { parentOid: 'A', parentIndex: 4, parentLane: 0, visibility: 'visible' },
       ])
       // A must not inherit a duplicate lane-1 through-vertical.
-      expect(nodes[4].incomingLanes).toEqual([0])
+      expect(nodes[4].incomingLanes).toEqual([{ lane: 0, lineageId: nodes[0].lineageId }])
     })
 
     it('layout contract: parent lane matches the parent node\'s lane', () => {
@@ -226,7 +226,7 @@ describe('layoutGitGraph', () => {
         parentLane: 1,
         visibility: 'truncated',
       })
-      expect(nodes[2].incomingLanes).toEqual([0])
+      expect(nodes[2].incomingLanes).toEqual([{ lane: 0, lineageId: nodes[0].lineageId }])
     })
 
     it('assigns distinct lanes to distinct truncated parents', () => {
@@ -254,7 +254,7 @@ describe('layoutGitGraph', () => {
       const { nodes } = layoutGitGraph(commits)
 
       expect(nodes[2].lane).toBe(1)
-      expect(nodes[2].incomingLanes).toEqual([0])
+      expect(nodes[2].incomingLanes).toEqual([{ lane: 0, lineageId: nodes[1].lineageId }])
       expect(nodes[2].parentEdges[0]).toMatchObject({
         parentOid: 'offscreen-shared',
         parentLane: 1,
@@ -293,8 +293,81 @@ describe('layoutGitGraph', () => {
       { parentOid: 'f4612ff', parentLane: 1, visibility: 'visible' },
     ])
     expect(nodes[16].lane).toBe(1)
-    expect(nodes[16].incomingLanes).toEqual([1])
+    expect(nodes[16].incomingLanes).toEqual([{ lane: 1, lineageId: nodes[16].lineageId }])
     expect(nodes[17].lane).toBe(1)
-    expect(nodes[17].incomingLanes).toEqual([1])
+    expect(nodes[17].incomingLanes).toEqual([{ lane: 1, lineageId: nodes[16].lineageId }])
+  })
+
+  describe('lineage IDs', () => {
+    it('assigns the same lineage ID to commits on the same branch (linear history)', () => {
+      // c3 -> c2 -> c1: all on lane 0, all the same branch lineage.
+      const commits = [commit('c3', ['c2']), commit('c2', ['c1']), commit('c1', [])]
+      const { nodes } = layoutGitGraph(commits)
+      const lineage = nodes[0].lineageId
+      expect(nodes.map((n) => n.lineageId)).toEqual([lineage, lineage, lineage])
+      // First-parent edges continue the same lineage down to the parent.
+      expect(nodes[0].parentEdges[0].lineageId).toBe(lineage)
+      expect(nodes[1].parentEdges[0].lineageId).toBe(lineage)
+    })
+
+    it('gives a merge commit a different lineage ID on the second parent edge', () => {
+      //   c4 (main)
+      //   c3 (merge: c1 + c2')
+      //   c2' (side) -> c1
+      //   c1 (root)
+      const commits = [
+        commit('c4', ['c3']),
+        commit('c3', ['c1', "c2'"]),
+        commit("c2'", ['c1']),
+        commit('c1', []),
+      ]
+      const { nodes } = layoutGitGraph(commits)
+      const merge = nodes[1]
+      expect(merge.parentEdges).toHaveLength(2)
+      // First parent (c1, main line) shares the main lineage.
+      expect(merge.parentEdges[0].lineageId).toBe(nodes[0].lineageId)
+      // Second parent (c2', side branch) has its own lineage.
+      expect(merge.parentEdges[1].lineageId).not.toBe(merge.parentEdges[0].lineageId)
+      expect(merge.parentEdges[1].lineageId).toBe(nodes[2].lineageId)
+    })
+
+    it('gives a converging side branch its own lineage, but the convergence edge uses the parent (main) lineage', () => {
+      //   c4 (main)
+      //   c3 (merge: c1 + c2')
+      //   c2' (side) -> c1
+      //   c1 (root)
+      const commits = [
+        commit('c4', ['c3']),
+        commit('c3', ['c1', "c2'"]),
+        commit("c2'", ['c1']),
+        commit('c1', []),
+      ]
+      const { nodes } = layoutGitGraph(commits)
+      const sideCommit = nodes[2] // c2'
+      const mainLineage = nodes[0].lineageId
+      // Side branch commits have their own lineage, distinct from main.
+      expect(sideCommit.lineageId).not.toBe(mainLineage)
+      // The convergence edge (c2' -> c1) visually belongs to the parent (c1,
+      // main), so its lineage ID is main's, not the side branch's.
+      expect(sideCommit.parentEdges).toHaveLength(1)
+      expect(sideCommit.parentEdges[0].lineageId).toBe(mainLineage)
+      // And c1 itself inherits main's lineage.
+      expect(nodes[3].lineageId).toBe(mainLineage)
+    })
+
+    it('is deterministic: same input yields identical lineage IDs', () => {
+      const commits = [
+        commit('c4', ['c3']),
+        commit('c3', ['c1', "c2'"]),
+        commit("c2'", ['c1']),
+        commit('c1', []),
+      ]
+      const first = layoutGitGraph(commits)
+      const second = layoutGitGraph(commits)
+      expect(second.nodes.map((n) => n.lineageId)).toEqual(first.nodes.map((n) => n.lineageId))
+      expect(
+        second.nodes.flatMap((n) => n.parentEdges.map((e) => e.lineageId)),
+      ).toEqual(first.nodes.flatMap((n) => n.parentEdges.map((e) => e.lineageId)))
+    })
   })
 })
