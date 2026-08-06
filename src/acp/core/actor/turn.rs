@@ -235,6 +235,47 @@ struct PromptTurn<'a> {
     prompt_cancel: &'a AtomicBool,
 }
 
+/// Handle a control command received while a prompt owns the actor.
+async fn handle_prompt_command(
+    cx: &ConnectionTo<Agent>,
+    agent_session_id: &SessionId,
+    command: ActorCommand,
+    prompt_result: &mut Option<oneshot::Sender<Result<(), AppError>>>,
+) -> Result<Option<PromptExit>, agent_client_protocol::Error> {
+    let exit = match command {
+        ActorCommand::Cancel => {
+            let cancel = send_cancel(cx, agent_session_id);
+            if let Some(result) = prompt_result.take() {
+                let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
+            }
+            cancel?;
+            Some(PromptExit::Continue)
+        }
+        ActorCommand::Close(close) => {
+            if let Some(result) = prompt_result.take() {
+                let _ = result.send(Err(AppError::internal("ACP session closed during prompt")));
+            }
+            Some(PromptExit::Closed(close))
+        }
+        ActorCommand::Prompt { result, .. } => {
+            let _ = result.send(Err(AppError::validation(
+                "ACP session already has an active prompt",
+            )));
+            None
+        }
+        other => handle_non_prompt_command(cx, agent_session_id, other)
+            .await
+            .map(|close| {
+                if let Some(result) = prompt_result.take() {
+                    let _ =
+                        result.send(Err(AppError::internal("ACP session closed during prompt")));
+                }
+                PromptExit::Closed(close)
+            }),
+    };
+    Ok(exit)
+}
+
 /// Await one prompt while continuing to receive session control commands.
 // Actor state machine — splitting would obscure the prompt/abort transition flow.
 #[allow(clippy::too_many_lines)]
@@ -307,36 +348,19 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
     // so Cancel/Close cannot sit behind a prompt that has not started yet.
     // Provider/model RPCs are serviced here too (concurrent with the upcoming
     // prompt) so they are not starved behind a long turn.
+    let mut result = Some(result);
     while let Ok(command) = commands.try_recv() {
-        match command {
-            ActorCommand::Cancel => {
-                let cancel = send_cancel(&cx, &agent_session_id);
-                let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
-                cancel?;
-                return Ok(PromptExit::Continue);
-            }
-            ActorCommand::Close(close) => {
-                let _ = result.send(Err(AppError::internal("ACP session closed during prompt")));
-                return Ok(PromptExit::Closed(close));
-            }
-            ActorCommand::Prompt { result: nested, .. } => {
-                let _ = nested.send(Err(AppError::validation(
-                    "ACP session already has an active prompt",
-                )));
-            }
-            other => {
-                if let Some(closed) = handle_non_prompt_command(&cx, &agent_session_id, other).await
-                {
-                    let _ =
-                        result.send(Err(AppError::internal("ACP session closed during prompt")));
-                    return Ok(PromptExit::Closed(closed));
-                }
-            }
+        if let Some(exit) =
+            handle_prompt_command(&cx, &agent_session_id, command, &mut result).await?
+        {
+            return Ok(exit);
         }
     }
     if take_sticky_cancel(prompt_cancel) {
         let cancel = send_cancel(&cx, &agent_session_id);
-        let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
+        if let Some(result) = result.take() {
+            let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
+        }
         cancel?;
         return Ok(PromptExit::Continue);
     }
@@ -356,7 +380,6 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
         .send_request(PromptRequest::new(agent_session_id.clone(), blocks))
         .block_task();
     tokio::pin!(prompt);
-    let mut result = Some(result);
 
     loop {
         tokio::select! {
@@ -431,42 +454,15 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                 }
                 return Ok(PromptExit::Continue);
             }
-            command = commands.recv() => {
-                match command {
-                    Some(ActorCommand::Cancel) => {
-                        let cancel = send_cancel(&cx, &agent_session_id);
-                        if let Some(result) = result.take() {
-                            let _ = result.send(Err(AppError::internal("ACP prompt cancelled")));
-                        }
-                        cancel?;
-                        return Ok(PromptExit::Continue);
+            command = commands.recv() => match command {
+                Some(command) => {
+                    if let Some(exit) =
+                        handle_prompt_command(&cx, &agent_session_id, command, &mut result).await?
+                    {
+                        return Ok(exit);
                     }
-                    Some(ActorCommand::Close(close)) => {
-                        if let Some(result) = result.take() {
-                            let _ = result.send(Err(AppError::internal("ACP session closed during prompt")));
-                        }
-                        return Ok(PromptExit::Closed(close));
-                    }
-                    Some(ActorCommand::Prompt { result, .. }) => {
-                        let _ = result.send(Err(AppError::validation(
-                            "ACP session already has an active prompt",
-                        )));
-                    }
-                    Some(other) => {
-                        if let Some(closed) =
-                            handle_non_prompt_command(&cx, &agent_session_id, other)
-                                .await
-                        {
-                            if let Some(result) = result.take() {
-                                let _ = result.send(Err(AppError::internal(
-                                    "ACP session closed during prompt",
-                                )));
-                            }
-                            return Ok(PromptExit::Closed(closed));
-                        }
-                    }
-                    None => return Err(agent_client_protocol::Error::internal_error()),
                 }
+                None => return Err(agent_client_protocol::Error::internal_error()),
             }
         }
     }
