@@ -189,40 +189,19 @@ impl Client {
             // long-running turn is not falsely flagged — every streamed
             // chunk/tool event keeps the timer alive, and completion cancels it.
             match result_rx.await {
-                Ok(Ok(())) => {
-                    watchdog_cancel.cancel();
-                    sessions.update_state_if(
-                        &session_id,
-                        SessionState::Running,
-                        SessionState::Idle,
-                    );
-                }
-                Ok(Err(error)) => {
-                    watchdog_cancel.cancel();
-                    tracing::debug!(
-                        session_id = %session_id,
-                        error = %error,
-                        "ACP prompt finished with error after HTTP admitted it"
-                    );
-                    sessions.update_state_if(
-                        &session_id,
-                        SessionState::Running,
-                        SessionState::Idle,
-                    );
-                }
-                Err(_) => {
-                    watchdog_cancel.cancel();
-                    tracing::debug!(
-                        session_id = %session_id,
-                        "ACP prompt actor dropped result channel"
-                    );
-                    sessions.update_state_if(
-                        &session_id,
-                        SessionState::Running,
-                        SessionState::Idle,
-                    );
-                }
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => tracing::debug!(
+                    session_id = %session_id,
+                    error = %error,
+                    "ACP prompt finished with error after HTTP admitted it"
+                ),
+                Err(_) => tracing::debug!(
+                    session_id = %session_id,
+                    "ACP prompt actor dropped result channel"
+                ),
             }
+            watchdog_cancel.cancel();
+            sessions.update_state_if(&session_id, SessionState::Running, SessionState::Idle);
         });
         Ok(())
     }

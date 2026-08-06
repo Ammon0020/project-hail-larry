@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
     ClientCapabilities, FileSystemCapabilities, Implementation, InitializeRequest,
-    InitializeResponse, ListSessionsRequest, LoadSessionRequest, McpServer, NewSessionRequest,
-    SessionConfigOption, SessionId, SessionNotification,
+    ListSessionsRequest, LoadSessionRequest, McpServer, NewSessionRequest, SessionConfigOption,
+    SessionId, SessionNotification,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ByteStreams, Client as SdkClient, ConnectionTo};
@@ -481,7 +481,7 @@ async fn run_actor_inner(
             .await;
             let (agent_session_id, config_options) = resolve_acp_session(
                 &cx,
-                &init,
+                caps,
                 &config.workspace_path,
                 mcp_servers,
                 &config.persisted_acp_session_id,
@@ -497,10 +497,8 @@ async fn run_actor_inner(
                     );
                 }
             })?;
-            let model_config_id = find_model_config_id(
-                config_options.as_deref().unwrap_or(&[]),
-                &config.agent.models,
-            );
+            let config_options = config_options.as_deref().unwrap_or(&[]);
+            let model_config_id = find_model_config_id(config_options, &config.agent.models);
             if model_config_id.is_none() {
                 tracing::info!(
                     "agent did not advertise a model config option; switch_model will be unsupported"
@@ -509,8 +507,7 @@ async fn run_actor_inner(
             // Profile (mode-category) config option id. `None` means the agent
             // lacks the capability; profile instructions are injected into the
             // prompt context as the fallback (context.rs).
-            let profile_config_id =
-                find_profile_config_id(config_options.as_deref().unwrap_or(&[]));
+            let profile_config_id = find_profile_config_id(config_options);
             if profile_config_id.is_none() {
                 tracing::info!(
                     "agent did not advertise a mode/profile config option; profile will use prompt-injection fallback"
@@ -596,13 +593,13 @@ fn should_attempt_load(persisted_id: &str, load_session: bool) -> bool {
 /// 3. Else / on load failure: `NewSession`.
 async fn resolve_acp_session(
     cx: &ConnectionTo<Agent>,
-    init: &InitializeResponse,
+    caps: SessionCaps,
     workspace_path: &Path,
     mcp_servers: Vec<McpServer>,
     persisted_id: &str,
 ) -> Result<(SessionId, Option<Vec<SessionConfigOption>>), agent_client_protocol::Error> {
-    let can_load = init.agent_capabilities.load_session;
-    let can_list = init.agent_capabilities.session_capabilities.list.is_some();
+    let can_load = caps.can_load_session;
+    let can_list = caps.can_list_sessions;
 
     // When the agent supports session/list, reconcile first: only attempt
     // LoadSession if the agent confirms the session still exists.
