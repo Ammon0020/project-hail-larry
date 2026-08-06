@@ -211,6 +211,17 @@ fn error_code_label(error: &agent_client_protocol::Error) -> &'static str {
     }
 }
 
+/// Keep agent-controlled error text out of synced events, but identify the
+/// common transport failure without exposing its endpoint or request payload.
+fn prompt_failure_content(error: &agent_client_protocol::Error, code: &str) -> String {
+    if error.to_string().contains("All connection attempts failed") {
+        return format!(
+            "ACP prompt request failed ({code}): agent could not reach its configured model backend"
+        );
+    }
+    format!("ACP prompt request failed ({code})")
+}
+
 struct PromptTurn<'a> {
     cx: ConnectionTo<Agent>,
     agent_session_id: SessionId,
@@ -393,8 +404,7 @@ async fn await_prompt(turn: PromptTurn<'_>) -> Result<PromptExit, agent_client_p
                                 error = %error,
                                 "ACP prompt request failed (full SDK error)"
                             );
-                            let exit_content =
-                                format!("ACP prompt request failed ({code_label})");
+                            let exit_content = prompt_failure_content(&error, code_label);
                             if let Err(append_error) = append_payload(
                                 event_bus,
                                 local_session_id,
@@ -483,7 +493,7 @@ mod tests {
 
     use agent_client_protocol::schema::v1::StopReason;
 
-    use super::{stop_reason_name, take_sticky_cancel};
+    use super::{prompt_failure_content, stop_reason_name, take_sticky_cancel};
     use crate::acp::core::lifecycle::tests::{mock_client, wait_until_running};
     use crate::interfaces::ACPClient;
 
@@ -492,6 +502,17 @@ mod tests {
         assert_eq!(stop_reason_name(StopReason::EndTurn), "end_turn");
         assert_eq!(stop_reason_name(StopReason::MaxTokens), "max_tokens");
         assert_eq!(stop_reason_name(StopReason::Cancelled), "cancelled");
+    }
+
+    #[test]
+    fn backend_connection_failure_has_an_actionable_safe_summary() {
+        let error = agent_client_protocol::Error::new(
+            -32603,
+            "endpoint: http://secret.invalid; All connection attempts failed",
+        );
+        let summary = prompt_failure_content(&error, "internal_error");
+        assert!(summary.contains("configured model backend"));
+        assert!(!summary.contains("secret.invalid"));
     }
 
     #[test]
