@@ -76,6 +76,7 @@ impl PermissionSink for EventBusPermissionSink {
         );
         event.tool.clone_from(&req.tool);
         event.tool_kind.clone_from(&req.tool_kind);
+        event.tool_call_id.clone_from(&req.tool_call_id);
         event.target.clone_from(&req.target);
         event.command.clone_from(&req.command);
         event.request_id.clone_from(&req.id);

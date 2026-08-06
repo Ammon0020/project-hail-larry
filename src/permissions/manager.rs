@@ -273,6 +273,36 @@ impl Manager {
         });
     }
 
+    /// Reject a second in-flight permission that would shadow an existing
+    /// waiter. Two cases are guarded: an identical request id (a replayed
+    /// transport call) and the same `session_id` + `tool_call_id` already
+    /// pending (an agent re-issuing `request_permission` for one tool call).
+    /// Without this, the second `oneshot::Sender` would overwrite the first in
+    /// the pending map and the original waiter would hang until timeout.
+    fn check_duplicate_pending_locked(
+        inner: &Inner,
+        req: &PermissionRequest,
+    ) -> Result<(), AppError> {
+        if inner.pending.contains_key(&req.id) {
+            return Err(AppError::validation(format!(
+                "permission request already pending: {}",
+                req.id
+            )));
+        }
+        if !req.tool_call_id.is_empty()
+            && inner.pending.values().any(|pending| {
+                pending.request.session_id == req.session_id
+                    && pending.request.tool_call_id == req.tool_call_id
+            })
+        {
+            return Err(AppError::validation(format!(
+                "permission request already pending for tool call: {}",
+                req.tool_call_id
+            )));
+        }
+        Ok(())
+    }
+
     /// Helper to deny and remove pending prompts older than the stale timeout.
     fn cleanup_stale_locked(inner: &mut Inner, stale_timeout: Duration) {
         let now = Instant::now();
@@ -442,6 +472,7 @@ impl PermissionManager for Manager {
                 Self::push_audit_locked(&mut inner, &req, PermissionDecision::Deny);
                 return Ok(PermissionDecision::Deny);
             }
+            Self::check_duplicate_pending_locked(&inner, &req)?;
             let (tx, rx) = oneshot::channel();
             inner.pending.insert(
                 req.id.clone(),

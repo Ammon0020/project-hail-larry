@@ -225,6 +225,94 @@ async fn request_timeout_via_drop() {
     );
 }
 
+#[tokio::test]
+async fn duplicate_tool_call_does_not_replace_first_waiter() {
+    let m = Manager::new(None);
+    let first_manager = m.clone();
+    let first = tokio::spawn(async move {
+        first_manager
+            .request(PermissionRequest {
+                id: "request-first".into(),
+                session_id: "session-1".into(),
+                tool: "edit_file".into(),
+                tool_call_id: "tool-call-1".into(),
+                target: "server.js".into(),
+                ..Default::default()
+            })
+            .await
+    });
+
+    wait_for_pending(&m, 1).await;
+    let duplicate = m
+        .request(PermissionRequest {
+            id: "request-second".into(),
+            session_id: "session-1".into(),
+            tool: "edit_file".into(),
+            tool_call_id: "tool-call-1".into(),
+            target: "server.js".into(),
+            ..Default::default()
+        })
+        .await;
+    assert!(duplicate.is_err(), "duplicate tool call should be rejected");
+    assert_eq!(m.get_pending()[0].id, "request-first");
+
+    m.respond("request-first", D::AllowOnce)
+        .await
+        .expect("respond to original request");
+    let decision = timeout(Duration::from_secs(1), first)
+        .await
+        .expect("original waiter timed out")
+        .expect("task panicked")
+        .expect("original request error");
+    assert_eq!(decision, D::AllowOnce);
+}
+
+#[tokio::test]
+async fn duplicate_request_id_does_not_replace_first_waiter() {
+    let m = Manager::new(None);
+    let first_manager = m.clone();
+    let first = tokio::spawn(async move {
+        first_manager
+            .request(PermissionRequest {
+                id: "request-shared".into(),
+                session_id: "session-1".into(),
+                tool: "shell".into(),
+                command: "npm test".into(),
+                ..Default::default()
+            })
+            .await
+    });
+
+    wait_for_pending(&m, 1).await;
+    let duplicate = m
+        .request(PermissionRequest {
+            id: "request-shared".into(),
+            session_id: "session-2".into(),
+            tool: "shell".into(),
+            command: "cargo test".into(),
+            ..Default::default()
+        })
+        .await;
+    assert!(
+        duplicate.is_err(),
+        "duplicate request ID should be rejected"
+    );
+    let pending = m.get_pending();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].session_id, "session-1");
+    assert_eq!(pending[0].command, "npm test");
+
+    m.respond("request-shared", D::AllowOnce)
+        .await
+        .expect("respond to original request");
+    let decision = timeout(Duration::from_secs(1), first)
+        .await
+        .expect("original waiter timed out")
+        .expect("task panicked")
+        .expect("original request error");
+    assert_eq!(decision, D::AllowOnce);
+}
+
 /// Verifies that responding to a nonexistent request fails. Mirrors Go
 /// `TestRespondNotFound`.
 #[tokio::test]

@@ -84,6 +84,7 @@ pub(in crate::acp::core) async fn request_permission(
         session_id: deps.local_session_id.clone(),
         tool,
         tool_kind,
+        tool_call_id: request.tool_call.tool_call_id.to_string(),
         command,
         target,
         options,

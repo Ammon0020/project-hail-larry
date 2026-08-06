@@ -761,6 +761,8 @@ pub struct PermissionRequest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tool_kind: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tool_call_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub command: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub target: String,

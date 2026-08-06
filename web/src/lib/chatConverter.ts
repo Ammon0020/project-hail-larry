@@ -143,11 +143,10 @@ export function eventsToMessages(
   let idCounter = 0
   const nextId = (event: AppEvent) =>
     `evt-${event.id ?? 'x'}-${idCounter++}`
-  // Tracks toolCallIds already emitted so duplicates (from event replay or
-  // unmerged ToolStarted/Completed pairs) get a unique suffix. Without this,
-  // assistant-ui's useResources throws "Duplicate key toolCallId-…" and crashes
-  // the chat panel.
-  const seenToolCallIds = new Set<string>()
+  // Maps each raw toolCallId to its latest emitted ID. A replayed call that is
+  // no longer in the current tool container gets a unique suffix, while its
+  // immediately following lifecycle updates can still replace that same part.
+  const emittedToolCallIds = new Map<string, string>()
 
   for (const ev of events) {
     switch (ev.type) {
@@ -268,7 +267,7 @@ export function eventsToMessages(
       }
 
       case 'ToolStarted': {
-        pushOrMergeToolCallMessage(out, ev, nextId, { running: true }, seenToolCallIds)
+        pushOrMergeToolCallMessage(out, ev, nextId, { running: true }, emittedToolCallIds)
         break
       }
 
@@ -278,7 +277,7 @@ export function eventsToMessages(
           running: false,
           failed,
           result: ev.content ?? ev.summary ?? '',
-        }, seenToolCallIds)
+        }, emittedToolCallIds)
         break
       }
 
@@ -287,7 +286,7 @@ export function eventsToMessages(
           running: true,
           isShell: true,
           output: ev.content,
-        }, seenToolCallIds)
+        }, emittedToolCallIds)
         break
       }
 
@@ -299,7 +298,7 @@ export function eventsToMessages(
           isShell: true,
           output: ev.content || ev.summary,
           exitCode: ev.exitCode,
-        }, seenToolCallIds)
+        }, emittedToolCallIds)
         break
       }
 
@@ -315,7 +314,7 @@ export function eventsToMessages(
             approved: resolution === 'granted' ? true : resolution === 'denied' ? false : undefined,
             options: approvalOptionsFor(pending),
           },
-        }, seenToolCallIds)
+        }, emittedToolCallIds)
         break
       }
 
@@ -568,7 +567,6 @@ function toolCallMessage(
   ev: AppEvent,
   id: string,
   opts: ToolCallOptions,
-  seenToolCallIds: Set<string>,
 ): ThreadMessageLike {
   const meta: ToolCallMetadata = {
     toolKind: ev.toolKind,
@@ -578,17 +576,7 @@ function toolCallMessage(
     exitCode: opts.exitCode,
     isShell: opts.isShell,
   }
-  // Ensure the toolCallId is unique across the thread. assistant-ui's
-  // useResources keys resources by toolCallId and throws "Duplicate key" on
-  // collisions. Duplicate events (WS replay, reconnect REST/WS race) or
-  // unmerged ToolStarted/Completed pairs can produce two parts with the same
-  // toolCallId; suffixing with the unique message id keeps the key unique
-  // without breaking the normal (non-duplicate) case.
-  let toolCallId = ev.toolCallId ?? ev.requestId ?? id
-  if (seenToolCallIds.has(toolCallId)) {
-    toolCallId = `${toolCallId}#${id}`
-  }
-  seenToolCallIds.add(toolCallId)
+  const toolCallId = ev.toolCallId ?? ev.requestId ?? id
   const toolName = opts.isShell
     ? 'shell'
     : opts.isPermission
@@ -645,11 +633,13 @@ function pushOrMergeToolCallMessage(
   ev: AppEvent,
   nextId: (ev: AppEvent) => string,
   opts: ToolCallOptions,
-  seenToolCallIds: Set<string>,
+  emittedToolCallIds: Map<string, string>,
 ) {
-  const message = toolCallMessage(ev, nextId(ev), opts, seenToolCallIds)
+  const message = toolCallMessage(ev, nextId(ev), opts)
   const part = (message.content as ContentPart[])[0]
-  const partToolCallId = (part as Record<string, unknown>).toolCallId
+  const partRecord = part as Record<string, unknown>
+  const rawToolCallId = partRecord.toolCallId as string
+  const latestEmittedId = emittedToolCallIds.get(rawToolCallId)
   const last = out[out.length - 1]
 
   if (
@@ -659,13 +649,16 @@ function pushOrMergeToolCallMessage(
     last.content.length > 0 &&
     (last.content[last.content.length - 1] as Record<string, unknown>).type === 'tool-call'
   ) {
-    const existingIndex = (last.content as ContentPart[]).findIndex(
-      (p) =>
-        (p as Record<string, unknown>).type === 'tool-call' &&
-        (p as Record<string, unknown>).toolCallId === partToolCallId,
-    )
+    const existingIndex = (last.content as ContentPart[]).findIndex((p) => {
+      const existing = p as Record<string, unknown>
+      return existing.type === 'tool-call' &&
+        (existing.toolCallId === rawToolCallId || existing.toolCallId === latestEmittedId)
+    })
 
     if (existingIndex !== -1) {
+      // Preserve the emitted ID when updating a replayed call whose first event
+      // was suffixed outside its original container.
+      partRecord.toolCallId = (last.content[existingIndex] as Record<string, unknown>).toolCallId
       // Replace the existing part for this tool call so we never have two parts
       // with the same toolCallId in one message (breaks assistant-ui's useResources
       // keying and can crash the thread renderer).
@@ -676,6 +669,7 @@ function pushOrMergeToolCallMessage(
         metadata: message.metadata,
       }
     } else {
+      assignUniqueToolCallId(partRecord, rawToolCallId, message.id, emittedToolCallIds)
       ;(last.content as ContentPart[]).push(part)
       const PRECEDENCE = { 'requires-action': 2, 'running': 1, 'complete': 0 }
       const currentScore = PRECEDENCE[(last.status?.type as keyof typeof PRECEDENCE) ?? 'complete'] ?? 0
@@ -689,7 +683,22 @@ function pushOrMergeToolCallMessage(
       }
     }
   } else {
+    assignUniqueToolCallId(partRecord, rawToolCallId, message.id, emittedToolCallIds)
     out.push(message)
   }
+}
+
+/** Assign an assistant-ui-safe ID only after the current container cannot merge it. */
+function assignUniqueToolCallId(
+  part: Record<string, unknown>,
+  rawToolCallId: string,
+  messageId: string | undefined,
+  emittedToolCallIds: Map<string, string>,
+) {
+  const emittedId = emittedToolCallIds.has(rawToolCallId)
+    ? `${rawToolCallId}#${messageId ?? 'message'}`
+    : rawToolCallId
+  part.toolCallId = emittedId
+  emittedToolCallIds.set(rawToolCallId, emittedId)
 }
 
