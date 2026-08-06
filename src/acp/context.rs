@@ -88,11 +88,15 @@ pub struct OpenFilesTracker {
 }
 
 impl OpenFilesTracker {
-    fn entry(&self, session_id: &str) -> Result<Option<OpenFilesEntry>, AppError> {
+    fn read<T: Default>(
+        &self,
+        session_id: &str,
+        field: impl FnOnce(&OpenFilesEntry) -> T,
+    ) -> Result<T, AppError> {
         self.sessions
             .read()
-            .map(|sessions| sessions.get(session_id).cloned())
             .map_err(|_| AppError::internal("open-files tracker lock poisoned"))
+            .map(|sessions| sessions.get(session_id).map(field).unwrap_or_default())
     }
 
     fn with_entry_mut(
@@ -147,24 +151,15 @@ impl OpenFilesTracker {
     }
 
     fn open_files(&self, session_id: &str) -> Result<Vec<String>, AppError> {
-        Ok(self
-            .entry(session_id)?
-            .map(|e| e.open_files)
-            .unwrap_or_default())
+        self.read(session_id, |entry| entry.open_files.clone())
     }
 
     fn recent_edits(&self, session_id: &str) -> Result<Vec<String>, AppError> {
-        Ok(self
-            .entry(session_id)?
-            .map(|e| e.recent_edits)
-            .unwrap_or_default())
+        self.read(session_id, |entry| entry.recent_edits.clone())
     }
 
     fn selection(&self, session_id: &str) -> Result<EditorSelection, AppError> {
-        Ok(self
-            .entry(session_id)?
-            .map(|e| e.selection)
-            .unwrap_or_default())
+        self.read(session_id, |entry| entry.selection.clone())
     }
 }
 
@@ -260,7 +255,7 @@ impl PromptPipeline {
             if embedded_context {
                 resources.extend(first_resources);
             } else {
-                text_sections.extend(first_resources.into_iter().map(render_resource));
+                text_sections.extend(first_resources.into_iter().map(|resource| resource.text));
             }
             if let Some(transfer) = self
                 .transfers
@@ -444,10 +439,6 @@ fn selection_resource(
         }));
     }
     Ok(None)
-}
-
-fn render_resource(resource: ContextResource) -> String {
-    resource.text
 }
 
 fn truncate_string(text: &mut String, max_bytes: usize) {
