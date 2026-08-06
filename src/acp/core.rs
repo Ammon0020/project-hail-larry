@@ -26,9 +26,3 @@ pub const STDERR_TAIL_BYTES: usize = 8 * 1024;
 pub(super) const MAX_SESSIONS: usize = 32;
 /// Safe default for a model-switch rebind transfer (256 KiB).
 pub(super) const MODEL_SWITCH_TRANSFER_BYTES: i64 = 256 * 1024;
-
-/// Grace period after a cooperative cancel before force-closing the session.
-#[cfg(not(test))]
-pub(super) const CANCEL_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
-#[cfg(test)]
-pub(super) const CANCEL_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_millis(50);

@@ -294,6 +294,9 @@ fn default_config_matches_golden_dto() {
         revocation_grace_period_seconds: 300,
         prompt_context: PromptContextSettings::default(),
         workspace_trust: HashMap::new(),
+        cancel_grace_period_seconds: 0,
+        permission_timeout_seconds: 0,
+        agent_idle_timeout_seconds: 0,
         extra: toml::Table::new(),
     };
 

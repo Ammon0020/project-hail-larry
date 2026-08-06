@@ -342,6 +342,9 @@ fn write_seed_config(state_dir: &Path, repo_root: &Path, port: u16) -> Result<()
         revocation_grace_period_seconds: 300,
         prompt_context: local_agent::config::PromptContextSettings::default(),
         workspace_trust: std::collections::HashMap::new(),
+        cancel_grace_period_seconds: 0,
+        permission_timeout_seconds: 0,
+        agent_idle_timeout_seconds: 0,
         extra: toml::Table::new(),
     };
     std::fs::write(

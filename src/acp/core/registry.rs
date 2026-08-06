@@ -196,7 +196,16 @@ impl SessionRegistry {
     pub(super) fn begin_prompt(
         &self,
         session_id: &str,
-    ) -> Result<(mpsc::Sender<actor::ActorCommand>, SessionCaps, String, bool), AppError> {
+    ) -> Result<
+        (
+            mpsc::Sender<actor::ActorCommand>,
+            SessionCaps,
+            String,
+            bool,
+            u64,
+        ),
+        AppError,
+    > {
         let mut live = self.live_write()?;
         let entry = live
             .get_mut(session_id)
@@ -210,6 +219,7 @@ impl SessionRegistry {
                     entry.caps,
                     entry.info.workspace.clone(),
                     entry.profile_config_id.is_none(),
+                    entry.actor.id(),
                 ))
             }
             SessionState::Running => Err(AppError::validation(

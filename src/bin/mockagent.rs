@@ -52,6 +52,12 @@ const ENV_NO_MODE_CAP: &str = "MOCKAGENT_NO_MODE_CAP";
 /// path for unexpected post-startup actor exits.
 const ENV_EXIT_AFTER_INIT: &str = "MOCKAGENT_EXIT_AFTER_INIT";
 
+/// `MOCKAGENT_HANG_ON_PROMPT`, when set to a non-empty value, makes the mock
+/// agent accept `session/prompt` but never respond or emit any session
+/// updates — it sleeps indefinitely. Rust tests use this to exercise the idle
+/// watchdog, which must mark the session `Failed` after the configured timeout.
+const ENV_HANG_ON_PROMPT: &str = "MOCKAGENT_HANG_ON_PROMPT";
+
 /// The `SessionConfigOption` id the Rust client sends via
 /// `session/set_config_option` to switch the active profile (S-PROF-ACP).
 const PROFILE_CONFIG_ID: &str = "profile";
@@ -215,6 +221,23 @@ async fn main() {
                             responder: Responder<PromptResponse>,
                             cx: ConnectionTo<Client>| {
                     let sid = req.session_id.clone();
+
+                    // Hang mode: accept the prompt but never respond or emit
+                    // any session updates. The idle watchdog must detect this
+                    // silence and mark the session Failed. Sleep for a long
+                    // Hang mode: accept the prompt but never respond or emit
+                    // any session updates. The idle watchdog must detect this
+                    // silence and mark the session Failed. Hold the responder
+                    // (do NOT drop it — dropping would let the SDK send an
+                    // error response and complete the turn) and sleep for a
+                    // long time; the process is killed when the watchdog
+                    // fails the session.
+                    if std::env::var(ENV_HANG_ON_PROMPT).is_ok_and(|v| !v.is_empty()) {
+                        let _responder = responder;
+                        loop {
+                            tokio::time::sleep(Duration::from_hours(1)).await;
+                        }
+                    }
 
                     // Extract the user's text from the prompt content blocks.
                     let mut user_text = String::new();

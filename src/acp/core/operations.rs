@@ -4,6 +4,7 @@ use std::path::Path;
 
 use chrono::Utc;
 use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::actor::ActorCommand;
@@ -121,7 +122,7 @@ impl Client {
             }
         }
 
-        let (sender, caps, workspace_id, include_profile) =
+        let (sender, caps, workspace_id, include_profile, actor_id) =
             self.sessions.begin_prompt(session_id)?;
         let workspace = self.resolve_workspace(&workspace_id).await?;
         let prepared = match self
@@ -161,6 +162,18 @@ impl Client {
                 .map_err(|error| { tracing::error!(session_id, error = %error, "failed to persist ACP prompt-dispatch failure"); error })?;
             return Err(AppError::internal("ACP session actor is unavailable"));
         }
+        // Arm the idle watchdog. It resets on any event for this session and
+        // fires only if the agent goes silent for the configured timeout. The
+        // token is cancelled when the prompt completes (below) so a normal
+        // long-running turn does not trigger a false positive — every streamed
+        // chunk/tool event keeps the timer alive, and completion cancels it.
+        let watchdog_cancel = CancellationToken::new();
+        self.spawn_idle_watchdog(
+            session_id,
+            actor_id,
+            self.deps.agent_idle_timeout,
+            watchdog_cancel.clone(),
+        );
         // Return as soon as the turn is admitted. Holding the HTTP request open
         // for the full agent turn pinches the browser's ~6 connections/origin
         // when multiple tabs/sessions run at once, which surfaces as gateway
@@ -171,8 +184,13 @@ impl Client {
         let sessions = self.sessions.clone();
         let session_id = session_id.to_string();
         tokio::spawn(async move {
+            // The watchdog stays armed while the prompt is in flight. It is
+            // cancelled only after the turn completes (below) so a normal
+            // long-running turn is not falsely flagged — every streamed
+            // chunk/tool event keeps the timer alive, and completion cancels it.
             match result_rx.await {
                 Ok(Ok(())) => {
+                    watchdog_cancel.cancel();
                     sessions.update_state_if(
                         &session_id,
                         SessionState::Running,
@@ -180,6 +198,7 @@ impl Client {
                     );
                 }
                 Ok(Err(error)) => {
+                    watchdog_cancel.cancel();
                     tracing::debug!(
                         session_id = %session_id,
                         error = %error,
@@ -192,6 +211,7 @@ impl Client {
                     );
                 }
                 Err(_) => {
+                    watchdog_cancel.cancel();
                     tracing::debug!(
                         session_id = %session_id,
                         "ACP prompt actor dropped result channel"

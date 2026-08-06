@@ -3,6 +3,7 @@
  */
 
 import { apiFetch } from './client'
+import { withRetry } from '@/lib/retry'
 
 /**
  * One named profile entry. Mirrors the Rust `ProfileEntry` struct returned by
@@ -60,8 +61,14 @@ export async function putProfiles(config: ProfileConfig): Promise<void> {
  * when `profileId` is not a known profile id (both surface as thrown `Error`s).
  */
 export async function setSessionProfile(sessionId: string, profileId: string): Promise<void> {
-  await apiFetch<unknown>(`/sessions/${sessionId}/profile`, {
-    method: 'POST',
-    body: JSON.stringify({ profile: profileId }),
-  })
+  // Retried: a transient failure during a profile switch would otherwise leave
+  // the session on the old profile with no UI feedback. 4xx (unknown profile /
+  // missing session) still fail immediately — only 502/503/504 and network
+  // errors retry.
+  await withRetry(() =>
+    apiFetch<unknown>(`/sessions/${sessionId}/profile`, {
+      method: 'POST',
+      body: JSON.stringify({ profile: profileId }),
+    }),
+  )
 }

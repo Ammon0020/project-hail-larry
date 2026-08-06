@@ -24,7 +24,10 @@ use crate::interfaces::WorkspaceManager;
 use crate::pairing::{
     Manager as PairingManager, PairingError, RevocationListener, WorkspaceRegistrar,
 };
-use crate::permissions::{EventBusPermissionSink, Manager as PermissionsManager, PermissionSink};
+use crate::permissions::{
+    EventBusPermissionSink, Manager as PermissionsManager, PermissionSink, DEFAULT_STALE_TIMEOUT,
+    DEFAULT_SWEEP_INTERVAL,
+};
 use crate::sync::Hub;
 use crate::uploads::Manager as UploadsManager;
 use crate::workspace::Manager as WorkspaceManagerImpl;
@@ -131,7 +134,12 @@ impl Daemon {
         // event bus before they reach the hub's reconnect stream.
         let permission_sink: Arc<dyn PermissionSink> =
             Arc::new(EventBusPermissionSink::new(Arc::clone(&events)));
-        let permissions = PermissionsManager::new(Some(permission_sink));
+        let permissions = PermissionsManager::with_timeout(
+            Some(permission_sink),
+            DEFAULT_STALE_TIMEOUT,
+            DEFAULT_SWEEP_INTERVAL,
+            config.permission_timeout(),
+        );
         let permission_sweeper = permissions.start_sweeper();
         let registry = Arc::new(AgentRegistry::from_agents(config.agents.clone()));
         let mcp_config_path = Path::new(&config.data_dir).join("mcp.json");
@@ -144,6 +152,8 @@ impl Daemon {
                 Path::new(&config.data_dir).join("conversations.json"),
             )),
             mcp_config_path: Some(mcp_config_path.clone()),
+            cancel_grace_period: config.cancel_grace_period(),
+            agent_idle_timeout: config.agent_idle_timeout(),
         }));
         acp.replace_prompt_context_settings(config.prompt_context.clone())
             .context("apply prompt context settings")?;

@@ -19,7 +19,8 @@ mod sink;
 mod tests;
 
 pub use manager::{
-    AuditEntry, Manager, DEFAULT_STALE_TIMEOUT, DEFAULT_SWEEP_INTERVAL, MAX_AUDIT_ENTRIES,
+    AuditEntry, Manager, DEFAULT_PERMISSION_TIMEOUT, DEFAULT_STALE_TIMEOUT, DEFAULT_SWEEP_INTERVAL,
+    MAX_AUDIT_ENTRIES,
 };
 pub use sink::{null_sink, EventBusPermissionSink, NullSink, PermissionSink};
 

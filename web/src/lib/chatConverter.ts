@@ -51,20 +51,22 @@ import type { PendingPermission } from '@/lib/api'
  */
 export interface ContextInjectionPart {
   readonly type: 'data-context-injection'
-  readonly context: { name: string; content: string }[]
+  readonly data: { context: { name: string; content: string }[] }
 }
 
 export interface PlanPart {
   readonly type: 'data-plan'
-  readonly content: string
+  readonly data: { content: string }
 }
 
 export interface SystemRowPart {
   readonly type: 'data-system-row'
-  readonly content?: string
-  readonly fallback: string
-  readonly prefix?: string
-  readonly variant?: 'muted' | 'destructive'
+  readonly data: {
+    content?: string
+    fallback: string
+    prefix?: string
+    variant?: 'muted' | 'destructive'
+  }
 }
 
 /**
@@ -160,7 +162,7 @@ export function eventsToMessages(
         if (ev.injectedContext && ev.injectedContext.length > 0) {
           const ctxPart: ContextInjectionPart = {
             type: 'data-context-injection',
-            context: ev.injectedContext,
+            data: { context: ev.injectedContext },
           }
           content.push(ctxPart as unknown as ContentPart)
         }
@@ -320,7 +322,7 @@ export function eventsToMessages(
       case 'PlanUpdated': {
         const planPart: PlanPart = {
           type: 'data-plan',
-          content: ev.content ?? '',
+          data: { content: ev.content ?? '' },
         }
         out.push({
           id: nextId(ev),
@@ -337,6 +339,19 @@ export function eventsToMessages(
       case 'PermissionGranted':
       case 'PermissionDenied':
         break
+
+      case 'PermissionTimedOut': {
+        out.push(
+          systemRowMessage(
+            ev,
+            nextId(ev),
+            'Permission request timed out (no device available to approve)',
+            undefined,
+            'destructive',
+          ),
+        )
+        break
+      }
 
       default:
         // Unknown event types are silently dropped (prior behavior returned null).
@@ -362,10 +377,12 @@ function systemRowMessage(
 ): ThreadMessageLike {
   const part: SystemRowPart = {
     type: 'data-system-row',
-    content: ev.content,
-    fallback,
-    prefix,
-    variant,
+    data: {
+      content: ev.content,
+      fallback,
+      prefix,
+      variant,
+    },
   }
   return {
     id,

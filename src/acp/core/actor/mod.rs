@@ -24,6 +24,7 @@ use async_process::Command;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio_util::sync::CancellationToken;
 
+mod setup;
 mod turn;
 
 use super::super::providers::{find_model_config_id, find_profile_config_id, SessionCaps};
@@ -86,6 +87,10 @@ pub(super) struct Config {
     /// Durable agent ACP session id to attempt `session/load` with (empty =
     /// always `session/new`). Cleared on rebind.
     pub(super) persisted_acp_session_id: String,
+    /// The model id selected by the user at session creation or rebind. Sent to
+    /// the agent via `session/set_config_option` (model category) after session
+    /// setup so the agent uses the requested model instead of its default.
+    pub(super) model_id: String,
 }
 
 /// Opaque, cloneable handle to a running actor. Carries the command sender
@@ -515,7 +520,7 @@ async fn run_actor_inner(
             if let Some(ready) = ready.take() {
                 let _ = ready.send(Ok(ActorStartup {
                     caps,
-                    model_config_id,
+                    model_config_id: model_config_id.clone(),
                     profile_config_id: profile_config_id.clone(),
                     acp_session_id,
                 }));
@@ -525,42 +530,17 @@ async fn run_actor_inner(
                     .await
                     .map_err(|_| agent_client_protocol::Error::internal_error())?;
             }
-            // Send the initial profile over ACP when the agent advertised the
-            // mode-category config option. Best-effort: a failure here is logged
-            // but does not fail session setup — profile selection is a hint, not
-            // critical to the session lifecycle.
-            if let Some(config_id) = profile_config_id.as_deref() {
-                let active_profile = config
-                    .profiles
-                    .profile(&config.local_session_id)
-                    .unwrap_or_else(|_| {
-                        tracing::warn!(
-                            "profile middleware lookup failed at startup; sending default profile id"
-                        );
-                        "code".to_string()
-                    });
-                if let Err(error) = super::super::providers::rpc_set_profile_config(
-                    &cx,
-                    &agent_session_id,
-                    config_id,
-                    &active_profile,
-                )
-                .await
-                {
-                    tracing::warn!(
-                        session_id = %config.local_session_id,
-                        profile = %active_profile,
-                        error = %error,
-                        "initial session/set_config_option (profile) failed; agent keeps its current profile configuration"
-                    );
-                } else {
-                    tracing::info!(
-                        session_id = %config.local_session_id,
-                        profile = %active_profile,
-                        "sent initial session/set_config_option (profile) on session setup"
-                    );
-                }
-            }
+            // Send the initial model and profile config options to the agent.
+            // Both are best-effort: a failure is logged but does not fail
+            // session setup — the agent keeps its defaults if a send fails.
+            setup::send_initial_config_options(
+                &cx,
+                &agent_session_id,
+                config,
+                model_config_id.as_deref(),
+                profile_config_id.as_deref(),
+            )
+            .await;
             turn::actor_loop(
                 cx,
                 agent_session_id,

@@ -167,3 +167,14 @@ clear prerequisite message.
 pre-checks `web/dist/index.html` before invoking cargo, panicking with a clear
 "run `make build-frontend` first" message if it's absent. The underlying
 concurrent-build race is also documented in `build.rs`.
+
+## `idle_watchdog_marks_hung_agent_failed` — pre-existing failure (concurrent WIP)
+
+Observed failing during the permission-timeout story implementation on
+2026-08-05. The test at `src/acp/core/lifecycle/tests.rs:1015` expects the
+idle watchdog to mark a hung mock-agent session `Failed` within 15s, but the
+watchdog never fires. The `agent_idle_timeout` feature (config field,
+`ClientDeps` field, watchdog task in `lifecycle/mod.rs`, mockagent
+`MOCKAGENT_HANG_ON_PROMPT` env var) was added as uncommitted concurrent WIP
+in the same working tree. Not caused by the permission-timeout change; fix
+belongs to the idle-watchdog review pass.

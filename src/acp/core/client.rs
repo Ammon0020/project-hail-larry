@@ -26,6 +26,15 @@ pub struct ClientDeps {
     pub conversation_store: super::super::store::ConversationStore,
     /// Path to `mcp.json`. `None` skips MCP attachment on session/new (tests).
     pub mcp_config_path: Option<PathBuf>,
+    /// Grace period after a cooperative cancel before force-closing the
+    /// session. Defaults to 10s if unset. Configurable via `config.toml`
+    /// (`cancelGracePeriodSeconds`).
+    pub cancel_grace_period: std::time::Duration,
+    /// Idle watchdog timeout for `Running` sessions. If no events arrive from
+    /// the agent for this duration, the session is marked `Failed` with an
+    /// `AgentExited` event. Defaults to 120s if unset. Configurable via
+    /// `config.toml` (`agentIdleTimeoutSeconds`).
+    pub agent_idle_timeout: std::time::Duration,
 }
 
 /// ACP lifecycle facade. The registry lock protects only metadata and command

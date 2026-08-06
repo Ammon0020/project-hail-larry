@@ -726,7 +726,12 @@ async fn policy_same_shell_command_auto_resolves() {
 async fn cleanup_stale_denies_expired_request() {
     // 100ms stale timeout — short enough for a fast test, long enough that the
     // request registers before going stale.
-    let m = Manager::with_timeout(None, Duration::from_millis(100), Duration::from_mins(1));
+    let m = Manager::with_timeout(
+        None,
+        Duration::from_millis(100),
+        Duration::from_mins(1),
+        Duration::from_mins(10),
+    );
 
     let m_clone = m.clone();
     let task = tokio::spawn(async move {
@@ -769,7 +774,12 @@ async fn cleanup_stale_denies_expired_request() {
 #[tokio::test]
 async fn cleanup_stale_keeps_fresh_request() {
     // Long stale timeout so the prompt is always fresh during the test.
-    let m = Manager::with_timeout(None, Duration::from_mins(1), Duration::from_mins(1));
+    let m = Manager::with_timeout(
+        None,
+        Duration::from_mins(1),
+        Duration::from_mins(1),
+        Duration::from_mins(10),
+    );
 
     let m_clone = m.clone();
     let task = tokio::spawn(async move {
@@ -804,7 +814,12 @@ async fn cleanup_stale_keeps_fresh_request() {
 /// manual `cleanup_stale` call. Uses a short stale timeout + sweep interval.
 #[tokio::test]
 async fn sweeper_auto_denies_stale_prompt() {
-    let m = Manager::with_timeout(None, Duration::from_millis(80), Duration::from_millis(20));
+    let m = Manager::with_timeout(
+        None,
+        Duration::from_millis(80),
+        Duration::from_millis(20),
+        Duration::from_mins(10),
+    );
     let _handle = m.start_sweeper();
 
     let m_clone = m.clone();
@@ -1197,4 +1212,170 @@ async fn allow_tool_kind_does_not_cross_tool_kinds() {
     if let Some(p) = pending.first() {
         let _ = m.respond(&p.id, D::Deny).await;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Permission prompt timeout (auto-deny when no device responds)
+// ---------------------------------------------------------------------------
+
+/// Verifies that an unanswered permission prompt is auto-denied after the
+/// configured `permission_timeout` elapses, so the agent does not hang
+/// forever. The deny reaches the waiting `request` future via the normal
+/// oneshot channel.
+#[tokio::test]
+async fn permission_timeout_auto_denies_unanswered_prompt() {
+    // 50ms permission timeout — short enough for a fast test. The stale
+    // timeout is set high so only the per-prompt timeout fires.
+    let m = Manager::with_timeout(
+        None,
+        Duration::from_mins(10),
+        Duration::from_mins(10),
+        Duration::from_millis(50),
+    );
+
+    let m_clone = m.clone();
+    let task = tokio::spawn(async move {
+        m_clone
+            .request(PermissionRequest {
+                id: String::new(),
+                session_id: "sess-timeout".into(),
+                tool: "execute".into(),
+                command: "echo timeout".into(),
+                options: vec![D::AllowOnce, D::Deny],
+                ..Default::default()
+            })
+            .await
+    });
+
+    // Wait for the request to register as pending.
+    let pending = wait_for_pending(&m, 1).await;
+    assert_eq!(pending[0].command, "echo timeout");
+
+    // Do NOT respond — let the per-prompt timeout fire.
+    let decision = timeout(Duration::from_secs(2), task)
+        .await
+        .expect("timed out waiting for auto-deny")
+        .expect("task panicked")
+        .expect("request error");
+    assert_eq!(
+        decision,
+        D::Deny,
+        "expected auto-deny after permission timeout"
+    );
+
+    // The pending map should be empty after the timeout.
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert!(
+        m.get_pending().is_empty(),
+        "pending entry should be removed after timeout auto-deny"
+    );
+}
+
+/// Verifies that a prompt answered before the permission timeout does NOT
+/// trigger an auto-deny — first-response-wins ensures the device decision
+/// reaches the agent.
+#[tokio::test]
+async fn permission_timeout_does_not_fire_if_responded() {
+    // 100ms permission timeout — long enough to respond first.
+    let m = Manager::with_timeout(
+        None,
+        Duration::from_mins(10),
+        Duration::from_mins(10),
+        Duration::from_millis(100),
+    );
+
+    let m_clone = m.clone();
+    let task = tokio::spawn(async move {
+        m_clone
+            .request(PermissionRequest {
+                id: String::new(),
+                session_id: "sess-respond-first".into(),
+                tool: "execute".into(),
+                command: "echo respond".into(),
+                options: vec![D::AllowOnce, D::Deny],
+                ..Default::default()
+            })
+            .await
+    });
+
+    // Wait for the request to register, then respond before the timeout.
+    let pending = wait_for_pending(&m, 1).await;
+    m.respond(&pending[0].id, D::AllowOnce)
+        .await
+        .expect("respond");
+
+    let decision = timeout(Duration::from_secs(2), task)
+        .await
+        .expect("timed out waiting for decision")
+        .expect("task panicked")
+        .expect("request error");
+    assert_eq!(
+        decision,
+        D::AllowOnce,
+        "device response must win over the not-yet-fired timeout"
+    );
+
+    // Give the timeout task a chance to fire (it should be a no-op).
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        m.get_pending().is_empty(),
+        "pending entry should be gone after respond"
+    );
+}
+
+/// Verifies that the sink's `broadcast_timeout` is invoked when a permission
+/// times out, so the frontend can surface a visible warning.
+#[tokio::test]
+async fn permission_timeout_invokes_sink_broadcast_timeout() {
+    use std::sync::atomic::AtomicBool;
+
+    struct TimeoutCapturingSink {
+        timed_out: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl PermissionSink for TimeoutCapturingSink {
+        async fn broadcast_request(&self, _req: &PermissionRequest) {}
+
+        async fn broadcast_timeout(&self, _req: &PermissionRequest) {
+            self.timed_out.store(true, Ordering::SeqCst);
+        }
+    }
+
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let sink = Arc::new(TimeoutCapturingSink {
+        timed_out: timed_out.clone(),
+    });
+    let m = Manager::with_timeout(
+        Some(sink),
+        Duration::from_mins(10),
+        Duration::from_mins(10),
+        Duration::from_millis(50),
+    );
+
+    let m_clone = m.clone();
+    let task = tokio::spawn(async move {
+        let _ = m_clone
+            .request(PermissionRequest {
+                id: String::new(),
+                session_id: "sess-timeout-sink".into(),
+                tool: "execute".into(),
+                command: "echo sink".into(),
+                options: vec![D::AllowOnce, D::Deny],
+                ..Default::default()
+            })
+            .await;
+    });
+
+    // Wait for the timeout to fire and the request to resolve.
+    let _ = timeout(Duration::from_secs(2), task)
+        .await
+        .expect("timed out waiting for auto-deny");
+
+    // Give the broadcast_timeout call a tick to complete.
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        timed_out.load(Ordering::SeqCst),
+        "broadcast_timeout should be called on permission timeout"
+    );
 }

@@ -196,10 +196,69 @@ pub struct Config {
     /// preview, restrictive CSP as safe default until the user chooses).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub workspace_trust: HashMap<String, bool>,
+    /// Grace period (seconds) after a cooperative cancel before force-closing
+    /// the ACP session. Explicit 0 or omitted = default 10s. Agents that need
+    /// longer cleanup time can set a higher value.
+    #[serde(skip_serializing_if = "is_zero_i64", default)]
+    pub cancel_grace_period_seconds: i64,
+    /// Timeout (seconds) for unanswered permission prompts before auto-deny.
+    /// Explicit 0 or omitted = default 300s (5 min). When the timeout fires,
+    /// the pending permission is auto-denied and the agent receives a rejection
+    /// so it can proceed or fail gracefully instead of hanging forever.
+    #[serde(skip_serializing_if = "is_zero_i64", default)]
+    pub permission_timeout_seconds: i64,
+    /// Idle timeout (seconds) for the agent process watchdog. If an ACP session
+    /// stays `Running` without producing any events for this long, the daemon
+    /// marks it `Failed` with an `AgentExited` event ("Agent unresponsive").
+    /// Explicit 0 or omitted = default 120s. Tools that legitimately run for a
+    /// long time keep the timer alive by streaming progress events.
+    #[serde(skip_serializing_if = "is_zero_i64", default)]
+    pub agent_idle_timeout_seconds: i64,
     /// Forward-compatible unknown TOML keys, preserved across round-trips.
     #[serde(flatten)]
     #[serde(default)]
     pub extra: toml::Table,
+}
+
+impl Config {
+    /// Returns the configured cancel grace period, defaulting to 10s if
+    /// unset or zero. Mirrors the previous hardcoded constant.
+    #[must_use]
+    pub fn cancel_grace_period(&self) -> std::time::Duration {
+        let secs = self.cancel_grace_period_seconds;
+        if secs <= 0 {
+            std::time::Duration::from_secs(10)
+        } else {
+            std::time::Duration::from_secs(secs.cast_unsigned())
+        }
+    }
+
+    /// Returns the configured permission prompt timeout, defaulting to 300s
+    /// (5 min) if unset or zero. When the timeout fires, an unanswered
+    /// permission prompt is auto-denied so the agent does not hang forever.
+    #[must_use]
+    pub fn permission_timeout(&self) -> std::time::Duration {
+        let secs = self.permission_timeout_seconds;
+        if secs <= 0 {
+            std::time::Duration::from_mins(5)
+        } else {
+            std::time::Duration::from_secs(secs.cast_unsigned())
+        }
+    }
+
+    /// Returns the configured agent idle watchdog timeout, defaulting to 120s
+    /// if unset or zero. When an ACP session stays `Running` without producing
+    /// any events for this long, the watchdog marks it `Failed` so a hung agent
+    /// process does not leave the session stuck indefinitely.
+    #[must_use]
+    pub fn agent_idle_timeout(&self) -> std::time::Duration {
+        let secs = self.agent_idle_timeout_seconds;
+        if secs <= 0 {
+            std::time::Duration::from_mins(2)
+        } else {
+            std::time::Duration::from_secs(secs.cast_unsigned())
+        }
+    }
 }
 
 /// `skip_serializing_if` helper mirroring Go's `omitempty` for integer fields
@@ -247,6 +306,9 @@ impl Config {
             revocation_grace_period_seconds: DEFAULT_REVOCATION_GRACE_PERIOD_SECONDS,
             prompt_context: PromptContextSettings::default(),
             workspace_trust: HashMap::new(),
+            cancel_grace_period_seconds: 0,
+            permission_timeout_seconds: 0,
+            agent_idle_timeout_seconds: 0,
             extra: toml::Table::new(),
         })
     }
@@ -411,6 +473,9 @@ impl std::default::Default for Config {
                     revocation_grace_period_seconds: DEFAULT_REVOCATION_GRACE_PERIOD_SECONDS,
                     prompt_context: PromptContextSettings::default(),
                     workspace_trust: HashMap::new(),
+                    cancel_grace_period_seconds: 0,
+                    permission_timeout_seconds: 0,
+                    agent_idle_timeout_seconds: 0,
                     extra: toml::Table::new(),
                 }
             }

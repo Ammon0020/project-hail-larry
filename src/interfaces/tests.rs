@@ -156,8 +156,8 @@ fn assert_matches_golden(name: &str, got: &Value) {
 // ---- Event type exhaustiveness ------------------------------------------------
 
 #[test]
-fn event_type_has_30_variants() {
-    assert_eq!(EventType::all().len(), 30);
+fn event_type_has_31_variants() {
+    assert_eq!(EventType::all().len(), 31);
     // Unique wire strings.
     let mut seen = std::collections::BTreeSet::new();
     for et in EventType::all() {
@@ -654,6 +654,10 @@ fn wire_adapter_roundtrips_all_event_payloads() {
             tool: "tool".into(),
         },
         EventPayload::PermissionDenied {
+            request_id: "request".into(),
+            tool: "tool".into(),
+        },
+        EventPayload::PermissionTimedOut {
             request_id: "request".into(),
             tool: "tool".into(),
         },

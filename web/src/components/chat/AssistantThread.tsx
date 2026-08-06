@@ -225,16 +225,16 @@ function renderUnnormalizedDataPart(
 ): ReactNode {
   switch (part.type as string) {
     case 'data-context-injection':
-      return <ContextInjectionPartView context={customPart.context ?? []} />
+      return <ContextInjectionPartView context={customPart.data?.context ?? customPart.context ?? []} />
     case 'data-plan':
-      return <PlanPartView content={customPart.content ?? ''} />
+      return <PlanPartView content={customPart.data?.content ?? customPart.content ?? ''} />
     case 'data-system-row':
       return (
         <SystemRowMessage
-          content={customPart.content}
-          fallback={customPart.fallback ?? ''}
-          prefix={customPart.prefix}
-          variant={customPart.variant}
+          content={customPart.data?.content ?? customPart.content}
+          fallback={customPart.data?.fallback ?? customPart.fallback ?? ''}
+          prefix={customPart.data?.prefix ?? customPart.prefix}
+          variant={customPart.data?.variant ?? customPart.variant}
         />
       )
     default:

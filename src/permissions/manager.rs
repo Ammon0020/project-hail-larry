@@ -51,6 +51,12 @@ pub const DEFAULT_STALE_TIMEOUT: Duration = Duration::from_mins(5);
 /// Stale-sweeper tick interval. Mirrors Go's 60s sweep cadence.
 pub const DEFAULT_SWEEP_INTERVAL: Duration = Duration::from_mins(1);
 
+/// Default per-prompt timeout before auto-deny. A device that is unavailable
+/// to approve may never respond; without a bound the agent would hang in
+/// `Running` state until the agent's own deadline (or forever). Configurable
+/// via `config.toml` `permissionTimeoutSeconds` (0 = this default).
+pub const DEFAULT_PERMISSION_TIMEOUT: Duration = Duration::from_mins(5);
+
 /// Bound on the in-memory audit log so a long-running daemon does not grow it
 /// without limit. Only the most recent entries are retained. Mirrors Go
 /// `maxAuditEntries`.
@@ -159,24 +165,36 @@ pub struct Manager {
     sink: Option<Arc<dyn PermissionSink>>,
     stale_timeout: Duration,
     sweep_interval: Duration,
+    /// Per-prompt timeout. When elapsed without a device response, the prompt
+    /// is auto-denied and a `PermissionTimedOut` event is published so the
+    /// agent does not hang forever. Defaults to 5 min (see
+    /// [`DEFAULT_PERMISSION_TIMEOUT`]).
+    permission_timeout: Duration,
 }
 
 impl Manager {
-    /// Create a manager with the default 5-minute stale timeout and 60s sweep
-    /// interval. Returns an `Arc` so the stale sweeper task can hold a weak
-    /// reference.
+    /// Create a manager with the default 5-minute stale timeout, 60s sweep
+    /// interval, and 5-minute permission timeout. Returns an `Arc` so the
+    /// stale sweeper task can hold a weak reference.
     #[must_use]
     pub fn new(sink: Option<Arc<dyn PermissionSink>>) -> Arc<Self> {
-        Self::with_timeout(sink, DEFAULT_STALE_TIMEOUT, DEFAULT_SWEEP_INTERVAL)
+        Self::with_timeout(
+            sink,
+            DEFAULT_STALE_TIMEOUT,
+            DEFAULT_SWEEP_INTERVAL,
+            DEFAULT_PERMISSION_TIMEOUT,
+        )
     }
 
-    /// Create a manager with a custom stale timeout and sweep interval (used by
-    /// tests to avoid waiting 5 minutes for a prompt to go stale).
+    /// Create a manager with custom stale timeout, sweep interval, and
+    /// permission timeout (used by tests to avoid waiting 5 minutes for a
+    /// prompt to go stale or time out).
     #[must_use]
     pub fn with_timeout(
         sink: Option<Arc<dyn PermissionSink>>,
         stale_timeout: Duration,
         sweep_interval: Duration,
+        permission_timeout: Duration,
     ) -> Arc<Self> {
         Arc::new(Self {
             inner: Arc::new(Mutex::new(Inner {
@@ -188,6 +206,7 @@ impl Manager {
             sink,
             stale_timeout,
             sweep_interval,
+            permission_timeout,
         })
     }
 
@@ -215,6 +234,43 @@ impl Manager {
                 }
             }
         })
+    }
+
+    /// Spawn a per-prompt timeout task. After `permission_timeout` elapses,
+    /// if the prompt is still pending, it is auto-denied via the normal
+    /// removal path (first-response-wins) and a `PermissionTimedOut` event is
+    /// published so the frontend can surface a visible warning. The task holds
+    /// a weak ref so it exits when the manager is dropped.
+    fn spawn_permission_timeout(&self, req: PermissionRequest) {
+        // Clone the Arc-backed state the timeout task needs so it does not
+        // require an `Arc<Manager>` (the `request` trait method only has
+        // `&self`). The inner map and sink are both `Arc`, so cloning is cheap.
+        let inner = self.inner.clone();
+        let sink = self.sink.clone();
+        let timeout_dur = self.permission_timeout;
+        let request_id = req.id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(timeout_dur).await;
+            // First-response-wins: only auto-deny if still pending. The entry
+            // is removed under the lock before sending, so a concurrent
+            // `respond` / sweeper / `clear_session` cannot also send.
+            let tx = {
+                let mut guard = inner.lock().unwrap_or_else(PoisonError::into_inner);
+                guard.pending.remove(&request_id).map(|p| p.tx)
+            };
+            if let Some(tx) = tx {
+                let _ = tx.send(PermissionDecision::Deny);
+                // Publish the timeout event so the frontend can warn the user.
+                if let Some(sink) = &sink {
+                    sink.broadcast_timeout(&req).await;
+                }
+                tracing::info!(
+                    request_id = %request_id,
+                    timeout_secs = timeout_dur.as_secs(),
+                    "permission request timed out — auto-denied",
+                );
+            }
+        });
     }
 
     /// Helper to deny and remove pending prompts older than the stale timeout.
@@ -410,6 +466,14 @@ impl PermissionManager for Manager {
         if let Some(sink) = &self.sink {
             sink.broadcast_request(&req).await;
         }
+
+        // Spawn a per-prompt timeout task. After `permission_timeout` elapses
+        // with no device response, the prompt is auto-denied via the same
+        // removal path as `respond`/sweeper (first-response-wins), and a
+        // `PermissionTimedOut` event is published so the frontend can surface a
+        // visible warning. The task holds a weak ref so it exits when the
+        // manager is dropped.
+        self.spawn_permission_timeout(req.clone());
 
         // Await the decision. The sender is removed from `pending` before
         // sending (see `respond` / sweeper / `clear_session`), so exactly one

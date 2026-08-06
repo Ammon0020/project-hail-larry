@@ -320,7 +320,8 @@ export function useBackend() {
         if (
           event.type === 'PermissionRequested' ||
           event.type === 'PermissionGranted' ||
-          event.type === 'PermissionDenied'
+          event.type === 'PermissionDenied' ||
+          event.type === 'PermissionTimedOut'
         ) {
           loadPendingPermissions()
         }

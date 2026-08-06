@@ -46,6 +46,11 @@ pub enum EventType {
     PermissionGranted,
     #[serde(rename = "PermissionDenied")]
     PermissionDenied,
+    /// A permission prompt timed out with no device response and was
+    /// auto-denied. Surfaces a visible warning in the chat so the user knows
+    /// the agent was unblocked by timeout, not an explicit deny.
+    #[serde(rename = "PermissionTimedOut")]
+    PermissionTimedOut,
     #[serde(rename = "ShellCommandStarted")]
     ShellCommandStarted,
     #[serde(rename = "ShellOutputStreamed")]
@@ -108,6 +113,7 @@ impl EventType {
             Self::PermissionRequested => "PermissionRequested",
             Self::PermissionGranted => "PermissionGranted",
             Self::PermissionDenied => "PermissionDenied",
+            Self::PermissionTimedOut => "PermissionTimedOut",
             Self::ShellCommandStarted => "ShellCommandStarted",
             Self::ShellOutputStreamed => "ShellOutputStreamed",
             Self::ShellCommandCompleted => "ShellCommandCompleted",
@@ -145,7 +151,7 @@ impl std::fmt::Display for EventType {
     }
 }
 
-const ALL_EVENT_TYPES: [EventType; 30] = [
+const ALL_EVENT_TYPES: [EventType; 31] = [
     EventType::PromptSubmitted,
     EventType::ResponseStarted,
     EventType::StreamUpdate,
@@ -155,6 +161,7 @@ const ALL_EVENT_TYPES: [EventType; 30] = [
     EventType::PermissionRequested,
     EventType::PermissionGranted,
     EventType::PermissionDenied,
+    EventType::PermissionTimedOut,
     EventType::ShellCommandStarted,
     EventType::ShellOutputStreamed,
     EventType::ShellCommandCompleted,
@@ -414,6 +421,13 @@ pub enum EventPayload {
         request_id: String,
         tool: String,
     },
+    /// A permission prompt timed out and was auto-denied. Carries the same
+    /// fields as `PermissionDenied` plus a human-readable reason for the chat
+    /// warning.
+    PermissionTimedOut {
+        request_id: String,
+        tool: String,
+    },
     ShellCommandStarted {
         command: String,
         cwd: String,
@@ -505,6 +519,7 @@ impl EventPayload {
             Self::PermissionRequested { .. } => EventType::PermissionRequested,
             Self::PermissionGranted { .. } => EventType::PermissionGranted,
             Self::PermissionDenied { .. } => EventType::PermissionDenied,
+            Self::PermissionTimedOut { .. } => EventType::PermissionTimedOut,
             Self::ShellCommandStarted { .. } => EventType::ShellCommandStarted,
             Self::ShellOutputStreamed { .. } => EventType::ShellOutputStreamed,
             Self::ShellCommandCompleted { .. } => EventType::ShellCommandCompleted,

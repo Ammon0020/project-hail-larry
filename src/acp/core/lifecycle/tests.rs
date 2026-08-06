@@ -92,9 +92,12 @@ impl PermissionManager for RecordingPermissions {
 ///
 /// Registers both a default mock agent (mode/profile capability on) and a
 /// `mock-nocap` agent that suppresses the mode option via
-/// `MOCKAGENT_NO_MODE_CAP=1` for rebind/fallback coverage.
+/// `MOCKAGENT_NO_MODE_CAP=1` for rebind/fallback coverage. `agent_idle_timeout`
+/// configures the watchdog; most tests pass the production default (120s) so
+/// the watchdog never fires, while the watchdog test passes a short value.
 async fn mock_client_empty(
     conversation_store: ConversationStore,
+    agent_idle_timeout: Duration,
 ) -> (Arc<Client>, Arc<RecordingPermissions>, TempDir, String) {
     let mockagent_bin = mockagent_bin();
     assert!(
@@ -151,6 +154,8 @@ async fn mock_client_empty(
         event_bus,
         conversation_store,
         mcp_config_path: None,
+        cancel_grace_period: std::time::Duration::from_millis(50),
+        agent_idle_timeout,
     }));
     (client, permissions, tempdir, workspace.id)
 }
@@ -158,7 +163,7 @@ async fn mock_client_empty(
 /// Create an isolated local ACP client backed by the deterministic Go fixture.
 pub(crate) async fn mock_client() -> (Arc<Client>, Arc<RecordingPermissions>, TempDir) {
     let (client, permissions, tempdir, workspace_id) =
-        mock_client_empty(ConversationStore::new(None)).await;
+        mock_client_empty(ConversationStore::new(None), Duration::from_mins(2)).await;
     let session = client
         .create_session("mock", "mock-model", &workspace_id)
         .await
@@ -226,6 +231,8 @@ async fn startup_failure_before_publication_is_not_registered() {
         event_bus,
         conversation_store: ConversationStore::new(None),
         mcp_config_path: None,
+        cancel_grace_period: std::time::Duration::from_millis(50),
+        agent_idle_timeout: Duration::from_mins(2),
     }));
 
     let error = client
@@ -276,6 +283,8 @@ async fn unexpected_post_startup_exit_marks_session_failed() {
         event_bus: event_bus.clone(),
         conversation_store: ConversationStore::new(None),
         mcp_config_path: None,
+        cancel_grace_period: std::time::Duration::from_millis(50),
+        agent_idle_timeout: Duration::from_mins(2),
     }));
 
     // create_session may succeed (readiness fires before the crash) or
@@ -325,7 +334,7 @@ async fn unexpected_post_startup_exit_marks_session_failed() {
 #[tokio::test]
 async fn session_creation_and_closure_append_lifecycle_events() {
     let (client, _permissions, _workspace, workspace_id) =
-        mock_client_empty(ConversationStore::new(None)).await;
+        mock_client_empty(ConversationStore::new(None), Duration::from_mins(2)).await;
     let session = client
         .create_session("mock", "mock-model", &workspace_id)
         .await
@@ -424,7 +433,7 @@ async fn rebind_preserves_session_identity_and_event_history() {
 #[tokio::test]
 async fn rebind_refreshes_profile_config_id_from_replacement_agent() {
     let (client, _permissions, _workspace, workspace_id) =
-        mock_client_empty(ConversationStore::new(None)).await;
+        mock_client_empty(ConversationStore::new(None), Duration::from_mins(2)).await;
     let session = client
         .create_session("mock-nocap", "mock-model", &workspace_id)
         .await
@@ -470,7 +479,7 @@ async fn rebind_refreshes_profile_config_id_from_replacement_agent() {
 #[tokio::test]
 async fn prompt_injection_fallback_skips_set_config_option() {
     let (client, _permissions, _workspace, workspace_id) =
-        mock_client_empty(ConversationStore::new(None)).await;
+        mock_client_empty(ConversationStore::new(None), Duration::from_mins(2)).await;
     let session = client
         .create_session("mock-nocap", "mock-model", &workspace_id)
         .await
@@ -600,8 +609,11 @@ async fn set_session_profile_leaves_local_state_on_rpc_failure() {
 async fn list_sessions_includes_stored_without_live_actors() {
     let store_dir = TempDir::new().expect("store dir");
     let store_path = store_dir.path().join("conversations.json");
-    let (client, _permissions, _workspace, workspace_id) =
-        mock_client_empty(ConversationStore::new(Some(store_path))).await;
+    let (client, _permissions, _workspace, workspace_id) = mock_client_empty(
+        ConversationStore::new(Some(store_path)),
+        Duration::from_mins(2),
+    )
+    .await;
     let now = Utc::now();
     client
         .deps
@@ -651,8 +663,11 @@ async fn list_sessions_includes_stored_without_live_actors() {
 async fn prompt_on_stored_session_starts_actor_without_wiping_history() {
     let store_dir = TempDir::new().expect("store dir");
     let store_path = store_dir.path().join("conversations.json");
-    let (client, _permissions, _workspace, workspace_id) =
-        mock_client_empty(ConversationStore::new(Some(store_path))).await;
+    let (client, _permissions, _workspace, workspace_id) = mock_client_empty(
+        ConversationStore::new(Some(store_path)),
+        Duration::from_mins(2),
+    )
+    .await;
     let now = Utc::now();
     let session_id = "sess-restore-prompt";
     client
@@ -746,8 +761,11 @@ async fn prompt_on_stored_session_starts_actor_without_wiping_history() {
 async fn persisted_acp_session_id_survives_rename_round_trip() {
     let store_dir = TempDir::new().expect("store dir");
     let store_path = store_dir.path().join("conversations.json");
-    let (client, _permissions, _workspace, workspace_id) =
-        mock_client_empty(ConversationStore::new(Some(store_path.clone()))).await;
+    let (client, _permissions, _workspace, workspace_id) = mock_client_empty(
+        ConversationStore::new(Some(store_path.clone())),
+        Duration::from_mins(2),
+    )
+    .await;
     let now = Utc::now();
     client
         .deps
@@ -837,8 +855,11 @@ async fn stale_actor_outcome_cannot_fail_replacement_session() {
 async fn concurrent_restore_publishes_one_actor() {
     let directory = TempDir::new().expect("store dir");
     let store_path = directory.path().join("conversations.json");
-    let (client, _permissions, _workspace, workspace_id) =
-        mock_client_empty(ConversationStore::new(Some(store_path))).await;
+    let (client, _permissions, _workspace, workspace_id) = mock_client_empty(
+        ConversationStore::new(Some(store_path)),
+        Duration::from_mins(2),
+    )
+    .await;
     let now = Utc::now();
     client
         .deps
@@ -914,5 +935,118 @@ async fn max_sessions_rejects_before_new_actor_is_spawned() {
         client.sessions.live_len().expect("live count"),
         super::super::MAX_SESSIONS,
         "rejected create must not publish or spawn another actor"
+    );
+}
+
+/// A hung agent (accepts `session/prompt` but never emits events or responds)
+/// must be detected by the idle watchdog: the session transitions to `Failed`
+/// and an `AgentExited` event with "Agent unresponsive" is appended.
+#[tokio::test]
+async fn idle_watchdog_marks_hung_agent_failed() {
+    let tempdir = TempDir::new().expect("temporary workspace");
+    let workspaces = Arc::new(WorkspaceRegistry::new());
+    let workspace = workspaces
+        .register(tempdir.path().to_str().expect("UTF-8 temporary workspace"))
+        .await
+        .expect("register temporary workspace");
+    let permissions = Arc::new(RecordingPermissions::default());
+    let event_bus = Arc::new(EventBus::new(
+        Store::open(tempdir.path().join("events.db")).expect("open test event store"),
+    ));
+    let mockagent_bin = mockagent_bin();
+    assert!(
+        Path::new(&mockagent_bin).exists(),
+        "mockagent binary missing at {mockagent_bin}"
+    );
+    // Wrap mockagent in `env MOCKAGENT_HANG_ON_PROMPT=1` so it accepts the
+    // prompt but never responds or streams any session updates.
+    #[cfg(unix)]
+    let (hang_cmd, hang_args): (String, Vec<String>) = (
+        "env".to_string(),
+        vec![
+            "MOCKAGENT_HANG_ON_PROMPT=1".to_string(),
+            mockagent_bin.clone(),
+        ],
+    );
+    #[cfg(windows)]
+    let (hang_cmd, hang_args): (String, Vec<String>) = (
+        "cmd".to_string(),
+        vec![
+            "/C".to_string(),
+            format!("set MOCKAGENT_HANG_ON_PROMPT=1&&{}", mockagent_bin),
+        ],
+    );
+    let registry = Arc::new(AgentRegistry::from_agents([AgentInfo {
+        id: "mock-hang".to_string(),
+        name: "Mock agent that hangs on prompt".to_string(),
+        command: hang_cmd,
+        args: hang_args,
+        models: vec![AgentModel::new(
+            "mock-model".to_string(),
+            "Mock model".to_string(),
+        )],
+        warning: String::new(),
+    }]));
+    // Use a short idle timeout so the test does not wait 120s.
+    let idle_timeout = Duration::from_millis(500);
+    let client = Arc::new(Client::new(ClientDeps {
+        registry,
+        workspaces,
+        permissions: permissions.clone(),
+        event_bus: event_bus.clone(),
+        conversation_store: ConversationStore::new(None),
+        mcp_config_path: None,
+        cancel_grace_period: Duration::from_mins(1),
+        agent_idle_timeout: idle_timeout,
+    }));
+    let session = client
+        .create_session("mock-hang", "mock-model", &workspace.id)
+        .await
+        .expect("create mock-hang ACP session");
+    // Admit a prompt; the agent will hang without emitting any events.
+    client
+        .send_prompt(&session.id, "please respond", &[])
+        .await
+        .expect("admit prompt to hung agent");
+    wait_until_running(&client, &session.id).await;
+
+    // The watchdog must fire after the idle timeout and mark the session
+    // Failed. Poll with a generous bound to absorb CI scheduling jitter.
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if client
+                .get_session_info(&session.id)
+                .is_ok_and(|s| s.status == "failed")
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("hung agent session must transition to failed via idle watchdog");
+
+    // An AgentExited event with the "unresponsive" message must be appended.
+    let events = event_bus
+        .query(&session.id, 0, 1000)
+        .await
+        .expect("query session events");
+    let exited = events
+        .iter()
+        .find(|e| e.event_type == EventType::AgentExited)
+        .expect("hung agent must append an AgentExited event");
+    assert!(
+        exited.content.contains("unresponsive"),
+        "AgentExited event must mention unresponsive: {exited:?}"
+    );
+
+    // Permissions must be cleared for the failed session.
+    let cleared = permissions
+        .cleared_sessions
+        .lock()
+        .expect("recording permissions lock");
+    assert!(
+        cleared.iter().any(|id| id == &session.id),
+        "watchdog did not clear permissions for the hung session; cleared: {cleared:?}"
     );
 }

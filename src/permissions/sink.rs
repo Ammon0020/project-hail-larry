@@ -14,6 +14,7 @@ use chrono::Utc;
 
 use crate::events::SharedEventBus;
 use crate::interfaces::types::{Event, EventType, PermissionRequest};
+use crate::interfaces::PermissionDecision;
 
 /// Sink for broadcasting a newly-registered permission prompt.
 ///
@@ -27,6 +28,13 @@ pub trait PermissionSink: Send + Sync {
     /// Broadcast `req` to subscribers. Best-effort: failures are logged by the
     /// implementation and must not block the request flow.
     async fn broadcast_request(&self, req: &PermissionRequest);
+
+    /// Publish a `PermissionTimedOut` event so the frontend can surface a
+    /// visible warning in the chat. Best-effort: failures are logged by the
+    /// implementation and must not block the auto-deny flow. The default impl
+    /// is a no-op so test sinks (`NullSink`, capturing sinks) need not override
+    /// it.
+    async fn broadcast_timeout(&self, _req: &PermissionRequest) {}
 }
 
 /// No-op sink used when no event bus is wired (e.g. unit tests that only
@@ -78,6 +86,29 @@ impl PermissionSink for EventBusPermissionSink {
         // the stale sweeper eventually unblocks it.
         if let Err(e) = self.bus.append_and_publish(event).await {
             tracing::warn!(error = %e, "permission sink: failed to publish PermissionRequested");
+        }
+    }
+
+    /// Publish a `PermissionTimedOut` event so the frontend can show a warning
+    /// in the chat. The event carries the request id and tool so the UI can
+    /// collapse the corresponding permission card.
+    async fn broadcast_timeout(&self, req: &PermissionRequest) {
+        let mut event = Event::new(
+            0,
+            EventType::PermissionTimedOut,
+            req.session_id.clone(),
+            Utc::now(),
+        );
+        event.tool.clone_from(&req.tool);
+        event.request_id.clone_from(&req.id);
+        // The content carries the human-readable reason for the chat warning.
+        event.content = format!(
+            "Permission request timed out (no device available to approve) — {}",
+            PermissionDecision::Deny.as_str()
+        );
+
+        if let Err(e) = self.bus.append_and_publish(event).await {
+            tracing::warn!(error = %e, "permission sink: failed to publish PermissionTimedOut");
         }
     }
 }

@@ -3,14 +3,17 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 
 use super::actor::{self, ActorCommand, ACTOR_COMMAND_CAPACITY};
 use super::diagnostics::StderrTail;
 use super::events::append_payload;
 use super::registry::{SessionEntry, SessionState};
-use super::{Client, CANCEL_GRACE_PERIOD, MAX_SESSIONS};
+use super::{Client, MAX_SESSIONS};
+use crate::events::SubRecv;
 use crate::interfaces::{AppError, EventPayload, SessionInfo, WorkspaceInfo};
 
 impl Client {
@@ -108,6 +111,7 @@ impl Client {
                 mcp_config_path: self.deps.mcp_config_path.clone(),
                 profiles: Arc::clone(&self.pipeline.profiles),
                 persisted_acp_session_id,
+                model_id: info.model_id.clone(),
             },
             ACTOR_COMMAND_CAPACITY,
         );
@@ -161,6 +165,43 @@ impl Client {
             }
             tracing::warn!(session_id, error = %error, "ACP session actor ended");
         });
+    }
+
+    /// Spawn the idle watchdog for a `Running` session.
+    ///
+    /// The watchdog subscribes to the event bus and resets an idle timer on
+    /// every event produced for this session. If no event arrives within
+    /// `idle_timeout`, the session is marked `Failed` and an `AgentExited`
+    /// event ("Agent unresponsive (no activity for {N}s)") is published so the
+    /// frontend surfaces a clear error instead of hanging forever.
+    ///
+    /// The watchdog stops when the `cancel` token is cancelled (the session
+    /// left `Running` via normal completion, cancel, or close) or when the
+    /// session is no longer live.
+    pub(super) fn spawn_idle_watchdog(
+        &self,
+        session_id: &str,
+        actor_id: u64,
+        idle_timeout: Duration,
+        cancel: CancellationToken,
+    ) {
+        if idle_timeout.is_zero() {
+            // A zero timeout disables the watchdog entirely.
+            return;
+        }
+        let sessions = self.sessions.clone();
+        let permissions = Arc::clone(&self.deps.permissions);
+        let event_bus = Arc::clone(&self.deps.event_bus);
+        let session_id = session_id.to_string();
+        tokio::spawn(idle_watchdog_task(
+            sessions,
+            permissions,
+            event_bus,
+            session_id,
+            actor_id,
+            idle_timeout,
+            cancel,
+        ));
     }
 
     // Single linear rebind sequence — splitting would obscure the transfer flow.
@@ -229,6 +270,7 @@ impl Client {
                 mcp_config_path: self.deps.mcp_config_path.clone(),
                 profiles: Arc::clone(&self.pipeline.profiles),
                 persisted_acp_session_id: String::new(),
+                model_id: model_id.to_string(),
             },
             ACTOR_COMMAND_CAPACITY,
         );
@@ -303,8 +345,9 @@ impl Client {
         let conversation_store = self.deps.conversation_store.clone();
         let pipeline = Arc::clone(&self.pipeline);
         let session_id = session_id.to_string();
+        let grace_period = self.deps.cancel_grace_period;
         tokio::spawn(async move {
-            tokio::time::sleep(CANCEL_GRACE_PERIOD).await;
+            tokio::time::sleep(grace_period).await;
             let Some(removed) = sessions.take_interrupted(&session_id) else {
                 return;
             };
@@ -369,6 +412,153 @@ impl Client {
         self.sessions.rename(session_id, name)?;
         self.persist_sessions()
     }
+}
+
+/// Background watchdog task body for [`Client::spawn_idle_watchdog`].
+///
+/// Subscribes to the event bus at the current tail and resets an idle timer
+/// whenever an event for the watched session arrives. If the timer elapses
+/// while the session is still `Running` (and the actor generation has not
+/// changed), the session is marked `Failed` and an `AgentExited` event is
+/// published. The task exits cleanly when the `cancel` token fires (session
+/// left `Running`) or the event bus closes.
+async fn idle_watchdog_task(
+    sessions: super::registry::SessionRegistry,
+    permissions: Arc<dyn crate::interfaces::PermissionManager>,
+    event_bus: crate::events::SharedEventBus,
+    session_id: String,
+    actor_id: u64,
+    idle_timeout: Duration,
+    cancel: CancellationToken,
+) {
+    // Subscribe from the current tail so only events arriving *after* the
+    // watchdog starts can reset the timer. Replay of historical events would
+    // incorrectly keep a hung session alive.
+    let cursor = match event_bus.store().count().await {
+        Ok(count) => count,
+        Err(error) => {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %error,
+                "idle watchdog: cannot read event tail; aborting watchdog"
+            );
+            return;
+        }
+    };
+    let mut subscription = match event_bus.subscribe(cursor).await {
+        Ok(subscription) => subscription,
+        Err(error) => {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %error,
+                "idle watchdog: cannot subscribe to event bus; aborting watchdog"
+            );
+            return;
+        }
+    };
+    tracing::debug!(
+        session_id = %session_id,
+        idle_timeout_secs = idle_timeout.as_secs(),
+        "idle watchdog armed"
+    );
+    loop {
+        let sleep = tokio::time::sleep(idle_timeout);
+        tokio::pin!(sleep);
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                tracing::debug!(session_id = %session_id, "idle watchdog cancelled");
+                return;
+            }
+            // Timer elapsed with no events for this session.
+            () = &mut sleep => {
+                handle_idle_timeout(
+                    &sessions,
+                    &permissions,
+                    &event_bus,
+                    &session_id,
+                    actor_id,
+                    idle_timeout,
+                ).await;
+                return;
+            }
+            recv = subscription.recv_or_lag() => {
+                if !handle_watchdog_event(recv, &session_id) {
+                    return;
+                }
+                // Any event for this session resets the idle timer (loop again).
+            }
+        }
+    }
+}
+
+/// Process one subscription outcome. Returns `true` to continue the watchdog
+/// loop (reset the timer) or `false` to exit (bus closed).
+fn handle_watchdog_event(recv: SubRecv, session_id: &str) -> bool {
+    match recv {
+        SubRecv::Event(event) => {
+            // Only events for *this* session reset the timer. Other sessions'
+            // events are ignored but do not exit the loop.
+            event.session_id == session_id
+        }
+        SubRecv::Lagged { skipped } => {
+            // The broadcast buffer overflowed. Continue from the last seen
+            // event id; lag here is not fatal because the watchdog's purpose
+            // is detection, not delivery.
+            tracing::warn!(
+                session_id,
+                skipped,
+                "idle watchdog lagged; continuing from last seen event id"
+            );
+            true
+        }
+        SubRecv::Closed => false,
+    }
+}
+
+/// Fire the watchdog: mark the session `Failed` and publish `AgentExited`.
+///
+/// Only acts if the session is still live, still `Running`, and owned by the
+/// same actor generation. This guards against races where the session
+/// completed, was cancelled, or was rebound between the timer firing and this
+/// state check.
+async fn handle_idle_timeout(
+    sessions: &super::registry::SessionRegistry,
+    permissions: &Arc<dyn crate::interfaces::PermissionManager>,
+    event_bus: &crate::events::SharedEventBus,
+    session_id: &str,
+    actor_id: u64,
+    idle_timeout: Duration,
+) {
+    // `mark_failed_if_current` atomically transitions only if the actor
+    // generation matches, so a rebind or close that replaced the actor cannot
+    // be failed by a stale watchdog.
+    if !sessions.mark_failed_if_current(session_id, actor_id) {
+        tracing::debug!(
+            session_id,
+            "idle watchdog fired but session is no longer current; skipping"
+        );
+        return;
+    }
+    permissions.clear_session(session_id);
+    let content = format!(
+        "Agent unresponsive (no activity for {}s)",
+        idle_timeout.as_secs()
+    );
+    if let Err(append_error) =
+        append_payload(event_bus, session_id, EventPayload::AgentExited { content }).await
+    {
+        tracing::error!(
+            session_id,
+            error = %append_error,
+            "failed to persist ACP idle-watchdog AgentExited event"
+        );
+    }
+    tracing::warn!(
+        session_id,
+        idle_timeout_secs = idle_timeout.as_secs(),
+        "ACP session marked failed: agent unresponsive (idle watchdog)"
+    );
 }
 
 #[cfg(test)]

@@ -80,6 +80,8 @@ async fn client_with_workspace() -> (Arc<Client>, TempDir, String, Arc<EventBus>
         event_bus: event_bus.clone(),
         conversation_store: local_agent::acp::ConversationStore::new(None),
         mcp_config_path: None,
+        cancel_grace_period: std::time::Duration::from_millis(50),
+        agent_idle_timeout: std::time::Duration::from_mins(2),
     }));
 
     (client, directory, workspace.id, event_bus)

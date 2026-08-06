@@ -131,7 +131,8 @@ fn apply_payload(event: &mut Event, payload: &EventPayload) {
             event.options.clone_from(options);
         }
         EventPayload::PermissionGranted { request_id, tool }
-        | EventPayload::PermissionDenied { request_id, tool } => {
+        | EventPayload::PermissionDenied { request_id, tool }
+        | EventPayload::PermissionTimedOut { request_id, tool } => {
             event.request_id.clone_from(request_id);
             event.tool.clone_from(tool);
         }
@@ -286,6 +287,10 @@ pub fn wire_to_typed_event(event: &Event) -> TypedEvent {
             tool: event.tool.clone(),
         },
         EventType::PermissionDenied => EventPayload::PermissionDenied {
+            request_id: event.request_id.clone(),
+            tool: event.tool.clone(),
+        },
+        EventType::PermissionTimedOut => EventPayload::PermissionTimedOut {
             request_id: event.request_id.clone(),
             tool: event.tool.clone(),
         },

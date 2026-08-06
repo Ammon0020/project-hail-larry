@@ -53,6 +53,8 @@ fn core_deps(dir: &Path) -> CoreDeps {
         event_bus: events.clone(),
         conversation_store: ConversationStore::new(None),
         mcp_config_path: None,
+        cancel_grace_period: std::time::Duration::from_millis(50),
+        agent_idle_timeout: std::time::Duration::from_mins(2),
     }));
     CoreDeps {
         config,

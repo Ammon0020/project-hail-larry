@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useRef, useMemo, type ChangeEvent, type CSSProperties } from 'react'
-import { WifiOff, AlertCircle, X } from 'lucide-react'
+import { WifiOff, AlertCircle, X, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   api,
@@ -7,6 +7,7 @@ import {
   type UploadResult,
 } from '@/lib/api'
 import { isSessionNotFound } from '@/lib/errors'
+import { useRetrying } from '@/lib/retry'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatComposer } from './ChatComposer'
 import { AssistantThread } from './chat/AssistantThread'
@@ -20,6 +21,7 @@ import { useAgentSelection } from '@/hooks/useAgentSelection'
 import { useProfileSelection } from '@/hooks/useProfileSelection'
 import { type ContextUsage } from '@/lib/contextUsage'
 import { useSendingState } from '@/hooks/useSendingState'
+import { useStuckAgentWarning } from '@/hooks/useStuckAgentWarning'
 import { pushRecentModel } from '@/lib/modelPrefs'
 import type { AppEvent, Agent, Attachment, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
@@ -139,6 +141,11 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loadingOlderEvents, setLoadingOlderEvents] = useState(false)
+
+  // Subtle "Retrying…" indicator — true while a mutating API call (send
+  // prompt, upload, model/profile switch) is in a backoff sleep before a
+  // retry attempt. See web/src/lib/retry.ts.
+  const retrying = useRetrying()
 
   // Transient "New chat" placeholder tab. Set true by handleNewChat so the tab
   // bar shows a "New chat" tab immediately (without a backend round-trip).
@@ -270,6 +277,25 @@ export function ChatPanel({
   } = useSendingState({ activeSessionId, events, allEvents, sessions })
 
   const agentRunning = activeSending || isRunningEvent(lastEvent)
+
+  // Monotonic activity signal for the stuck-agent watchdog: changes whenever a
+  // new event lands for the active session (event id when present, else the
+  // events array length). AppEvent has no timestamp field, and Date.now() must
+  // not run during render, so the hook records the wall-clock baseline itself
+  // in an effect each time this signal changes.
+  const lastEventTimestamp = useMemo(
+    () => (lastEvent ? (lastEvent.id ?? events.length) : null),
+    [lastEvent, events.length],
+  )
+
+  // Frontend watchdog: if agentRunning stays true with no events for 90s,
+  // surface a recovery banner. See useStuckAgentWarning for the full contract.
+  const { stuck: stuckAgent, seconds: stuckSeconds, wait: waitStuckAgent } =
+    useStuckAgentWarning({
+      agentRunning,
+      lastEventTimestamp,
+      sessionId: activeSessionId ?? '',
+    })
 
   // Per-tab running dots: admission latch and/or last event per open session.
   const runningSessionIds = useMemo(() => {
@@ -441,8 +467,8 @@ export function ChatPanel({
   const permissionResolution = useMemo(() => {
     const m = new Map<string, 'granted' | 'denied'>()
     for (const e of events) {
-      if (e.requestId && (e.type === 'PermissionGranted' || e.type === 'PermissionDenied')) {
-        m.set(e.requestId, e.type === 'PermissionDenied' ? 'denied' : 'granted')
+      if (e.requestId && (e.type === 'PermissionGranted' || e.type === 'PermissionDenied' || e.type === 'PermissionTimedOut')) {
+        m.set(e.requestId, e.type === 'PermissionGranted' ? 'granted' : 'denied')
       }
     }
     return m
@@ -672,6 +698,15 @@ export function ChatPanel({
         </Banner>
       )}
 
+      {/* Subtle retry indicator — shown while a mutating API call is backing
+          off before a retry (send prompt, upload, model/profile switch).
+          Kept minimal: a small spinning loader + label, not a full banner. */}
+      {retrying && (
+        <div className="border-b border-border px-3 py-1.5 flex items-center gap-2 shrink-0 text-xs text-muted-foreground">
+          <Loader2 className="w-3 h-3 animate-spin" /> Retrying…
+        </div>
+      )}
+
       {/* MCP load/toggle failure — surfaces errors the hook used to swallow. */}
       {mcpError && (
         <Banner
@@ -687,6 +722,34 @@ export function ChatPanel({
             className="hover:opacity-80"
           >
             <X className="w-3.5 h-3.5" />
+          </button>
+        </Banner>
+      )}
+
+      {/* Stuck-agent watchdog — agentRunning has stayed true with no events
+          for the timeout window. Offers a manual interrupt or a wait reset. */}
+      {stuckAgent && activeSessionId && (
+        <Banner
+          variant="warning"
+          className="border-b px-3 py-2 flex items-center gap-2 shrink-0"
+        >
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="flex-1">
+            Agent seems unresponsive. No activity for {stuckSeconds}s.
+          </span>
+          <button
+            type="button"
+            onClick={waitStuckAgent}
+            className="hover:opacity-80 underline underline-offset-2"
+          >
+            Wait
+          </button>
+          <button
+            type="button"
+            onClick={handleStop}
+            className="hover:opacity-80 underline underline-offset-2"
+          >
+            Interrupt
           </button>
         </Banner>
       )}

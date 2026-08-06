@@ -198,6 +198,7 @@ export type EventType =
   | 'PermissionRequested'
   | 'PermissionGranted'
   | 'PermissionDenied'
+  | 'PermissionTimedOut'
   | 'ShellCommandStarted'
   | 'ShellOutputStreamed'
   | 'ShellCommandCompleted'

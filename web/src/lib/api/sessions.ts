@@ -4,7 +4,8 @@
  */
 
 import type { AppEvent, Attachment, Agent, PromptContextSettings, Session } from '@/types'
-import { API_BASE, apiFetch, withAuthHeaders } from './client'
+import { API_BASE, ApiError, apiFetch, withAuthHeaders } from './client'
+import { withRetry } from '@/lib/retry'
 
 /** The user's current text selection in the editor, reported to the backend
  *  so the ACP prompt pipeline can send it as a resource block. Path is
@@ -93,10 +94,15 @@ export function patchSession(
   sessionId: string,
   patch: { name?: string; agentId?: string; modelId?: string; maxTransferBytes?: number },
 ) {
-  return apiFetch<{ status: string }>(`/sessions/${sessionId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(patch),
-  })
+  // Retried: PATCH is a mutating call (model switch, agent rebind, rename).
+  // A transient failure during a model/agent switch would otherwise leave the
+  // UI silently out of sync with the backend; retrying recovers automatically.
+  return withRetry(() =>
+    apiFetch<{ status: string }>(`/sessions/${sessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  )
 }
 
 export function reportSessionContext(
@@ -123,33 +129,43 @@ export function putPromptContextSettings(settings: PromptContextSettings) {
 }
 
 export function sendPrompt(sessionId: string, content: string, attachments?: Attachment[]) {
-  return apiFetch<{ status: string }>(`/sessions/${sessionId}/prompt`, {
-    method: 'POST',
-    body: JSON.stringify(
-      attachments && attachments.length > 0
-        ? { content, attachments }
-        : { content },
-    ),
-  })
+  // Retried: a transient failure during a send would otherwise lose the
+  // message. The caller (ChatPanel) restores the input on final failure, so
+  // retrying first gives the daemon a chance to come back before surfacing.
+  return withRetry(() =>
+    apiFetch<{ status: string }>(`/sessions/${sessionId}/prompt`, {
+      method: 'POST',
+      body: JSON.stringify(
+        attachments && attachments.length > 0
+          ? { content, attachments }
+          : { content },
+      ),
+    }),
+  )
 }
 
 /** Uploads an image file via multipart/form-data. Uses `fetch` directly
  *  (not `apiFetch`) so the browser sets the multipart Content-Type and
  *  boundary automatically — `apiFetch` forces `application/json`. Mirrors
- *  `apiFetch`'s same-origin base URL and error handling. */
+ *  `apiFetch`'s same-origin base URL and error handling. Retried via
+ *  `withRetry` so a transient daemon blip during an upload doesn't lose the
+ *  file; throws `ApiError` (carrying the HTTP status) so the retry layer can
+ *  distinguish transient 5xx from non-transient 4xx. */
 export async function uploadFile(sessionId: string, file: File): Promise<UploadResult> {
-  const form = new FormData()
-  form.append('file', file)
-  const res = await fetch(`${API_BASE}/sessions/${sessionId}/uploads`, {
-    method: 'POST',
-    headers: withAuthHeaders(),
-    body: form,
+  return withRetry(async () => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/uploads`, {
+      method: 'POST',
+      headers: withAuthHeaders(),
+      body: form,
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string }
+      throw new ApiError(body.error || `HTTP ${res.status}`, res.status)
+    }
+    return (await res.json()) as UploadResult
   })
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string }
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return (await res.json()) as UploadResult
 }
 
 export function cancelSession(sessionId: string) {

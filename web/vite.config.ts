@@ -19,8 +19,14 @@ export default defineConfig({
     chunkSizeWarningLimit: 2000,
   },
   server: {
-    // Proxy API and WebSocket routes to the Go backend during dev.
-    // In production, the Go server serves the frontend directly via go:embed.
+    // Proxy API and WebSocket routes to the Rust daemon during dev.
+    // In production, the Rust daemon serves the frontend directly via
+    // build.rs embed (see build.rs).
+    // strictPort: fail loudly if 5173 is taken instead of silently moving to
+    // 5174+, which would leave the browser on a stale Vite from a previous
+    // dev.sh run and cause perpetual "Reconnecting" (proxy → dead daemon).
+    strictPort: true,
+    port: 5173,
     proxy: {
       '/api': {
         target: 'http://localhost:7337',
