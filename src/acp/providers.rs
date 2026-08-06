@@ -17,7 +17,7 @@
 //!
 //! List responses accept both `id` and `providerId` for forward compatibility.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
@@ -249,56 +249,46 @@ pub fn find_model_config_id(
     opts: &[SessionConfigOption],
     known_models: &[AgentModel],
 ) -> Option<String> {
-    let known: HashSet<&str> = known_models.iter().map(|m| m.id.as_str()).collect();
+    find_select_option(opts, |opt, _| {
+        matches!(opt.category, Some(SessionConfigOptionCategory::Model))
+    })
+    .or_else(|| find_select_option(opts, |opt, _| opt.id.0.as_ref() == "model"))
+    .or_else(|| {
+        find_select_option(opts, |opt, _| {
+            opt.name.to_ascii_lowercase().contains("model")
+        })
+    })
+    .or_else(|| {
+        find_select_option(opts, |_, select| {
+            let known = |value: &str| known_models.iter().any(|model| model.id == value);
+            known(select.current_value.0.as_ref())
+                || match &select.options {
+                    SessionConfigSelectOptions::Ungrouped(options) => {
+                        options.iter().any(|option| known(option.value.0.as_ref()))
+                    }
+                    SessionConfigSelectOptions::Grouped(groups) => groups
+                        .iter()
+                        .flat_map(|group| &group.options)
+                        .any(|option| known(option.value.0.as_ref())),
+                    _ => false,
+                }
+        })
+    })
+}
 
-    // Pass 1: explicit category == model (spec-preferred).
-    for opt in opts {
-        if matches!(opt.category, Some(SessionConfigOptionCategory::Model))
-            && matches!(opt.kind, SessionConfigKind::Select(_))
-        {
-            return Some(opt.id.to_string());
-        }
-    }
-    // Pass 2: conventional id "model".
-    for opt in opts {
-        if opt.id.0.as_ref() == "model" && matches!(opt.kind, SessionConfigKind::Select(_)) {
-            return Some(opt.id.to_string());
-        }
-    }
-    // Pass 3: name contains "model" (case-insensitive).
-    for opt in opts {
-        if opt.name.to_ascii_lowercase().contains("model")
-            && matches!(opt.kind, SessionConfigKind::Select(_))
-        {
-            return Some(opt.id.to_string());
-        }
-    }
-    // Pass 4: current or listed value matches a known model id.
-    if known.is_empty() {
-        return None;
-    }
-    for opt in opts {
+fn find_select_option(
+    opts: &[SessionConfigOption],
+    predicate: impl Fn(
+        &SessionConfigOption,
+        &agent_client_protocol::schema::v1::SessionConfigSelect,
+    ) -> bool,
+) -> Option<String> {
+    opts.iter().find_map(|opt| {
         let SessionConfigKind::Select(select) = &opt.kind else {
-            continue;
+            return None;
         };
-        if known.contains(select.current_value.0.as_ref()) {
-            return Some(opt.id.to_string());
-        }
-        let hit = match &select.options {
-            SessionConfigSelectOptions::Ungrouped(options) => {
-                options.iter().any(|o| known.contains(o.value.0.as_ref()))
-            }
-            SessionConfigSelectOptions::Grouped(groups) => groups
-                .iter()
-                .flat_map(|g| g.options.iter())
-                .any(|o| known.contains(o.value.0.as_ref())),
-            _ => false,
-        };
-        if hit {
-            return Some(opt.id.to_string());
-        }
-    }
-    None
+        predicate(opt, select).then(|| opt.id.to_string())
+    })
 }
 
 /// Locate the profile (mode-category) config option id.
@@ -307,21 +297,10 @@ pub fn find_model_config_id(
 /// did not advertise a mode-category config option (prompt-injection fallback).
 #[must_use]
 pub fn find_profile_config_id(opts: &[SessionConfigOption]) -> Option<String> {
-    // Pass 1: explicit category == mode (spec-preferred).
-    for opt in opts {
-        if matches!(opt.category, Some(SessionConfigOptionCategory::Mode))
-            && matches!(opt.kind, SessionConfigKind::Select(_))
-        {
-            return Some(opt.id.to_string());
-        }
-    }
-    // Pass 2: conventional id "profile".
-    for opt in opts {
-        if opt.id.0.as_ref() == "profile" && matches!(opt.kind, SessionConfigKind::Select(_)) {
-            return Some(opt.id.to_string());
-        }
-    }
-    None
+    find_select_option(opts, |opt, _| {
+        matches!(opt.category, Some(SessionConfigOptionCategory::Mode))
+    })
+    .or_else(|| find_select_option(opts, |opt, _| opt.id.0.as_ref() == "profile"))
 }
 
 /// Live profile switch via `session/set_config_option` (mode category).
