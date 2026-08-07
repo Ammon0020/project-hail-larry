@@ -11,6 +11,7 @@
  */
 
 import { parseModelId } from '@/lib/modelGrouping'
+import { safeStorage } from './safeStorage'
 
 export interface ModelPrefs {
   /** Base model ids (e.g. "gpt-5.3-codex"), order preserved. */
@@ -42,7 +43,7 @@ function emptyPrefs(): ModelPrefs {
 
 function readAll(): StoredByAgent {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = safeStorage.get(STORAGE_KEY)
     if (!raw) return {}
     const parsed = JSON.parse(raw) as StoredByAgent
     return parsed && typeof parsed === 'object' ? parsed : {}
@@ -53,7 +54,7 @@ function readAll(): StoredByAgent {
 
 function writeAll(all: StoredByAgent): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all))
+    safeStorage.setJson(STORAGE_KEY, all)
   } catch {
     // Quota / private mode — UI still works without persistence.
   }

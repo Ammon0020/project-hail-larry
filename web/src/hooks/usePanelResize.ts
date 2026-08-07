@@ -7,6 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
 } from 'react'
+import { safeStorage } from '@/lib/safeStorage'
 
 interface PanelResizeConfig {
   initialWidth: number
@@ -36,10 +37,8 @@ interface UsePanelResizeResult {
 }
 
 function readStoredWidth(config: PanelResizeConfig): number {
-  const stored = Number(localStorage.getItem(config.storageKey))
-  return Number.isFinite(stored) && stored >= config.minWidth && stored <= config.maxWidth
-    ? stored
-    : config.initialWidth
+  const stored = safeStorage.getNumber(config.storageKey, config.initialWidth)
+  return stored >= config.minWidth && stored <= config.maxWidth ? stored : config.initialWidth
 }
 
 function hiddenStorageKey(config: PanelResizeConfig): string {
@@ -47,7 +46,7 @@ function hiddenStorageKey(config: PanelResizeConfig): string {
 }
 
 function readStoredHidden(config: PanelResizeConfig): boolean {
-  return localStorage.getItem(hiddenStorageKey(config)) === '1'
+  return safeStorage.get(hiddenStorageKey(config)) === '1'
 }
 
 /**
@@ -74,19 +73,19 @@ export function usePanelResize({
 
   useEffect(() => {
     if (leftWidth > 0) {
-      localStorage.setItem(leftStorageKey, String(leftWidth))
-      localStorage.setItem(leftHiddenKey, '0')
+      safeStorage.set(leftStorageKey, String(leftWidth))
+      safeStorage.set(leftHiddenKey, '0')
     } else {
-      localStorage.setItem(leftHiddenKey, '1')
+      safeStorage.set(leftHiddenKey, '1')
     }
   }, [leftStorageKey, leftHiddenKey, leftWidth])
 
   useEffect(() => {
     if (rightWidth > 0) {
-      localStorage.setItem(rightStorageKey, String(rightWidth))
-      localStorage.setItem(rightHiddenKey, '0')
+      safeStorage.set(rightStorageKey, String(rightWidth))
+      safeStorage.set(rightHiddenKey, '0')
     } else {
-      localStorage.setItem(rightHiddenKey, '1')
+      safeStorage.set(rightHiddenKey, '1')
     }
   }, [rightStorageKey, rightHiddenKey, rightWidth])
 

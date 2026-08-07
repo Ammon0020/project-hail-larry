@@ -1,3 +1,4 @@
+import { safeStorage } from './safeStorage'
 /**
  * Theme management. Supports an explicit 'dark'/'light' choice plus 'system'
  * (follow the OS preference). The resolved theme is applied by toggling the
@@ -12,7 +13,7 @@ const VALID: readonly Theme[] = ['dark', 'light', 'system']
 /** Reads the persisted theme preference, falling back to 'dark'. */
 export function getStoredTheme(): Theme {
   try {
-    const v = localStorage.getItem(STORAGE_KEY)
+    const v = safeStorage.get(STORAGE_KEY)
     return v && (VALID as readonly string[]).includes(v) ? (v as Theme) : 'dark'
   } catch {
     return 'dark'
@@ -43,7 +44,7 @@ export function applyTheme(theme: Theme): void {
 /** Persists and applies a theme preference. */
 export function setTheme(theme: Theme): void {
   try {
-    localStorage.setItem(STORAGE_KEY, theme)
+    safeStorage.set(STORAGE_KEY, theme)
   } catch {
     // Quota / private mode — UI still works without persistence.
   }

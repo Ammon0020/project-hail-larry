@@ -23,6 +23,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useLayoutState } from '@/hooks/useLayoutState'
 import type { EditorSelectionInfo } from '@/lib/api'
 import type { FileNode, FileTreeNode, AppEvent, Attachment, SessionStatus } from '@/types'
+import { safeStorage } from '@/lib/safeStorage'
 
 /**
  * Runtime guard that narrows an arbitrary backend status string to the
@@ -45,7 +46,7 @@ function narrowStatus(raw: string): SessionStatus {
  * arbitrary stored strings (AGENTS.md — type safety).
  */
 function readValidString<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
-  const v = localStorage.getItem(key)
+  const v = safeStorage.get(key)
   return v && (allowed as readonly string[]).includes(v) ? (v as T) : fallback
 }
 
@@ -112,7 +113,7 @@ export default function App() {
   // Session state — restored from localStorage so the active conversation
   // survives a page reload (UI Spec §6.2).
   const [activeSessionId, setActiveSessionId] = useState<string | null>(
-    () => localStorage.getItem('lai:activeSessionId') || null,
+    () => safeStorage.get('lai:activeSessionId') || null,
   )
 
   // Real backend connection
@@ -176,8 +177,8 @@ export default function App() {
 
   /** Persist the active conversation so it is restored on reload. */
   useEffect(() => {
-    if (activeSessionId) localStorage.setItem('lai:activeSessionId', activeSessionId)
-    else localStorage.removeItem('lai:activeSessionId')
+    if (activeSessionId) safeStorage.set('lai:activeSessionId', activeSessionId)
+    else safeStorage.remove('lai:activeSessionId')
   }, [activeSessionId])
 
   // Validate the persisted activeSessionId against the backend's session list.

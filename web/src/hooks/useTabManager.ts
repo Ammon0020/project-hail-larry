@@ -5,6 +5,7 @@ import { useFileChangeDetection } from '@/hooks/useFileChangeDetection'
 import { pathIsUnder, previewTabId, remapAfterRename, remapTabIdAfterRename, tabIdTouchesPath } from '@/lib/tabPath'
 import type { EditorSelectionInfo } from '@/lib/api'
 import type { Tab } from '@/types'
+import { safeStorage } from '@/lib/safeStorage'
 
 type Backend = ReturnType<typeof useBackend>
 
@@ -29,15 +30,10 @@ export function useTabManager({
 }: UseTabManagerOptions) {
   // Tab state — restored from localStorage so open files survive a reload.
   const [openTabs, setOpenTabs] = useState<Tab[]>(() => {
-    try {
-      const stored = localStorage.getItem('lai:openTabs')
-      return stored ? (JSON.parse(stored) as Tab[]) : []
-    } catch {
-      return []
-    }
+    return safeStorage.getJson<Tab[]>('lai:openTabs', [])
   })
   const [activeTabId, setActiveTabId] = useState<string | null>(
-    () => localStorage.getItem('lai:activeTabId') || null,
+    () => safeStorage.get('lai:activeTabId') || null,
   )
   const lastCodeTabIdRef = useRef<string | null>(
     activeTabId !== 'settings' ? activeTabId : null
@@ -60,7 +56,7 @@ export function useTabManager({
   /** Persist open tabs, active tab, panel, and mobile view so the layout
    *  survives a page reload (UI Spec §6.2 — UI Persistence). */
   useEffect(() => {
-    try {
+    {
       // Settings and browse-preview tabs are synthetic / session-only — not
       // persisted. Transient isPreview file tabs ARE persisted (with their
       // isPreview flag intact) so a reload restores the editor's tab state
@@ -69,15 +65,13 @@ export function useTabManager({
       const persistable = openTabs.filter(
         (t) => t.kind !== 'settings' && t.kind !== 'preview',
       )
-      localStorage.setItem('lai:openTabs', JSON.stringify(persistable))
-    } catch {
-      // Ignore serialization errors (e.g. quota exceeded).
+      safeStorage.setJson('lai:openTabs', persistable)
     }
   }, [openTabs])
 
   useEffect(() => {
-    if (activeTabId) localStorage.setItem('lai:activeTabId', activeTabId)
-    else localStorage.removeItem('lai:activeTabId')
+    if (activeTabId) safeStorage.set('lai:activeTabId', activeTabId)
+    else safeStorage.remove('lai:activeTabId')
   }, [activeTabId])
 
   // Report open files and recent (unsaved) edits to the backend so the context
