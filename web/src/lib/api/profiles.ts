@@ -2,6 +2,7 @@
  * Profiles (S-PROF-REST + S-PROF-CHAT) endpoints.
  */
 
+import type { Session } from '@/types'
 import { apiFetch } from './client'
 import { withRetry } from '@/lib/retry'
 
@@ -71,4 +72,61 @@ export async function setSessionProfile(sessionId: string, profileId: string): P
       body: JSON.stringify({ profile: profileId }),
     }),
   )
+}
+
+/**
+ * Whether switching a session to another profile changes MCP server access.
+ *
+ * `requiresNewSession` is true when the two effective server sets differ, which
+ * means the profile cannot be applied to the running agent session — ACP fixes
+ * the server list at session start. The server names are the *effective* sets
+ * (configured, enabled, reachable with this agent's transports, and permitted
+ * by each profile), so the UI never prompts for a change the daemon would not
+ * actually make.
+ */
+export interface ProfileTransitionPreview {
+  requiresNewSession: boolean
+  currentServers: string[]
+  targetServers: string[]
+}
+
+/** How a profile change that alters MCP server access is applied. */
+export type ProfileTransitionStrategy = 'history' | 'fresh'
+
+/**
+ * GET /sessions/:id/profile/preview — does this profile change MCP access?
+ *
+ * Read-only. Retried like other reads: a transient failure would otherwise make
+ * the UI fall back to a silent in-place switch and misreport tool access.
+ */
+export async function previewSessionProfile(
+  sessionId: string,
+  profileId: string,
+): Promise<ProfileTransitionPreview> {
+  return withRetry(() =>
+    apiFetch<ProfileTransitionPreview>(
+      `/sessions/${sessionId}/profile/preview?profile=${encodeURIComponent(profileId)}`,
+    ),
+  )
+}
+
+/**
+ * POST /sessions/:id/profile/transition — apply a profile via a new agent
+ * session, because ACP cannot change MCP server access in place.
+ *
+ * Returns the session the caller should display: the same one for `history`,
+ * a newly created one for `fresh`.
+ *
+ * Not retried. Both strategies start an agent session, so a blind retry after
+ * an ambiguous failure could leave an orphaned conversation behind.
+ */
+export async function transitionSessionProfile(
+  sessionId: string,
+  profileId: string,
+  strategy: ProfileTransitionStrategy,
+): Promise<Session> {
+  return apiFetch<Session>(`/sessions/${sessionId}/profile/transition`, {
+    method: 'POST',
+    body: JSON.stringify({ profile: profileId, strategy }),
+  })
 }

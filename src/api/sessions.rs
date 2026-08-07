@@ -1,14 +1,16 @@
 //! Session lifecycle, prompt, profile, and validation handlers.
 
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, State};
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{error, warn};
 
-use crate::interfaces::{ACPClient, Attachment, SessionInfo};
+use crate::interfaces::{
+    ACPClient, Attachment, ProfileTransitionPreview, ProfileTransitionStrategy, SessionInfo,
+};
 
 use super::{app_error, decode_json_body, ApiResponseError, AppState};
 
@@ -108,7 +110,9 @@ pub(super) async fn patch_session(
     if let (Some(agent_id), Some(model_id)) =
         (request.agent_id.as_deref(), request.model_id.as_deref())
     {
-        let max_transfer = request.max_transfer_bytes.unwrap_or(0);
+        // 0 means "unspecified" here; the ACP layer floors it at the daemon
+        // default so an omitted cap never means an unbounded transcript.
+        let max_transfer = request.max_transfer_bytes.unwrap_or_default();
         state
             .acp
             .rebind_session(&id, agent_id, model_id, max_transfer)
@@ -217,6 +221,77 @@ pub(super) async fn set_session_profile(
         .await
         .map_err(app_error)?;
     Ok(Json(json!({"status": "updated"})))
+}
+
+/// Query for `GET /api/sessions/{id}/profile/preview`.
+#[derive(Deserialize)]
+pub(super) struct ProfilePreviewQuery {
+    /// Profile id to price against the session's current access.
+    profile: String,
+}
+
+/// `GET /api/sessions/{id}/profile/preview` — would this profile change MCP
+/// server access?
+///
+/// Read-only and side-effect free. The UI calls it before offering a profile
+/// switch so it only interrupts the user when applying the profile in place
+/// would leave the session's real tool access behind the selector.
+pub(super) async fn preview_session_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    query: Result<Query<ProfilePreviewQuery>, QueryRejection>,
+) -> Result<Json<ProfileTransitionPreview>, ApiResponseError> {
+    let Query(query) =
+        query.map_err(|_| ApiResponseError::bad_request("profile query parameter is required"))?;
+    state
+        .acp
+        .preview_session_profile(&id, &query.profile)
+        .await
+        .map(Json)
+        .map_err(app_error)
+}
+
+/// Request body for `POST /api/sessions/{id}/profile/transition`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct TransitionProfileRequest {
+    /// Target profile id (validated against the loaded config; unknown → 400).
+    profile: String,
+    /// `history` moves this conversation; `fresh` opens a separate one. An
+    /// unrecognized value is rejected by serde rather than defaulted — picking
+    /// one would start or replace an agent session the caller did not ask for.
+    strategy: ProfileTransitionStrategy,
+    /// Optional cap on the transcript carried into the replacement session's
+    /// first prompt. Omitted or `<= 0` uses the daemon default.
+    max_transfer_bytes: Option<i64>,
+}
+
+/// `POST /api/sessions/{id}/profile/transition` — apply a profile whose MCP
+/// server set differs, by starting a new agent session.
+///
+/// Returns the session the client should display: the same one for `history`,
+/// a newly created one for `fresh`. Use `POST /api/sessions/{id}/profile`
+/// instead when only instructions should change.
+pub(super) async fn transition_session_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<TransitionProfileRequest>, JsonRejection>,
+) -> Result<Json<SessionInfo>, ApiResponseError> {
+    let Json(request) = decode_json_body(body)?;
+    if request.profile.trim().is_empty() {
+        return Err(ApiResponseError::bad_request("profile is required"));
+    }
+    state
+        .acp
+        .transition_session_profile(
+            &id,
+            &request.profile,
+            request.strategy,
+            request.max_transfer_bytes.unwrap_or_default(),
+        )
+        .await
+        .map(Json)
+        .map_err(app_error)
 }
 
 pub(super) async fn close_session(
@@ -352,6 +427,94 @@ mod tests {
         .await;
         // 404 (missing session), not 400 — proves the body parsed fine and the
         // profile field was silently dropped by serde.
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// The preview is read-only, so a missing session is 404 rather than 400.
+    async fn profile_preview_missing_session_is_not_found() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method("GET")
+                .uri("/api/sessions/sess-does-not-exist/profile/preview?profile=code")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// Without a `profile` query parameter there is nothing to compare against.
+    async fn profile_preview_requires_a_profile_query_parameter() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method("GET")
+                .uri("/api/sessions/sess-fake/profile/preview")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    /// An unrecognized strategy must be rejected outright — silently picking a
+    /// default would start or destroy an agent session the caller did not ask
+    /// for.
+    async fn profile_transition_rejects_unknown_strategy() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method("POST")
+                .uri("/api/sessions/sess-fake/profile/transition")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"profile":"code","strategy":"instructionsOnly"}"#,
+                ))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    /// Validation order: the profile id is checked before the session exists,
+    /// matching `POST /api/sessions/{id}/profile`.
+    async fn profile_transition_rejects_unknown_profile() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method("POST")
+                .uri("/api/sessions/sess-fake/profile/transition")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"profile":"nope","strategy":"history"}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    /// A valid request against a missing session is 404, not 400.
+    async fn profile_transition_missing_session_is_not_found() {
+        let (_dir, state) = state();
+        let response = oneshot(
+            state,
+            Request::builder()
+                .method("POST")
+                .uri("/api/sessions/sess-does-not-exist/profile/transition")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"profile":"code","strategy":"fresh"}"#))
+                .expect("request"),
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 

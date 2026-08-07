@@ -66,6 +66,11 @@ pub(super) struct ActorStartup {
     pub(super) profile_config_id: Option<String>,
     /// Resolved agent-side ACP session id (from load or new).
     pub(super) acp_session_id: String,
+    /// MCP server names actually attached at `session/new`.
+    ///
+    /// ACP fixes this list for the life of the agent session, so it — not the
+    /// session's current profile — is the truth about its tool access.
+    pub(super) attached_mcp_servers: Vec<String>,
 }
 
 /// Constructor-only dependencies for spawning an actor. The actor never
@@ -461,6 +466,10 @@ async fn run_actor_inner(
                 can_resume_session: session_caps.resume.is_some(),
                 can_close_session: session_caps.close.is_some(),
                 can_delete_session: session_caps.delete.is_some(),
+                // Cached so a profile-transition preview can filter MCP servers
+                // exactly like session setup does, without re-initializing.
+                mcp_http: agent_caps.mcp_capabilities.http,
+                mcp_sse: agent_caps.mcp_capabilities.sse,
             };
             tracing::debug!(
                 providers_supported = caps.providers_supported,
@@ -479,6 +488,10 @@ async fn run_actor_inner(
                 &config.local_session_id,
             )
             .await;
+            let attached_mcp_servers: Vec<String> = mcp_servers
+                .iter()
+                .map(|server| crate::mcp::mcp_server_name(server).to_string())
+                .collect();
             let (agent_session_id, config_options) = resolve_acp_session(
                 &cx,
                 caps,
@@ -520,6 +533,7 @@ async fn run_actor_inner(
                     model_config_id: model_config_id.clone(),
                     profile_config_id: profile_config_id.clone(),
                     acp_session_id,
+                    attached_mcp_servers,
                 }));
             }
             if let Some(registered) = registered.take() {

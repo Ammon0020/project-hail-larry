@@ -108,12 +108,27 @@ impl ProfileMiddleware {
         &self,
         session_id: &str,
     ) -> Result<Option<Vec<String>>, AppError> {
-        let profile_id = self.profile(session_id)?;
+        self.mcp_servers_for_profile(&self.profile(session_id)?)
+    }
+
+    /// MCP server policy for an explicit profile id.
+    ///
+    /// Same rules as [`Self::mcp_servers_for_session`], but without reading the
+    /// session's stored selection — a transition preview needs to price a
+    /// profile the session has not switched to yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the profile config lock is poisoned.
+    pub fn mcp_servers_for_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<Option<Vec<String>>, AppError> {
         let config = self
             .config
             .read()
             .map_err(|_| AppError::internal("profile config lock poisoned"))?;
-        let profile = config.profile(&profile_id);
+        let profile = config.profile(&config.normalize_profile_id(profile_id));
         if profile.mcp_servers.is_none()
             && profile
                 .legacy_tools
@@ -290,6 +305,51 @@ mod tests {
             .instructions("s")
             .expect("text")
             .contains("focus-only"));
+    }
+
+    /// A transition preview compares two profiles without touching the
+    /// session's stored selection, so the policy lookup must accept an explicit
+    /// profile id — and must keep the same fail-closed rule for a profile that
+    /// still carries a legacy tool whitelist.
+    #[test]
+    fn profile_policy_lookup_is_available_without_a_session() {
+        let config = ProfileConfig::parse(
+            br#"{
+              "profiles": {
+                "code": { "label": "Code", "instructions": "x" },
+                "review": { "label": "Review", "instructions": "x", "mcpServers": ["workspace-read"] },
+                "legacy": { "label": "Legacy", "instructions": "x", "tools": ["read_file"] },
+                "none": { "label": "None", "instructions": "x", "mcpServers": [] }
+              },
+              "defaultProfileId": "code"
+            }"#,
+        )
+        .expect("profile config");
+        let middleware = ProfileMiddleware::from_config(config);
+
+        assert_eq!(
+            middleware.mcp_servers_for_profile("code").expect("code"),
+            None,
+            "omitted mcpServers means all enabled servers"
+        );
+        assert_eq!(
+            middleware
+                .mcp_servers_for_profile("review")
+                .expect("review"),
+            Some(vec!["workspace-read".to_string()])
+        );
+        assert_eq!(
+            middleware.mcp_servers_for_profile("none").expect("none"),
+            Some(Vec::new()),
+            "an explicit empty list means no servers"
+        );
+        assert_eq!(
+            middleware
+                .mcp_servers_for_profile("legacy")
+                .expect("legacy"),
+            Some(Vec::new()),
+            "an unmigrated tool whitelist must still fail closed"
+        );
     }
 
     #[test]

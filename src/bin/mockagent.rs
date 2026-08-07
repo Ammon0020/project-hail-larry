@@ -72,11 +72,37 @@ const PROFILE_CONFIG_ID: &str = "profile";
 /// Format: `[profile: <value>] ` (with trailing space).
 const PROFILE_MARKER_PREFIX: &str = "[profile: ";
 
+/// Prefixes the mock's first streamed reply chunk with the MCP server names
+/// received on `session/new`, so tests can assert *which* servers the client
+/// attached — the only externally visible proof that a profile's server
+/// allowlist was applied before the agent session started. Omitted entirely
+/// when no servers were attached, keeping existing fixtures byte-identical.
+///
+/// Format: `[mcp: <name>,<name>] ` (comma-separated, request order).
+const MCP_MARKER_PREFIX: &str = "[mcp: ";
+
 /// Per-word streaming delay, matching the Go mock's 20ms cadence.
 const STREAM_DELAY: Duration = Duration::from_millis(20);
 
 /// Shared state across handlers: session id -> last received profile value.
 type Profiles = Arc<Mutex<HashMap<String, String>>>;
+
+/// Shared state across handlers: session id -> MCP server names from
+/// `session/new`, in the order the client sent them.
+type McpServers = Arc<Mutex<HashMap<String, Vec<String>>>>;
+
+/// Name of an ACP MCP server declaration, whatever its transport.
+fn mcp_server_name(server: &agent_client_protocol::schema::v1::McpServer) -> &str {
+    use agent_client_protocol::schema::v1::McpServer;
+    match server {
+        McpServer::Stdio(server) => server.name.as_str(),
+        McpServer::Http(server) => server.name.as_str(),
+        McpServer::Sse(server) => server.name.as_str(),
+        // `McpServer` is non-exhaustive; unknown transports are unnamed here
+        // rather than failing the mock.
+        _ => "",
+    }
+}
 
 /// Build the `mode`-category `profile` select option the client uses to gate
 /// the ACP send path. A single placeholder value is advertised for UX
@@ -167,6 +193,7 @@ async fn main() {
     // client's prompt-injection fallback branch.
     let mode_cap = std::env::var(ENV_NO_MODE_CAP).map_or(true, |v| v.is_empty());
     let profiles: Profiles = Arc::new(Mutex::new(HashMap::new()));
+    let mcp_servers: McpServers = Arc::new(Mutex::new(HashMap::new()));
 
     let result = Agent
         .builder()
@@ -186,10 +213,24 @@ async fn main() {
         )
         // session/new
         .on_receive_request(
-            async move |_req: NewSessionRequest,
+            {
+                let mcp_servers = Arc::clone(&mcp_servers);
+                async move |req: NewSessionRequest,
                         responder: Responder<NewSessionResponse>,
                         _cx: ConnectionTo<Client>| {
                     let id = random_session_id();
+                    // Record the attached servers so the prompt handler can
+                    // report them back to the test.
+                    {
+                        let names: Vec<String> = req
+                            .mcp_servers
+                            .iter()
+                            .map(|server| mcp_server_name(server).to_string())
+                            .collect();
+                        if !names.is_empty() {
+                            mcp_servers.lock().await.insert(id.clone(), names);
+                        }
+                    }
                     let mut resp = NewSessionResponse::new(SessionId::from(id));
                     // Advertise the mode/profile config option so the Rust
                     // client's capability gate takes the
@@ -210,6 +251,7 @@ async fn main() {
                         std::process::exit(1);
                     }
                     responder.respond(resp)
+                }
             },
             on_receive_request!(),
         )
@@ -217,6 +259,7 @@ async fn main() {
         .on_receive_request(
             {
                 let profiles = Arc::clone(&profiles);
+                let mcp_servers = Arc::clone(&mcp_servers);
                 async move |req: PromptRequest,
                             responder: Responder<PromptResponse>,
                             cx: ConnectionTo<Client>| {
@@ -295,6 +338,13 @@ async fn main() {
                         let profiles = profiles.lock().await;
                         if let Some(profile) = profiles.get(sid.0.as_ref()) {
                             first_chunk = format!("{PROFILE_MARKER_PREFIX}{profile}] {first_chunk}");
+                        }
+                    }
+                    {
+                        let attached = mcp_servers.lock().await;
+                        if let Some(names) = attached.get(sid.0.as_ref()) {
+                            first_chunk =
+                                format!("{MCP_MARKER_PREFIX}{}] {first_chunk}", names.join(","));
                         }
                     }
                     stream_text(&cx, &sid, &first_chunk, STREAM_DELAY).await;

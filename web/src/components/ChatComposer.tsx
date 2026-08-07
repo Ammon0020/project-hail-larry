@@ -1,5 +1,5 @@
 import { type KeyboardEvent, useState, useRef, useEffect, useCallback } from 'react'
-import { Plus, ArrowUp, Square, X, Loader2, Wrench, Users } from 'lucide-react'
+import { Plus, ArrowUp, Square, X, Loader2, Wrench, Users, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { type ModelOption } from '@/lib/modelPrefs'
 import { type ContextUsage } from '@/lib/contextUsage'
@@ -55,6 +55,9 @@ interface ChatComposerProps {
   selectedProfileId: string
   /** Callback when the user changes the profile mode. */
   onProfileChange: (profileId: string) => void
+  /** Persistent disclosure when the session's instructions and its MCP server
+   *  access come from different profiles. Null hides the strip. */
+  profileAccessNotice?: string | null
   /** Latest context-usage for the active session (from `UsageUpdated` events).
    *  Null until the agent reports its first `usage_update`. */
   contextUsage?: ContextUsage | null
@@ -97,6 +100,7 @@ export function ChatComposer({
   profiles,
   selectedProfileId,
   onProfileChange,
+  profileAccessNotice,
   contextUsage,
 }: ChatComposerProps) {
   // Tools popout visibility — toggled by the Wrench button, closed by
@@ -164,6 +168,17 @@ export function ChatComposer({
       {uploadError && (
         <div className="mb-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
           {uploadError}
+        </div>
+      )}
+
+      {/* Profile/tool-access disclosure — persistent, not a hover tooltip. The
+          selector alone would imply this conversation has the selected
+          profile's MCP servers; after an "instructions only" switch it does
+          not, and ACP cannot change that in place. */}
+      {profileAccessNotice && (
+        <div className="mb-2 flex items-start gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+          <Info className="mt-px w-3 h-3 shrink-0" strokeWidth={2} />
+          <span>{profileAccessNotice}</span>
         </div>
       )}
 

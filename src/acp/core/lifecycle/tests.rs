@@ -22,8 +22,8 @@ use crate::acp::{AgentRegistry, ConversationStore};
 use crate::config::{AgentInfo, AgentModel};
 use crate::events::{EventBus, Store};
 use crate::interfaces::{
-    ACPClient, AppError, Event, EventStore, EventType, PermissionDecision, PermissionManager,
-    PermissionRequest, SessionInfo, WorkspaceManager,
+    ACPClient, AppError, Event, EventPayload, EventStore, EventType, PermissionDecision,
+    PermissionManager, PermissionRequest, ProfileTransitionStrategy, SessionInfo, WorkspaceManager,
 };
 use crate::workspace::Manager as WorkspaceRegistry;
 use chrono::Utc;
@@ -99,6 +99,17 @@ async fn mock_client_empty(
     conversation_store: ConversationStore,
     agent_idle_timeout: Duration,
 ) -> (Arc<Client>, Arc<RecordingPermissions>, TempDir, String) {
+    mock_client_with_mcp(conversation_store, agent_idle_timeout, None).await
+}
+
+/// As [`mock_client_empty`], but with `mcp.json` contents written into the
+/// temporary directory and wired into the client. Tests that assert which MCP
+/// servers reach `session/new` need a real config file on disk.
+async fn mock_client_with_mcp(
+    conversation_store: ConversationStore,
+    agent_idle_timeout: Duration,
+    mcp_config: Option<&str>,
+) -> (Arc<Client>, Arc<RecordingPermissions>, TempDir, String) {
     let mockagent_bin = mockagent_bin();
     assert!(
             Path::new(&mockagent_bin).exists(),
@@ -114,6 +125,11 @@ async fn mock_client_empty(
     let event_bus = Arc::new(EventBus::new(
         Store::open(tempdir.path().join("events.db")).expect("open test event store"),
     ));
+    let mcp_config_path = mcp_config.map(|contents| {
+        let path = tempdir.path().join("mcp.json");
+        std::fs::write(&path, contents).expect("write test mcp config");
+        path
+    });
     let mock_model = AgentModel::new("mock-model".to_string(), "Mock model".to_string());
     #[cfg(unix)]
     let (nocap_cmd, nocap_args): (String, Vec<String>) = (
@@ -153,7 +169,7 @@ async fn mock_client_empty(
         permissions: permissions.clone(),
         event_bus,
         conversation_store,
-        mcp_config_path: None,
+        mcp_config_path,
         cancel_grace_period: std::time::Duration::from_millis(50),
         agent_idle_timeout,
     }));
@@ -465,6 +481,511 @@ async fn rebind_refreshes_profile_config_id_from_replacement_agent() {
         .close_session(&session.id)
         .await
         .expect("close rebound session");
+}
+
+/// `PATCH /api/sessions/{id}` defaults `maxTransferBytes` to 0, and
+/// `truncate_export` reads `<= 0` as *unbounded*. Left alone, an agent switch on
+/// a long conversation pushes the entire transcript into the replacement
+/// session's first prompt. A rebind must therefore floor an unspecified budget
+/// at the daemon default rather than trusting the caller's zero.
+#[tokio::test]
+async fn rebind_caps_an_unspecified_transfer_budget_at_the_daemon_default() {
+    let (client, _permissions, _workspace) = mock_client().await;
+    let session = client.list_sessions().pop().expect("one mock session");
+
+    // A transcript comfortably larger than the default budget, written straight
+    // to the event bus so the test does not depend on agent streaming speed.
+    let huge = "x".repeat(usize::try_from(super::super::DEFAULT_TRANSFER_BYTES).unwrap() * 2);
+    super::super::events::append_payload(
+        &client.deps.event_bus,
+        &session.id,
+        EventPayload::PromptSubmitted {
+            role: "user".to_string(),
+            content: huge,
+            attachments: Vec::new(),
+            injected_context: Vec::new(),
+        },
+    )
+    .await
+    .expect("append oversized prompt event");
+
+    // 0 is exactly what the REST layer sends when the client omits the field.
+    client
+        .rebind_session(&session.id, "mock", "mock-model", 0)
+        .await
+        .expect("rebind idle session");
+
+    let transfer = client
+        .pipeline
+        .transfers
+        .take_for_first_prompt(&session.id, 0)
+        .expect("read queued transfer")
+        .expect("rebind must queue a transfer");
+    assert!(
+        transfer.markdown.len() <= usize::try_from(super::super::DEFAULT_TRANSFER_BYTES).unwrap(),
+        "unspecified budget must be capped, got {} bytes",
+        transfer.markdown.len()
+    );
+    assert!(
+        transfer.markdown.contains("conversation truncated"),
+        "a capped transfer must say it was truncated"
+    );
+    client.close_session(&session.id).await.expect("close");
+}
+
+/// The `history` strategy keeps the local conversation — same id, same name,
+/// same durable event history — while starting a fresh ACP agent session under
+/// the target profile. This is what makes the new profile's MCP server list
+/// take effect: ACP only reads it at `session/new`.
+#[tokio::test]
+async fn profile_transition_history_keeps_the_conversation_and_applies_the_profile() {
+    let (client, _permissions, _workspace) = mock_client().await;
+    let session = client.list_sessions().pop().expect("one mock session");
+    client
+        .pipeline
+        .profiles
+        .set_profile(&session.id, "code")
+        .expect("seed local profile");
+    client
+        .send_prompt(&session.id, "record this before the transition", &[])
+        .await
+        .expect("admit first prompt");
+    let before = wait_for_completed_turn(&client, &session.id).await;
+
+    let moved = client
+        .transition_session_profile(
+            &session.id,
+            "ask",
+            ProfileTransitionStrategy::History,
+            8 * 1024,
+        )
+        .await
+        .expect("history transition on an idle session");
+
+    assert_eq!(moved.id, session.id, "history keeps the local conversation");
+    assert_eq!(moved.name, "Mock session", "history keeps the session name");
+    assert_eq!(
+        client
+            .pipeline
+            .profiles
+            .profile(&session.id)
+            .expect("read profile after transition"),
+        "ask",
+        "the target profile must be active on the replacement ACP session"
+    );
+    let after = client
+        .deps
+        .event_bus
+        .query(&session.id, 0, 100)
+        .await
+        .expect("query event history after transition");
+    assert!(
+        after.len() > before.len(),
+        "history must preserve prior events and append a restart notice"
+    );
+    client
+        .close_session(&session.id)
+        .await
+        .expect("close transitioned session");
+}
+
+/// The `fresh` strategy must not disturb the original conversation: it stays
+/// live, keeps its name and history, and keeps its own profile selection.
+#[tokio::test]
+async fn profile_transition_fresh_leaves_the_original_session_untouched() {
+    let (client, _permissions, _workspace) = mock_client().await;
+    let session = client.list_sessions().pop().expect("one mock session");
+    client
+        .pipeline
+        .profiles
+        .set_profile(&session.id, "code")
+        .expect("seed local profile");
+
+    let created = client
+        .transition_session_profile(&session.id, "ask", ProfileTransitionStrategy::Fresh, 0)
+        .await
+        .expect("fresh transition");
+
+    assert_ne!(created.id, session.id, "fresh must open a new conversation");
+    assert_eq!(created.name, "New chat", "fresh starts blank");
+    assert_eq!(
+        client
+            .pipeline
+            .profiles
+            .profile(&created.id)
+            .expect("read new session profile"),
+        "ask"
+    );
+    assert_eq!(
+        client
+            .pipeline
+            .profiles
+            .profile(&session.id)
+            .expect("read original session profile"),
+        "code",
+        "the original conversation keeps its profile and MCP access"
+    );
+    assert_eq!(
+        client
+            .get_session_info(&session.id)
+            .expect("original session still registered")
+            .name,
+        "Mock session"
+    );
+    client
+        .close_session(&created.id)
+        .await
+        .expect("close fresh session");
+    client
+        .close_session(&session.id)
+        .await
+        .expect("close original session");
+}
+
+/// An unknown profile id must be rejected before anything is torn down: the
+/// selection, the actor, and the conversation all stay usable.
+#[tokio::test]
+async fn profile_transition_rejects_unknown_profile_without_touching_the_session() {
+    let (client, _permissions, _workspace) = mock_client().await;
+    let session = client.list_sessions().pop().expect("one mock session");
+    client
+        .pipeline
+        .profiles
+        .set_profile(&session.id, "code")
+        .expect("seed local profile");
+
+    let error = client
+        .transition_session_profile(
+            &session.id,
+            "no-such-profile",
+            ProfileTransitionStrategy::History,
+            0,
+        )
+        .await
+        .expect_err("unknown profile must be rejected");
+    assert!(
+        error.to_string().contains("unknown profile id"),
+        "error must name the cause: {error}"
+    );
+    assert_eq!(
+        client
+            .pipeline
+            .profiles
+            .profile(&session.id)
+            .expect("read profile after rejected transition"),
+        "code",
+        "a rejected transition must not change the stored profile"
+    );
+    // The session is still usable: a normal prompt is still admitted.
+    client
+        .send_prompt(&session.id, "still working", &[])
+        .await
+        .expect("session remains usable after a rejected transition");
+    client
+        .close_session(&session.id)
+        .await
+        .expect("close session");
+}
+
+/// The whole point of the `history` strategy: the target profile's MCP server
+/// allowlist must reach the replacement agent's `session/new`. That only works
+/// if the profile is stored *before* the replacement actor spawns, so this
+/// asserts on what the agent actually received rather than on what the daemon
+/// stored. The mock reports its attached servers as an `[mcp: ...]` prefix.
+#[tokio::test]
+async fn profile_transition_history_attaches_the_target_profiles_mcp_servers() {
+    use crate::acp::profile_config::{Profile, ProfileConfig};
+    use std::collections::BTreeMap;
+
+    let (client, _permissions, _workspace, workspace_id) = mock_client_with_mcp(
+        ConversationStore::new(None),
+        Duration::from_mins(2),
+        Some(
+            r#"{
+  "version": 1,
+  "mcpServers": {
+    "alpha": { "command": "true" },
+    "beta": { "command": "true" }
+  }
+}"#,
+        ),
+    )
+    .await;
+    let profile = |label: &str, server: &str| Profile {
+        label: label.to_string(),
+        instructions: "x".to_string(),
+        mcp_servers: Some(vec![server.to_string()]),
+        legacy_tools: None,
+    };
+    client
+        .pipeline
+        .profiles
+        .replace_config(ProfileConfig {
+            profiles: BTreeMap::from([
+                ("code".to_string(), profile("Code", "alpha")),
+                ("ask".to_string(), profile("Ask", "beta")),
+            ]),
+            default_profile_id: "code".to_string(),
+        })
+        .expect("install test profiles");
+
+    let session = client
+        .create_session_with_profile("mock", "mock-model", &workspace_id, Some("code"))
+        .await
+        .expect("create session under the code profile");
+    client
+        .send_prompt(&session.id, "before", &[])
+        .await
+        .expect("admit first prompt");
+    let before = assistant_text_after(&client, &session.id, 0).await;
+    assert!(
+        before.contains("[mcp: alpha]"),
+        "the original session must attach only the code profile's server: {before}"
+    );
+
+    client
+        .transition_session_profile(
+            &session.id,
+            "ask",
+            ProfileTransitionStrategy::History,
+            8 * 1024,
+        )
+        .await
+        .expect("history transition");
+    let settled = event_count(&client, &session.id).await;
+    client
+        .send_prompt(&session.id, "after", &[])
+        .await
+        .expect("admit prompt on the replacement session");
+    let after = assistant_text_after(&client, &session.id, settled).await;
+    assert!(
+        after.contains("[mcp: beta]"),
+        "the replacement agent session must attach the ask profile's server: {after}"
+    );
+
+    client
+        .close_session(&session.id)
+        .await
+        .expect("close transitioned session");
+}
+
+/// Build a client whose `mcp.json` holds one stdio and one HTTP server, with
+/// profiles wired to the given allowlists.
+async fn preview_client(
+    code_servers: Vec<String>,
+    ask_servers: Vec<String>,
+) -> (Arc<Client>, TempDir, String) {
+    use crate::acp::profile_config::{Profile, ProfileConfig};
+    use std::collections::BTreeMap;
+
+    let (client, _permissions, tempdir, workspace_id) = mock_client_with_mcp(
+        ConversationStore::new(None),
+        Duration::from_mins(2),
+        Some(
+            r#"{
+  "version": 1,
+  "mcpServers": {
+    "alpha": { "command": "true" },
+    "remote": { "type": "http", "url": "https://example.com/mcp" }
+  }
+}"#,
+        ),
+    )
+    .await;
+    let profile = |label: &str, servers: Vec<String>| Profile {
+        label: label.to_string(),
+        instructions: "x".to_string(),
+        mcp_servers: Some(servers),
+        legacy_tools: None,
+    };
+    client
+        .pipeline
+        .profiles
+        .replace_config(ProfileConfig {
+            profiles: BTreeMap::from([
+                ("code".to_string(), profile("Code", code_servers)),
+                ("ask".to_string(), profile("Ask", ask_servers)),
+            ]),
+            default_profile_id: "code".to_string(),
+        })
+        .expect("install test profiles");
+    (client, tempdir, workspace_id)
+}
+
+/// Identical effective access must not prompt the user: the profile can be
+/// applied in place through the ordinary `set_session_profile` path.
+#[tokio::test]
+async fn profile_preview_reports_no_change_when_server_access_matches() {
+    let (client, _tempdir, workspace_id) =
+        preview_client(vec!["alpha".to_string()], vec!["alpha".to_string()]).await;
+    let session = client
+        .create_session_with_profile("mock", "mock-model", &workspace_id, Some("code"))
+        .await
+        .expect("create session");
+
+    let preview = client
+        .preview_session_profile(&session.id, "ask")
+        .await
+        .expect("preview");
+
+    assert!(!preview.requires_new_session);
+    assert_eq!(preview.current_servers, vec!["alpha".to_string()]);
+    assert_eq!(preview.target_servers, vec!["alpha".to_string()]);
+    client.close_session(&session.id).await.expect("close");
+}
+
+/// Differing access must prompt, and must report both sets so the dialog can
+/// explain exactly what the user gains and loses.
+#[tokio::test]
+async fn profile_preview_reports_change_with_both_server_sets() {
+    let (client, _tempdir, workspace_id) =
+        preview_client(vec!["alpha".to_string()], Vec::new()).await;
+    let session = client
+        .create_session_with_profile("mock", "mock-model", &workspace_id, Some("code"))
+        .await
+        .expect("create session");
+
+    let preview = client
+        .preview_session_profile(&session.id, "ask")
+        .await
+        .expect("preview");
+
+    assert!(preview.requires_new_session);
+    assert_eq!(preview.current_servers, vec!["alpha".to_string()]);
+    assert!(preview.target_servers.is_empty());
+    client.close_session(&session.id).await.expect("close");
+}
+
+/// A server the agent has no transport for is not access the user can gain, so
+/// naming it in the target profile must not trigger the dialog. The mock agent
+/// advertises no `mcpCapabilities`, so its HTTP server is unreachable.
+#[tokio::test]
+async fn profile_preview_ignores_servers_the_agent_cannot_reach() {
+    let (client, _tempdir, workspace_id) = preview_client(
+        vec!["alpha".to_string()],
+        vec!["alpha".to_string(), "remote".to_string()],
+    )
+    .await;
+    let session = client
+        .create_session_with_profile("mock", "mock-model", &workspace_id, Some("code"))
+        .await
+        .expect("create session");
+
+    let preview = client
+        .preview_session_profile(&session.id, "ask")
+        .await
+        .expect("preview");
+
+    assert!(
+        !preview.requires_new_session,
+        "an unreachable HTTP server must not count as a change: {preview:?}"
+    );
+    assert_eq!(preview.target_servers, vec!["alpha".to_string()]);
+    client.close_session(&session.id).await.expect("close");
+}
+
+/// After an "instructions only" switch, the session keeps the MCP servers it
+/// started with while its *stored* profile is the new one. Preview must compare
+/// against what the live agent session actually has — not against the stored
+/// profile's allowlist — or it reports "no change" and the UI loses its only
+/// way to tell the user that server access is still the old profile's.
+#[tokio::test]
+async fn profile_preview_compares_against_the_live_sessions_attached_servers() {
+    let (client, _tempdir, workspace_id) =
+        preview_client(vec!["alpha".to_string()], Vec::new()).await;
+    let session = client
+        .create_session_with_profile("mock", "mock-model", &workspace_id, Some("code"))
+        .await
+        .expect("create session under the code profile");
+
+    // "Instructions only": the stored profile becomes `ask`, but the running
+    // agent session still holds the `code` profile's server list.
+    client
+        .set_session_profile(&session.id, "ask")
+        .await
+        .expect("in-place profile switch");
+
+    let preview = client
+        .preview_session_profile(&session.id, "ask")
+        .await
+        .expect("preview");
+
+    assert_eq!(
+        preview.current_servers,
+        vec!["alpha".to_string()],
+        "current access must reflect the live session, not the stored profile"
+    );
+    assert!(
+        preview.requires_new_session,
+        "the session still has alpha while ask grants none: {preview:?}"
+    );
+    client.close_session(&session.id).await.expect("close");
+}
+
+/// Durable events recorded for a session so far.
+async fn event_count(client: &Client, session_id: &str) -> usize {
+    client
+        .deps
+        .event_bus
+        .query(session_id, 0, 200)
+        .await
+        .expect("query event history")
+        .len()
+}
+
+/// Assistant stream text from the turn that follows the first `skip` events.
+///
+/// Scoped to the tail because a session accumulates history across turns — a
+/// whole-history scan would happily match the *previous* turn's reply and let a
+/// broken transition pass.
+async fn assistant_text_after(client: &Client, session_id: &str, skip: usize) -> String {
+    tokio::time::timeout(TEST_POLL_TIMEOUT, async {
+        loop {
+            let events = client
+                .deps
+                .event_bus
+                .query(session_id, 0, 200)
+                .await
+                .expect("query event history");
+            let tail = events.get(skip..).unwrap_or_default();
+            if tail
+                .iter()
+                .any(|event| event.event_type == EventType::StreamUpdate && !event.streaming)
+            {
+                return tail
+                    .iter()
+                    .filter(|event| event.event_type == EventType::StreamUpdate)
+                    .map(|event| event.content.clone())
+                    .collect::<String>();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for the next turn")
+}
+
+/// Wait until a prompt turn has produced durable, non-streaming history.
+async fn wait_for_completed_turn(client: &Client, session_id: &str) -> Vec<Event> {
+    tokio::time::timeout(TEST_POLL_TIMEOUT, async {
+        loop {
+            let events = client
+                .deps
+                .event_bus
+                .query(session_id, 0, 100)
+                .await
+                .expect("query event history");
+            if events
+                .iter()
+                .any(|event| event.event_type == EventType::StreamUpdate && !event.streaming)
+            {
+                return events;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for prompt history")
 }
 
 /// When the agent does NOT advertise the `mode`-category `profile` config
@@ -920,10 +1441,13 @@ async fn max_sessions_rejects_before_new_actor_is_spawned() {
                 Handle::dead(),
                 Arc::new(Mutex::new(StderrTail::default())),
                 Arc::new(AtomicBool::new(false)),
-                SessionCaps::default(),
-                None,
-                None,
-                String::new(),
+                super::super::actor::ActorStartup {
+                    caps: SessionCaps::default(),
+                    model_config_id: None,
+                    profile_config_id: None,
+                    acp_session_id: String::new(),
+                    attached_mcp_servers: Vec::new(),
+                },
             ))
             .expect("publish capacity placeholder");
     }

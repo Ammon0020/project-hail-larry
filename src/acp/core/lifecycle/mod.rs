@@ -16,6 +16,20 @@ use super::{Client, MAX_SESSIONS};
 use crate::events::SubRecv;
 use crate::interfaces::{AppError, EventPayload, SessionInfo, WorkspaceInfo};
 
+/// Transcript budget for a rebind transfer, flooring an unspecified request.
+///
+/// `export_conversation` treats `<= 0` as *unbounded*, and the REST layer sends
+/// `0` whenever a client omits `maxTransferBytes`. Taking that literally would
+/// push an entire long conversation into the replacement session's first
+/// prompt, so an unspecified budget becomes the daemon default instead.
+fn transfer_budget(max_transfer_bytes: i64) -> i64 {
+    if max_transfer_bytes > 0 {
+        max_transfer_bytes
+    } else {
+        super::DEFAULT_TRANSFER_BYTES
+    }
+}
+
 impl Client {
     pub(super) async fn resolve_workspace(
         &self,
@@ -124,10 +138,7 @@ impl Client {
             spawned.handle.clone(),
             stderr_tail,
             prompt_cancel,
-            startup.caps,
-            startup.model_config_id,
-            startup.profile_config_id,
-            startup.acp_session_id,
+            startup,
         ))?;
         let _ = spawned.registered.send(());
         self.watch_actor_terminal(spawned.terminal, spawned.handle, published.id.clone());
@@ -204,14 +215,37 @@ impl Client {
         ));
     }
 
-    // Single linear rebind sequence — splitting would obscure the transfer flow.
-    #[allow(clippy::too_many_lines)]
     pub(super) async fn rebind_session_inner(
         &self,
         session_id: &str,
         agent_id: &str,
         model_id: &str,
         max_transfer_bytes: i64,
+    ) -> Result<SessionInfo, AppError> {
+        self.rebind_session_with_notice(
+            session_id,
+            agent_id,
+            model_id,
+            max_transfer_bytes,
+            &format!("Rebound session to {agent_id}/{model_id}."),
+        )
+        .await
+    }
+
+    /// Rebind with a caller-chosen restart notice.
+    ///
+    /// The notice is what the user sees in the transcript where the old agent
+    /// session ended, so the reason for the restart (agent switch, model
+    /// fallback, profile transition) has to come from the caller.
+    // Single linear rebind sequence — splitting would obscure the transfer flow.
+    #[allow(clippy::too_many_lines)]
+    pub(super) async fn rebind_session_with_notice(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        model_id: &str,
+        max_transfer_bytes: i64,
+        notice: &str,
     ) -> Result<SessionInfo, AppError> {
         self.ensure_live_session(session_id).await?;
         let agent = self
@@ -223,7 +257,7 @@ impl Client {
         let transfer = match super::super::conversation::export_conversation(
             &self.deps.event_bus,
             session_id,
-            max_transfer_bytes,
+            transfer_budget(max_transfer_bytes),
         )
         .await
         {
@@ -292,10 +326,7 @@ impl Client {
             spawned.handle.clone(),
             stderr_tail,
             prompt_cancel,
-            startup.caps,
-            startup.model_config_id,
-            startup.profile_config_id,
-            startup.acp_session_id,
+            startup,
             agent_id,
             model_id,
         )?;
@@ -313,7 +344,7 @@ impl Client {
             &self.deps.event_bus,
             session_id,
             EventPayload::ConnectionRestarted {
-                content: format!("Rebound session to {agent_id}/{model_id}."),
+                content: notice.to_string(),
             },
         )
         .await?;

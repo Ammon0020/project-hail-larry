@@ -89,15 +89,45 @@ per-tool broker until it is a deliberate product requirement and stable ACP supp
 
 ## Implementation slices
 
-1. Backend profile schema migration: `mcpServers` allowlist, initial `profileId`, direct
+1. **Done.** Backend profile schema migration: `mcpServers` allowlist, initial `profileId`, direct
    server-name filtering, and a profile-aware rebind/fresh-session operation.
-2. HTTP/API contracts and focused Rust tests for state rollback, profile-before-startup, mixed
-   server exclusion, history transfer, and fresh-session isolation.
-3. `ProfileTransitionDialog` beside the existing `SwitchAgentDialog`; wire the selector, loading
-   state, errors, focus restoration, mobile layout, and the persistent instructions-only notice.
-4. Run `cargo test -q --all-targets`, `cargo clippy -q --all-targets -- -D warnings`,
-   `cargo fmt --check -q`, `make test-contract`, `npm run lint --silent`, and
-   `npm run build --silent` in `web/`.
+2. **Done.** HTTP/API contracts and focused Rust tests for state rollback, profile-before-startup,
+   mixed server exclusion, history transfer, and fresh-session isolation.
+3. **Done.** `ProfileTransitionDialog` beside the existing `SwitchAgentDialog`; wire the selector,
+   loading state, errors, focus restoration, mobile layout, and the persistent
+   instructions-only notice.
+4. **Done.** `make check` (Rust fmt/clippy/tests, frontend lint/build, contracts) passes.
+
+### Backend surface delivered (slices 1–2)
+
+- `GET /api/sessions/{id}/profile/preview?profile={id}` → `ProfileTransitionPreview`
+  (`requiresNewSession`, `currentServers`, `targetServers`). Read-only; the daemon computes the
+  *effective* sets, applying agent transport capabilities before the profile allowlist, so the UI
+  never prompts for a change the daemon would not make.
+- `POST /api/sessions/{id}/profile/transition` with `{profile, strategy, maxTransferBytes?}` →
+  `SessionInfo` for the session the client should display. `strategy` is `history` or `fresh`;
+  an unrecognized value is a 400 rather than a default. Omitted/`<= 0` `maxTransferBytes` uses
+  the 256 KiB daemon default instead of an unbounded transcript.
+- Failure handling, resolving the plan's internal contradiction: teardown-order atomicity is not
+  achievable because ACP requires closing the old actor before the replacement starts. Validation
+  failures change nothing. A startup failure leaves the session `Failed` (as agent rebind already
+  does) and rolls the stored profile selection back, so the selector keeps matching real access.
+- `mockagent` now reports the MCP servers it received at `session/new` as an `[mcp: a,b]` prefix
+  on its first reply. This is what makes "the target profile's server list reached the new agent
+  session" testable rather than assumed.
+
+### Correction found while building slice 3
+
+Preview originally compared the *stored profile's* allowlist against the target's. That is wrong
+for the case this story exists to handle: after "instructions only" the stored profile is already
+the target, so preview reported "no change" and the disclosure could never be derived. The same
+bug hid access drift whenever `profiles.json` was edited mid-session.
+
+Sessions now record the MCP server names actually attached at `session/new`
+(`ActorStartup::attached_mcp_servers` → `SessionEntry`), and preview compares against that. Live
+sessions are priced on what they really have; dormant ones fall back to the config estimate.
+This is what lets the persistent notice be derived rather than persisted as a flag that could go
+stale.
 
 ## Acceptance
 

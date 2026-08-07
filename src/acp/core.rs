@@ -13,6 +13,7 @@ pub(super) mod lifecycle;
 mod mcp;
 mod operations;
 mod registry;
+mod transition;
 
 pub use client::{Client, ClientDeps};
 pub use registry::SessionState;
@@ -24,5 +25,8 @@ pub const STDERR_TAIL_BYTES: usize = 8 * 1024;
 /// Maximum concurrent live ACP sessions. Each session pins an agent child
 /// process, so a cap prevents unbounded process-exhaustion `DoS`.
 pub(super) const MAX_SESSIONS: usize = 32;
-/// Safe default for a model-switch rebind transfer (256 KiB).
-pub(super) const MODEL_SWITCH_TRANSFER_BYTES: i64 = 256 * 1024;
+/// Safe default transcript budget when the daemon starts a replacement agent
+/// session on the user's behalf (model switch, profile transition): 256 KiB.
+/// Callers that accept a client-supplied cap use this when none is given, so an
+/// unbounded transcript can never be pushed into a first prompt.
+pub(super) const DEFAULT_TRANSFER_BYTES: i64 = 256 * 1024;

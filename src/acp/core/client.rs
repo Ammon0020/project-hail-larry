@@ -232,6 +232,25 @@ impl ACPClient for Client {
         self.set_session_profile_inner(session_id, profile).await
     }
 
+    async fn preview_session_profile(
+        &self,
+        session_id: &str,
+        profile: &str,
+    ) -> Result<crate::interfaces::ProfileTransitionPreview, AppError> {
+        self.preview_session_profile_inner(session_id, profile)
+    }
+
+    async fn transition_session_profile(
+        &self,
+        session_id: &str,
+        profile: &str,
+        strategy: crate::interfaces::ProfileTransitionStrategy,
+        max_transfer_bytes: i64,
+    ) -> Result<SessionInfo, AppError> {
+        self.transition_session_profile_inner(session_id, profile, strategy, max_transfer_bytes)
+            .await
+    }
+
     async fn list_providers(&self, session_id: &str) -> Result<Vec<ProviderInfo>, AppError> {
         self.list_providers_inner(session_id).await
     }

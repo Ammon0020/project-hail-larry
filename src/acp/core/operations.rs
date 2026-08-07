@@ -10,7 +10,7 @@ use uuid::Uuid;
 use super::actor::ActorCommand;
 use super::events::append_payload;
 use super::registry::SessionState;
-use super::{Client, MODEL_SWITCH_TRANSFER_BYTES};
+use super::{Client, DEFAULT_TRANSFER_BYTES};
 use crate::interfaces::{AppError, Attachment, EventPayload, ProviderInfo, SessionInfo};
 
 impl Client {
@@ -31,22 +31,7 @@ impl Client {
     ) -> Result<SessionInfo, AppError> {
         let config = self.pipeline.profiles.config()?;
         let selected_profile = match profile_id {
-            Some(profile) => {
-                let trimmed = profile.trim();
-                if trimmed.is_empty() {
-                    return Err(AppError::validation("profile id must not be empty"));
-                }
-                if !config
-                    .profiles
-                    .keys()
-                    .any(|id| id.eq_ignore_ascii_case(trimmed))
-                {
-                    return Err(AppError::validation(format!(
-                        "unknown profile id: {profile}"
-                    )));
-                }
-                config.normalize_profile_id(trimmed)
-            }
+            Some(profile) => super::transition::validated_profile_id(&config, profile)?,
             None => config.default_profile_id.clone(),
         };
         if let Some(path) = self.deps.mcp_config_path.as_deref() {
@@ -226,7 +211,7 @@ impl Client {
                     session_id,
                     &current.agent_id,
                     model_id,
-                    MODEL_SWITCH_TRANSFER_BYTES,
+                    DEFAULT_TRANSFER_BYTES,
                 )
                 .await
                 .map(|_| ());
@@ -262,20 +247,7 @@ impl Client {
         profile: &str,
     ) -> Result<(), AppError> {
         let config = self.pipeline.profiles.config()?;
-        let trimmed = profile.trim();
-        if trimmed.is_empty() {
-            return Err(AppError::validation("profile id is required"));
-        }
-        if !config
-            .profiles
-            .keys()
-            .any(|id| id.eq_ignore_ascii_case(trimmed))
-        {
-            return Err(AppError::validation(format!(
-                "unknown profile id: {profile}"
-            )));
-        }
-        let normalized = config.normalize_profile_id(profile);
+        let normalized = super::transition::validated_profile_id(&config, profile)?;
         if !self.has_live_session(session_id)? && !self.sessions.contains_dormant(session_id)? {
             return Err(AppError::not_found_id("session", session_id));
         }

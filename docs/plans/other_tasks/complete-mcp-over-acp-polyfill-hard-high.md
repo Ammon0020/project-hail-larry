@@ -1,7 +1,9 @@
 # Wire MCP-over-ACP broker via agent-client-protocol-polyfill
 
-> **Status:** pending | **Difficulty:** hard | **Urgency:** high
+> **Status:** complete | **Difficulty:** hard | **Urgency:** high
 > **Epic:** [profiles-over-acp](../complete-profiles-over-acp-hard.md) (loose follow-up)
+> **Completed:** commit `f0bddd9`. Remaining scope moved to
+> [`pending-mcp-over-acp-handlers-hard-high.md`](pending-mcp-over-acp-handlers-hard-high.md).
 
 ## Goal
 
@@ -88,14 +90,19 @@ are transparently bridged via HTTP.
 
 ## Acceptance
 
-- [ ] `agent-client-protocol-polyfill` added as a dependency
-- [ ] MCP-over-ACP relay methods (`mcp/connect`, `mcp/message`,
-      `mcp/disconnect`) are wired in the actor loop
-- [ ] Agents without `mcpCapabilities.acp` are transparently bridged via HTTP
-- [ ] Inline MCP path still works as a fallback
-- [ ] `docs/STATUS.md` "MCP-over-ACP — broker not wired" gap is resolved
-- [ ] `cargo test -q --all-targets`, `cargo clippy -q --all-targets -- -D warnings`,
+Scaffolding only. The conductor + `McpOverAcpPolyfill` chain is installed
+(`src/acp/core/actor/mod.rs`), but the polyfill stays inert until the client
+handlers land — see the follow-up story, which carries the unchecked items.
+
+- [x] `agent-client-protocol-polyfill` added as a dependency
+- [x] Conductor + polyfill inserted into the client→agent chain
+- [x] Inline MCP path still works as a fallback
+- [x] `cargo test -q --all-targets`, `cargo clippy -q --all-targets -- -D warnings`,
       `cargo fmt --check -q`, `make test-contract` pass
+- [ ] → follow-up: MCP-over-ACP relay methods (`mcp/connect`, `mcp/message`,
+      `mcp/disconnect`) wired in the actor loop
+- [ ] → follow-up: agents without `mcpCapabilities.acp` bridged via HTTP
+- [ ] → follow-up: `docs/STATUS.md` "MCP-over-ACP — broker not wired" gap resolved
 
 ## Suggested commit
 
