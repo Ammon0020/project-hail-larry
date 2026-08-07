@@ -67,6 +67,10 @@ Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
 - See `docs/development/building.md` for release and toolchain details. Record unrelated failures in `docs/known-issues.md` instead of expanding scope.
 - Keep code small: comment non-obvious or security-sensitive intent, avoid megafiles and overcomplicated tests, and include tests plus a suggested commit message when handing off.
 
+## Optional: Repomix
+
+For major or cross-cutting refactors, `npx repomix --compress` can help map dependencies before editing. Use `--include` for a focused area; treat `repomix-output.xml` as generated and regenerate it when useful.
+
 ## Plans
 List relevant folder to see task status. Review after milestones. Task reviewer deletes tasks after review, or updates status if work is not complete. Add action items from review as stories unless they are immediately fixable. 
 
