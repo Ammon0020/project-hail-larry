@@ -6,8 +6,8 @@ import { pathIsUnder, previewTabId, remapAfterRename, remapTabIdAfterRename, tab
 import { getWorkspaceTabs, putWorkspaceTabs, type EditorSelectionInfo } from '@/lib/api'
 import {
   loadTabDrafts,
+  planWorkspaceSwitch,
   rememberDrafts,
-  resolveWorkspaceTabs,
   saveTabDrafts,
   toWorkspaceTabs,
 } from '@/lib/workspaceTabs'
@@ -125,8 +125,10 @@ export function useTabManager({
     let cancelled = false
 
     const swap = async () => {
-      // Stash the outgoing workspace's unsaved buffers before its tabs leave
-      // the editor, then flush its layout to the server.
+      // Stash the outgoing workspace's unsaved buffers *before* any await so a
+      // crash during the fetch can't lose them. The pure decision (including
+      // this stash) is recomputed by planWorkspaceSwitch below — re-stashing is
+      // idempotent — but the storage write has to happen eagerly.
       if (previous) {
         draftsRef.current = rememberDrafts(draftsRef.current, previous, tabsRef.current)
         saveTabDrafts(draftsRef.current)
@@ -137,27 +139,22 @@ export function useTabManager({
       }
       const saved = await getWorkspaceTabs(workspaceId).catch(() => null)
       if (cancelled) return
-      const { tabs, needsContent, activeTabId: nextActive } = resolveWorkspaceTabs(
-        saved,
-        tabsRef.current,
-        workspaceId,
-        draftsRef.current[workspaceId],
-      )
 
-      // The drafts are live in the editor again; keeping a copy would let a
-      // crash resurrect them over text the user has since saved.
-      if (draftsRef.current[workspaceId]) {
-        const remaining = { ...draftsRef.current }
-        delete remaining[workspaceId]
-        draftsRef.current = remaining
-        saveTabDrafts(remaining)
-      }
+      const { tabs, activeTabId: nextActive, draftCache, needsContent } =
+        planWorkspaceSwitch(
+          previous,
+          tabsRef.current,
+          activeTabIdRef.current,
+          draftsRef.current,
+          saved,
+          workspaceId,
+        )
 
-      // Settings belongs to no workspace — switching should not close it.
-      const carried = tabsRef.current.filter((tab) => tab.kind === 'settings')
+      draftsRef.current = draftCache
+      saveTabDrafts(draftCache)
       syncedWorkspaceRef.current = workspaceId
-      setOpenTabs([...tabs, ...carried])
-      setActiveTabId(activeTabIdRef.current === 'settings' ? 'settings' : nextActive)
+      setOpenTabs(tabs)
+      setActiveTabId(nextActive)
 
       // Tabs restored from another device have no local buffer — read them.
       for (const id of needsContent) {

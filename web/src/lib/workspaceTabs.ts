@@ -137,6 +137,79 @@ export function resolveWorkspaceTabs(
   return { tabs, needsContent, activeTabId }
 }
 
+/**
+ * The pure decision behind a workspace switch.
+ *
+ * The async effect in `useTabManager` does the I/O (flushing the outgoing
+ * workspace's layout, fetching the incoming workspace's saved tabs, reading
+ * file content from disk for ids the device doesn't have). Everything that is
+ * not I/O — stashing the outgoing drafts, resolving the incoming tab set,
+ * clearing the now-live drafts, carrying the settings tab, picking the next
+ * active tab — lives here so it can be unit-tested without a React tree.
+ *
+ * Inputs:
+ *  - `previousWorkspaceId`: the workspace being left (null on first run).
+ *  - `currentTabs`: the open tabs at the moment of the switch (any workspace).
+ *  - `currentActiveTabId`: the active tab id at the moment of the switch.
+ *  - `draftCache`: unsaved buffers stashed for other workspaces.
+ *  - `serverResponse`: the incoming workspace's saved tabs (null on fetch
+ *    failure or first run after upgrade).
+ *  - `nextWorkspaceId`: the workspace being switched to.
+ *
+ * Outputs:
+ *  - `tabs`: the next open-tab set (incoming tabs plus any carried settings
+ *    tab; content is empty for ids in `needsContent`).
+ *  - `activeTabId`: the next active tab id. Settings is sticky — if it was
+ *    active before the switch it stays active after.
+ *  - `draftCache`: the updated stash. The outgoing workspace's unsaved buffers
+ *    are recorded and the incoming workspace's drafts are dropped (they are
+ *    live in the editor again).
+ *  - `needsContent`: ids whose descriptors have no local buffer and must be
+ *    read from disk before they are usable.
+ */
+export function planWorkspaceSwitch(
+  previousWorkspaceId: string | null,
+  currentTabs: Tab[],
+  currentActiveTabId: string | null,
+  draftCache: TabDraftCache,
+  serverResponse: WorkspaceTabs | null,
+  nextWorkspaceId: string,
+): {
+  tabs: Tab[]
+  activeTabId: string | null
+  draftCache: TabDraftCache
+  needsContent: string[]
+} {
+  // Stash the outgoing workspace's unsaved buffers before its tabs leave the
+  // editor. Recomputing on every departure is what keeps the stash honest.
+  let drafts = draftCache
+  if (previousWorkspaceId) {
+    drafts = rememberDrafts(drafts, previousWorkspaceId, currentTabs)
+  }
+
+  const { tabs, needsContent, activeTabId: resolvedActive } = resolveWorkspaceTabs(
+    serverResponse,
+    currentTabs,
+    nextWorkspaceId,
+    drafts[nextWorkspaceId],
+  )
+
+  // The drafts are live in the editor again; keeping a copy would let a crash
+  // resurrect them over text the user has since saved.
+  if (drafts[nextWorkspaceId]) {
+    const remaining = { ...drafts }
+    delete remaining[nextWorkspaceId]
+    drafts = remaining
+  }
+
+  // Settings belongs to no workspace — switching should not close it.
+  const carried = currentTabs.filter((tab) => tab.kind === 'settings')
+  const nextTabs = [...tabs, ...carried]
+  const nextActive = currentActiveTabId === 'settings' ? 'settings' : resolvedActive
+
+  return { tabs: nextTabs, activeTabId: nextActive, draftCache: drafts, needsContent }
+}
+
 /** Stashed drafts win over a live tab of the same id: they are the newer text. */
 function mergeDrafts(local: Tab[], drafts: Tab[]): Tab[] {
   if (drafts.length === 0) return local

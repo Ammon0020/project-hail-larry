@@ -120,6 +120,17 @@ pub(super) async fn remove_workspace(
     if let Some(watcher) = state.fs_watcher.as_ref() {
         watcher.remove_workspace(&id);
     }
+    // Drop the workspace's stored tabs so entries in workspace-tabs.json do not
+    // outlive the workspace. Treated as non-fatal: the workspace is already
+    // gone from the live manager, so failing the request would be worse than
+    // an orphaned entry — matches the config-drift warning below.
+    if let Err(error) = state.tabs.remove(&id) {
+        warn!(
+            workspace_id = %id,
+            %error,
+            "removed live workspace but tab cleanup failed"
+        );
+    }
     if let Err(error) = state.config.write().remove_workspace(&workspace.path) {
         // Already removed from the live manager; config drift is loud but not
         // fatal for the CLI operator who may have already saved config.
@@ -512,6 +523,68 @@ mod tests {
         assert_eq!(
             entry["trusted"], true,
             "trusted workspace should list trusted=true, got: {entry}"
+        );
+    }
+
+    /// Removing a workspace must also drop its stored tabs, so entries in
+    /// workspace-tabs.json do not outlive the workspace. DELETE is
+    /// loopback-only, so the request goes through `oneshot` (127.0.0.1:9).
+    #[tokio::test]
+    async fn removing_a_workspace_drops_its_stored_tabs() {
+        let (state_dir, state) = state();
+        let _env = StateDirEnvGuard::pin(state_dir.path());
+        let workspace_dir = tempfile::tempdir().expect("workspace directory");
+        let workspace = state
+            .workspaces
+            .register(workspace_dir.path().to_str().expect("UTF-8 path"))
+            .await
+            .expect("register workspace");
+
+        let saved = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/api/workspaces/{}/tabs", workspace.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"tabs":[{"id":"t1","path":"src/a.rs","name":"a.rs"}],"activeTabId":"t1"}"#,
+                ))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(saved.status(), StatusCode::OK);
+
+        let removed = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/workspaces/{}", workspace.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(json_body(removed).await["status"], "removed");
+
+        // The workspace is gone, so GET tabs 404s — and the underlying store
+        // must have no entry left to resurrect on a future re-registration.
+        let loaded = oneshot(
+            state.clone(),
+            Request::builder()
+                .uri(format!("/api/workspaces/{}/tabs", workspace.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(loaded.status(), StatusCode::NOT_FOUND);
+        assert!(
+            state
+                .tabs
+                .load(&workspace.id)
+                .expect("load tabs")
+                .tabs
+                .is_empty(),
+            "tab store should have no entry for the removed workspace"
         );
     }
 }
