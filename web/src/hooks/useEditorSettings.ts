@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { safeStorage } from '@/lib/safeStorage'
 
 /**
  * Editor preferences persisted to `localStorage`. All keys are prefixed with
@@ -45,25 +46,19 @@ const KEYS = {
 
 /** Reads a JSON-parsed localStorage value, falling back to `fallback`. */
 function readJSON<T>(key: string, fallback: T): T {
-  try {
-    const stored = localStorage.getItem(key)
-    if (stored === null) return fallback
-    return JSON.parse(stored) as T
-  } catch {
-    return fallback
-  }
+  return safeStorage.getJson<T>(key, fallback)
 }
 
-/** Reads a numeric localStorage value (stored as a plain string or JSON). */
+/**
+ * Reads a numeric setting stored as JSON.
+ *
+ * Stricter than `safeStorage.getNumber`, which accepts the plain-string form:
+ * these keys are JSON-encoded, so a stored `"13"` string is a corrupt value
+ * rather than a font size and must fall back.
+ */
 function readNumber(key: string, fallback: number): number {
-  try {
-    const stored = localStorage.getItem(key)
-    if (stored === null) return fallback
-    const parsed = JSON.parse(stored)
-    return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : fallback
-  } catch {
-    return fallback
-  }
+  const parsed = safeStorage.getJson<unknown>(key, null)
+  return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : fallback
 }
 
 /**
@@ -77,7 +72,7 @@ function loadSettings(isDesktop: boolean): EditorSettings {
   let fontSize = readNumber(KEYS.fontSize, NaN)
   if (!Number.isFinite(fontSize)) {
     // Migrate from the legacy key used before settings were consolidated.
-    const legacy = localStorage.getItem(KEYS.fontSizeLegacy)
+    const legacy = safeStorage.get(KEYS.fontSizeLegacy)
     if (legacy) {
       const parsed = parseInt(legacy, 10)
       if (Number.isFinite(parsed)) fontSize = parsed
@@ -101,7 +96,7 @@ function loadSettings(isDesktop: boolean): EditorSettings {
 /** Persists a single field to localStorage, swallowing write failures. */
 function persist<K extends keyof EditorSettings>(key: K, value: EditorSettings[K]): void {
   try {
-    localStorage.setItem(KEYS[key], JSON.stringify(value))
+    safeStorage.setJson(KEYS[key], value)
   } catch {
     // Ignore write failures (quota, disabled storage) — UI state still updates.
   }

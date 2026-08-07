@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { safeStorage } from '@/lib/safeStorage'
 
 /**
  * Persisted state synced to `localStorage` under `key`.
@@ -19,25 +20,15 @@ export function useLocalStorage<T>(
   key: string,
   fallback: T,
 ): [T, (v: T | ((prev: T) => T)) => void] {
-  const [value, setValue] = useState<T>(() => {
-    try {
-      const stored = localStorage.getItem(key)
-      if (stored === null) return fallback
-      return JSON.parse(stored) as T
-    } catch {
-      return fallback
-    }
-  })
+  const [value, setValue] = useState<T>(() => safeStorage.getJson<T>(key, fallback))
 
   const set = useCallback(
     (v: T | ((prev: T) => T)) => {
       setValue((prev) => {
         const next = v instanceof Function ? v(prev) : v
-        try {
-          localStorage.setItem(key, JSON.stringify(next))
-        } catch {
-          // Ignore write failures (quota, disabled storage) — UI state still updates.
-        }
+        // Write failures (quota, disabled storage) are ignored — UI state
+        // still updates.
+        safeStorage.setJson(key, next)
         return next
       })
     },

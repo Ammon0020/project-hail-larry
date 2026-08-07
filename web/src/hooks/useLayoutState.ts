@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { type SettingsSection } from '@/components/SettingsPanel'
 import { usePanelResize } from '@/hooks/usePanelResize'
 import type { LeftPanel, MobileView } from '@/types'
+import { safeStorage } from '@/lib/safeStorage'
 
 type ReadValidString = <T extends string>(
   key: string,
@@ -68,11 +69,11 @@ export function useLayoutState(readValidString: ReadValidString) {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem('lai:leftPanel', leftPanel)
+    safeStorage.set('lai:leftPanel', leftPanel)
   }, [leftPanel])
 
   useEffect(() => {
-    localStorage.setItem('lai:mobileView', mobileView)
+    safeStorage.set('lai:mobileView', mobileView)
   }, [mobileView])
 
   // ---- Determine panel visibility based on viewport and state ----

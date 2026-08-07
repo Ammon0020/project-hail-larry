@@ -3,6 +3,7 @@ import { api, getDeviceCredential, type AppEvent, type WorkspaceInfo, type FileN
 import type { Agent, Session } from '@/types'
 import { useFileActions } from '@/hooks/useFileActions'
 import { useSessionActions } from '@/hooks/useSessionActions'
+import { safeStorage } from '@/lib/safeStorage'
 
 /**
  * Upper bound on how many events we keep in memory at once. The in-memory
@@ -371,7 +372,7 @@ export function useBackend() {
     activeWorkspaceRef.current = ws
     setActiveWorkspace(ws)
     // Persist the active workspace by id so it survives a reload.
-    localStorage.setItem('lai:activeWorkspace', ws.id)
+    safeStorage.set('lai:activeWorkspace', ws.id)
     try {
       setFileTree(await api.getFileTree(ws.id))
     } catch {
@@ -405,7 +406,7 @@ export function useBackend() {
       if (ws.length > 0 && !activeWorkspaceRef.current) {
         // Restore the previously active workspace from localStorage if it
         // still exists in the loaded list; otherwise fall back to the first.
-        const storedId = localStorage.getItem('lai:activeWorkspace')
+        const storedId = safeStorage.get('lai:activeWorkspace')
         const match = storedId ? ws.find((w) => w.id === storedId) : undefined
         selectWorkspace(match ?? ws[0])
       }
@@ -435,7 +436,7 @@ export function useBackend() {
       const ws = await api.listWorkspaces()
       setWorkspaces(ws)
       if (ws.length === 0) return
-      const storedId = localStorage.getItem('lai:activeWorkspace')
+      const storedId = safeStorage.get('lai:activeWorkspace')
       const match = storedId ? ws.find((w) => w.id === storedId) : undefined
       selectWorkspace(match ?? ws[0])
     } catch {

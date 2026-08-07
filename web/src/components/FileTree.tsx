@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils'
 import { FileIcon } from '@/lib/fileIcon'
 import { useLongPressHandlers } from '@/hooks/useLongPressHandlers'
 import type { FileTreeNode } from '@/types'
+import { safeStorage } from '@/lib/safeStorage'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -486,7 +487,7 @@ function expandedStorageKey(workspaceId: string): string {
 function loadExpandedPaths(workspaceId: string | null): Set<string> {
   if (!workspaceId) return new Set()
   try {
-    const raw = localStorage.getItem(expandedStorageKey(workspaceId))
+    const raw = safeStorage.get(expandedStorageKey(workspaceId))
     if (!raw) return new Set()
     const arr = JSON.parse(raw) as string[]
     return new Set(Array.isArray(arr) ? arr : [])
@@ -499,7 +500,7 @@ function loadExpandedPaths(workspaceId: string | null): Set<string> {
 function saveExpandedPaths(workspaceId: string | null, expanded: Set<string>): void {
   if (!workspaceId) return
   try {
-    localStorage.setItem(expandedStorageKey(workspaceId), JSON.stringify([...expanded]))
+    safeStorage.setJson(expandedStorageKey(workspaceId), [...expanded])
   } catch {
     // Ignore quota / serialization errors — persistence is best-effort.
   }

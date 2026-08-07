@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { languageExtensionsForPath } from '@/lib/language'
 import { useResolvedTheme } from '@/hooks/useTheme'
+import { safeStorage } from '@/lib/safeStorage'
 
 /**
  * Structured git diff viewer (S-GIT-DIFF-VIEWER).
@@ -58,12 +59,12 @@ function readEditorPrefs(): { fontSize: number; wrap: boolean } {
   let fontSize = 14
   let wrap = false
   try {
-    const raw = localStorage.getItem('lai:fontSize')
+    const raw = safeStorage.get('lai:fontSize')
     if (raw) {
       const n = Number(raw)
       if (Number.isFinite(n) && n > 0) fontSize = n
     }
-    const w = localStorage.getItem('lai:wrap')
+    const w = safeStorage.get('lai:wrap')
     if (w === 'true') wrap = true
   } catch {
     // localStorage may be unavailable (private mode / SSR) — keep defaults.

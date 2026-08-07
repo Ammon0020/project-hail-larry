@@ -8,7 +8,8 @@ import {
   type ProfileTransitionPreview,
 } from '@/lib/api'
 import type { ProfileTransitionChoice } from '@/components/ProfileTransitionDialog'
-import { isSessionNotFound } from '@/lib/errors'
+import { describeSessionError, SESSION_GONE_MESSAGE } from '@/lib/errors'
+import { safeStorage } from '@/lib/safeStorage'
 
 /** Options accepted by {@link useProfileSelection}. */
 interface UseProfileSelectionOptions {
@@ -120,7 +121,7 @@ export function useProfileSelection({
       resolved = profileConfig.defaultProfileId
     } else {
       try {
-        const persisted = localStorage.getItem(`local-agent:profile:${activeSessionId}`)
+        const persisted = safeStorage.get(`local-agent:profile:${activeSessionId}`)
         resolved = persisted || profileConfig.defaultProfileId
       } catch {
         // localStorage unavailable (private mode / disabled) — fall back to default.
@@ -132,7 +133,7 @@ export function useProfileSelection({
     if (profileConfig && resolved && !profileConfig.profiles[resolved]) {
       if (activeSessionId) {
         try {
-          localStorage.removeItem(`local-agent:profile:${activeSessionId}`)
+          safeStorage.remove(`local-agent:profile:${activeSessionId}`)
         } catch {
           // Ignore storage failures — fallback below still keeps the UI valid.
         }
@@ -191,19 +192,15 @@ export function useProfileSelection({
 
   /** Remember a session's profile locally; storage failures are non-fatal. */
   const persistProfile = useCallback((sessionId: string, profileId: string) => {
-    try {
-      localStorage.setItem(`local-agent:profile:${sessionId}`, profileId)
-    } catch {
-      // Quota / disabled storage — the selection still applies for this session.
-    }
+    safeStorage.set(`local-agent:profile:${sessionId}`, profileId)
   }, [])
 
   /** Surface a failure, treating a vanished session as a special case. */
   const reportFailure = useCallback(
     (err: unknown, fallback: string) => {
-      const message = err instanceof Error ? err.message : fallback
-      if (isSessionNotFound(message)) {
-        setError('This conversation is no longer available. Start a new chat.')
+      const { message, sessionGone } = describeSessionError(err, fallback)
+      if (sessionGone) {
+        setError(SESSION_GONE_MESSAGE)
         onSelectSession('')
       } else {
         setError(message)

@@ -1,7 +1,8 @@
 import { useCallback, useRef, type MutableRefObject } from 'react'
 import { api, type WorkspaceInfo, type UploadResult, type EditorSelectionInfo } from '@/lib/api'
-import { isSessionNotFound } from '@/lib/errors'
+import { describeSessionError, SESSION_GONE_MESSAGE } from '@/lib/errors'
 import type { AppEvent, Attachment, Session } from '@/types'
+import { safeStorage } from '@/lib/safeStorage'
 
 interface UseSessionActionsOptions {
   activeWorkspaceRef: MutableRefObject<WorkspaceInfo | null>
@@ -82,12 +83,10 @@ export function useSessionActions(opts: UseSessionActionsOptions): UseSessionAct
         // 404 "session not found: sess-…". Recover gracefully: clear the
         // persisted id so the UI resets to the new-chat state, and surface a
         // friendly message instead of the raw error string.
-        const msg = err instanceof Error ? err.message : String(err)
-        if (isSessionNotFound(msg)) {
-          localStorage.removeItem('lai:activeSessionId')
-          throw new Error('This conversation is no longer available. Start a new chat.', {
-            cause: err,
-          })
+        const { sessionGone } = describeSessionError(err, String(err))
+        if (sessionGone) {
+          safeStorage.remove('lai:activeSessionId')
+          throw new Error(SESSION_GONE_MESSAGE, { cause: err })
         }
         throw err
       }

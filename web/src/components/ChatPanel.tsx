@@ -6,7 +6,7 @@ import {
   type SessionHistoryCapabilities,
   type UploadResult,
 } from '@/lib/api'
-import { isSessionNotFound } from '@/lib/errors'
+import { describeSessionError, SESSION_GONE_MESSAGE } from '@/lib/errors'
 import { useRetrying } from '@/lib/retry'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatComposer } from './ChatComposer'
@@ -24,8 +24,10 @@ import { type ContextUsage } from '@/lib/contextUsage'
 import { useSendingState } from '@/hooks/useSendingState'
 import { useStuckAgentWarning } from '@/hooks/useStuckAgentWarning'
 import { pushRecentModel } from '@/lib/modelPrefs'
+import { mergeChatEvents } from '@/lib/eventMerging'
 import type { AppEvent, Agent, Attachment, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
+import { safeStorage } from '@/lib/safeStorage'
 
 export interface ChatPanelActions {
   onSendMessage: (sessionId: string, content: string, attachments?: Attachment[]) => Promise<void>
@@ -376,7 +378,7 @@ export function ChatPanel({
           const pendingProfileId = profileOverride.profileId
           setProfileOverride({ sessionId, profileId: pendingProfileId })
           try {
-            localStorage.setItem(`local-agent:profile:${sessionId}`, pendingProfileId)
+            safeStorage.set(`local-agent:profile:${sessionId}`, pendingProfileId)
           } catch {
             // Ignore write failures (quota / disabled storage).
           }
@@ -402,9 +404,9 @@ export function ChatPanel({
       setPendingPreviews([])
       // Keep the per-session latch until a terminal event clears it.
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to send message'
-      if (isSessionNotFound(message)) {
-        setError('This conversation is no longer available. Start a new chat.')
+      const { message, sessionGone } = describeSessionError(err, 'Failed to send message')
+      if (sessionGone) {
+        setError(SESSION_GONE_MESSAGE)
         onSelectSession('')
       } else {
         setError(message)
@@ -461,9 +463,9 @@ export function ChatPanel({
         setPendingPreviews((prev) => [...prev, { url: result.url, name: result.name }])
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to upload file'
-      if (isSessionNotFound(message)) {
-        setError('This conversation is no longer available. Start a new chat.')
+      const { message, sessionGone } = describeSessionError(err, 'Failed to upload file')
+      if (sessionGone) {
+        setError(SESSION_GONE_MESSAGE)
         onSelectSession('')
       } else {
         setUploadError(message)
@@ -516,105 +518,9 @@ export function ChatPanel({
       !uploading,
   )
 
-  /**
-   * Merges consecutive StreamUpdate events into a single accumulated message
-   * so streaming text appears as one growing response (like ChatGPT).
-   * Also folds ShellOutputStreamed chunks into the preceding ShellCommandStarted
-   * card (and preserves that output when Completed replaces Started).
-   */
-  const mergedEvents: AppEvent[] = useMemo(
-    () =>
-      events.reduce((acc: AppEvent[], event: AppEvent) => {
-        if (event.type === 'StreamUpdate') {
-          const last = acc[acc.length - 1]
-          if (
-            last &&
-            last.type === 'StreamUpdate' &&
-            last.role === event.role &&
-            !!last.thought === !!event.thought
-          ) {
-            acc[acc.length - 1] = {
-              ...last,
-              content: (last.content || '') + (event.content || ''),
-              streaming: event.streaming,
-            }
-            return acc
-          }
-        }
-        // Live shell stdout/stderr: append onto the running Started card.
-        if (event.type === 'ShellOutputStreamed') {
-          let startedIdx = -1
-          for (let i = acc.length - 1; i >= 0; i--) {
-            const e = acc[i]
-            if (e.type === 'ShellCommandStarted' && (!event.toolCallId || e.toolCallId === event.toolCallId)) {
-              startedIdx = i
-              break
-            }
-          }
-          if (startedIdx !== -1) {
-            const started = acc[startedIdx]
-            acc[startedIdx] = {
-              ...started,
-              content: (started.content || '') + (event.content || ''),
-            }
-            return acc
-          }
-          // Orphan chunk (no matching Started) — drop, matching prior UI behavior.
-          return acc
-        }
-        // Completed replaces Started so exit code + streamed output share one card.
-        if (event.type === 'ShellCommandCompleted') {
-          let startedIdx = -1
-          for (let i = acc.length - 1; i >= 0; i--) {
-            const e = acc[i]
-            if (e.type === 'ShellCommandStarted' && (!event.toolCallId || !e.toolCallId || e.toolCallId === event.toolCallId)) {
-              startedIdx = i
-              break
-            }
-          }
-          if (startedIdx !== -1) {
-            const started = acc[startedIdx]
-            acc[startedIdx] = {
-              ...event,
-              id: started.id, // Preserve original event ID for stable React keys
-              content: started.content || event.content || event.summary,
-            }
-            return acc
-          }
-        }
-        // ToolCompleted replaces ToolStarted so the tool card transitions from
-        // running to complete in place (same pattern as ShellCommand above).
-        // ToolCompleted doesn't carry `command`/`tool`/`target` (those are on
-        // ToolStarted), so preserve them from the Started event to keep the
-        // completed card's args/label intact.
-        if (event.type === 'ToolCompleted') {
-          let startedIdx = -1
-          for (let i = acc.length - 1; i >= 0; i--) {
-            const e = acc[i]
-            if (e.type === 'ToolStarted' && (!event.toolCallId || !e.toolCallId || e.toolCallId === event.toolCallId)) {
-              startedIdx = i
-              break
-            }
-          }
-          if (startedIdx !== -1) {
-            const started = acc[startedIdx]
-            acc[startedIdx] = {
-              ...event,
-              id: started.id, // Preserve original event ID for stable React keys
-              toolCallId: event.toolCallId ?? started.toolCallId,
-              command: event.command ?? started.command,
-              tool: event.tool ?? started.tool,
-              target: event.target ?? started.target,
-              toolKind: event.toolKind ?? started.toolKind,
-            }
-            return acc
-          }
-        }
-        acc.push(event)
-        return acc
-      }, []),
-    [events],
-  )
+  // Folds streamed chunks and started/completed pairs into the cards the
+  // thread renders. Pure logic — see web/src/lib/eventMerging.ts.
+  const mergedEvents: AppEvent[] = useMemo(() => mergeChatEvents(events), [events])
 
   const handleLoadOlder = useCallback(async () => {
     if (!activeSessionId || loadingOlderEvents) return
