@@ -2,7 +2,7 @@
 
 ## Product
 
-Self-hosted, cross-platform web IDE with built-in AI. A Rust daemon serves thin browser clients on the local network; files and state remain on the host. ACP orchestrates external agents alongside a VS Code-style editor.
+Self-hosted, cross-platform web IDE with built-in AI. A Rust daemon serves thin browser clients on the local network, letting a user connect multiple devices at once and switch between them seamlessly; files and state remain on the host. ACP orchestrates external agents alongside a VS Code-style editor.
 
 ## App workflow
 

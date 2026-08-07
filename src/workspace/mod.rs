@@ -747,5 +747,6 @@ fn is_noise_dir(name: &str) -> bool {
     )
 }
 
+pub mod tabs;
 #[cfg(test)]
 mod tests;

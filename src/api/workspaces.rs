@@ -12,6 +12,7 @@ use tracing::warn;
 
 use crate::interfaces::{Event, EventType, WorkspaceManager};
 use crate::sync::is_loopback_addr;
+use crate::workspace::tabs::WorkspaceTabs;
 
 use super::auth::{device_id_from_request, PeerAddr};
 use super::{
@@ -163,6 +164,50 @@ pub(super) async fn set_workspace_trust(
     Ok(Json(json!({ "id": id, "trusted": payload.trusted })))
 }
 
+/// `GET /api/workspaces/{id}/tabs` — restorable editor tabs for a workspace.
+///
+/// Returns an empty set for a workspace whose tabs have never been saved,
+/// which is the normal first-open state rather than an error.
+pub(super) async fn get_workspace_tabs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkspaceTabs>, ApiResponseError> {
+    require_workspace(&state, &id).await?;
+    state.tabs.load(&id).map(Json).map_err(app_error)
+}
+
+/// `PUT /api/workspaces/{id}/tabs` — replace a workspace's tab set.
+///
+/// Any paired device may write this: it is editor layout, not a security
+/// boundary. The payload is capped (tab count and field lengths) because a
+/// client could otherwise grow the daemon's state file without bound.
+/// File content is deliberately not accepted — unsaved buffers stay on the
+/// device that typed them.
+pub(super) async fn put_workspace_tabs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<WorkspaceTabs>, JsonRejection>,
+) -> Result<Json<Value>, ApiResponseError> {
+    require_workspace(&state, &id).await?;
+    let Json(payload) = decode_json_body(body)?;
+    let validated = payload.validated().map_err(app_error)?;
+    let count = validated.tabs.len();
+    state.tabs.save(&id, validated).map_err(app_error)?;
+    Ok(Json(json!({ "id": id, "tabs": count })))
+}
+
+/// 404 unless `id` names a registered workspace, so tabs cannot be stored
+/// against a phantom id and accumulate forever.
+async fn require_workspace(state: &AppState, id: &str) -> Result<(), ApiResponseError> {
+    let workspaces = state.workspaces.list().await.map_err(app_error)?;
+    if workspaces.iter().any(|workspace| workspace.id == id) {
+        return Ok(());
+    }
+    Err(ApiResponseError::not_found(format!(
+        "workspace {id} not found"
+    )))
+}
+
 /// `POST /api/workspaces/cancel-registration` — body `{"actionId":"..."}`.
 pub(super) async fn cancel_workspace_registration(
     State(state): State<AppState>,
@@ -312,6 +357,98 @@ mod tests {
     }
 
     /// Trust updates are persisted and joined back into workspace list results.
+    /// Tabs must not be storable against an unregistered id — otherwise a
+    /// client could accumulate entries for workspaces that never existed.
+    #[tokio::test]
+    async fn workspace_tabs_reject_an_unknown_workspace() {
+        let (_dir, state) = state();
+        for (method, body) in [
+            (Method::GET, Body::empty()),
+            (Method::PUT, Body::from(r#"{"tabs":[]}"#)),
+        ] {
+            let response = oneshot(
+                state.clone(),
+                Request::builder()
+                    .method(method)
+                    .uri("/api/workspaces/ws-nope/tabs")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(body)
+                    .expect("request"),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+    }
+
+    /// The payload cap is the only bound on how large a paired device can make
+    /// the daemon's tab file.
+    #[tokio::test]
+    async fn workspace_tabs_reject_an_oversized_payload() {
+        let (state_dir, state) = state();
+        let _env = StateDirEnvGuard::pin(state_dir.path());
+        let workspace_dir = tempfile::tempdir().expect("workspace directory");
+        let workspace = state
+            .workspaces
+            .register(workspace_dir.path().to_str().expect("UTF-8 path"))
+            .await
+            .expect("register workspace");
+
+        let tabs: Vec<String> = (0..=crate::workspace::tabs::MAX_TABS_PER_WORKSPACE)
+            .map(|i| format!(r#"{{"id":"t{i}","path":"a","name":"a"}}"#))
+            .collect();
+        let response = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/api/workspaces/{}/tabs", workspace.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(r#"{{"tabs":[{}]}}"#, tabs.join(","))))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// A saved layout must come back on the next open — the whole feature.
+    #[tokio::test]
+    async fn workspace_tabs_round_trip_for_a_registered_workspace() {
+        let (state_dir, state) = state();
+        let _env = StateDirEnvGuard::pin(state_dir.path());
+        let workspace_dir = tempfile::tempdir().expect("workspace directory");
+        let workspace = state
+            .workspaces
+            .register(workspace_dir.path().to_str().expect("UTF-8 path"))
+            .await
+            .expect("register workspace");
+
+        let saved = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/api/workspaces/{}/tabs", workspace.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"tabs":[{"id":"t1","path":"src/a.rs","name":"a.rs"}],"activeTabId":"t1"}"#,
+                ))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(saved.status(), StatusCode::OK);
+
+        let loaded = oneshot(
+            state.clone(),
+            Request::builder()
+                .uri(format!("/api/workspaces/{}/tabs", workspace.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(loaded.status(), StatusCode::OK);
+        let body = json_body(loaded).await;
+        assert_eq!(body["tabs"][0]["path"], "src/a.rs");
+        assert_eq!(body["activeTabId"], "t1");
+    }
+
     #[tokio::test]
     async fn set_workspace_trust_persists_and_reflects_in_list() {
         let (state_dir, state) = state();
