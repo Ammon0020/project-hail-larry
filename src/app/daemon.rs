@@ -185,6 +185,9 @@ impl Daemon {
             Some(mcp_config_path.clone()),
             Some(uploads.clone()),
             fs_watcher.clone(),
+            crate::workspace::tabs::TabStore::new(Some(
+                Path::new(&config.data_dir).join("workspace-tabs.json"),
+            )),
         );
         let cancel = CancellationToken::new();
 

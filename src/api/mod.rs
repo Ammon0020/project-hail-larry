@@ -86,6 +86,8 @@ pub struct AppState {
     pub uploads: Option<Arc<Mutex<uploads::Manager>>>,
     /// External filesystem watcher. `None` when notify init failed.
     pub fs_watcher: Option<Arc<crate::fswatch::Watcher>>,
+    /// Per-workspace editor tab sets. A pathless store disables persistence.
+    pub tabs: crate::workspace::tabs::TabStore,
     pair_rate: Arc<Mutex<HashMap<String, pair::PairRateBucket>>>,
     /// In-memory, workspace-scoped preview tickets with short expiry.
     preview_tokens: Arc<Mutex<HashMap<String, preview::PreviewToken>>>,
@@ -112,6 +114,7 @@ impl AppState {
         mcp_config_path: Option<PathBuf>,
         uploads: Option<Arc<Mutex<uploads::Manager>>>,
         fs_watcher: Option<Arc<crate::fswatch::Watcher>>,
+        tabs: crate::workspace::tabs::TabStore,
     ) -> Self {
         Self {
             config,
@@ -124,6 +127,7 @@ impl AppState {
             mcp_config_path,
             uploads,
             fs_watcher,
+            tabs,
             pair_rate: Arc::new(Mutex::new(HashMap::new())),
             preview_tokens: Arc::new(Mutex::new(HashMap::new())),
             autodetect_cache: Arc::new(Mutex::new(None)),
@@ -157,6 +161,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/workspaces/{id}/trust",
             put(workspaces::set_workspace_trust),
+        )
+        .route(
+            "/api/workspaces/{id}/tabs",
+            get(workspaces::get_workspace_tabs).put(workspaces::put_workspace_tabs),
         )
         .route(
             "/api/workspaces/cancel-registration",

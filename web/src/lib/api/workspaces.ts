@@ -99,3 +99,49 @@ export function searchWorkspace(workspaceId: string, opts: SearchOptions) {
   if (opts.contextLines != null) params.set('contextLines', String(opts.contextLines))
   return apiFetch<SearchResult[]>(`/workspaces/${workspaceId}/search?${params.toString()}`)
 }
+
+/**
+ * One restorable editor tab as the server stores it.
+ *
+ * Identity and order only — never file content. Unsaved buffers are drafts
+ * belonging to the device that typed them; syncing them would let one device
+ * silently overwrite another's edits.
+ */
+export interface WorkspaceTab {
+  id: string
+  path: string
+  name: string
+  language?: string
+  kind?: string
+  isPreview?: boolean
+  viewMode?: string
+  staged?: boolean
+  commitOid?: string
+}
+
+/** A workspace's restorable editor state. */
+export interface WorkspaceTabs {
+  tabs: WorkspaceTab[]
+  activeTabId?: string | null
+}
+
+/** GET /workspaces/:id/tabs — empty set when the workspace has none saved. */
+export async function getWorkspaceTabs(workspaceId: string): Promise<WorkspaceTabs> {
+  return apiFetch<WorkspaceTabs>(`/workspaces/${workspaceId}/tabs`)
+}
+
+/**
+ * PUT /workspaces/:id/tabs — replace a workspace's tab set.
+ *
+ * Not retried: it is a last-write-wins layout save that runs again on the next
+ * tab change, so a retry storm would add load without adding durability.
+ */
+export async function putWorkspaceTabs(
+  workspaceId: string,
+  tabs: WorkspaceTabs,
+): Promise<void> {
+  await apiFetch<unknown>(`/workspaces/${workspaceId}/tabs`, {
+    method: 'PUT',
+    body: JSON.stringify(tabs),
+  })
+}

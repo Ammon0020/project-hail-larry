@@ -31,6 +31,8 @@ export type { SessionHistoryCapabilities, EditorSelectionInfo, UploadResult } fr
 export type { PermissionOptionInfo, PendingPermission, DeviceCredential, PairingSession } from './permissions'
 export type { McpServerStatus } from './mcp'
 export type { ProviderInfo } from './providers'
+export type { WorkspaceTab, WorkspaceTabs } from './workspaces'
+export { getWorkspaceTabs, putWorkspaceTabs } from './workspaces'
 export type {
   ProfileEntry,
   ProfileConfig,

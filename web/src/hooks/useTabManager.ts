@@ -3,7 +3,14 @@ import { type SettingsSection } from '@/components/SettingsPanel'
 import { useBackend } from '@/hooks/useBackend'
 import { useFileChangeDetection } from '@/hooks/useFileChangeDetection'
 import { pathIsUnder, previewTabId, remapAfterRename, remapTabIdAfterRename, tabIdTouchesPath } from '@/lib/tabPath'
-import type { EditorSelectionInfo } from '@/lib/api'
+import { getWorkspaceTabs, putWorkspaceTabs, type EditorSelectionInfo } from '@/lib/api'
+import {
+  loadTabDrafts,
+  rememberDrafts,
+  resolveWorkspaceTabs,
+  saveTabDrafts,
+  toWorkspaceTabs,
+} from '@/lib/workspaceTabs'
 import type { Tab } from '@/types'
 import { safeStorage } from '@/lib/safeStorage'
 
@@ -73,6 +80,113 @@ export function useTabManager({
     if (activeTabId) safeStorage.set('lai:activeTabId', activeTabId)
     else safeStorage.remove('lai:activeTabId')
   }, [activeTabId])
+
+  // --- Per-workspace tab sets -------------------------------------------
+  //
+  // The server owns *which* tabs a workspace has; this device owns their
+  // content, so unsaved buffers never travel. Latest tab state is read through
+  // refs inside the switch effect: including them as dependencies would re-run
+  // the switch on every keystroke.
+  const workspaceId = backend.activeWorkspace?.id ?? ''
+  const tabsRef = useRef(openTabs)
+  const activeTabIdRef = useRef(activeTabId)
+  const syncedWorkspaceRef = useRef<string | null>(null)
+  // Unsaved buffers for workspaces that are not on screen. The server stores
+  // tab identity only, so this is the only thing standing between a workspace
+  // switch and losing whatever the user had typed.
+  const draftsRef = useRef(loadTabDrafts())
+
+  // Declared before the effects that read these refs so it commits first.
+  useEffect(() => {
+    tabsRef.current = openTabs
+    activeTabIdRef.current = activeTabId
+  }, [openTabs, activeTabId])
+
+  // Push layout changes for the current workspace. Debounced so a burst of
+  // opens/closes produces one write.
+  useEffect(() => {
+    if (!workspaceId || syncedWorkspaceRef.current !== workspaceId) return
+    const timer = setTimeout(() => {
+      void putWorkspaceTabs(
+        workspaceId,
+        toWorkspaceTabs(tabsRef.current, workspaceId, activeTabIdRef.current),
+      ).catch(() => {
+        // Layout persistence is best-effort — the local cache still has it.
+      })
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [workspaceId, openTabs, activeTabId])
+
+  // Swap the visible tab set when the workspace changes.
+  useEffect(() => {
+    if (!workspaceId) return
+    const previous = syncedWorkspaceRef.current
+    if (previous === workspaceId) return
+    let cancelled = false
+
+    const swap = async () => {
+      // Stash the outgoing workspace's unsaved buffers before its tabs leave
+      // the editor, then flush its layout to the server.
+      if (previous) {
+        draftsRef.current = rememberDrafts(draftsRef.current, previous, tabsRef.current)
+        saveTabDrafts(draftsRef.current)
+        await putWorkspaceTabs(
+          previous,
+          toWorkspaceTabs(tabsRef.current, previous, activeTabIdRef.current),
+        ).catch(() => {})
+      }
+      const saved = await getWorkspaceTabs(workspaceId).catch(() => null)
+      if (cancelled) return
+      const { tabs, needsContent, activeTabId: nextActive } = resolveWorkspaceTabs(
+        saved,
+        tabsRef.current,
+        workspaceId,
+        draftsRef.current[workspaceId],
+      )
+
+      // The drafts are live in the editor again; keeping a copy would let a
+      // crash resurrect them over text the user has since saved.
+      if (draftsRef.current[workspaceId]) {
+        const remaining = { ...draftsRef.current }
+        delete remaining[workspaceId]
+        draftsRef.current = remaining
+        saveTabDrafts(remaining)
+      }
+
+      // Settings belongs to no workspace — switching should not close it.
+      const carried = tabsRef.current.filter((tab) => tab.kind === 'settings')
+      syncedWorkspaceRef.current = workspaceId
+      setOpenTabs([...tabs, ...carried])
+      setActiveTabId(activeTabIdRef.current === 'settings' ? 'settings' : nextActive)
+
+      // Tabs restored from another device have no local buffer — read them.
+      for (const id of needsContent) {
+        const descriptor = tabs.find((tab) => tab.id === id)
+        if (!descriptor) continue
+        readFile(descriptor.path, workspaceId)
+          .then((file) => {
+            if (cancelled) return
+            setOpenTabs((prev) =>
+              prev.map((tab) =>
+                tab.id === id
+                  ? { ...tab, content: file.content, revision: file.revision }
+                  : tab,
+              ),
+            )
+          })
+          .catch(() => {
+            // Unreadable (deleted, renamed elsewhere) — drop the stale tab
+            // rather than leaving an empty buffer that could be saved over it.
+            if (cancelled) return
+            setOpenTabs((prev) => prev.filter((tab) => tab.id !== id))
+          })
+      }
+    }
+    void swap()
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, readFile])
 
   // Report open files and recent (unsaved) edits to the backend so the context
   // middleware can inject them into the next agent prompt. Debounced inside

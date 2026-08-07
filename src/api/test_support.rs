@@ -81,6 +81,7 @@ pub(crate) fn test_state(dir: &Path) -> AppState {
         None,
         None,
         None,
+        crate::workspace::tabs::TabStore::new(Some(dir.join("workspace-tabs.json"))),
     )
 }
 
@@ -194,6 +195,7 @@ pub(crate) fn test_state_with_mcp(dir: &Path, mcp_path: PathBuf) -> AppState {
         Some(mcp_path),
         None,
         None,
+        crate::workspace::tabs::TabStore::new(Some(dir.join("workspace-tabs.json"))),
     )
 }
 
@@ -214,5 +216,6 @@ pub(crate) fn test_state_with_uploads(dir: &Path) -> AppState {
         None,
         Some(uploads),
         None,
+        crate::workspace::tabs::TabStore::new(Some(dir.join("workspace-tabs.json"))),
     )
 }
