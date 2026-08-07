@@ -51,20 +51,27 @@ pub(super) struct SessionEntry {
     model_config_id: Option<String>,
     profile_config_id: Option<String>,
     acp_session_id: String,
+    /// MCP servers this agent session started with. Fixed for its lifetime.
+    attached_mcp_servers: Vec<String>,
+}
+
+/// What a live session actually negotiated for MCP at `session/new`.
+///
+/// Distinct from the session's current profile: an "instructions only" switch
+/// changes the stored profile while the agent session keeps the servers it
+/// started with.
+pub(super) struct LiveMcpState {
+    pub(super) caps: SessionCaps,
+    pub(super) attached_servers: Vec<String>,
 }
 
 impl SessionEntry {
-    // Constructor assigns every field directly; a params struct would add indirection.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         info: SessionInfo,
         actor: actor::Handle,
         stderr_tail: Arc<Mutex<StderrTail>>,
         prompt_cancel: Arc<AtomicBool>,
-        caps: SessionCaps,
-        model_config_id: Option<String>,
-        profile_config_id: Option<String>,
-        acp_session_id: String,
+        startup: actor::ActorStartup,
     ) -> Self {
         Self {
             info,
@@ -72,10 +79,11 @@ impl SessionEntry {
             actor,
             stderr_tail,
             prompt_cancel,
-            caps,
-            model_config_id,
-            profile_config_id,
-            acp_session_id,
+            caps: startup.caps,
+            model_config_id: startup.model_config_id,
+            profile_config_id: startup.profile_config_id,
+            acp_session_id: startup.acp_session_id,
+            attached_mcp_servers: startup.attached_mcp_servers,
         }
     }
 
@@ -291,18 +299,22 @@ impl SessionRegistry {
         Err(AppError::not_found_id("session", session_id))
     }
 
-    /// Cached MCP transport capabilities for a live session.
+    /// MCP state a live session negotiated at startup.
     ///
     /// `None` for a known-but-dormant session: there has been no `initialize`,
-    /// so the agent's transports are unknown. Callers must treat that as
-    /// "stdio only" rather than assuming HTTP/SSE are available.
-    pub(super) fn mcp_transport_caps(
+    /// so neither the agent's transports nor an attached server list exist yet.
+    /// Callers must treat that as "stdio only, nothing attached" rather than
+    /// assuming HTTP/SSE are available.
+    pub(super) fn live_mcp_state(
         &self,
         session_id: &str,
-    ) -> Result<Option<SessionCaps>, AppError> {
+    ) -> Result<Option<LiveMcpState>, AppError> {
         let live = self.live_read()?;
         if let Some(entry) = live.get(session_id) {
-            return Ok(Some(entry.caps));
+            return Ok(Some(LiveMcpState {
+                caps: entry.caps,
+                attached_servers: entry.attached_mcp_servers.clone(),
+            }));
         }
         drop(live);
         if self.contains_dormant(session_id)? {
@@ -383,7 +395,9 @@ impl SessionRegistry {
         ))
     }
 
-    // Rebind replaces every mutable field; a params struct would add indirection.
+    // Down from 11 args by taking `startup` whole; the rest are the identity of
+    // the session and its replacement agent, which read better named than
+    // bundled into a one-use struct.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn rebind_finish(
         &self,
@@ -391,10 +405,7 @@ impl SessionRegistry {
         actor: actor::Handle,
         stderr_tail: Arc<Mutex<StderrTail>>,
         prompt_cancel: Arc<AtomicBool>,
-        caps: SessionCaps,
-        model_config_id: Option<String>,
-        profile_config_id: Option<String>,
-        acp_session_id: String,
+        startup: actor::ActorStartup,
         agent_id: &str,
         model_id: &str,
     ) -> Result<SessionInfo, AppError> {
@@ -405,10 +416,11 @@ impl SessionRegistry {
         entry.actor = actor;
         entry.stderr_tail = stderr_tail;
         entry.prompt_cancel = prompt_cancel;
-        entry.caps = caps;
-        entry.model_config_id = model_config_id;
-        entry.profile_config_id = profile_config_id;
-        entry.acp_session_id = acp_session_id;
+        entry.caps = startup.caps;
+        entry.model_config_id = startup.model_config_id;
+        entry.profile_config_id = startup.profile_config_id;
+        entry.acp_session_id = startup.acp_session_id;
+        entry.attached_mcp_servers = startup.attached_mcp_servers;
         entry.info.agent_id = agent_id.to_string();
         entry.info.model_id = model_id.to_string();
         entry.apply_state(SessionState::Idle);
@@ -555,10 +567,13 @@ mod tests {
             Handle::dead(),
             std::sync::Arc::new(std::sync::Mutex::new(StderrTail::default())),
             std::sync::Arc::new(AtomicBool::new(false)),
-            SessionCaps::default(),
-            None,
-            None,
-            "acp-live".to_string(),
+            super::actor::ActorStartup {
+                caps: SessionCaps::default(),
+                model_config_id: None,
+                profile_config_id: None,
+                acp_session_id: "acp-live".to_string(),
+                attached_mcp_servers: Vec::new(),
+            },
         )
     }
 

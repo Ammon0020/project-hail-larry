@@ -55,43 +55,44 @@ impl Client {
         let config = self.pipeline.profiles.config()?;
         let target = validated_profile_id(&config, profile)?;
         // Errors for an unknown session; `None` for a known dormant one.
-        let caps = self.sessions.mcp_transport_caps(session_id)?;
-        let current = self.pipeline.profiles.profile(session_id)?;
+        let live = self.sessions.live_mcp_state(session_id)?;
+        let file = self.load_mcp_file_for_preview();
 
-        let Some(file) = self.load_mcp_file_for_preview() else {
-            // No MCP configuration means no server access either way, so no
-            // profile switch can change it.
-            return Ok(ProfileTransitionPreview {
-                requires_new_session: false,
-                current_servers: Vec::new(),
-                target_servers: Vec::new(),
-            });
-        };
         // A dormant session has never run `initialize`, so its agent's
         // transports are unknown. Assume stdio only — the conservative floor
         // every agent supports.
-        let mcp_caps = caps.map_or_else(McpCapabilities::new, |caps| {
-            McpCapabilities::new().http(caps.mcp_http).sse(caps.mcp_sse)
+        let mcp_caps = live.as_ref().map_or_else(McpCapabilities::new, |state| {
+            McpCapabilities::new()
+                .http(state.caps.mcp_http)
+                .sse(state.caps.mcp_sse)
         });
-        let current_servers = super::mcp::effective_server_names(
-            &file,
-            &mcp_caps,
-            self.pipeline
-                .profiles
-                .mcp_servers_for_profile(&current)?
-                .as_deref(),
-        );
-        let target_servers = super::mcp::effective_server_names(
-            &file,
-            &mcp_caps,
-            self.pipeline
-                .profiles
-                .mcp_servers_for_profile(&target)?
-                .as_deref(),
-        );
+        let effective = |profile_id: &str| -> Result<Vec<String>, AppError> {
+            let Some(file) = file.as_ref() else {
+                return Ok(Vec::new());
+            };
+            Ok(super::mcp::effective_server_names(
+                file,
+                &mcp_caps,
+                self.pipeline
+                    .profiles
+                    .mcp_servers_for_profile(profile_id)?
+                    .as_deref(),
+            ))
+        };
+
+        // Current access is what the agent session actually negotiated, not what
+        // its stored profile would ask for now. The two diverge after an
+        // "instructions only" switch, and whenever profiles.json is edited
+        // mid-session — in both cases the running session keeps its original
+        // servers, and saying otherwise would hide a real difference.
+        let current_servers = match &live {
+            Some(state) => state.attached_servers.clone(),
+            None => effective(&self.pipeline.profiles.profile(session_id)?)?,
+        };
+        let target_servers = effective(&target)?;
         Ok(ProfileTransitionPreview {
-            // Both sides come from one config walk, so ordering already matches
-            // and a plain comparison is a set comparison.
+            // Both sides are produced in config order, so a plain comparison is
+            // a set comparison.
             requires_new_session: current_servers != target_servers,
             current_servers,
             target_servers,

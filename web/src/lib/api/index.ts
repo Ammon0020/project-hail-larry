@@ -31,11 +31,22 @@ export type { SessionHistoryCapabilities, EditorSelectionInfo, UploadResult } fr
 export type { PermissionOptionInfo, PendingPermission, DeviceCredential, PairingSession } from './permissions'
 export type { McpServerStatus } from './mcp'
 export type { ProviderInfo } from './providers'
-export type { ProfileEntry, ProfileConfig } from './profiles'
+export type {
+  ProfileEntry,
+  ProfileConfig,
+  ProfileTransitionPreview,
+  ProfileTransitionStrategy,
+} from './profiles'
 
 // Domain functions (standalone exports)
 export { listProviders, setProvider, disableProvider, UnsupportedProvidersError } from './providers'
-export { getProfiles, putProfiles, setSessionProfile } from './profiles'
+export {
+  getProfiles,
+  putProfiles,
+  setSessionProfile,
+  previewSessionProfile,
+  transitionSessionProfile,
+} from './profiles'
 
 // Assemble the api object from domain modules — preserves `api.method()` calls.
 import * as workspaces from './workspaces'

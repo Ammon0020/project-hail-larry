@@ -884,6 +884,44 @@ async fn profile_preview_ignores_servers_the_agent_cannot_reach() {
     client.close_session(&session.id).await.expect("close");
 }
 
+/// After an "instructions only" switch, the session keeps the MCP servers it
+/// started with while its *stored* profile is the new one. Preview must compare
+/// against what the live agent session actually has — not against the stored
+/// profile's allowlist — or it reports "no change" and the UI loses its only
+/// way to tell the user that server access is still the old profile's.
+#[tokio::test]
+async fn profile_preview_compares_against_the_live_sessions_attached_servers() {
+    let (client, _tempdir, workspace_id) =
+        preview_client(vec!["alpha".to_string()], Vec::new()).await;
+    let session = client
+        .create_session_with_profile("mock", "mock-model", &workspace_id, Some("code"))
+        .await
+        .expect("create session under the code profile");
+
+    // "Instructions only": the stored profile becomes `ask`, but the running
+    // agent session still holds the `code` profile's server list.
+    client
+        .set_session_profile(&session.id, "ask")
+        .await
+        .expect("in-place profile switch");
+
+    let preview = client
+        .preview_session_profile(&session.id, "ask")
+        .await
+        .expect("preview");
+
+    assert_eq!(
+        preview.current_servers,
+        vec!["alpha".to_string()],
+        "current access must reflect the live session, not the stored profile"
+    );
+    assert!(
+        preview.requires_new_session,
+        "the session still has alpha while ask grants none: {preview:?}"
+    );
+    client.close_session(&session.id).await.expect("close");
+}
+
 /// Durable events recorded for a session so far.
 async fn event_count(client: &Client, session_id: &str) -> usize {
     client
@@ -1403,10 +1441,13 @@ async fn max_sessions_rejects_before_new_actor_is_spawned() {
                 Handle::dead(),
                 Arc::new(Mutex::new(StderrTail::default())),
                 Arc::new(AtomicBool::new(false)),
-                SessionCaps::default(),
-                None,
-                None,
-                String::new(),
+                super::super::actor::ActorStartup {
+                    caps: SessionCaps::default(),
+                    model_config_id: None,
+                    profile_config_id: None,
+                    acp_session_id: String::new(),
+                    attached_mcp_servers: Vec::new(),
+                },
             ))
             .expect("publish capacity placeholder");
     }

@@ -138,10 +138,7 @@ impl Client {
             spawned.handle.clone(),
             stderr_tail,
             prompt_cancel,
-            startup.caps,
-            startup.model_config_id,
-            startup.profile_config_id,
-            startup.acp_session_id,
+            startup,
         ))?;
         let _ = spawned.registered.send(());
         self.watch_actor_terminal(spawned.terminal, spawned.handle, published.id.clone());
@@ -329,10 +326,7 @@ impl Client {
             spawned.handle.clone(),
             stderr_tail,
             prompt_cancel,
-            startup.caps,
-            startup.model_config_id,
-            startup.profile_config_id,
-            startup.acp_session_id,
+            startup,
             agent_id,
             model_id,
         )?;

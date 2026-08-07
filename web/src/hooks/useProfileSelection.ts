@@ -1,5 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
-import { getProfiles, setSessionProfile, type ProfileConfig } from '@/lib/api'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  getProfiles,
+  previewSessionProfile,
+  setSessionProfile,
+  transitionSessionProfile,
+  type ProfileConfig,
+  type ProfileTransitionPreview,
+} from '@/lib/api'
+import type { ProfileTransitionChoice } from '@/components/ProfileTransitionDialog'
 import { isSessionNotFound } from '@/lib/errors'
 
 /** Options accepted by {@link useProfileSelection}. */
@@ -10,12 +18,26 @@ interface UseProfileSelectionOptions {
   onSelectSession: (sessionId: string) => void
   /** Surfaces inline error messages from profile-switch failures. */
   setError: (message: string | null) => void
+  /**
+   * Invoked with a session created outside the normal create flow (the `fresh`
+   * transition strategy), so the app can refresh its session list and switch to
+   * it. Without this the new conversation would exist on the server but be
+   * invisible in the UI.
+   */
+  onSessionCreated?: (sessionId: string) => void
 }
 
 /** A selectable profile option surfaced to the composer dropdown. */
 interface ProfileOption {
   id: string
   label: string
+}
+
+/** A profile switch waiting on the user's transition choice. */
+export interface PendingProfileTransition {
+  profileId: string
+  profileLabel: string
+  preview: ProfileTransitionPreview
 }
 
 /** Result returned by {@link useProfileSelection}. */
@@ -25,6 +47,18 @@ interface UseProfileSelectionResult {
   profileOverride: { sessionId: string; profileId: string } | null
   setProfileOverride: (override: { sessionId: string; profileId: string } | null) => void
   handleProfileChange: (profileId: string) => Promise<void>
+  /** Non-null while the transition dialog is open. */
+  pendingTransition: PendingProfileTransition | null
+  /** True while a chosen transition is in flight. */
+  transitioning: boolean
+  resolveTransition: (choice: ProfileTransitionChoice) => Promise<void>
+  cancelTransition: () => void
+  /**
+   * Set when the session's instructions come from a profile whose MCP servers
+   * it does not actually have — the "instructions only" outcome. Drives the
+   * persistent disclosure so the selector never implies access it lacks.
+   */
+  instructionsOnlyNotice: string | null
 }
 
 /**
@@ -47,6 +81,7 @@ export function useProfileSelection({
   activeSessionId,
   onSelectSession,
   setError,
+  onSessionCreated,
 }: UseProfileSelectionOptions): UseProfileSelectionResult {
   const [profileConfig, setProfileConfig] = useState<ProfileConfig | null>(null)
   const profiles = useMemo(
@@ -133,11 +168,58 @@ export function useProfileSelection({
     }
   }, [])
 
-  /** Switches the active session's profile: pushes the new id to the backend
-   *  (POST /sessions/:id/profile), then persists it in localStorage. The
-   *  dropdown updates immediately via `profileOverride` (session-scoped so
-   *  switching sessions restores the other session's profile). On error,
-   *  reverts the override and surfaces an inline message via `error`. */
+  // A profile switch the user has not resolved yet — non-null keeps the
+  // transition dialog open. The dropdown deliberately does NOT move until the
+  // choice is committed, so a cancel leaves no trace.
+  const [pendingTransition, setPendingTransition] = useState<PendingProfileTransition | null>(
+    null,
+  )
+  const [transitioning, setTransitioning] = useState(false)
+
+  // Cached notice tagged with the session+profile it was computed for. Deriving
+  // the visible value during render (rather than clearing state in an effect)
+  // means a stale notice can never be shown against a different session, and
+  // keeps this hook free of setState-in-effect cascades.
+  const [noticeState, setNoticeState] = useState<{ key: string; notice: string | null } | null>(
+    null,
+  )
+
+  const profileLabel = useCallback(
+    (profileId: string) => profileConfig?.profiles[profileId]?.label ?? profileId,
+    [profileConfig],
+  )
+
+  /** Remember a session's profile locally; storage failures are non-fatal. */
+  const persistProfile = useCallback((sessionId: string, profileId: string) => {
+    try {
+      localStorage.setItem(`local-agent:profile:${sessionId}`, profileId)
+    } catch {
+      // Quota / disabled storage — the selection still applies for this session.
+    }
+  }, [])
+
+  /** Surface a failure, treating a vanished session as a special case. */
+  const reportFailure = useCallback(
+    (err: unknown, fallback: string) => {
+      const message = err instanceof Error ? err.message : fallback
+      if (isSessionNotFound(message)) {
+        setError('This conversation is no longer available. Start a new chat.')
+        onSelectSession('')
+      } else {
+        setError(message)
+      }
+    },
+    [onSelectSession, setError],
+  )
+
+  /**
+   * Switches the active session's profile.
+   *
+   * Asks the backend whether the target profile changes MCP server access
+   * first. When it does not, this is the ordinary in-place switch. When it
+   * does, the profile cannot be applied to the running agent session, so the
+   * transition dialog opens and the dropdown stays put until the user chooses.
+   */
   const handleProfileChange = async (profileId: string) => {
     if (profileId === selectedProfileId) return
     if (!activeSessionId) {
@@ -146,28 +228,105 @@ export function useProfileSelection({
       setProfileOverride({ sessionId: '', profileId })
       return
     }
+
+    let preview
+    try {
+      preview = await previewSessionProfile(activeSessionId, profileId)
+    } catch (err) {
+      // Without a preview there is no way to know whether tool access would
+      // change. Switching anyway could leave the selector claiming access the
+      // session does not have, so surface the failure and change nothing.
+      reportFailure(err, 'Failed to check profile tool access')
+      return
+    }
+
+    if (preview.requiresNewSession) {
+      setPendingTransition({ profileId, profileLabel: profileLabel(profileId), preview })
+      return
+    }
+
     const previous = selectedProfileId
     setProfileOverride({ sessionId: activeSessionId, profileId })
     try {
       await setSessionProfile(activeSessionId, profileId)
-      try {
-        localStorage.setItem(`local-agent:profile:${activeSessionId}`, profileId)
-      } catch {
-        // Ignore write failures (quota / disabled storage) — selection still applies for this session.
-      }
+      persistProfile(activeSessionId, profileId)
     } catch (err) {
-      // Revert the dropdown and surface the error so the user knows the
-      // backend switch failed (e.g. unknown profile id, session gone).
+      // Revert the dropdown so it keeps matching the backend.
       setProfileOverride({ sessionId: activeSessionId, profileId: previous })
-      const message = err instanceof Error ? err.message : 'Failed to switch profile'
-      if (isSessionNotFound(message)) {
-        setError('This conversation is no longer available. Start a new chat.')
-        onSelectSession('')
-      } else {
-        setError(message)
-      }
+      reportFailure(err, 'Failed to switch profile')
     }
   }
+
+  /** Applies the user's choice from the transition dialog. */
+  const resolveTransition = async (choice: ProfileTransitionChoice) => {
+    if (!pendingTransition || !activeSessionId) return
+    const { profileId } = pendingTransition
+    const previous = selectedProfileId
+    setTransitioning(true)
+    try {
+      if (choice === 'instructions') {
+        // Instructions move; MCP server access deliberately does not. The
+        // persistent notice below keeps that visible.
+        setProfileOverride({ sessionId: activeSessionId, profileId })
+        await setSessionProfile(activeSessionId, profileId)
+        persistProfile(activeSessionId, profileId)
+      } else {
+        const session = await transitionSessionProfile(activeSessionId, profileId, choice)
+        persistProfile(session.id, profileId)
+        setProfileOverride({ sessionId: session.id, profileId })
+        if (choice === 'fresh') {
+          // `history` returns the same session, already active. `fresh` creates
+          // a separate conversation the app does not know about yet.
+          onSessionCreated?.(session.id)
+        }
+      }
+      setPendingTransition(null)
+    } catch (err) {
+      setProfileOverride({ sessionId: activeSessionId, profileId: previous })
+      setPendingTransition(null)
+      reportFailure(err, 'Failed to apply profile')
+    } finally {
+      setTransitioning(false)
+    }
+  }
+
+  const cancelTransition = () => {
+    setPendingTransition(null)
+  }
+
+  // Derive the instructions-only disclosure rather than storing it: the backend
+  // preview already compares the servers the live agent session negotiated
+  // against what the selected profile asks for. A difference means the session's
+  // instructions and its tool access come from different profiles — which is
+  // exactly the instructions-only outcome, and also what an edit to
+  // profiles.json mid-session produces. Deriving keeps it correct across
+  // reloads without persisting a flag that could go stale.
+  const noticeKey =
+    activeSessionId && selectedProfileId ? `${activeSessionId}:${selectedProfileId}` : ''
+  const instructionsOnlyNotice =
+    noticeKey && noticeState?.key === noticeKey ? noticeState.notice : null
+
+  useEffect(() => {
+    if (!noticeKey || !activeSessionId) return
+    let cancelled = false
+    void previewSessionProfile(activeSessionId, selectedProfileId)
+      .then((preview) => {
+        if (cancelled) return
+        setNoticeState({
+          key: noticeKey,
+          notice: preview.requiresNewSession
+            ? `Instructions: ${profileLabel(selectedProfileId)}; MCP servers: this session's existing access.`
+            : null,
+        })
+      })
+      .catch(() => {
+        // Advisory only — a failed check must not block the composer. The
+        // derived value stays null because no entry matches this key.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [noticeKey, activeSessionId, selectedProfileId, profileLabel])
 
   return {
     profiles,
@@ -175,5 +334,10 @@ export function useProfileSelection({
     profileOverride,
     setProfileOverride,
     handleProfileChange,
+    pendingTransition,
+    transitioning,
+    resolveTransition,
+    cancelTransition,
+    instructionsOnlyNotice,
   }
 }

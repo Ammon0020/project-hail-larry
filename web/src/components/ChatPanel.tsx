@@ -13,6 +13,7 @@ import { ChatComposer } from './ChatComposer'
 import { AssistantThread } from './chat/AssistantThread'
 import { ChatHistory } from './ChatHistory'
 import { SwitchAgentDialog } from './SwitchAgentDialog'
+import { ProfileTransitionDialog } from './ProfileTransitionDialog'
 import { WorkspaceBar } from './chat/WorkspaceBar'
 import { Banner } from './ui/Banner'
 import { useChatTabs } from '@/hooks/useChatTabs'
@@ -31,6 +32,10 @@ export interface ChatPanelActions {
   onCreateSession: (agentId: string, modelId: string, profileId?: string) => Promise<string>
   onPermissionResponse: (requestId: string, decision: string) => void
   onSelectSession: (sessionId: string) => void
+  /** Adopts a session created outside the normal create flow (the `fresh`
+   *  profile-transition strategy): refreshes the session list and switches to
+   *  it, so the new conversation is actually reachable. */
+  onAdoptSession: (sessionId: string) => void
   onCancel: (sessionId: string) => void
   onRenameSession: (sessionId: string, name: string) => void
   onDeleteSession: (sessionId: string) => void
@@ -122,6 +127,7 @@ export function ChatPanel({
     onCreateSession,
     onPermissionResponse,
     onSelectSession,
+    onAdoptSession,
     onCancel,
     onRenameSession,
     onDeleteSession,
@@ -182,7 +188,17 @@ export function ChatPanel({
     profileOverride,
     setProfileOverride,
     handleProfileChange,
-  } = useProfileSelection({ activeSessionId, onSelectSession, setError })
+    pendingTransition,
+    transitioning,
+    resolveTransition,
+    cancelTransition,
+    instructionsOnlyNotice,
+  } = useProfileSelection({
+    activeSessionId,
+    onSelectSession,
+    setError,
+    onSessionCreated: onAdoptSession,
+  })
 
   /** Restart for MCP: ACP doesn't support live add/remove in v1, so the
    *  simplest correct action is to drop the active session and let the user
@@ -796,6 +812,7 @@ export function ChatPanel({
         profiles={profiles}
         selectedProfileId={selectedProfileId}
         onProfileChange={handleProfileChange}
+        profileAccessNotice={instructionsOnlyNotice}
         contextUsage={contextUsage}
       />
 
@@ -841,6 +858,20 @@ export function ChatPanel({
         onConfirm={confirmSwitchAgent}
         onCancel={cancelSwitchAgent}
         busy={rebinding}
+      />
+
+      {/* Profile-transition dialog — shown only when the picked profile would
+          change MCP server access, which ACP cannot apply to a running agent
+          session. */}
+      <ProfileTransitionDialog
+        // Remount per transition so the radio selection resets to the default.
+        key={pendingTransition?.profileId ?? 'none'}
+        open={!!pendingTransition}
+        targetProfileLabel={pendingTransition?.profileLabel ?? ''}
+        preview={pendingTransition?.preview ?? null}
+        onConfirm={(choice) => void resolveTransition(choice)}
+        onCancel={cancelTransition}
+        busy={transitioning}
       />
     </aside>
   )

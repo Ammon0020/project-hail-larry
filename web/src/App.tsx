@@ -333,6 +333,14 @@ export default function App() {
     return session.id
   }
 
+  /** Adopts a session created by a profile transition (`fresh` strategy). The
+   *  normal create path goes through handleCreateSession; this one exists on
+   *  the server already, so the list just needs a refresh before we switch. */
+  const handleAdoptSession = (sessionId: string) => {
+    void backend.loadSessions()
+    setActiveSessionId(sessionId)
+  }
+
   const handleSelectSession = (sessionId: string) => {
     if (sessionId === '') {
       // "New Chat" — reset to a fresh state, no backend session yet
@@ -691,6 +699,7 @@ export default function App() {
           onCreateSession: handleCreateSession,
           onPermissionResponse: backend.respondPermission,
           onSelectSession: handleSelectSession,
+          onAdoptSession: handleAdoptSession,
           onCancel: backend.cancelSession,
           onRenameSession: backend.renameSession,
           onDeleteSession: backend.deleteSession,
