@@ -291,6 +291,26 @@ impl SessionRegistry {
         Err(AppError::not_found_id("session", session_id))
     }
 
+    /// Cached MCP transport capabilities for a live session.
+    ///
+    /// `None` for a known-but-dormant session: there has been no `initialize`,
+    /// so the agent's transports are unknown. Callers must treat that as
+    /// "stdio only" rather than assuming HTTP/SSE are available.
+    pub(super) fn mcp_transport_caps(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<SessionCaps>, AppError> {
+        let live = self.live_read()?;
+        if let Some(entry) = live.get(session_id) {
+            return Ok(Some(entry.caps));
+        }
+        drop(live);
+        if self.contains_dormant(session_id)? {
+            return Ok(None);
+        }
+        Err(AppError::not_found_id("session", session_id))
+    }
+
     pub(super) fn list(&self) -> Result<Vec<Session>, AppError> {
         let live = self.live_read()?;
         let dormant = self.dormant_read()?;

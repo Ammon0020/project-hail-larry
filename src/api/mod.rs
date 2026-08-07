@@ -231,6 +231,14 @@ pub fn router(state: AppState) -> Router {
             post(sessions::set_session_profile),
         )
         .route(
+            "/api/sessions/{id}/profile/preview",
+            get(sessions::preview_session_profile),
+        )
+        .route(
+            "/api/sessions/{id}/profile/transition",
+            post(sessions::transition_session_profile),
+        )
+        .route(
             "/api/sessions/{id}/export",
             get(session_extra::export_session),
         )

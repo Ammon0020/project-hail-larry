@@ -307,6 +307,31 @@ const REST_CASES: &[RestCase] = &[
         path: "/api/sessions/nonexistent/profile",
         body: r#"{not json"#,
     },
+    // Profile MCP transition: GET .../profile/preview + POST .../profile/transition.
+    RestCase {
+        name: "sessions_profile_preview_not_found",
+        method: "GET",
+        path: "/api/sessions/nonexistent/profile/preview?profile=code",
+        body: "",
+    },
+    RestCase {
+        name: "sessions_profile_preview_missing_query",
+        method: "GET",
+        path: "/api/sessions/nonexistent/profile/preview",
+        body: "",
+    },
+    RestCase {
+        name: "sessions_profile_transition_not_found",
+        method: "POST",
+        path: "/api/sessions/nonexistent/profile/transition",
+        body: r#"{"profile":"code","strategy":"history"}"#,
+    },
+    RestCase {
+        name: "sessions_profile_transition_bad_strategy",
+        method: "POST",
+        path: "/api/sessions/nonexistent/profile/transition",
+        body: r#"{"profile":"code","strategy":"instructionsOnly"}"#,
+    },
     RestCase {
         name: "sessions_close_not_found",
         method: "DELETE",

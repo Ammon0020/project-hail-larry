@@ -61,9 +61,82 @@ pub(super) async fn load_session_mcp_servers(
     servers
 }
 
+/// Names of the MCP servers a profile would actually get, in config order.
+///
+/// Applies the same two filters as [`load_session_mcp_servers`] — agent
+/// transport capabilities, then the profile's server allowlist — so a
+/// transition preview and the real session setup can never disagree. A
+/// malformed config yields no servers, matching the additive-MCP rule.
+pub(super) fn effective_server_names(
+    file: &crate::mcp::File,
+    caps: &McpCapabilities,
+    allowlist: Option<&[String]>,
+) -> Vec<String> {
+    let servers = file.to_acp(caps).unwrap_or_default();
+    crate::mcp::filter_servers_by_name(servers, allowlist)
+        .iter()
+        .map(|server| crate::mcp::mcp_server_name(server).to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
+
+    /// The preview must apply the same two filters as session setup, in the
+    /// same order: agent transport capabilities first, then the profile's
+    /// server allowlist. Without the capability filter a profile that names an
+    /// HTTP server would look like it changes access even when the agent can
+    /// never use that server.
+    #[test]
+    fn effective_server_names_applies_caps_then_profile_allowlist() {
+        use agent_client_protocol::schema::v1::McpCapabilities;
+
+        let file = crate::mcp::File::parse(
+            br#"{
+  "version": 1,
+  "mcpServers": {
+    "alpha": { "command": "true" },
+    "beta": { "command": "true" },
+    "remote": { "type": "http", "url": "https://example.com/mcp" },
+    "off": { "command": "false", "enabled": false }
+  }
+}"#,
+        )
+        .expect("parse mcp config");
+
+        // No HTTP capability: `remote` is dropped, `off` is disabled.
+        let stdio_only = super::effective_server_names(&file, &McpCapabilities::new(), None);
+        assert_eq!(stdio_only, vec!["alpha".to_string(), "beta".to_string()]);
+
+        // HTTP capability advertised: `remote` becomes reachable.
+        let with_http =
+            super::effective_server_names(&file, &McpCapabilities::new().http(true), None);
+        assert_eq!(
+            with_http,
+            vec![
+                "alpha".to_string(),
+                "beta".to_string(),
+                "remote".to_string()
+            ]
+        );
+
+        // A profile allowlist narrows the capability-filtered set.
+        let allowlist = vec!["beta".to_string(), "remote".to_string()];
+        assert_eq!(
+            super::effective_server_names(&file, &McpCapabilities::new(), Some(&allowlist)),
+            vec!["beta".to_string()],
+            "an allowlisted HTTP server the agent cannot reach must not appear"
+        );
+
+        // An explicit empty allowlist means no servers at all.
+        assert!(super::effective_server_names(
+            &file,
+            &McpCapabilities::new().http(true),
+            Some(&[])
+        )
+        .is_empty());
+    }
 
     #[tokio::test]
     async fn load_session_mcp_servers_attaches_enabled_stdio() {

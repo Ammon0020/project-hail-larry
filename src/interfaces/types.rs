@@ -658,6 +658,42 @@ impl SessionHistoryCapabilities {
 /// Alias matching Go `type Session = SessionInfo`.
 pub type Session = SessionInfo;
 
+/// How a profile change is applied when it alters MCP server access.
+///
+/// ACP fixes a session's MCP server list at `session/new`, so a profile whose
+/// server allowlist differs cannot take effect on the running agent session.
+/// The user picks which lifecycle operation to perform instead. "Instructions
+/// only" is not listed here — it is the existing
+/// `POST /api/sessions/{id}/profile` path, which never touches server access.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ProfileTransitionStrategy {
+    /// Rebind this conversation to a new ACP session under the target profile,
+    /// carrying the visible transcript into its first prompt.
+    History,
+    /// Open a separate blank conversation under the target profile and leave
+    /// this one untouched.
+    Fresh,
+}
+
+/// Whether switching a session to another profile changes MCP server access.
+///
+/// Returned by `GET /api/sessions/{id}/profile/preview`. Server names are the
+/// *effective* sets — configured, enabled, reachable with this agent's
+/// transports, and permitted by each profile's allowlist — so the UI never
+/// prompts for a change the daemon would not actually make.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileTransitionPreview {
+    /// True when the two effective server sets differ, so applying the profile
+    /// in place would misrepresent the session's tool access.
+    pub requires_new_session: bool,
+    /// Effective MCP servers for the session's current profile.
+    pub current_servers: Vec<String>,
+    /// Effective MCP servers the target profile would get.
+    pub target_servers: Vec<String>,
+}
+
 /// Configurable LLM provider advertised by an agent.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

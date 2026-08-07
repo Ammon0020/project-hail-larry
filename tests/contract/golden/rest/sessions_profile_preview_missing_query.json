@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/sessions/nonexistent/profile/preview",
+  "status": 400,
+  "contentType": "application/json",
+  "body": "{\"error\":\"profile query parameter is required\"}\n"
+}

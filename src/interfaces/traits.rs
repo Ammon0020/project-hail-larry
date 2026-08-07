@@ -238,6 +238,50 @@ pub trait ACPClient: Send + Sync {
     /// capability keep using the prompt-injection fallback (`context.rs`).
     async fn set_session_profile(&self, session_id: &str, profile: &str) -> Result<(), AppError>;
 
+    /// Report whether switching to `profile` would change MCP server access.
+    ///
+    /// Read-only. The UI calls this before offering a profile switch so it only
+    /// interrupts the user when [`set_session_profile`] alone would leave the
+    /// session's real tool access behind the selector.
+    ///
+    /// [`set_session_profile`]: Self::set_session_profile
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the profile id is unknown or the session does not
+    /// exist.
+    async fn preview_session_profile(
+        &self,
+        session_id: &str,
+        profile: &str,
+    ) -> Result<crate::interfaces::ProfileTransitionPreview, AppError>;
+
+    /// Apply a profile whose MCP server set differs, via a new agent session.
+    ///
+    /// ACP fixes MCP servers at `session/new`, so the target profile's server
+    /// list can only take effect on a *new* agent session. `strategy` chooses
+    /// whether this conversation moves to that session
+    /// ([`History`](crate::interfaces::ProfileTransitionStrategy::History)) or a
+    /// separate blank one is opened
+    /// ([`Fresh`](crate::interfaces::ProfileTransitionStrategy::Fresh)).
+    /// Returns the session the user should now be looking at.
+    ///
+    /// `max_transfer_bytes` caps the transcript carried into the replacement
+    /// session's first prompt; `<= 0` selects the daemon default. `Fresh`
+    /// transfers nothing and ignores it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the profile id is unknown, the session does not
+    /// exist, or the replacement agent session cannot start.
+    async fn transition_session_profile(
+        &self,
+        session_id: &str,
+        profile: &str,
+        strategy: crate::interfaces::ProfileTransitionStrategy,
+        max_transfer_bytes: i64,
+    ) -> Result<SessionInfo, AppError>;
+
     /// Agent's configurable LLM providers for the session.
     async fn list_providers(&self, session_id: &str) -> Result<Vec<ProviderInfo>, AppError>;
 

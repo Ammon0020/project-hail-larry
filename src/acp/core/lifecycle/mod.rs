@@ -204,14 +204,37 @@ impl Client {
         ));
     }
 
-    // Single linear rebind sequence — splitting would obscure the transfer flow.
-    #[allow(clippy::too_many_lines)]
     pub(super) async fn rebind_session_inner(
         &self,
         session_id: &str,
         agent_id: &str,
         model_id: &str,
         max_transfer_bytes: i64,
+    ) -> Result<SessionInfo, AppError> {
+        self.rebind_session_with_notice(
+            session_id,
+            agent_id,
+            model_id,
+            max_transfer_bytes,
+            &format!("Rebound session to {agent_id}/{model_id}."),
+        )
+        .await
+    }
+
+    /// Rebind with a caller-chosen restart notice.
+    ///
+    /// The notice is what the user sees in the transcript where the old agent
+    /// session ended, so the reason for the restart (agent switch, model
+    /// fallback, profile transition) has to come from the caller.
+    // Single linear rebind sequence — splitting would obscure the transfer flow.
+    #[allow(clippy::too_many_lines)]
+    pub(super) async fn rebind_session_with_notice(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        model_id: &str,
+        max_transfer_bytes: i64,
+        notice: &str,
     ) -> Result<SessionInfo, AppError> {
         self.ensure_live_session(session_id).await?;
         let agent = self
@@ -313,7 +336,7 @@ impl Client {
             &self.deps.event_bus,
             session_id,
             EventPayload::ConnectionRestarted {
-                content: format!("Rebound session to {agent_id}/{model_id}."),
+                content: notice.to_string(),
             },
         )
         .await?;

@@ -61,6 +61,10 @@ pub struct SessionCaps {
     pub can_close_session: bool,
     /// `sessionCapabilities.delete` present.
     pub can_delete_session: bool,
+    /// `mcpCapabilities.http` — HTTP MCP servers are attachable.
+    pub mcp_http: bool,
+    /// `mcpCapabilities.sse` — SSE MCP servers are attachable.
+    pub mcp_sse: bool,
 }
 
 impl SessionCaps {
@@ -429,6 +433,8 @@ mod tests {
             can_resume_session: true,
             can_close_session: true,
             can_delete_session: true,
+            mcp_http: true,
+            mcp_sse: true,
         };
         let projected = caps.to_history_capabilities(false);
         assert!(!projected.available);

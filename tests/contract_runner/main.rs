@@ -490,6 +490,38 @@ async fn rest_sessions_profile_bad_body() {
 }
 
 #[tokio::test]
+async fn rest_sessions_profile_preview_not_found() {
+    banner("REST: sessions_profile_preview_not_found");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "sessions_profile_preview_not_found").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_sessions_profile_preview_missing_query() {
+    banner("REST: sessions_profile_preview_missing_query");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "sessions_profile_preview_missing_query").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_sessions_profile_transition_not_found() {
+    banner("REST: sessions_profile_transition_not_found");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "sessions_profile_transition_not_found").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_sessions_profile_transition_bad_strategy() {
+    banner("REST: sessions_profile_transition_bad_strategy");
+    let h = BackendHarness::start().await;
+    rest::run_case(&h, "sessions_profile_transition_bad_strategy").await;
+    h.shutdown().await;
+}
+
+#[tokio::test]
 async fn rest_permissions_pending_ok() {
     banner("REST: permissions_pending_ok");
     let h = BackendHarness::start().await;

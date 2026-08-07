@@ -461,6 +461,10 @@ async fn run_actor_inner(
                 can_resume_session: session_caps.resume.is_some(),
                 can_close_session: session_caps.close.is_some(),
                 can_delete_session: session_caps.delete.is_some(),
+                // Cached so a profile-transition preview can filter MCP servers
+                // exactly like session setup does, without re-initializing.
+                mcp_http: agent_caps.mcp_capabilities.http,
+                mcp_sse: agent_caps.mcp_capabilities.sse,
             };
             tracing::debug!(
                 providers_supported = caps.providers_supported,
