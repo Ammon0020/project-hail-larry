@@ -22,8 +22,8 @@ use crate::acp::{AgentRegistry, ConversationStore};
 use crate::config::{AgentInfo, AgentModel};
 use crate::events::{EventBus, Store};
 use crate::interfaces::{
-    ACPClient, AppError, Event, EventStore, EventType, PermissionDecision, PermissionManager,
-    PermissionRequest, ProfileTransitionStrategy, SessionInfo, WorkspaceManager,
+    ACPClient, AppError, Event, EventPayload, EventStore, EventType, PermissionDecision,
+    PermissionManager, PermissionRequest, ProfileTransitionStrategy, SessionInfo, WorkspaceManager,
 };
 use crate::workspace::Manager as WorkspaceRegistry;
 use chrono::Utc;
@@ -481,6 +481,56 @@ async fn rebind_refreshes_profile_config_id_from_replacement_agent() {
         .close_session(&session.id)
         .await
         .expect("close rebound session");
+}
+
+/// `PATCH /api/sessions/{id}` defaults `maxTransferBytes` to 0, and
+/// `truncate_export` reads `<= 0` as *unbounded*. Left alone, an agent switch on
+/// a long conversation pushes the entire transcript into the replacement
+/// session's first prompt. A rebind must therefore floor an unspecified budget
+/// at the daemon default rather than trusting the caller's zero.
+#[tokio::test]
+async fn rebind_caps_an_unspecified_transfer_budget_at_the_daemon_default() {
+    let (client, _permissions, _workspace) = mock_client().await;
+    let session = client.list_sessions().pop().expect("one mock session");
+
+    // A transcript comfortably larger than the default budget, written straight
+    // to the event bus so the test does not depend on agent streaming speed.
+    let huge = "x".repeat(usize::try_from(super::super::DEFAULT_TRANSFER_BYTES).unwrap() * 2);
+    super::super::events::append_payload(
+        &client.deps.event_bus,
+        &session.id,
+        EventPayload::PromptSubmitted {
+            role: "user".to_string(),
+            content: huge,
+            attachments: Vec::new(),
+            injected_context: Vec::new(),
+        },
+    )
+    .await
+    .expect("append oversized prompt event");
+
+    // 0 is exactly what the REST layer sends when the client omits the field.
+    client
+        .rebind_session(&session.id, "mock", "mock-model", 0)
+        .await
+        .expect("rebind idle session");
+
+    let transfer = client
+        .pipeline
+        .transfers
+        .take_for_first_prompt(&session.id, 0)
+        .expect("read queued transfer")
+        .expect("rebind must queue a transfer");
+    assert!(
+        transfer.markdown.len() <= usize::try_from(super::super::DEFAULT_TRANSFER_BYTES).unwrap(),
+        "unspecified budget must be capped, got {} bytes",
+        transfer.markdown.len()
+    );
+    assert!(
+        transfer.markdown.contains("conversation truncated"),
+        "a capped transfer must say it was truncated"
+    );
+    client.close_session(&session.id).await.expect("close");
 }
 
 /// The `history` strategy keeps the local conversation — same id, same name,

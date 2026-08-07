@@ -10,7 +10,7 @@
 use agent_client_protocol::schema::v1::McpCapabilities;
 
 use super::super::profile_config::ProfileConfig;
-use super::{Client, DEFAULT_TRANSFER_BYTES};
+use super::Client;
 use crate::interfaces::{
     AppError, ProfileTransitionPreview, ProfileTransitionStrategy, SessionInfo,
 };
@@ -149,17 +149,13 @@ impl Client {
             .profile(target)
             .label
             .clone();
-        let transfer = if max_transfer_bytes > 0 {
-            max_transfer_bytes
-        } else {
-            DEFAULT_TRANSFER_BYTES
-        };
+        // An unspecified budget is floored by the rebind path itself.
         let result = self
             .rebind_session_with_notice(
                 session_id,
                 &current.agent_id,
                 &current.model_id,
-                transfer,
+                max_transfer_bytes,
                 &format!("Started a new agent session with the {label} profile."),
             )
             .await;

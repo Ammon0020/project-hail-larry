@@ -110,7 +110,9 @@ pub(super) async fn patch_session(
     if let (Some(agent_id), Some(model_id)) =
         (request.agent_id.as_deref(), request.model_id.as_deref())
     {
-        let max_transfer = request.max_transfer_bytes.unwrap_or(0);
+        // 0 means "unspecified" here; the ACP layer floors it at the daemon
+        // default so an omitted cap never means an unbounded transcript.
+        let max_transfer = request.max_transfer_bytes.unwrap_or_default();
         state
             .acp
             .rebind_session(&id, agent_id, model_id, max_transfer)

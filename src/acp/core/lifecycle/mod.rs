@@ -16,6 +16,20 @@ use super::{Client, MAX_SESSIONS};
 use crate::events::SubRecv;
 use crate::interfaces::{AppError, EventPayload, SessionInfo, WorkspaceInfo};
 
+/// Transcript budget for a rebind transfer, flooring an unspecified request.
+///
+/// `export_conversation` treats `<= 0` as *unbounded*, and the REST layer sends
+/// `0` whenever a client omits `maxTransferBytes`. Taking that literally would
+/// push an entire long conversation into the replacement session's first
+/// prompt, so an unspecified budget becomes the daemon default instead.
+fn transfer_budget(max_transfer_bytes: i64) -> i64 {
+    if max_transfer_bytes > 0 {
+        max_transfer_bytes
+    } else {
+        super::DEFAULT_TRANSFER_BYTES
+    }
+}
+
 impl Client {
     pub(super) async fn resolve_workspace(
         &self,
@@ -246,7 +260,7 @@ impl Client {
         let transfer = match super::super::conversation::export_conversation(
             &self.deps.event_bus,
             session_id,
-            max_transfer_bytes,
+            transfer_budget(max_transfer_bytes),
         )
         .await
         {

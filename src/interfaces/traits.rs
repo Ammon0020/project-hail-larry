@@ -212,6 +212,10 @@ pub trait ACPClient: Send + Sync {
     fn rename_session(&self, session_id: &str, name: &str) -> Result<(), AppError>;
 
     /// Switch agent/model while preserving session id and history.
+    ///
+    /// `max_transfer_bytes` caps the transcript carried into the replacement
+    /// session's first prompt; `<= 0` selects the daemon default rather than an
+    /// unbounded transfer.
     async fn rebind_session(
         &self,
         session_id: &str,

@@ -1,7 +1,7 @@
 # Wire mcp/connect, mcp/message, mcp/disconnect handlers + emit McpServer::Acp
 
 > **Status:** pending | **Difficulty:** hard | **Urgency:** high
-> **Follow-up to:** `active-mcp-over-acp-polyfill-hard-high.md`
+> **Follow-up to:** `complete-mcp-over-acp-polyfill-hard-high.md`
 
 ## Goal
 
@@ -79,7 +79,7 @@ But two pieces are missing:
 ## Dependencies
 
 - Requires the conductor + polyfill scaffolding (done — see
-  `active-mcp-over-acp-polyfill-hard-high.md`).
+  `complete-mcp-over-acp-polyfill-hard-high.md`).
 - Coordinate with `active-profile-mcp-transition-hard-high.md` — live MCP
   add/remove changes the transition dialog's assumptions.
 
