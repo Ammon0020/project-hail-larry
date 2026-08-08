@@ -24,6 +24,7 @@ TODO: Break this down into individual stories.
 
 - [ ] **[Large/Medium]** Add a little popup/slideup above the chat input with icons for edited files and subagents and anything else we choose to add. Popup only shows if something is in one of them. The one that has a status has a blue dot indicator on its top right. Extremely compact. Eg. If a file is changed, it shows the blue dot by that and when you click it, the popup slides open more to reveal the list of edited files and changed line counts (plus and minus) on the right of the filename, and to the right of the edits is an accept edits button and a revert button. Revert requires a confirmation. When you click/tap any file it opens the agent diff in an editor tab.
   - *Popup pattern exists (`web/src/components/chat/McpPopout.tsx`); chat input is `ChatComposer.tsx`. Missing: edited-files list with +/- line counts, subagent status tracking, blue-dot indicator, accept/revert actions, and an agent diff viewer. Depends on the git diff viewer above for diff rendering.*
+  - *Broken into stories: `pending-chat-edited-files-popup-1-tracking-med-med.md` (backend tracking + frontend hook), `pending-chat-edited-files-popup-2-popup-ui-med-med.md` (popup UI + accept/revert), `pending-chat-edited-files-popup-3-diff-viewer-small-med.md` (agent diff viewer tab).*
 
 - [x] There's a favorite button next to the model, and favorites are marked in the dropdown selector. TODO: Replace that dropdown selector with a menu, including search. Instead of listing models as "gpt xxx high, gpt xxx medium" etc, we give an option to models with multiple thinking levels to select thinking level on said model. Same goes for the fast option for those models that support fast. So at most, a model has: 
   - pin (replace favorite)
@@ -33,12 +34,13 @@ TODO: Break this down into individual stories.
   - *Done 2026-08-05 — see `docs/plans/other_tasks/done-model-selector-menu-med-high.md`. New `ModelSelector.tsx` popover with search, base-model grouping, inline thinking-level pills, fast toggle, and pin (replacing favorites). `modelGrouping.ts` parses model IDs; `modelPrefs.ts` migrated favorites→pinned with storage migration.*
   - [ ] Under ACP's model_config options, agents can advertise configurable model traits. We should try to support any of these we can. *(deferred — backend AgentModel has no structured traits yet)*
 
-- [ ] Context Window Usage & Cumulative Cost (usage_update): ACP uses a standardized session notification (session/update with sessionUpdate: "usage_update") that allows agents to push real-time context token usage and financial cost metrics back to the client.  
+- [x] Context Window Usage & Cumulative Cost (usage_update): ACP uses a standardized session notification (session/update with sessionUpdate: "usage_update") that allows agents to push real-time context token usage and financial cost metrics back to the client.  
   1. Use a ring next to the send button. As context fills, it fills clockwise until 100% of the given model's context. If compacting, an inside ring should spin around it to indicate that compaction is in progress. 
   2. Hovering shows a popout with:
     - "<x>% (<y>k/<z>k) context used"
     - Cost
     - Below that a timer until the prompt cache expires: "Prompt cache expires in x" down to the second. If prompt cache time can't be seen for the model, it says "Estimated: Prompt cache expires in x". When expired the text turns orange. On mobile, shows on tap for a few seconds or on hold.
+  - *Done 2026-08-05 — see `docs/plans/other_tasks/done-context-usage-ring-med-med.md`. Ring + cost display complete. Compaction signal and prompt-cache expiry deferred (blocked on ACP protocol — no compaction flag or cache expiry in the stabilized `usage_update` schema).*
 
 ---
 
@@ -51,8 +53,9 @@ TODO: Break this down into individual stories.
   - *Done 2026-08-05 — `TabBar.tsx` scroll arrows now always rendered with `opacity-0 pointer-events-none` when not scrollable, reserving their footprint so tabs don't reflow.*
 - [x] Remove the word "online" from the online indicator in the top left and leave it as an icon.
   - *Done 2026-08-05 — `WorkspaceHeader.tsx` now shows just the Wifi/WifiOff icon without text. Status details remain in the dropdown and `title` attribute.*
-- [ ] When you switch workspace, it switches which tabs are open. When you reopen, they open back up. Keeps tabs associated with workspace. Tabs are remembered per-workspace on the server. 
-  - [ ] Next: Tabs are synced between devices, saved to workspace rather than browser, but only when workspace syncing is enabled. Remove the word "online" from the online indicator in the top left and leave it as an icon, then add a button to turn on/off workspace syncing.
+- [x] When you switch workspace, it switches which tabs are open. When you reopen, they open back up. Keeps tabs associated with workspace. Tabs are remembered per-workspace on the server. 
+  - *Done 2026-08-06 — per-workspace tab persistence + cleanup on workspace removal + pure switch logic extraction. See commit `d8e6cd3`.*
+  - [ ] Next: Tabs are synced between devices, saved to workspace rather than browser, but only when workspace syncing is enabled. Add a button to turn on/off workspace syncing. → *Broken into `pending-workspace-syncing-toggle-med-med.md`.*
 
 ## Agent Chat
 - [x] Fix Devin auto-detect models

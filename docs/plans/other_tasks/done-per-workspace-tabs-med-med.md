@@ -1,7 +1,8 @@
 # Per-workspace tab persistence on server
 
-> **Status:** pending | **Difficulty:** medium | **Urgency:** medium
+> **Status:** done | **Difficulty:** medium | **Urgency:** medium
 > **Source:** user-noted improvements — UI section
+> **Completed:** 2026-08-06 — commit `d8e6cd3`
 
 ## Goal
 
@@ -74,6 +75,8 @@ makes the cross-device follow-up safe to build.
 - [x] Tabs are persisted per-workspace on the server
 - [x] Switching workspace switches which tabs are open
 - [x] Reopening a workspace restores its tabs
-- [ ] (Follow-up) Tabs sync between devices when workspace syncing enabled
-- [ ] (Follow-up) Button to toggle workspace syncing on/off
+- [ ] (Follow-up) Tabs sync between devices when workspace syncing enabled → *`pending-workspace-syncing-toggle-med-med.md`*
+- [ ] (Follow-up) Button to toggle workspace syncing on/off → *`pending-workspace-syncing-toggle-med-med.md`*
 - [x] `make check` passes
+- [x] (2026-08-06) `TabStore::remove` called on workspace deletion; orphaned tab entries no longer outlive their workspace.
+- [x] (2026-08-06) Workspace-switch logic extracted into pure `planWorkspaceSwitch` for unit testing.

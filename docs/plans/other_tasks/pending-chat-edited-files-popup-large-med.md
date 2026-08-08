@@ -35,3 +35,14 @@ items with a status. Clicking expands the popup to reveal details.
 - [ ] Clicking a file opens the agent diff in an editor tab
 - [ ] Mobile-friendly (tap to expand/collapse)
 - [ ] `make check` passes
+
+## Stories
+
+Broken into three executable stories (each fits one branch):
+
+1. `pending-chat-edited-files-popup-1-tracking-med-med.md` — backend edited-files
+   query + frontend `useEditedFiles` hook (medium)
+2. `pending-chat-edited-files-popup-2-popup-ui-med-med.md` — popup UI with
+   accept/revert actions (medium)
+3. `pending-chat-edited-files-popup-3-diff-viewer-small-med.md` — agent diff
+   viewer tab (small)
