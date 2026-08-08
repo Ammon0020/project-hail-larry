@@ -587,4 +587,93 @@ mod tests {
             "tab store should have no entry for the removed workspace"
         );
     }
+
+    /// `remove_workspace` treats tab cleanup as non-fatal: a `warn!` is logged
+    /// and the request still succeeds when `TabStore::remove` fails. We force
+    /// that failure by making the state dir read-only so the atomic write
+    /// (`O_TMPFILE` + rename) inside `fsutil::atomic_write` is rejected with
+    /// `EACCES`. The DELETE must still return 200 with `{"status":"removed"}`
+    /// and the workspace must be gone from the live manager.
+    ///
+    /// Unix-only: the fault relies on filesystem DAC permissions. Skipped when
+    /// running as root, since root bypasses those checks and the read-only dir
+    /// would not produce a write failure.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn removing_a_workspace_succeeds_when_tab_cleanup_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::PathBuf;
+
+        /// RAII guard that restores writable permissions on the state dir so
+        /// the owning `TempDir` can clean up after the test.
+        struct PermGuard(PathBuf);
+        impl Drop for PermGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+            }
+        }
+
+        // Root bypasses DAC permissions, so the fault would not fire. Bail
+        // before mutating any state rather than silently passing.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let (state_dir, state) = state();
+        let _env = StateDirEnvGuard::pin(state_dir.path());
+        let workspace_dir = tempfile::tempdir().expect("workspace directory");
+        let workspace = state
+            .workspaces
+            .register(workspace_dir.path().to_str().expect("UTF-8 path"))
+            .await
+            .expect("register workspace");
+
+        // Persist tabs so the store has a file to rewrite on cleanup.
+        let saved = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::PUT)
+                .uri(format!("/api/workspaces/{}/tabs", workspace.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"tabs":[{"id":"t1","path":"src/a.rs","name":"a.rs"}],"activeTabId":"t1"}"#,
+                ))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(saved.status(), StatusCode::OK);
+
+        // Make the state dir read-only (r-x) so the atomic write inside
+        // `TabStore::save` cannot create its temp file. Restore writable
+        // permissions on drop so the TempDir cleanup succeeds.
+        let state_dir_path = state_dir.path().to_path_buf();
+        std::fs::set_permissions(&state_dir_path, std::fs::Permissions::from_mode(0o500))
+            .expect("set state dir read-only");
+        let _perm_guard = PermGuard(state_dir_path);
+
+        // Even though tab cleanup fails, the workspace is already removed from
+        // the live manager, so the request must succeed.
+        let removed = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/api/workspaces/{}", workspace.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(json_body(removed).await["status"], "removed");
+
+        // The workspace is gone from the live manager: GET tabs 404s.
+        let loaded = oneshot(
+            state.clone(),
+            Request::builder()
+                .uri(format!("/api/workspaces/{}/tabs", workspace.id))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(loaded.status(), StatusCode::NOT_FOUND);
+    }
 }
