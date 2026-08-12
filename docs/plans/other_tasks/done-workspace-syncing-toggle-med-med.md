@@ -1,6 +1,6 @@
 # Workspace syncing toggle — per-workspace tab sync between devices
 
-> **Status:** active | **Difficulty:** medium | **Urgency:** medium
+> **Status:** done | **Difficulty:** medium | **Urgency:** medium
 > **Source:** user-noted improvements — UI section
 > **Parent:** `pending-user_noted_improvements-large-high.md`
 

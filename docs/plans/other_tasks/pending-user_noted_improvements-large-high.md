@@ -55,7 +55,7 @@ TODO: Break this down into individual stories.
   - *Done 2026-08-05 — `WorkspaceHeader.tsx` now shows just the Wifi/WifiOff icon without text. Status details remain in the dropdown and `title` attribute.*
 - [x] When you switch workspace, it switches which tabs are open. When you reopen, they open back up. Keeps tabs associated with workspace. Tabs are remembered per-workspace on the server. 
   - *Done 2026-08-06 — per-workspace tab persistence + cleanup on workspace removal + pure switch logic extraction. See commit `d8e6cd3`.*
-  - [ ] Next: Tabs are synced between devices, saved to workspace rather than browser, but only when workspace syncing is enabled. Add a button to turn on/off workspace syncing. → *Broken into `pending-workspace-syncing-toggle-med-med.md`.*
+  - [x] Next: Tabs are synced between devices, saved to workspace rather than browser, but only when workspace syncing is enabled. Add a button to turn on/off workspace syncing. → *Done 2026-08-11 — see `done-workspace-syncing-toggle-med-med.md`.*
 
 ## Agent Chat
 - [x] Fix Devin auto-detect models
