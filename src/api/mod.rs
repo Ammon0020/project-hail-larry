@@ -163,6 +163,10 @@ pub fn router(state: AppState) -> Router {
             put(workspaces::set_workspace_trust),
         )
         .route(
+            "/api/workspaces/{id}/sync-tabs",
+            patch(workspaces::set_workspace_sync_tabs),
+        )
+        .route(
             "/api/workspaces/{id}/tabs",
             get(workspaces::get_workspace_tabs).put(workspaces::put_workspace_tabs),
         )

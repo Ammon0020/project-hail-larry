@@ -333,6 +333,7 @@ fn golden_workspace_info() {
         available: true,
         error: String::new(),
         trusted: None,
+        sync_tabs: None,
     };
     assert_matches_golden("workspace_info", &to_value(&info));
 }

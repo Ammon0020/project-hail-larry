@@ -591,6 +591,10 @@ pub struct WorkspaceInfo {
     /// layer; the workspace manager itself does not know about trust.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trusted: Option<bool>,
+    /// Tab syncing preference. See `Config.workspace_sync_tabs`. Joined by
+    /// the API layer; the workspace manager is unaware of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_tabs: Option<bool>,
 }
 
 // ============================================================================

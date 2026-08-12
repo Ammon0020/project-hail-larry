@@ -33,6 +33,8 @@ export function LeftSidebar({
   onRepoChanged,
   style,
   connected = true,
+  syncTabs,
+  onSyncTabsToggle,
 }: {
   activePanel: LeftPanel
   onSwitchPanel: (panel: LeftPanel) => void
@@ -62,6 +64,10 @@ export function LeftSidebar({
   style?: CSSProperties
   /** Whether the backend WebSocket is connected. Drives the Online/Offline badge. */
   connected?: boolean
+  /** Active workspace's tab-syncing preference (passed through to WorkspaceHeader). */
+  syncTabs?: boolean | null
+  /** Toggle handler for the active workspace's tab-syncing preference. */
+  onSyncTabsToggle?: (next: boolean) => void
 }) {
   /** Mini horizontal activity bar for mobile. */
   const miniTabs: { id: LeftPanel; icon: typeof Files; label: string }[] = [
@@ -81,11 +87,13 @@ export function LeftSidebar({
     >
       {/* Workspace Switcher (mobile only, visible at the very top) */}
       <div className="lg:hidden p-2 border-b border-border shrink-0">
-        <WorkspaceHeader 
+        <WorkspaceHeader
           connected={connected}
           workspaces={workspaces}
           activeWorkspace={activeWorkspace}
           onWorkspaceSelect={onWorkspaceSelect}
+          syncTabs={syncTabs}
+          onSyncTabsToggle={onSyncTabsToggle}
         />
       </div>
 

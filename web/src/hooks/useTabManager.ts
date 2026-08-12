@@ -24,6 +24,8 @@ interface UseTabManagerOptions {
   reportContext: Backend['reportContext']
   editorSelection: EditorSelectionInfo | undefined
   activeSessionId: string | null
+  /** `true`/`undefined` = sync tabs to server (default); `false` = browser-local. */
+  syncTabs: boolean
 }
 
 export function useTabManager({
@@ -34,6 +36,7 @@ export function useTabManager({
   reportContext,
   editorSelection,
   activeSessionId,
+  syncTabs,
 }: UseTabManagerOptions) {
   // Tab state — restored from localStorage so open files survive a reload.
   const [openTabs, setOpenTabs] = useState<Tab[]>(() => {
@@ -91,6 +94,19 @@ export function useTabManager({
   const tabsRef = useRef(openTabs)
   const activeTabIdRef = useRef(activeTabId)
   const syncedWorkspaceRef = useRef<string | null>(null)
+  // Sync setting of the workspace currently shown on screen, captured when
+  // it became active. Used for the outgoing push on swap so it reflects the
+  // workspace being left, not the one being entered (syncTabsRef updates
+  // before this effect runs when both change at once).
+  const syncedSyncTabsRef = useRef(true)
+  // Mirror of the active workspace's `syncTabs` setting. `true`/`undefined`
+  // (default) → tabs round-trip through the server; `false` → tabs stay
+  // browser-local and the hook skips the GET/PUT `/tabs` calls. A ref (not a
+  // dep) so flipping the toggle doesn't re-run the workspace-swap effect.
+  const syncTabsRef = useRef(syncTabs)
+  useEffect(() => {
+    syncTabsRef.current = syncTabs
+  }, [syncTabs])
   // Unsaved buffers for workspaces that are not on screen. The server stores
   // tab identity only, so this is the only thing standing between a workspace
   // switch and losing whatever the user had typed.
@@ -103,9 +119,11 @@ export function useTabManager({
   }, [openTabs, activeTabId])
 
   // Push layout changes for the current workspace. Debounced so a burst of
-  // opens/closes produces one write.
+  // opens/closes produces one write. Skipped when tab syncing is off for this
+  // workspace — tabs stay browser-local (localStorage still caches them).
   useEffect(() => {
     if (!workspaceId || syncedWorkspaceRef.current !== workspaceId) return
+    if (!syncTabsRef.current) return
     const timer = setTimeout(() => {
       void putWorkspaceTabs(
         workspaceId,
@@ -116,6 +134,17 @@ export function useTabManager({
     }, 800)
     return () => clearTimeout(timer)
   }, [workspaceId, openTabs, activeTabId])
+
+  // Push current tabs when syncing is turned on for this workspace, so other
+  // devices see them without waiting for the next open/close. Also overwrites
+  // any stale server layout left from a previous syncing-on period.
+  useEffect(() => {
+    if (!syncTabs || !workspaceId || syncedWorkspaceRef.current !== workspaceId) return
+    void putWorkspaceTabs(
+      workspaceId,
+      toWorkspaceTabs(tabsRef.current, workspaceId, activeTabIdRef.current),
+    ).catch(() => {})
+  }, [syncTabs, workspaceId])
 
   // Swap the visible tab set when the workspace changes.
   useEffect(() => {
@@ -132,12 +161,21 @@ export function useTabManager({
       if (previous) {
         draftsRef.current = rememberDrafts(draftsRef.current, previous, tabsRef.current)
         saveTabDrafts(draftsRef.current)
-        await putWorkspaceTabs(
-          previous,
-          toWorkspaceTabs(tabsRef.current, previous, activeTabIdRef.current),
-        ).catch(() => {})
+        // Only push the outgoing layout to the server when syncing is on.
+        // When off, tabs are browser-local and the next open of that
+        // workspace will restore from localStorage/drafts instead.
+        if (syncedSyncTabsRef.current) {
+          await putWorkspaceTabs(
+            previous,
+            toWorkspaceTabs(tabsRef.current, previous, activeTabIdRef.current),
+          ).catch(() => {})
+        }
       }
-      const saved = await getWorkspaceTabs(workspaceId).catch(() => null)
+      // Skip the server fetch when syncing is off — use `null` so
+      // planWorkspaceSwitch falls back to local tabs/drafts only.
+      const saved = syncTabsRef.current
+        ? await getWorkspaceTabs(workspaceId).catch(() => null)
+        : null
       if (cancelled) return
 
       const { tabs, activeTabId: nextActive, draftCache, needsContent } =
@@ -153,6 +191,7 @@ export function useTabManager({
       draftsRef.current = draftCache
       saveTabDrafts(draftCache)
       syncedWorkspaceRef.current = workspaceId
+      syncedSyncTabsRef.current = syncTabsRef.current
       setOpenTabs(tabs)
       setActiveTabId(nextActive)
 

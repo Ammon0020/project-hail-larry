@@ -153,6 +153,7 @@ export default function App() {
     reportContext,
     editorSelection,
     activeSessionId,
+    syncTabs: backend.activeWorkspace?.syncTabs ?? true,
   })
   const {
     searchResultLine,
@@ -246,6 +247,18 @@ export default function App() {
   const handleCopyRelativePath = useCallback((path: string) => {
     navigator.clipboard?.writeText(path).catch(() => {})
   }, [])
+
+  /** Toggles the active workspace's editor tab syncing preference via the
+   *  API and updates local workspace state. No-op when no workspace is
+   *  active. Errors are surfaced via console (the toggle simply doesn't
+   *  flip in the UI on failure). */
+  const handleSyncTabsToggle = useCallback((next: boolean) => {
+    const ws = backend.activeWorkspace
+    if (!ws) return
+    backend.setWorkspaceSyncTabs(ws.id, next).catch((err) => {
+      console.error('Failed to toggle workspace tab syncing:', err)
+    })
+  }, [backend])
 
   // ---- Global keyboard shortcuts ----
   // Registered on window so they work even when the CodeMirror editor isn't
@@ -458,11 +471,13 @@ export default function App() {
                   {backend.connected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4 animate-pulse" />}
                 </div>
               ) : (
-                <WorkspaceHeader 
-                  connected={backend.connected} 
-                  workspaces={backend.workspaces} 
-                  activeWorkspace={backend.activeWorkspace} 
-                  onWorkspaceSelect={backend.selectWorkspace} 
+                <WorkspaceHeader
+                  connected={backend.connected}
+                  workspaces={backend.workspaces}
+                  activeWorkspace={backend.activeWorkspace}
+                  onWorkspaceSelect={backend.selectWorkspace}
+                  syncTabs={backend.activeWorkspace?.syncTabs ?? null}
+                  onSyncTabsToggle={handleSyncTabsToggle}
                 />
               )}
             </div>
@@ -563,6 +578,8 @@ export default function App() {
         onRepoChanged={refreshGitState}
         style={isDesktop ? { width: leftPanelWidth } : undefined}
         connected={backend.connected}
+        syncTabs={backend.activeWorkspace?.syncTabs ?? null}
+        onSyncTabsToggle={handleSyncTabsToggle}
       />
       </ErrorBoundary>
 

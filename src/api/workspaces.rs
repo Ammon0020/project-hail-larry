@@ -24,11 +24,12 @@ pub(super) async fn list_workspaces(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<crate::interfaces::WorkspaceInfo>>, ApiResponseError> {
     let mut workspaces = state.workspaces.list().await.map_err(app_error)?;
-    // Join preview trust state from config so the frontend knows whether to
-    // prompt (None), allow (Some(true)), or restrict (Some(false)).
-    let trust = state.config.read().clone();
+    // Join trust state and tab-syncing preference from config. Both default
+    // to None (absent) which the client treats as the current behavior.
+    let cfg = state.config.read().clone();
     for workspace in &mut workspaces {
-        workspace.trusted = trust.workspace_trust(&workspace.id);
+        workspace.trusted = cfg.workspace_trust(&workspace.id);
+        workspace.sync_tabs = cfg.workspace_sync_tabs(&workspace.id);
     }
     Ok(Json(workspaces))
 }
@@ -148,6 +149,12 @@ pub(super) struct SetWorkspaceTrustRequest {
     trusted: Option<bool>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct SetWorkspaceSyncTabsRequest {
+    sync_tabs: bool,
+}
+
 /// `PUT /api/workspaces/{id}/trust` — sets the preview trust state for a
 /// workspace. Body `{"trusted": true}` → trusted (permissive CSP),
 /// `{"trusted": false}` → untrusted (restrictive CSP), `{"trusted": null}`
@@ -173,6 +180,38 @@ pub(super) async fn set_workspace_trust(
         .set_workspace_trust(&id, payload.trusted)
         .map_err(|error| ApiResponseError::internal(format!("persist workspace trust: {error}")))?;
     Ok(Json(json!({ "id": id, "trusted": payload.trusted })))
+}
+
+/// `PATCH /api/workspaces/{id}/sync-tabs` — sets the workspace's tab syncing
+/// preference. Loopback-only like `DELETE /api/workspaces/{id}`: host-side
+/// editor-layout preference, not per-device UI state.
+pub(super) async fn set_workspace_sync_tabs(
+    State(state): State<AppState>,
+    PeerAddr(remote_addr): PeerAddr,
+    Path(id): Path<String>,
+    body: Result<Json<SetWorkspaceSyncTabsRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiResponseError> {
+    if !is_loopback_addr(&remote_addr) {
+        return Err(ApiResponseError::forbidden(
+            "Workspace tab-syncing preference can only be changed from the host.",
+        ));
+    }
+    let Json(payload) = decode_json_body(body)?;
+    // Verify the workspace exists before persisting for a phantom ID.
+    let workspaces = state.workspaces.list().await.map_err(app_error)?;
+    if !workspaces.iter().any(|workspace| workspace.id == id) {
+        return Err(ApiResponseError::not_found(format!(
+            "workspace {id} not found"
+        )));
+    }
+    state
+        .config
+        .write()
+        .set_workspace_sync_tabs(&id, Some(payload.sync_tabs))
+        .map_err(|error| {
+            ApiResponseError::internal(format!("persist workspace sync-tabs: {error}"))
+        })?;
+    Ok(Json(json!({ "id": id, "syncTabs": payload.sync_tabs })))
 }
 
 /// `GET /api/workspaces/{id}/tabs` — restorable editor tabs for a workspace.
@@ -675,5 +714,96 @@ mod tests {
         )
         .await;
         assert_eq!(loaded.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The tab-syncing toggle is loopback-only: a paired LAN peer must get
+    /// 403 even when authenticated. Mirrors the DELETE workspace guard.
+    #[tokio::test]
+    async fn set_workspace_sync_tabs_rejects_non_loopback_peer() {
+        let (_dir, state, credential) = pending_actions_state(300, true);
+        let response = oneshot_peer(
+            state,
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/workspaces/any-id/sync-tabs")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, bearer(&credential))
+                .body(Body::from(r#"{"syncTabs":false}"#))
+                .expect("request"),
+            "10.0.0.1:9",
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// PATCH sync-tabs persists the value and the GET workspaces list joins it
+    /// back as `syncTabs`. Default (no entry) stays absent on the wire.
+    #[tokio::test]
+    async fn set_workspace_sync_tabs_persists_and_reflects_in_list() {
+        let (state_dir, state) = state();
+        let _env = StateDirEnvGuard::pin(state_dir.path());
+        let workspace_dir = tempfile::tempdir().expect("workspace directory");
+        let workspace = state
+            .workspaces
+            .register(workspace_dir.path().to_str().expect("UTF-8 path"))
+            .await
+            .expect("register workspace");
+
+        // Default: no syncTabs field on the wire.
+        let list = oneshot(
+            state.clone(),
+            Request::builder()
+                .uri("/api/workspaces")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        let entries = json_body(list).await;
+        let entry = entries
+            .as_array()
+            .expect("workspaces list")
+            .iter()
+            .find(|entry| entry["id"] == workspace.id)
+            .expect("workspace in list");
+        assert!(
+            entry.get("syncTabs").is_none() || entry["syncTabs"].is_null(),
+            "default workspace should have no syncTabs field, got: {entry}"
+        );
+
+        // PATCH from loopback (oneshot uses 127.0.0.1:9) sets syncing off.
+        let update = oneshot(
+            state.clone(),
+            Request::builder()
+                .method(Method::PATCH)
+                .uri(format!("/api/workspaces/{}/sync-tabs", workspace.id))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"syncTabs":false}"#))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(update.status(), StatusCode::OK);
+        assert_eq!(json_body(update).await["syncTabs"], false);
+
+        // The list now reflects syncTabs=false.
+        let list = oneshot(
+            state,
+            Request::builder()
+                .uri("/api/workspaces")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        let entries = json_body(list).await;
+        let entry = entries
+            .as_array()
+            .expect("workspaces list")
+            .iter()
+            .find(|entry| entry["id"] == workspace.id)
+            .expect("workspace in list");
+        assert_eq!(
+            entry["syncTabs"], false,
+            "syncing-disabled workspace should list syncTabs=false, got: {entry}"
+        );
     }
 }

@@ -65,6 +65,9 @@ impl WorkspaceEntry {
             // joins this from Config.workspace_trust before returning to the
             // client.
             trusted: None,
+            // Likewise, the tab-syncing preference is joined from Config by
+            // the API layer; the manager stays unaware of it.
+            sync_tabs: None,
         }
     }
 }

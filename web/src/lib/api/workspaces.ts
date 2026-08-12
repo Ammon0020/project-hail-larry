@@ -14,6 +14,11 @@ export interface WorkspaceInfo {
    *  - `true` = trusted (permissive CSP, cross-origin resources allowed)
    *  - `false` = untrusted (restrictive CSP, exfil blocked) */
   trusted?: boolean | null
+  /** Per-workspace editor tab syncing preference.
+   *  - `null`/undefined = absent (default: syncing enabled, current behavior)
+   *  - `true` = sync tabs to the server (shared across devices)
+   *  - `false` = keep tabs browser-local (frontend skips the tabs round-trip) */
+  syncTabs?: boolean | null
 }
 
 // Health — apiFetch prefixes /api, so this hits /api/health.
@@ -51,6 +56,20 @@ export function setWorkspaceTrust(workspaceId: string, trusted: boolean | null |
     method: 'PUT',
     body: JSON.stringify({ trusted: trusted ?? null }),
   })
+}
+
+/** PATCH /api/workspaces/{id}/sync-tabs — sets whether editor tabs sync to
+ *  the server for this workspace. `true` = sync (shared across devices,
+ *  default); `false` = keep tabs browser-local. Loopback-only on the server.
+ *  Returns the persisted value so callers can update local state. */
+export function setWorkspaceSyncTabs(workspaceId: string, syncTabs: boolean) {
+  return apiFetch<{ id: string; syncTabs: boolean }>(
+    `/workspaces/${workspaceId}/sync-tabs`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ syncTabs }),
+    },
+  )
 }
 
 export function readFile(workspaceId: string, path: string) {

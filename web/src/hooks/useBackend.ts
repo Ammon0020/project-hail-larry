@@ -398,6 +398,16 @@ export function useBackend() {
     setActiveWorkspace((prev) => prev && prev.id === workspaceId ? { ...prev, trusted: next } : prev)
   }, [])
 
+  /** PATCH /api/workspaces/{id}/sync-tabs — updates the per-workspace editor
+   *  tab syncing preference on the backend and locally patches both the
+   *  workspaces list and the activeWorkspace so the UI (WorkspaceHeader
+   *  toggle, useTabManager) reflect the new value without a full reload. */
+  const setWorkspaceSyncTabs = useCallback(async (workspaceId: string, syncTabs: boolean) => {
+    await api.setWorkspaceSyncTabs(workspaceId, syncTabs)
+    setWorkspaces((prev) => prev.map((w) => w.id === workspaceId ? { ...w, syncTabs } : w))
+    setActiveWorkspace((prev) => prev && prev.id === workspaceId ? { ...prev, syncTabs } : prev)
+  }, [])
+
   // ---- Data loading methods ----
   const loadWorkspaces = useCallback(async () => {
     try {
@@ -665,6 +675,7 @@ export function useBackend() {
     selectWorkspace,
     registerWorkspace,
     setWorkspaceTrust,
+    setWorkspaceSyncTabs,
     readFile,
     saveFile,
     deleteFile,

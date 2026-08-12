@@ -294,6 +294,7 @@ fn default_config_matches_golden_dto() {
         revocation_grace_period_seconds: 300,
         prompt_context: PromptContextSettings::default(),
         workspace_trust: HashMap::new(),
+        workspace_sync_tabs: HashMap::new(),
         cancel_grace_period_seconds: 0,
         permission_timeout_seconds: 0,
         agent_idle_timeout_seconds: 0,
@@ -685,5 +686,65 @@ fn set_workspace_trust_survives_save_reload() {
             None,
             "reset should remove the entry from disk"
         );
+    });
+}
+
+// ---- Workspace tab syncing -----------------------------------------------
+
+/// A fresh config has no sync-tabs entries, so any unknown workspace ID
+/// reports `None` (absent = default syncing enabled, current behavior).
+#[test]
+fn workspace_sync_tabs_defaults_to_none_for_unknown_id() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    with_state_dir(tmp.path(), || {
+        let cfg = Config::default_or_error().expect("default");
+        assert_eq!(
+            cfg.workspace_sync_tabs("any-id"),
+            None,
+            "unknown workspace should have no sync-tabs state"
+        );
+    });
+}
+
+#[test]
+fn set_workspace_sync_tabs_persists_and_reads() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    with_state_dir(tmp.path(), || {
+        let mut cfg = Config::default_or_error().expect("default");
+        cfg.data_dir = tmp.path().to_string_lossy().to_string();
+        cfg.db_path = tmp
+            .path()
+            .join("local-agent.db")
+            .to_string_lossy()
+            .to_string();
+        cfg.tls_cert_dir = tmp.path().join("tls").to_string_lossy().to_string();
+
+        cfg.set_workspace_sync_tabs("ws-1", Some(false))
+            .expect("set syncing off");
+        assert_eq!(cfg.workspace_sync_tabs("ws-1"), Some(false));
+
+        cfg.set_workspace_sync_tabs("ws-1", None)
+            .expect("reset syncing");
+        assert_eq!(cfg.workspace_sync_tabs("ws-1"), None);
+    });
+}
+
+#[test]
+fn set_workspace_sync_tabs_survives_save_reload() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    with_state_dir(tmp.path(), || {
+        let mut cfg = Config::default_or_error().expect("default");
+        cfg.data_dir = tmp.path().to_string_lossy().to_string();
+        cfg.db_path = tmp
+            .path()
+            .join("local-agent.db")
+            .to_string_lossy()
+            .to_string();
+        cfg.tls_cert_dir = tmp.path().join("tls").to_string_lossy().to_string();
+
+        cfg.set_workspace_sync_tabs("ws-persist", Some(false))
+            .expect("set syncing off");
+        let reloaded = Config::load().expect("reload");
+        assert_eq!(reloaded.workspace_sync_tabs("ws-persist"), Some(false));
     });
 }

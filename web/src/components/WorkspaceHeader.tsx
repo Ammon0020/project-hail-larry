@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { FolderCode, ChevronsUpDown, Wifi, WifiOff, Check } from 'lucide-react'
+import { CloudUpload, CloudOff, FolderCode, ChevronsUpDown, Wifi, WifiOff, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export function WorkspaceHeader({
@@ -7,14 +7,21 @@ export function WorkspaceHeader({
   workspaces,
   activeWorkspace,
   onWorkspaceSelect,
+  syncTabs,
+  onSyncTabsToggle,
 }: {
   connected: boolean
   workspaces: { id: string; name: string; path: string }[]
   activeWorkspace: { id: string; name: string; path: string } | null
   onWorkspaceSelect: (ws: { id: string; name: string; path: string }) => void
+  /** `true`/`undefined` = sync (default); `false` = browser-local. */
+  syncTabs?: boolean | null
+  /** Flips the active workspace's syncing preference via the API. */
+  onSyncTabsToggle?: (next: boolean) => void
 }) {
   const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false)
   const [showStatusDropdown, setShowStatusDropdown] = useState(false)
+  const syncOn = syncTabs ?? true
 
   // Close dropdowns on Escape
   useEffect(() => {
@@ -71,6 +78,29 @@ export function WorkspaceHeader({
           </>
         )}
       </div>
+
+      {/* Tab-syncing toggle — on = server-shared, off = browser-local. */}
+      {activeWorkspace && onSyncTabsToggle && (
+        <button
+          type="button"
+          onClick={() => onSyncTabsToggle(!syncOn)}
+          aria-label={`Workspace tab syncing ${syncOn ? 'on' : 'off'}`}
+          aria-pressed={syncOn}
+          title={`Workspace tab syncing ${syncOn ? 'on' : 'off'}`}
+          className={cn(
+            'shrink-0 flex items-center justify-center w-6 h-6 rounded-full border transition hover:opacity-80 cursor-pointer',
+            syncOn
+              ? 'text-primary bg-primary/10 border-primary/20'
+              : 'text-muted-foreground bg-muted/40 border-border',
+          )}
+        >
+          {syncOn ? (
+            <CloudUpload className="w-3.5 h-3.5" />
+          ) : (
+            <CloudOff className="w-3.5 h-3.5" />
+          )}
+        </button>
+      )}
 
       <div className="flex-1 min-w-0" />
 

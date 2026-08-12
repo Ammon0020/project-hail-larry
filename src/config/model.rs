@@ -196,6 +196,13 @@ pub struct Config {
     /// preview, restrictive CSP as safe default until the user chooses).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub workspace_trust: HashMap<String, bool>,
+    /// Per-workspace editor tab syncing, keyed by workspace ID. `Some(true)`
+    /// = sync tabs to the server (current/default behavior, shared across
+    /// devices); `Some(false)` = keep tabs browser-local (frontend skips the
+    /// GET/PUT `/api/workspaces/{id}/tabs` round-trip); absent = default
+    /// (syncing enabled, matching pre-toggle behavior).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub workspace_sync_tabs: HashMap<String, bool>,
     /// Grace period (seconds) after a cooperative cancel before force-closing
     /// the ACP session. Explicit 0 or omitted = default 10s. Agents that need
     /// longer cleanup time can set a higher value.
@@ -306,6 +313,7 @@ impl Config {
             revocation_grace_period_seconds: DEFAULT_REVOCATION_GRACE_PERIOD_SECONDS,
             prompt_context: PromptContextSettings::default(),
             workspace_trust: HashMap::new(),
+            workspace_sync_tabs: HashMap::new(),
             cancel_grace_period_seconds: 0,
             permission_timeout_seconds: 0,
             agent_idle_timeout_seconds: 0,
@@ -404,6 +412,32 @@ impl Config {
         self.save()
     }
 
+    // ---- Workspace tab syncing --------------------------------------------
+
+    /// Returns the tab syncing preference for a workspace ID. See
+    /// `workspace_sync_tabs` field for the three-state semantics.
+    #[must_use]
+    pub fn workspace_sync_tabs(&self, id: &str) -> Option<bool> {
+        self.workspace_sync_tabs.get(id).copied()
+    }
+
+    /// Sets the tab syncing preference and persists. `None` removes the entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the config cannot be persisted.
+    pub fn set_workspace_sync_tabs(
+        &mut self,
+        id: &str,
+        enabled: Option<bool>,
+    ) -> Result<(), ConfigError> {
+        match enabled {
+            Some(value) => self.workspace_sync_tabs.insert(id.to_string(), value),
+            None => self.workspace_sync_tabs.remove(id),
+        };
+        self.save()
+    }
+
     // ---- Agent mutation methods --------------------------------------------
 
     /// `upsert_agent` adds or replaces an agent by ID and persists. Mirrors Go
@@ -473,6 +507,7 @@ impl std::default::Default for Config {
                     revocation_grace_period_seconds: DEFAULT_REVOCATION_GRACE_PERIOD_SECONDS,
                     prompt_context: PromptContextSettings::default(),
                     workspace_trust: HashMap::new(),
+                    workspace_sync_tabs: HashMap::new(),
                     cancel_grace_period_seconds: 0,
                     permission_timeout_seconds: 0,
                     agent_idle_timeout_seconds: 0,
