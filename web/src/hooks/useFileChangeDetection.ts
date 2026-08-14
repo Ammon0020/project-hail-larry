@@ -1,5 +1,6 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import type { useBackend } from '@/hooks/useBackend'
+import { ApiError } from '@/lib/api'
 import type { Tab } from '@/types'
 
 type FileChangeBackend = Pick<
@@ -16,6 +17,7 @@ export function useFileChangeDetection(
   backend: FileChangeBackend,
   openTabs: Tab[],
   setOpenTabs: Dispatch<SetStateAction<Tab[]>>,
+  setActiveTabId: Dispatch<SetStateAction<string | null>>,
 ): void {
   const processedFileEventIdRef = useRef<number | null>(null)
   // Pull the backend fields used as effect dependencies out of the backend
@@ -56,7 +58,7 @@ export function useFileChangeDetection(
     )
 
     for (const tab of openTabs) {
-      if (tab.kind === 'settings' || tab.kind === 'preview') continue
+      if (tab.kind === 'settings' || tab.kind === 'preview' || tab.kind === 'agent-diff') continue
       if (!changedPaths.has(tab.path) || tab.unsaved) continue
       readFile(tab.path, tab.workspaceId)
         .then((file) => {
@@ -77,7 +79,20 @@ export function useFileChangeDetection(
             ),
           )
         })
-        .catch(() => {})
+        .catch((error) => {
+          if (!(error instanceof ApiError) || error.status !== 404) return
+          // Reverting an agent-created file restores nonexistence. Drop a clean
+          // stale tab instead of leaving a buffer that can only fail on save.
+          setOpenTabs((currentTabs) => {
+            const index = currentTabs.findIndex((currentTab) => currentTab.id === tab.id)
+            if (index === -1 || currentTabs[index].unsaved) return currentTabs
+            const next = currentTabs.filter((currentTab) => currentTab.id !== tab.id)
+            setActiveTabId((active) =>
+              active === tab.id ? (next[Math.max(0, index - 1)]?.id ?? null) : active,
+            )
+            return next
+          })
+        })
     }
-  }, [events, activeWorkspace, readFile, openTabs, setOpenTabs])
+  }, [events, activeWorkspace, readFile, openTabs, setOpenTabs, setActiveTabId])
 }

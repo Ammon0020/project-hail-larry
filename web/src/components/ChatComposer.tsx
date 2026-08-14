@@ -3,7 +3,9 @@ import { Plus, ArrowUp, Square, X, Loader2, Wrench, Users, Info } from 'lucide-r
 import { cn } from '@/lib/utils'
 import { type ModelOption } from '@/lib/modelPrefs'
 import { type ContextUsage } from '@/lib/contextUsage'
+import type { EditedFile } from '@/types'
 import { McpPopout } from './chat/McpPopout'
+import { EditedFilesPopup } from './chat/EditedFilesPopup'
 import { ModelSelector } from './chat/ModelSelector'
 import { ContextUsageRing } from './chat/ContextUsageRing'
 
@@ -61,6 +63,18 @@ interface ChatComposerProps {
   /** Latest context-usage for the active session (from `UsageUpdated` events).
    *  Null until the agent reports its first `usage_update`. */
   contextUsage?: ContextUsage | null
+  /** Edited files for the active session (empty = no popup). */
+  editedFiles?: EditedFile[]
+  /** Accept edits for a file (client-side dismiss). */
+  onAcceptEditedFile?: (path: string) => void
+  /** Revert edits for a file (calls API). */
+  onRevertEditedFile?: (path: string) => void
+  /** Open the agent diff viewer for a file. */
+  onOpenEditedFileDiff?: (path: string) => void
+  /** Path currently being accepted, used to disable its popup row. */
+  acceptingEditedFilePath?: string | null
+  /** Path currently being reverted, used to disable its popup row. */
+  revertingEditedFilePath?: string | null
 }
 
 /**
@@ -102,6 +116,12 @@ export function ChatComposer({
   onProfileChange,
   profileAccessNotice,
   contextUsage,
+  editedFiles,
+  onAcceptEditedFile,
+  onRevertEditedFile,
+  onOpenEditedFileDiff,
+  acceptingEditedFilePath,
+  revertingEditedFilePath,
 }: ChatComposerProps) {
   // Tools popout visibility — toggled by the Wrench button, closed by
   // outside-click/Escape inside McpPopout.
@@ -134,30 +154,30 @@ export function ChatComposer({
   return (
     // Outer wrapper — no mobile bottom padding here anymore; that moved to
     // WorkspaceBar so the bottom-nav layout can own its own spacing.
-    <div className="pt-2.5 px-2.5 pb-0 lg:pt-3 lg:px-3 lg:pb-0 shrink-0 border-t border-border/50">
+    <div className="shrink-0 border-t border-border/50 px-2.5 pt-2.5 pb-0 lg:px-3 lg:pt-3 lg:pb-0">
       {/* Pending attachment previews — above the card so the card stays clean. */}
       {pendingPreviews.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-2">
+        <div className="mb-2 flex flex-wrap gap-2">
           {pendingPreviews.map((preview, i) => (
             <div
               key={`${preview.url}-${i}`}
-              className="relative group flex items-center gap-2 rounded-lg border border-border bg-muted px-2 py-1.5 pr-7 max-w-[180px]"
+              className="group relative flex max-w-45 items-center gap-2 rounded-lg border border-border bg-muted px-2 py-1.5 pr-7"
             >
               <img
                 src={preview.url}
                 alt={preview.name}
-                className="w-8 h-8 rounded object-cover shrink-0 border border-border"
+                className="size-8 shrink-0 rounded border border-border object-cover"
               />
-              <span className="text-xs text-muted-foreground truncate" title={preview.name}>
+              <span className="truncate text-xs text-muted-foreground" title={preview.name}>
                 {preview.name}
               </span>
               <button
                 onClick={() => onRemoveAttachment(i)}
-                className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition"
+                className="absolute top-1/2 right-1 -translate-y-1/2 rounded p-0.5 text-muted-foreground transition hover:bg-accent hover:text-foreground"
                 title="Remove attachment"
                 aria-label={`Remove ${preview.name}`}
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="size-3.5" />
               </button>
             </div>
           ))}
@@ -177,14 +197,14 @@ export function ChatComposer({
           not, and ACP cannot change that in place. */}
       {profileAccessNotice && (
         <div className="mb-2 flex items-start gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground">
-          <Info className="mt-px w-3 h-3 shrink-0" strokeWidth={2} />
+          <Info className="mt-px size-3 shrink-0" strokeWidth={2} />
           <span>{profileAccessNotice}</span>
         </div>
       )}
 
       {/* Composer card — textarea on top, actions row below. Focus reveals a
           subtle border (transparent → border). No divider; gap-3 spaces them. */}
-      <div className="bg-input rounded-xl px-3 pt-2 pb-1 flex flex-col gap-1.5 border border-transparent focus-within:border-border transition-colors">
+      <div className="flex flex-col gap-1.5 rounded-xl border border-transparent bg-input px-3 pt-2 pb-1 transition-colors focus-within:border-border">
         <textarea
           ref={textareaRef}
           value={input}
@@ -193,7 +213,7 @@ export function ChatComposer({
           placeholder="Type @ to bring in another conversation"
           disabled={disabled}
           rows={1}
-          className="w-full bg-transparent border-0 outline-none text-[13px] text-foreground placeholder:text-muted-foreground resize-none py-1 disabled:opacity-60 disabled:cursor-not-allowed"
+          className="w-full resize-none border-0 bg-transparent py-1 text-[13px] text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60"
         />
 
         {/* Actions row: [attach|Tools group] [profile] [model] ... [send/stop] */}
@@ -202,19 +222,19 @@ export function ChatComposer({
           <div className="flex items-center gap-px">
             {/* Button group: Plus (attach) + Tools (MCP toggle). The McpPopout
                 is anchored to this relative container. */}
-            <div className="relative flex gap-px mr-1">
+            <div className="relative mr-1 flex gap-px">
               {/* Plus (attach) — translucent icon button. */}
               <button
                 onClick={onPickFiles}
                 disabled={uploading || disabled}
-                className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground bg-white/[0.04] hover:bg-white/[0.12] hover:text-foreground transition disabled:opacity-60 disabled:cursor-not-allowed"
+                className="flex size-7 items-center justify-center rounded-md bg-white/[0.04] text-muted-foreground transition hover:bg-white/[0.12] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                 title="Attach files"
                 aria-label="Attach files"
               >
                 {uploading ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  <Plus className="w-3.5 h-3.5" strokeWidth={2.5} />
+                  <Plus className="size-3.5" strokeWidth={2.5} />
                 )}
               </button>
 
@@ -235,14 +255,14 @@ export function ChatComposer({
                   })
                 }
                 className={cn(
-                  'w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground bg-white/[0.04] hover:bg-white/[0.12] hover:text-foreground transition',
+                  'flex size-7 items-center justify-center rounded-md bg-white/[0.04] text-muted-foreground transition hover:bg-white/[0.12] hover:text-foreground',
                   showMcpPopout && 'bg-white/[0.12] text-foreground',
                 )}
                 title="Select MCP tools"
                 aria-label="MCP tools"
                 aria-expanded={showMcpPopout}
               >
-                <Wrench className="w-3.5 h-3.5" strokeWidth={2.5} />
+                <Wrench className="size-3.5" strokeWidth={2.5} />
               </button>
 
               {/* MCP popout — absolute-positioned bottom-full left-0 by the
@@ -258,17 +278,29 @@ export function ChatComposer({
                   onOpenMcpSettings={onOpenMcpSettings}
                 />
               )}
+
+              {editedFiles && editedFiles.length > 0 && onAcceptEditedFile && onRevertEditedFile && onOpenEditedFileDiff && (
+                <EditedFilesPopup
+                  editedFiles={editedFiles}
+                  onAccept={onAcceptEditedFile}
+                  onRevert={onRevertEditedFile}
+                  onOpenDiff={onOpenEditedFileDiff}
+                  acceptingPath={acceptingEditedFilePath}
+                  revertingPath={revertingEditedFilePath}
+                  onCloseFocus={() => textareaRef.current?.focus()}
+                />
+              )}
             </div>
 
             {/* Profile selector hitbox — options sourced from GET /api/profiles.
                 Native <select> overlaid transparently on a styled label. The
                 label text is hidden on narrow screens (icon-only). */}
             <div
-              className="relative flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer text-muted-foreground hover:bg-white/[0.04] hover:text-foreground transition-colors"
+              className="relative flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground"
               title="Profile context"
             >
-              <Users className="w-3.5 h-3.5" strokeWidth={2} />
-              <span className="text-[13px] pointer-events-none max-[500px]:hidden">
+              <Users className="size-3.5" strokeWidth={2} />
+              <span className="pointer-events-none text-[13px] max-[500px]:hidden">
                 {profiles.find((p) => p.id === selectedProfileId)?.label ?? selectedProfileId}
               </span>
               <select
@@ -277,7 +309,7 @@ export function ChatComposer({
                 disabled={profiles.length === 0}
                 aria-label="Profile"
                 aria-haspopup="listbox"
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent disabled:cursor-not-allowed"
+                className="absolute inset-0 size-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed"
               >
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -301,26 +333,26 @@ export function ChatComposer({
               actions row. The ring is a standalone 28px circle (same size as
               the send button) showing context-window fill from ACP
               `usage_update` events. Send/Stop is the circular button. */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex shrink-0 items-center gap-1.5">
             <ContextUsageRing usage={contextUsage ?? null} />
             {agentRunning ? (
               <button
                 onClick={onStop}
-                className="flex items-center justify-center w-7 h-7 rounded-full bg-destructive hover:bg-destructive/90 transition shrink-0"
+                className="flex size-7 shrink-0 items-center justify-center rounded-full bg-destructive transition hover:bg-destructive/90"
                 title="Stop"
                 aria-label="Stop"
               >
-                <Square className="w-3 h-3 text-destructive-foreground" />
+                <Square className="size-3 text-destructive-foreground" />
               </button>
             ) : (
               <button
                 onClick={onSend}
                 disabled={!canSend}
-                className="w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:bg-white/[0.06] hover:text-foreground transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-white/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 title="Send message"
                 aria-label="Send message"
               >
-                <ArrowUp className="w-[15px] h-[15px]" strokeWidth={2} />
+                <ArrowUp className="size-[15px]" strokeWidth={2} />
               </button>
             )}
           </div>

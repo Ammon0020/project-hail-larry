@@ -9,7 +9,7 @@ import type { Tab } from '@/types'
  * A transient *file* preview (`isPreview`) is different — it is a real file and
  * is kept, flag intact, so the preview slot survives a reload.
  */
-const EPHEMERAL_KINDS = new Set(['settings', 'preview'])
+const EPHEMERAL_KINDS = new Set(['settings', 'preview', 'agent-diff'])
 
 /**
  * Unsaved buffers for workspaces the user is not currently looking at.

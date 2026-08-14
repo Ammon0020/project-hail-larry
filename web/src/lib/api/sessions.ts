@@ -57,6 +57,32 @@ export function getEditedFiles(sessionId: string) {
   return apiFetch<EditedFile[]>(`/sessions/${sessionId}/edited-files`)
 }
 
+/** GET /api/sessions/{id}/edited-files/diff?path= — pre-edit vs current content
+ *  for the agent diff viewer. Returns 404 if no cached pre-edit content. */
+export function getEditedFileDiff(sessionId: string, path: string) {
+  return apiFetch<{ path: string; base: string; head: string; truncated: boolean }>(
+    `/sessions/${sessionId}/edited-files/diff?path=${encodeURIComponent(path)}`,
+  )
+}
+
+/** POST /api/sessions/{id}/edited-files/revert?path= — restore pre-edit content
+ *  for a file. Removes the cache entry on success. */
+export function revertEditedFile(sessionId: string, path: string) {
+  return apiFetch<{ path: string; reverted: boolean }>(
+    `/sessions/${sessionId}/edited-files/revert?path=${encodeURIComponent(path)}`,
+    { method: 'POST' },
+  )
+}
+
+/** POST /api/sessions/{id}/edited-files/accept?path= — dismiss a reviewed edit
+ *  without changing its current on-disk content. */
+export function acceptEditedFile(sessionId: string, path: string) {
+  return apiFetch<{ path: string; accepted: boolean }>(
+    `/sessions/${sessionId}/edited-files/accept?path=${encodeURIComponent(path)}`,
+    { method: 'POST' },
+  )
+}
+
 // Agents & Sessions
 export function listAgents() {
   return apiFetch<Agent[]>('/agents')

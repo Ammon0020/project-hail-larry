@@ -27,7 +27,13 @@ describe('aggregateEditedFiles', () => {
   it('returns a single written file', () => {
     const files = aggregateEditedFiles([event({ id: 7, target: 'src/app.ts' })])
 
-    expect(files).toEqual([{ path: 'src/app.ts', eventId: 7, timestamp: '' }])
+    expect(files).toEqual([{
+      path: 'src/app.ts',
+      eventId: 7,
+      timestamp: '',
+      addedLines: 0,
+      removedLines: 0,
+    }])
   })
 
   it('sorts files alphabetically by path', () => {
@@ -38,9 +44,9 @@ describe('aggregateEditedFiles', () => {
     ])
 
     expect(files).toEqual([
-      { path: 'README.md', eventId: 3, timestamp: '' },
-      { path: 'src/alpha.ts', eventId: 2, timestamp: '' },
-      { path: 'src/zebra.ts', eventId: 1, timestamp: '' },
+      { path: 'README.md', eventId: 3, timestamp: '', addedLines: 0, removedLines: 0 },
+      { path: 'src/alpha.ts', eventId: 2, timestamp: '', addedLines: 0, removedLines: 0 },
+      { path: 'src/zebra.ts', eventId: 1, timestamp: '', addedLines: 0, removedLines: 0 },
     ])
   })
 
@@ -51,13 +57,25 @@ describe('aggregateEditedFiles', () => {
       event({ id: 12, target: 'src/app.ts' }),
     ])
 
-    expect(files).toEqual([{ path: 'src/app.ts', eventId: 12, timestamp: '' }])
+    expect(files).toEqual([{
+      path: 'src/app.ts',
+      eventId: 12,
+      timestamp: '',
+      addedLines: 0,
+      removedLines: 0,
+    }])
   })
 
   it('treats events without IDs as event ID 0', () => {
     const files = aggregateEditedFiles([event({ target: 'src/app.ts' })])
 
-    expect(files).toEqual([{ path: 'src/app.ts', eventId: 0, timestamp: '' }])
+    expect(files).toEqual([{
+      path: 'src/app.ts',
+      eventId: 0,
+      timestamp: '',
+      addedLines: 0,
+      removedLines: 0,
+    }])
   })
 
   it('skips FileWritten events without a target path', () => {
@@ -67,6 +85,12 @@ describe('aggregateEditedFiles', () => {
       event({ id: 3, target: 'src/app.ts' }),
     ])
 
-    expect(files).toEqual([{ path: 'src/app.ts', eventId: 3, timestamp: '' }])
+    expect(files).toEqual([{
+      path: 'src/app.ts',
+      eventId: 3,
+      timestamp: '',
+      addedLines: 0,
+      removedLines: 0,
+    }])
   })
 })

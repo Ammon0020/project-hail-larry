@@ -55,8 +55,10 @@ export interface Tab {
    *    git changes. `path` is the file relative to the workspace root;
    *    `staged` selects the index diff vs. the working-tree diff.
    *  - `'git-commit-diff'`: multi-file commit diff view; `commitOid` identifies
-   *    the commit and `path` is a display label. */
-  kind?: 'file' | 'settings' | 'preview' | 'git-diff' | 'git-commit-diff'
+   *    the commit and `path` is a display label.
+   *  - `'agent-diff'`: a temporary pre-edit versus current-content diff for a
+   *    file written by an agent. */
+  kind?: 'file' | 'settings' | 'preview' | 'git-diff' | 'git-commit-diff' | 'agent-diff'
   /** True when the file is binary (image, executable, archive, etc.) and
    *  cannot be edited as text. The editor renders a placeholder or image
    *  preview instead of a CodeMirror instance. */
@@ -80,6 +82,12 @@ export interface Tab {
   staged?: boolean
   /** For `kind: 'git-commit-diff'` tabs: the commit to inspect. */
   commitOid?: string
+  /** For `kind: 'agent-diff'` tabs: content before the agent's write. */
+  diffBase?: string
+  /** For `kind: 'agent-diff'` tabs: content after the agent's write. */
+  diffHead?: string
+  /** For `kind: 'agent-diff'` tabs: whether the backend capped the diff. */
+  diffTruncated?: boolean
 }
 
 /** A registered AI agent (Blueprint Sec 5 — agent registration). */
@@ -259,15 +267,19 @@ export interface AppEvent {
   costCurrency?: string
 }
 
-/** A file written by an agent during a session, aggregated from `FileWritten`
- *  events. Deduplicated by path — the latest write wins. */
+/** A file written by an agent and still pending review in the session cache.
+ *  Deduplicated by path — the latest write wins. */
 export interface EditedFile {
   /** Workspace-relative path of the written file. */
   path: string
-  /** Monotonic event ID of the latest `FileWritten` for this path. */
+  /** Latest recent `FileWritten` event ID, or 0 if metadata was unavailable. */
   eventId: number
   /** Timestamp of the latest write (ISO 8601). */
   timestamp: string
+  /** Lines added by the agent's write (popup +/- display). */
+  addedLines: number
+  /** Lines removed by the agent's write (popup +/- display). */
+  removedLines: number
 }
 
 /** Left panel view options (Blueprint Sec 17 — activity bar). */

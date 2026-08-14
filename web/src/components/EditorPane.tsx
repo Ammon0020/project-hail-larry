@@ -15,6 +15,7 @@ import { FileViewer } from '@/components/FileViewer'
 import { BrowsePreview } from '@/components/BrowsePreview'
 import { GitDiffTab } from '@/components/git/GitDiffTab'
 import { GitCommitDiffTab } from '@/components/git/GitCommitDiffTab'
+import { AgentDiffTab } from '@/components/git/AgentDiffTab'
 import { StatusBar } from '@/components/StatusBar'
 import { useResolvedTheme } from '@/hooks/useTheme'
 import { TabBar } from './TabBar'
@@ -480,14 +481,14 @@ export function EditorPane({
   // Signature omits content so typing does not rebuild extension arrays.
   // Tab switch only changes activeTabId, so this memo stays stable.
   const editorTabsSig = tabs
-    .filter((t) => t.kind !== 'settings' && t.kind !== 'preview' && t.kind !== 'git-diff')
+    .filter((t) => t.kind !== 'settings' && t.kind !== 'preview' && t.kind !== 'git-diff' && t.kind !== 'agent-diff')
     .filter((t) => !(t.isBinary || (t.previewable && t.viewMode === 'preview')))
     .map((t) => `${t.id}\0${t.path}\0${t.language ?? ''}`)
     .join('\n')
   const extensionsByTabId = useMemo(() => {
     const map: Record<string, Extension[]> = {}
     for (const tab of tabs) {
-      if (tab.kind === 'settings' || tab.kind === 'preview' || tab.kind === 'git-diff') continue
+      if (tab.kind === 'settings' || tab.kind === 'preview' || tab.kind === 'git-diff' || tab.kind === 'agent-diff') continue
       if (tab.isBinary || (tab.previewable && tab.viewMode === 'preview')) continue
       // eslint-disable-next-line react-hooks/refs -- refs only read in keybinding/updateListener handlers, not during render
       map[tab.id] = getExtensions(tab.path)
@@ -499,7 +500,7 @@ export function EditorPane({
   return (
     <main
       className={cn(
-        'flex-1 flex flex-col min-w-0 h-full bg-editor relative pb-16 lg:pb-0 @container',
+        '@container relative flex h-full min-w-0 flex-1 flex-col bg-editor pb-16 lg:pb-0',
         visible ? 'flex' : 'hidden',
       )}
     >
@@ -543,9 +544,9 @@ export function EditorPane({
           discards local edits and fetches the on-disk version. Uses the
           warning semantic token so it adapts to the active theme. */}
       {activeTab?.changedOnDisk && activeTab.kind !== 'settings' && activeTab.kind !== 'preview' && (
-        <div role="alert" className="flex items-center justify-between gap-2 bg-warning/10 border-b border-warning/40 px-3 py-1.5 text-xs text-warning shrink-0">
+        <div role="alert" className="flex shrink-0 items-center justify-between gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1.5 text-xs text-warning">
           <span className="flex items-center gap-1.5">
-            <TriangleAlert className="w-3.5 h-3.5" />
+            <TriangleAlert className="size-3.5" />
             This file changed on disk{activeTab.unsaved ? ' and you have unsaved edits' : ''}.
           </span>
           <button
@@ -555,15 +556,15 @@ export function EditorPane({
               if (activeTab.unsaved && !window.confirm('Reload from disk? This discards your unsaved edits.')) return
               onReloadTab?.(activeTab.id)
             }}
-            className="flex items-center gap-1 font-medium text-warning bg-warning/15 hover:bg-warning/25 px-2 py-0.5 rounded transition"
+            className="flex items-center gap-1 rounded bg-warning/15 px-2 py-0.5 font-medium text-warning transition hover:bg-warning/25"
           >
-            <RefreshCw className="w-3 h-3" aria-hidden="true" /> Reload
+            <RefreshCw className="size-3" aria-hidden="true" /> Reload
           </button>
         </div>
       )}
 
       {/* CodeMirror 6 Editor, Settings Panel, or Empty State */}
-      <div className="flex-1 overflow-hidden bg-editor relative">
+      <div className="relative flex-1 overflow-hidden bg-editor">
         {tabs.some(t => t.kind === 'settings') && (
           <div className={cn("absolute inset-0 bg-background", activeTab?.kind === 'settings' ? 'block' : 'hidden')}>
             {settingsProps && <SettingsPanel {...settingsProps} />}
@@ -597,6 +598,20 @@ export function EditorPane({
           </div>
         ))}
 
+        {tabs.filter(t => t.kind === 'agent-diff').map(tab => (
+          <div
+            key={tab.id}
+            className={cn('absolute inset-0', activeTabId === tab.id ? 'block' : 'hidden')}
+          >
+            <AgentDiffTab
+              path={tab.path}
+              base={tab.diffBase ?? ''}
+              head={tab.diffHead ?? ''}
+              truncated={tab.diffTruncated}
+            />
+          </div>
+        ))}
+
         {tabs.filter(t => t.kind === 'git-commit-diff').map(tab => (
           <div
             key={tab.id}
@@ -609,7 +624,7 @@ export function EditorPane({
           </div>
         ))}
 
-        {tabs.filter(t => t.kind !== 'settings' && t.kind !== 'preview' && t.kind !== 'git-diff' && t.kind !== 'git-commit-diff').map(tab => {
+        {tabs.filter(t => t.kind !== 'settings' && t.kind !== 'preview' && t.kind !== 'git-diff' && t.kind !== 'git-commit-diff' && t.kind !== 'agent-diff').map(tab => {
           // Binary files always go to FileViewer. Text-preview files (SVG,
           // CSV, HTML, OBJ, etc.) go to FileViewer only when the user has
           // toggled to preview mode; otherwise they edit in CodeMirror.
@@ -639,9 +654,9 @@ export function EditorPane({
         })}
 
         {tabs.length === 0 && (
-          <div className="flex items-center justify-center h-full">
+          <div className="flex h-full items-center justify-center">
             <div className="text-center text-muted-foreground">
-              <FileText className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
+              <FileText className="mx-auto mb-3 size-12 text-muted-foreground" />
               <p className="text-sm">Open a file from the explorer</p>
             </div>
           </div>

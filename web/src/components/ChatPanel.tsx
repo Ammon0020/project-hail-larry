@@ -25,7 +25,7 @@ import { useSendingState } from '@/hooks/useSendingState'
 import { useStuckAgentWarning } from '@/hooks/useStuckAgentWarning'
 import { pushRecentModel } from '@/lib/modelPrefs'
 import { mergeChatEvents } from '@/lib/eventMerging'
-import type { AppEvent, Agent, Attachment, Session } from '@/types'
+import type { AppEvent, Agent, Attachment, EditedFile, Session } from '@/types'
 import type { PendingPermission } from '@/lib/api'
 import { safeStorage } from '@/lib/safeStorage'
 
@@ -88,6 +88,12 @@ export function ChatPanel({
   workspaceId,
   style,
   onOpenMcpSettings,
+  editedFiles,
+  onAcceptEditedFile,
+  onRevertEditedFile,
+  onOpenEditedFileDiff,
+  acceptingEditedFilePath,
+  revertingEditedFilePath,
 }: {
   events: AppEvent[]
   /** All events across all sessions — used only to compute the running
@@ -123,6 +129,13 @@ export function ChatPanel({
    * App → ChatComposer → McpPopout Settings icon.
    */
   onOpenMcpSettings?: () => void
+  /** Agent-written files shown in the composer review popover. */
+  editedFiles?: EditedFile[]
+  onAcceptEditedFile?: (path: string) => void
+  onRevertEditedFile?: (path: string) => void
+  onOpenEditedFileDiff?: (path: string) => void
+  acceptingEditedFilePath?: string | null
+  revertingEditedFilePath?: string | null
 }) {
   const {
     onSendMessage,
@@ -560,7 +573,7 @@ export function ChatPanel({
   return (
     <aside
       className={cn(
-        'flex-col h-full shrink-0 w-full bg-background border-l border-border lg:w-96',
+        'size-full shrink-0 flex-col border-l border-border bg-background lg:w-96',
         visible ? 'flex' : 'hidden',
         'absolute inset-0 z-30 lg:relative lg:inset-auto lg:z-auto',
       )}
@@ -614,9 +627,9 @@ export function ChatPanel({
       {!connected && (
         <Banner
           variant="warning"
-          className="border-b px-3 py-2 flex items-center gap-2 shrink-0"
+          className="flex shrink-0 items-center gap-2 border-b px-3 py-2"
         >
-          <WifiOff className="w-3.5 h-3.5" /> Reconnecting to daemon…
+          <WifiOff className="size-3.5" /> Reconnecting to daemon…
         </Banner>
       )}
 
@@ -624,8 +637,8 @@ export function ChatPanel({
           off before a retry (send prompt, upload, model/profile switch).
           Kept minimal: a small spinning loader + label, not a full banner. */}
       {retrying && (
-        <div className="border-b border-border px-3 py-1.5 flex items-center gap-2 shrink-0 text-xs text-muted-foreground">
-          <Loader2 className="w-3 h-3 animate-spin" /> Retrying…
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+          <Loader2 className="size-3 animate-spin" /> Retrying…
         </div>
       )}
 
@@ -633,9 +646,9 @@ export function ChatPanel({
       {mcpError && (
         <Banner
           variant="error"
-          className="border-b px-3 py-2 flex items-center gap-2 shrink-0"
+          className="flex shrink-0 items-center gap-2 border-b px-3 py-2"
         >
-          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <AlertCircle className="size-3.5 shrink-0" />
           <span className="flex-1">{mcpError}</span>
           <button
             type="button"
@@ -643,7 +656,7 @@ export function ChatPanel({
             onClick={() => setMcpError(null)}
             className="hover:opacity-80"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="size-3.5" />
           </button>
         </Banner>
       )}
@@ -653,23 +666,23 @@ export function ChatPanel({
       {stuckAgent && activeSessionId && (
         <Banner
           variant="warning"
-          className="border-b px-3 py-2 flex items-center gap-2 shrink-0"
+          className="flex shrink-0 items-center gap-2 border-b px-3 py-2"
         >
-          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <AlertCircle className="size-3.5 shrink-0" />
           <span className="flex-1">
             Agent seems unresponsive. No activity for {stuckSeconds}s.
           </span>
           <button
             type="button"
             onClick={waitStuckAgent}
-            className="hover:opacity-80 underline underline-offset-2"
+            className="underline underline-offset-2 hover:opacity-80"
           >
             Wait
           </button>
           <button
             type="button"
             onClick={handleStop}
-            className="hover:opacity-80 underline underline-offset-2"
+            className="underline underline-offset-2 hover:opacity-80"
           >
             Interrupt
           </button>
@@ -720,6 +733,12 @@ export function ChatPanel({
         onProfileChange={handleProfileChange}
         profileAccessNotice={instructionsOnlyNotice}
         contextUsage={contextUsage}
+        editedFiles={editedFiles}
+        onAcceptEditedFile={onAcceptEditedFile}
+        onRevertEditedFile={onRevertEditedFile}
+        onOpenEditedFileDiff={onOpenEditedFileDiff}
+        acceptingEditedFilePath={acceptingEditedFilePath}
+        revertingEditedFilePath={revertingEditedFilePath}
       />
 
       <WorkspaceBar

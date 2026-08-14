@@ -48,8 +48,12 @@ export function useEditorTabHandlers({
 
   // ---- File operations ----
   const handleFileSelect = async (path: string): Promise<boolean> => {
-    // Check if tab already open (file tabs only — preview tabs share path)
-    const existing = openTabs.find((t) => t.path === path && t.kind !== 'preview')
+    // Check if a regular file tab is already open. Synthetic views (browse,
+    // git, and agent diffs) share a path but must not intercept a request to
+    // open the editable workspace file.
+    const existing = openTabs.find(
+      (tab) => tab.path === path && (tab.kind === undefined || tab.kind === 'file'),
+    )
     if (existing) {
       setActiveTabId(existing.id)
       if (!isDesktop) setMobileView('editor')
@@ -223,7 +227,9 @@ export function useEditorTabHandlers({
   // sets the line; otherwise loads the file first, then sets the line after
   // the content is available so the editor can resolve the line position.
   const handleSearchResultSelect = async (path: string, lineNumber: number): Promise<void> => {
-    const existing = openTabs.find((t) => t.path === path && t.kind !== 'preview')
+    const existing = openTabs.find(
+      (tab) => tab.path === path && (tab.kind === undefined || tab.kind === 'file'),
+    )
     if (existing) {
       setActiveTabId(existing.id)
     } else {

@@ -25,6 +25,10 @@ export function aggregateEditedFiles(events: AppEvent[]): EditedFile[] {
       // AppEvent does not carry a timestamp. The backend endpoint provides it;
       // WS-stream aggregation is used only for the path list and change signal.
       timestamp: '',
+      // The WS stream does not include a diff summary. The session endpoint
+      // enriches these values when available.
+      addedLines: 0,
+      removedLines: 0,
     }))
     .sort((a, b) => a.path.localeCompare(b.path))
 }

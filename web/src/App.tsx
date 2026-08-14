@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react'
 import { X, Wifi, WifiOff, Bot, Command, PanelLeft, FolderOpen, GitBranch, Search, Settings, Save } from 'lucide-react'
 import { useEditorSettings } from '@/hooks/useEditorSettings'
 import { LockScreen } from '@/components/LockScreen'
@@ -18,10 +18,11 @@ import { StatusBar } from '@/components/StatusBar'
 import { useBackend } from '@/hooks/useBackend'
 import { useTabManager } from '@/hooks/useTabManager'
 import { useEditorTabHandlers } from '@/hooks/useEditorTabHandlers'
+import { useEditedFiles } from '@/hooks/useEditedFiles'
 import { useGitState } from '@/hooks/useGitState'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useLayoutState } from '@/hooks/useLayoutState'
-import type { EditorSelectionInfo } from '@/lib/api'
+import { api, type EditorSelectionInfo } from '@/lib/api'
 import type { FileNode, FileTreeNode, AppEvent, Attachment, SessionStatus } from '@/types'
 import { safeStorage } from '@/lib/safeStorage'
 
@@ -122,7 +123,17 @@ export default function App() {
   // the backend object so the react-hooks/exhaustive-deps rule sees standalone
   // stable identifiers (the backend object literal is new each render, but the
   // action identities it carries are now stable via useCallback in useBackend).
-  const { loadSessionEvents, reportContext, saveFile, readFile } = backend
+  const { loadSessionEvents, reportContext, saveFile, readFile, refreshFileTree } = backend
+  const editedFiles = useEditedFiles(backend.events, activeSessionId)
+  const [acceptedEditedFiles, setAcceptedEditedFiles] = useState<Map<string, number>>(new Map())
+  const [acceptingEditedFile, setAcceptingEditedFile] = useState<{ sessionId: string; path: string } | null>(null)
+  const [revertingEditedFile, setRevertingEditedFile] = useState<{ sessionId: string; path: string } | null>(null)
+  const activeSessionIdRef = useRef(activeSessionId)
+  useLayoutEffect(() => {
+    // Layout timing closes the gap where a completed diff request could run
+    // after a session switch commit but before a passive effect updated this guard.
+    activeSessionIdRef.current = activeSessionId
+  }, [activeSessionId])
   const {
     openTabs,
     setOpenTabs,
@@ -322,15 +333,117 @@ export default function App() {
   }, [backend.fileTree])
 
   const commands: PaletteCommand[] = useMemo(() => [
-    { id: 'toggle-sidebar', label: 'Toggle Sidebar', icon: <PanelLeft className="w-4 h-4" />, action: () => toggleLeftPanel() },
-    { id: 'toggle-chat', label: 'Toggle Chat Panel', icon: <Bot className="w-4 h-4" />, action: () => toggleRightPanel() },
-    { id: 'open-explorer', label: 'Open Explorer', icon: <FolderOpen className="w-4 h-4" />, action: () => { setLeftPanel('files'); showLeftPanel() } },
-    { id: 'open-search', label: 'Open Search', icon: <Search className="w-4 h-4" />, action: () => { setLeftPanel('search'); showLeftPanel() } },
-    { id: 'open-source-control', label: 'Open Source Control', icon: <GitBranch className="w-4 h-4" />, action: () => { setLeftPanel('git'); showLeftPanel() } },
-    { id: 'open-settings', label: 'Open Settings', icon: <Settings className="w-4 h-4" />, action: () => openSettingsTab() },
-    { id: 'save-file', label: 'Save File', icon: <Save className="w-4 h-4" />, action: () => handleSave() },
-    { id: 'close-tab', label: 'Close Active Tab', icon: <X className="w-4 h-4" />, action: () => { if (activeTabId) handleTabClose(activeTabId) } },
+    { id: 'toggle-sidebar', label: 'Toggle Sidebar', icon: <PanelLeft className="size-4" />, action: () => toggleLeftPanel() },
+    { id: 'toggle-chat', label: 'Toggle Chat Panel', icon: <Bot className="size-4" />, action: () => toggleRightPanel() },
+    { id: 'open-explorer', label: 'Open Explorer', icon: <FolderOpen className="size-4" />, action: () => { setLeftPanel('files'); showLeftPanel() } },
+    { id: 'open-search', label: 'Open Search', icon: <Search className="size-4" />, action: () => { setLeftPanel('search'); showLeftPanel() } },
+    { id: 'open-source-control', label: 'Open Source Control', icon: <GitBranch className="size-4" />, action: () => { setLeftPanel('git'); showLeftPanel() } },
+    { id: 'open-settings', label: 'Open Settings', icon: <Settings className="size-4" />, action: () => openSettingsTab() },
+    { id: 'save-file', label: 'Save File', icon: <Save className="size-4" />, action: () => handleSave() },
+    { id: 'close-tab', label: 'Close Active Tab', icon: <X className="size-4" />, action: () => { if (activeTabId) handleTabClose(activeTabId) } },
   ], [activeTabId, toggleLeftPanel, toggleRightPanel, showLeftPanel, setLeftPanel, openSettingsTab, handleSave, handleTabClose])
+
+  // ---- Edited-files popup handlers (before the early return so hooks
+  // are not conditional — react-hooks/rules-of-hooks) ----
+  const closeAgentDiffTab = useCallback((sessionId: string, path: string) => {
+    const tabId = `agent-diff:${sessionId}:${path}`
+    setOpenTabs((previous) => {
+      const index = previous.findIndex((tab) => tab.id === tabId)
+      if (index === -1) return previous
+      const next = previous.filter((tab) => tab.id !== tabId)
+      setActiveTabId((active) =>
+        active === tabId ? (next[Math.max(0, index - 1)]?.id ?? null) : active,
+      )
+      return next
+    })
+  }, [setActiveTabId, setOpenTabs])
+
+  const handleAcceptEditedFile = useCallback(async (path: string) => {
+    const sessionId = activeSessionId
+    if (!sessionId || acceptingEditedFile || revertingEditedFile) return
+    const eventId = editedFiles.find((file) => file.path === path)?.eventId ?? 0
+    setAcceptingEditedFile({ sessionId, path })
+    try {
+      const result = await api.acceptEditedFile(sessionId, path)
+      if (!result.accepted) throw new Error('The edited file could not be accepted.')
+      setAcceptedEditedFiles((previous) => {
+        const next = new Map(previous)
+        next.set(`${sessionId}\0${path}`, eventId)
+        return next
+      })
+      closeAgentDiffTab(sessionId, path)
+    } catch (error) {
+      console.error('Failed to accept agent edits:', error)
+      window.alert(error instanceof Error ? error.message : 'Failed to accept agent edits')
+    } finally {
+      setAcceptingEditedFile((current) =>
+        current?.sessionId === sessionId && current.path === path ? null : current,
+      )
+    }
+  }, [acceptingEditedFile, activeSessionId, closeAgentDiffTab, editedFiles, revertingEditedFile])
+
+  const handleRevertEditedFile = useCallback(async (path: string) => {
+    const sessionId = activeSessionId
+    if (!sessionId || acceptingEditedFile || revertingEditedFile) return
+    const eventId = editedFiles.find((file) => file.path === path)?.eventId ?? 0
+    setRevertingEditedFile({ sessionId, path })
+    try {
+      const result = await api.revertEditedFile(sessionId, path)
+      if (!result.reverted) {
+        throw new Error('The file could not be reverted because no cached edit was found.')
+      }
+      setAcceptedEditedFiles((previous) => {
+        const next = new Map(previous)
+        next.set(`${sessionId}\0${path}`, eventId)
+        return next
+      })
+      closeAgentDiffTab(sessionId, path)
+      await refreshFileTree()
+    } catch (error) {
+      console.error('Failed to revert agent edits:', error)
+      window.alert(error instanceof Error ? error.message : 'Failed to revert agent edits')
+    } finally {
+      setRevertingEditedFile((current) =>
+        current?.sessionId === sessionId && current.path === path ? null : current,
+      )
+    }
+  }, [acceptingEditedFile, activeSessionId, closeAgentDiffTab, editedFiles, refreshFileTree, revertingEditedFile])
+
+  const handleOpenEditedFileDiff = useCallback(async (path: string) => {
+    const sessionId = activeSessionId
+    if (!sessionId) return
+    try {
+      const diff = await api.getEditedFileDiff(sessionId, path)
+      // A response for a conversation the user has since left must not steal
+      // focus or create a stale preview tab in the new conversation.
+      if (activeSessionIdRef.current !== sessionId) return
+      const tabId = `agent-diff:${sessionId}:${path}`
+      const name = path.split(/[\\/]/).pop() || path
+      setOpenTabs((previous) => {
+        if (previous.some((tab) => tab.id === tabId)) return previous
+        return [...previous, {
+          id: tabId,
+          name: `Diff: ${name}`,
+          path,
+          content: '',
+          revision: 0,
+          unsaved: false,
+          language: '',
+          kind: 'agent-diff',
+          workspaceId: backend.activeWorkspace?.id,
+          diffBase: diff.base,
+          diffHead: diff.head,
+          diffTruncated: diff.truncated,
+          isPreview: true,
+        }]
+      })
+      setActiveTabId(tabId)
+      if (!isDesktop) setMobileView('editor')
+    } catch (error) {
+      console.error('Failed to load agent edit diff:', error)
+      window.alert(error instanceof Error ? error.message : 'Failed to load agent edit diff')
+    }
+  }, [activeSessionId, backend.activeWorkspace?.id, isDesktop, setActiveTabId, setMobileView, setOpenTabs])
 
   // ---- Lock screen for unpaired devices ----
   if (!paired) {
@@ -399,9 +512,13 @@ export default function App() {
   const sessionEvents = activeSessionId
     ? (backend.events as AppEvent[]).filter((e) => e.sessionId === activeSessionId)
     : []
+  const visibleEditedFiles = editedFiles.filter((file) => {
+    if (!activeSessionId) return false
+    return acceptedEditedFiles.get(`${activeSessionId}\0${file.path}`) !== file.eventId
+  })
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex flex-col bg-background text-foreground font-sans selection:bg-primary/30">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-background font-sans text-foreground selection:bg-primary/30">
       {/* Reconnecting banner — shown only after a prior successful connection
           drops (mid-session Wi-Fi loss). A cold-load failure does not set
           reconnecting, so the banner stays hidden on first load. The pulsing
@@ -410,23 +527,23 @@ export default function App() {
         <Banner
           variant={backend.reconnectFailed ? 'error' : 'info'}
           role={backend.reconnectFailed ? 'alert' : 'status'}
-          className="flex items-center gap-2 px-3 py-1.5 border-b shrink-0"
+          className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5"
         >
           {backend.reconnectFailed ? (
             <>
-              <WifiOff className="w-3.5 h-3.5 shrink-0" />
+              <WifiOff className="size-3.5 shrink-0" />
               <span>Connection lost — the backend has been unreachable for a while.</span>
               <button
                 type="button"
                 onClick={() => backend.reconnectNow()}
-                className="shrink-0 underline hover:no-underline transition"
+                className="shrink-0 underline transition hover:no-underline"
               >
                 Retry now
               </button>
             </>
           ) : (
             <>
-              <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/70 animate-pulse" />
+              <span className="inline-block size-2 animate-pulse rounded-full bg-muted-foreground/70" />
               Reconnecting…
             </>
           )}
@@ -438,37 +555,37 @@ export default function App() {
         <Banner
           variant="error"
           role="alert"
-          className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-destructive/20 shrink-0"
+          className="flex shrink-0 items-center justify-between gap-2 border-b border-destructive/20 px-3 py-1.5"
         >
           <span className="truncate">Save failed: {saveError}</span>
           <button
             type="button"
             onClick={() => setSaveError(null)}
-            className="shrink-0 text-destructive/70 hover:text-destructive transition"
+            className="shrink-0 text-destructive/70 transition hover:text-destructive"
             aria-label="Dismiss save error"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="size-3.5" />
           </button>
         </Banner>
       )}
       {/* Top Header Bar (Desktop only) */}
       {isDesktop && (
-        <div className="min-h-[36px] border-b border-border flex items-stretch bg-panel shrink-0 select-none">
+        <div className="flex min-h-9 shrink-0 items-stretch border-b border-border bg-panel select-none">
           {/* Left section: width matches ActivityBar + LeftSidebar */}
           <div
-            className="flex items-center justify-between pl-2 pr-3 border-r border-border shrink-0"
+            className="flex shrink-0 items-center justify-between border-r border-border pr-3 pl-2"
             style={{ width: leftPanelWidth + 48 }}
           >
             <div className={cn("flex w-full", leftPanelWidth === 0 ? "justify-center" : "justify-start")}>
               {leftPanelWidth === 0 ? (
                 <div
                   className={cn(
-                    'flex items-center justify-center w-5 h-5 rounded-full border border-none bg-transparent p-0 shrink-0 cursor-default',
+                    'flex size-5 shrink-0 cursor-default items-center justify-center rounded-full border border-none bg-transparent p-0',
                     backend.connected ? 'text-green-400' : 'text-muted-foreground'
                   )}
                   title={backend.connected ? 'Connected to backend' : 'Backend offline — reconnecting…'}
                 >
-                  {backend.connected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4 animate-pulse" />}
+                  {backend.connected ? <Wifi className="size-4" /> : <WifiOff className="size-4 animate-pulse" />}
                 </div>
               ) : (
                 <WorkspaceHeader
@@ -484,8 +601,8 @@ export default function App() {
           </div>
 
           {/* Right section: Tabs to the right */}
-          <div className="flex-1 flex items-stretch min-w-0 h-full @container">
-            <div className="flex-1 min-w-0 flex items-stretch">
+          <div className="@container flex h-full min-w-0 flex-1 items-stretch">
+            <div className="flex min-w-0 flex-1 items-stretch">
               <TabBar
                 tabs={openTabs}
                 activeTabId={activeTabId}
@@ -506,29 +623,29 @@ export default function App() {
               aria-pressed={rightPanelWidth > 0}
               onClick={toggleRightPanel}
               className={cn(
-                "shrink-0 self-center mr-2 w-7 h-6 rounded flex items-center justify-center transition",
+                "mr-2 flex h-6 w-7 shrink-0 items-center justify-center self-center rounded transition",
                 rightPanelWidth > 0
                   ? "bg-primary text-primary-foreground hover:bg-primary/90"
                   : "bg-secondary text-secondary-foreground hover:bg-accent",
               )}
             >
-              <Bot className="w-3.5 h-3.5" />
+              <Bot className="size-3.5" />
             </button>
             <button
               type="button"
               title="Command Palette (Ctrl+P)"
               aria-label="Command Palette"
               onClick={() => window.dispatchEvent(new CustomEvent('command-palette-open'))}
-              className="shrink-0 self-center mr-2 w-7 h-6 rounded flex items-center justify-center bg-secondary text-secondary-foreground hover:bg-accent transition"
+              className="mr-2 flex h-6 w-7 shrink-0 items-center justify-center self-center rounded bg-secondary text-secondary-foreground transition hover:bg-accent"
             >
-              <Command className="w-3.5 h-3.5" />
+              <Command className="size-3.5" />
             </button>
           </div>
         </div>
       )}
 
       {/* Main app shell — activity bar + sidebar + editor + chat (horizontal) */}
-      <div className="flex-1 min-h-0 flex">
+      <div className="flex min-h-0 flex-1">
       {/* Activity Bar (far left, icon-only — desktop only) */}
       <ActivityBar
         activePanel={leftPanel}
@@ -599,7 +716,7 @@ export default function App() {
             const step = e.key === 'ArrowRight' ? 16 : -16
             setLeftPanelWidth((w) => Math.min(LEFT_MAX, Math.max(LEFT_MIN, w + step)))
           }}
-          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 focus:outline-none focus-visible:bg-accent-foreground/30 transition-colors shrink-0 touch-none"
+          className="w-1 shrink-0 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-accent-foreground/20 focus:outline-none focus-visible:bg-accent-foreground/30"
           title="Drag to resize"
         />
       )}
@@ -678,7 +795,7 @@ export default function App() {
             const step = e.key === 'ArrowLeft' ? 16 : -16
             setRightPanelWidth((w) => Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, w + step)))
           }}
-          className="w-1 cursor-col-resize bg-transparent hover:bg-accent-foreground/20 focus:outline-none focus-visible:bg-accent-foreground/30 transition-colors shrink-0 touch-none"
+          className="w-1 shrink-0 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-accent-foreground/20 focus:outline-none focus-visible:bg-accent-foreground/30"
           title="Drag to resize"
         />
       )}
@@ -736,6 +853,16 @@ export default function App() {
           openSettingsTab('mcp-servers')
           if (!isDesktop) setMobileView('editor')
         }}
+        editedFiles={visibleEditedFiles}
+        onAcceptEditedFile={(path) => { void handleAcceptEditedFile(path) }}
+        onRevertEditedFile={(path) => { void handleRevertEditedFile(path) }}
+        onOpenEditedFileDiff={(path) => { void handleOpenEditedFileDiff(path) }}
+        acceptingEditedFilePath={
+          acceptingEditedFile?.sessionId === activeSessionId ? acceptingEditedFile.path : null
+        }
+        revertingEditedFilePath={
+          revertingEditedFile?.sessionId === activeSessionId ? revertingEditedFile.path : null
+        }
       />
       </ErrorBoundary>
 

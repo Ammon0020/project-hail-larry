@@ -73,7 +73,7 @@ export function useTabManager({
       // including the single preview slot; "Keep Open" is about promoting a
       // preview tab to persistent, not about reload survival.
       const persistable = openTabs.filter(
-        (t) => t.kind !== 'settings' && t.kind !== 'preview',
+        (t) => t.kind !== 'settings' && t.kind !== 'preview' && t.kind !== 'agent-diff',
       )
       safeStorage.setJson('lai:openTabs', persistable)
     }
@@ -233,13 +233,13 @@ export function useTabManager({
   useEffect(() => {
     if (!activeSessionId || !backend.activeWorkspace) return
     const openFiles = openTabs
-      .filter((t) => t.kind !== 'settings' && t.kind !== 'preview')
+      .filter((t) => t.kind !== 'settings' && t.kind !== 'preview' && t.kind !== 'agent-diff')
       .map((t) => t.path)
     const recentEdits = openTabs.filter((t) => t.unsaved).map((t) => t.path)
     reportContext(activeSessionId, openFiles, recentEdits, editorSelection)
   }, [openTabs, activeSessionId, editorSelection, backend.activeWorkspace, reportContext])
 
-  useFileChangeDetection(backend, openTabs, setOpenTabs)
+  useFileChangeDetection(backend, openTabs, setOpenTabs, setActiveTabId)
 
   // ---- Tab operations ----
   // Defined before the unpaired early return so the keyboard-shortcut
