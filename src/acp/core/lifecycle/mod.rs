@@ -121,6 +121,7 @@ impl Client {
                 workspaces: Arc::clone(&self.deps.workspaces),
                 stderr_tail: Arc::clone(&stderr_tail),
                 event_bus: Arc::clone(&self.deps.event_bus),
+                edited_files: self.deps.edited_files.clone(),
                 prompt_cancel: Arc::clone(&prompt_cancel),
                 mcp_config_path: self.deps.mcp_config_path.clone(),
                 profiles: Arc::clone(&self.pipeline.profiles),
@@ -300,6 +301,7 @@ impl Client {
                 workspaces: Arc::clone(&self.deps.workspaces),
                 stderr_tail: Arc::clone(&stderr_tail),
                 event_bus: Arc::clone(&self.deps.event_bus),
+                edited_files: self.deps.edited_files.clone(),
                 prompt_cancel: Arc::clone(&prompt_cancel),
                 mcp_config_path: self.deps.mcp_config_path.clone(),
                 profiles: Arc::clone(&self.pipeline.profiles),
@@ -374,6 +376,7 @@ impl Client {
         let sessions = self.sessions.clone();
         let permissions = Arc::clone(&self.deps.permissions);
         let conversation_store = self.deps.conversation_store.clone();
+        let edited_files = self.deps.edited_files.clone();
         let pipeline = Arc::clone(&self.pipeline);
         let session_id = session_id.to_string();
         let grace_period = self.deps.cancel_grace_period;
@@ -391,6 +394,7 @@ impl Client {
                 let _ = closed_rx.await;
             }
             pipeline.clear(&session_id);
+            edited_files.clear_session(&session_id).await;
         });
         Ok(())
     }
@@ -402,6 +406,7 @@ impl Client {
             }
             self.deps.permissions.clear_session(session_id);
             self.pipeline.clear(session_id);
+            self.deps.edited_files.clear_session(session_id).await;
             append_payload(
                 &self.deps.event_bus,
                 session_id,
@@ -424,6 +429,9 @@ impl Client {
         {
             let _ = closed_rx.await;
         }
+        // Actor close cancels and drains filesystem callbacks before cache
+        // cleanup, so a late write cannot recreate an entry for this session.
+        self.deps.edited_files.clear_session(session_id).await;
         self.pipeline.clear(session_id);
         append_payload(
             &self.deps.event_bus,

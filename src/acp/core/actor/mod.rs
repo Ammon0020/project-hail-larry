@@ -83,6 +83,7 @@ pub(super) struct Config {
     pub(super) permissions: Arc<dyn PermissionManager>,
     pub(super) workspaces: Arc<dyn WorkspaceManager>,
     pub(super) event_bus: SharedEventBus,
+    pub(super) edited_files: crate::acp::edited_files::EditedFileCache,
     pub(super) stderr_tail: Arc<Mutex<StderrTail>>,
     pub(super) prompt_cancel: Arc<std::sync::atomic::AtomicBool>,
     /// Optional `mcp.json` path passed through to session/new and session/load.
@@ -281,6 +282,7 @@ async fn run_actor_inner(
         workspaces: Arc::clone(&config.workspaces),
         permissions: Arc::clone(&config.permissions),
         event_bus: Arc::clone(&config.event_bus),
+        edited_files: config.edited_files.clone(),
         terminals: Arc::clone(&terminals),
         cancellation: handler_cancel.clone(),
         callback_slots: Arc::new(Semaphore::new(MAX_CALLBACK_TASKS)),

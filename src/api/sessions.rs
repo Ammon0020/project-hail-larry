@@ -10,10 +10,10 @@ use tracing::{error, warn};
 
 use crate::interfaces::{
     ACPClient, Attachment, EditedFile, Event, EventStore, EventType, ProfileTransitionPreview,
-    ProfileTransitionStrategy, SessionInfo,
+    ProfileTransitionStrategy, SessionInfo, WorkspaceManager,
 };
 
-use super::{app_error, decode_json_body, ApiResponseError, AppState};
+use super::{app_error, decode_json_body, required_query, ApiResponseError, AppState};
 
 /// Maximum characters allowed in a session name.
 const MAX_SESSION_NAME_CHARS: usize = 128;
@@ -45,18 +45,27 @@ pub(super) async fn get_session(
     state.acp.get_session_info(&id).map(Json).map_err(app_error)
 }
 
-/// `GET /api/sessions/{id}/edited-files` — files written by the agent in this
-/// session, aggregated from `FileWritten` events. Deduplicated by path; the
-/// latest write wins. Returns an empty array when no files have been written.
+/// `GET /api/sessions/{id}/edited-files` — agent-written files still pending
+/// review in the in-memory cache, enriched with recent `FileWritten` metadata.
+/// Deduplicated by path; the latest write wins.
 pub(super) async fn edited_files(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<EditedFile>>, ApiResponseError> {
-    // File writes are infrequent relative to chat and tool events, so one
-    // capped page usually covers a session without allowing unbounded queries.
+    // Validate the session before inspecting cache/event state so callers
+    // cannot probe stale cache keys belonging to an unknown session.
+    state.acp.get_session_info(&id).map_err(app_error)?;
+    let cached = state.edited_files.list(&id);
+    if cached.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+
+    // Read from the tail: a long conversation can exceed the event cap, and
+    // the metadata relevant to the in-memory cache is necessarily recent.
     let events = state
         .events
-        .query(&id, 0, crate::api::events::MAX_EVENT_LIMIT)
+        .store()
+        .query_before(&id, 0, crate::api::events::MAX_EVENT_LIMIT)
         .await
         .map_err(app_error)?;
 
@@ -76,17 +85,130 @@ pub(super) async fn edited_files(
         }
     }
 
-    let mut files: Vec<EditedFile> = latest
+    // The cache is authoritative for pending review. Accept/revert removes an
+    // entry, while a later agent write recreates it; durable historical events
+    // alone must not resurrect already-resolved edits.
+    let mut files: Vec<EditedFile> = cached
         .into_iter()
-        .map(|(path, event)| EditedFile {
-            path,
-            event_id: event.id,
-            timestamp: event.timestamp,
+        .map(|(path, added_lines, removed_lines, recorded_at)| {
+            // Do not attach an older accepted write's event to a newer cache
+            // entry when publication of the newer write failed.
+            let event = latest
+                .get(&path)
+                .filter(|event| event.timestamp >= recorded_at);
+            EditedFile {
+                path,
+                event_id: event.map_or(0, |event| event.id),
+                timestamp: event.map_or(recorded_at, |event| event.timestamp),
+                added_lines,
+                removed_lines,
+            }
         })
         .collect();
     // Stable output makes clients and tests deterministic.
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(Json(files))
+}
+
+#[derive(Deserialize)]
+pub(super) struct EditedFilePathQuery {
+    path: Option<String>,
+}
+
+/// `GET /api/sessions/{id}/edited-files/diff?path=` — pre-edit vs current
+/// content for the agent diff viewer. Returns 404 if no cached pre-edit
+/// content exists for this (session, path) pair.
+pub(super) async fn edited_file_diff(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<EditedFilePathQuery>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let path = required_query(query.path, "path")?;
+    let session = state.acp.get_session_info(&id).map_err(app_error)?;
+    let _write_guard = state.edited_files.lock_writes().await;
+    let entry = state
+        .edited_files
+        .get(&id, &path)
+        .ok_or_else(|| ApiResponseError::not_found(format!("no edited-file cache for {path}")))?;
+    let current = state
+        .workspaces
+        .read_file(&session.workspace, &path)
+        .await
+        .map_err(app_error)?;
+    Ok(Json(json!({
+        "path": path,
+        "base": entry.content_before,
+        "head": current.content,
+        "truncated": false,
+    })))
+}
+
+/// `POST /api/sessions/{id}/edited-files/revert?path=` — restore the pre-edit
+/// content for a file. Removes the cache entry on success.
+pub(super) async fn revert_edited_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<EditedFilePathQuery>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let path = required_query(query.path, "path")?;
+    let session = state.acp.get_session_info(&id).map_err(app_error)?;
+    let _write_guard = state.edited_files.lock_writes().await;
+    let entry = state
+        .edited_files
+        .get(&id, &path)
+        .ok_or_else(|| ApiResponseError::not_found(format!("no edited-file cache for {path}")))?;
+    if entry.existed_before {
+        state
+            .workspaces
+            .write_file(
+                &session.workspace,
+                &path,
+                &entry.content_before,
+                entry.written_revision,
+            )
+            .await
+            .map_err(app_error)?;
+    } else {
+        state
+            .workspaces
+            .delete_file_if_revision(&session.workspace, &path, entry.written_revision)
+            .await
+            .map_err(app_error)?;
+    }
+    let _ = state.edited_files.remove(&id, &path);
+    // Revert is an app-originated disk mutation, so fswatch suppresses its
+    // echo. Publish the same refresh signal used for ACP writes so other
+    // connected clients reload clean editor tabs and the pending cache list.
+    let mut event = Event::new(0, EventType::FileWritten, &id, chrono::Utc::now());
+    event.workspace_id = session.workspace;
+    event.target = path.clone();
+    if let Err(error) = state.events.append_and_publish(event).await {
+        tracing::error!(
+            session_id = %id,
+            path,
+            %error,
+            "failed to publish file refresh after edited-file revert"
+        );
+    }
+    Ok(Json(json!({ "path": path, "reverted": true })))
+}
+
+/// `POST /api/sessions/{id}/edited-files/accept?path=` — mark one cached edit
+/// as reviewed without changing its on-disk content.
+pub(super) async fn accept_edited_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<EditedFilePathQuery>,
+) -> Result<Json<Value>, ApiResponseError> {
+    let path = required_query(query.path, "path")?;
+    state.acp.get_session_info(&id).map_err(app_error)?;
+    let _write_guard = state.edited_files.lock_writes().await;
+    if !state.edited_files.remove(&id, &path) {
+        return Err(ApiResponseError::not_found(format!(
+            "no edited-file cache for {path}"
+        )));
+    }
+    Ok(Json(json!({ "path": path, "accepted": true })))
 }
 
 // ids are the natural name for these fields.
@@ -360,11 +482,13 @@ mod tests {
     use axum::body::{to_bytes, Body};
     use axum::extract::ConnectInfo;
     use axum::http::{header, Request, StatusCode};
+    use serde_json::Value;
     use std::net::SocketAddr;
     use tower::ServiceExt;
 
+    use crate::acp::{ConversationStore, StoredSession};
     use crate::api::{router, test_support, AppState};
-    use crate::interfaces::{EditedFile, Event, EventType};
+    use crate::interfaces::{EditedFile, Event, EventType, SessionInfo, WorkspaceManager};
 
     use super::{validate_session_name, MAX_SESSION_NAME_CHARS};
 
@@ -378,6 +502,39 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:9".parse().expect("peer address");
         request.extensions_mut().insert(ConnectInfo(addr));
         router(state).oneshot(request).await.expect("response")
+    }
+
+    async fn seed_dormant_session(
+        state: &AppState,
+        dir: &tempfile::TempDir,
+        session_id: &str,
+    ) -> String {
+        let workspace = state
+            .workspaces
+            .register(dir.path().to_str().expect("UTF-8 workspace path"))
+            .await
+            .expect("register workspace");
+        let now = chrono::Utc::now();
+        ConversationStore::new(Some(dir.path().join("conversations.json")))
+            .persist(&[StoredSession::from_parts(
+                SessionInfo {
+                    id: session_id.to_string(),
+                    name: "Edited file test".to_string(),
+                    status: "idle".to_string(),
+                    agent_id: "mock".to_string(),
+                    model_id: "mock-model".to_string(),
+                    workspace: workspace.id.clone(),
+                    created_at: now,
+                    updated_at: now,
+                },
+                "",
+            )])
+            .expect("persist session");
+        state
+            .acp
+            .load_conversations()
+            .expect("load persisted session");
+        workspace.id
     }
 
     #[tokio::test]
@@ -565,10 +722,319 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn edited_file_diff_returns_cached_base_and_current_head() {
+        let (dir, state) = state();
+        let session_id = "session-edited-file-diff";
+        let workspace_id = seed_dormant_session(&state, &dir, session_id).await;
+        let revision = state
+            .workspaces
+            .write_file(&workspace_id, "main.rs", "head", 0)
+            .await
+            .expect("write current content");
+        assert!(state.edited_files.record(
+            session_id,
+            "main.rs",
+            "base".to_string(),
+            "head",
+            true,
+            revision,
+        ));
+
+        let response = oneshot(
+            state,
+            Request::builder()
+                .uri(format!(
+                    "/api/sessions/{session_id}/edited-files/diff?path=main.rs"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let diff: Value = serde_json::from_slice(&body).expect("diff JSON");
+        assert_eq!(diff["path"], "main.rs");
+        assert_eq!(diff["base"], "base");
+        assert_eq!(diff["head"], "head");
+        assert_eq!(diff["truncated"], false);
+    }
+
+    #[tokio::test]
+    async fn revert_edited_file_restores_base_and_removes_cache_entry() {
+        let (dir, state) = state();
+        let session_id = "session-edited-file-revert";
+        let workspace_id = seed_dormant_session(&state, &dir, session_id).await;
+        let revision = state
+            .workspaces
+            .write_file(&workspace_id, "main.rs", "head", 0)
+            .await
+            .expect("write current content");
+        assert!(state.edited_files.record(
+            session_id,
+            "main.rs",
+            "base".to_string(),
+            "head",
+            true,
+            revision,
+        ));
+
+        let response = oneshot(
+            state.clone(),
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/sessions/{session_id}/edited-files/revert?path=main.rs"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let reverted: Value = serde_json::from_slice(&body).expect("revert JSON");
+        assert_eq!(reverted["path"], "main.rs");
+        assert_eq!(reverted["reverted"], true);
+        assert_eq!(
+            state
+                .workspaces
+                .read_file(&workspace_id, "main.rs")
+                .await
+                .expect("read reverted content")
+                .content,
+            "base"
+        );
+        assert!(state.edited_files.get(session_id, "main.rs").is_none());
+    }
+
+    #[tokio::test]
+    async fn revert_edited_file_deletes_a_file_created_by_the_agent() {
+        let (dir, state) = state();
+        let session_id = "session-edited-file-revert-created";
+        let workspace_id = seed_dormant_session(&state, &dir, session_id).await;
+        let revision = state
+            .workspaces
+            .write_file(&workspace_id, "created.rs", "agent content", 0)
+            .await
+            .expect("write agent-created content");
+        assert!(state.edited_files.record(
+            session_id,
+            "created.rs",
+            String::new(),
+            "agent content",
+            false,
+            revision,
+        ));
+
+        let response = oneshot(
+            state.clone(),
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/sessions/{session_id}/edited-files/revert?path=created.rs"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            state
+                .workspaces
+                .read_file(&workspace_id, "created.rs")
+                .await
+                .is_err(),
+            "reverting a created file must restore its prior nonexistence"
+        );
+        assert!(state.edited_files.get(session_id, "created.rs").is_none());
+    }
+
+    #[tokio::test]
+    async fn edited_file_diff_and_revert_return_not_found_without_cache_entry() {
+        let (_dir, state) = state();
+        let diff = oneshot(
+            state.clone(),
+            Request::builder()
+                .uri("/api/sessions/session-missing/edited-files/diff?path=main.rs")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(diff.status(), StatusCode::NOT_FOUND);
+
+        let revert = oneshot(
+            state,
+            Request::builder()
+                .method("POST")
+                .uri("/api/sessions/session-missing/edited-files/revert?path=main.rs")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(revert.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn edited_file_endpoints_reject_cached_path_traversal() {
+        let (dir, state) = state();
+        let session_id = "session-edited-file-traversal";
+        let _workspace_id = seed_dormant_session(&state, &dir, session_id).await;
+        // Production cache keys only come from successful workspace writes.
+        // Seed a hostile key directly to prove the filesystem boundary remains
+        // authoritative even if that invariant is ever broken.
+        assert!(state.edited_files.record(
+            session_id,
+            "../outside.txt",
+            "outside base".to_string(),
+            "outside head",
+            true,
+            1,
+        ));
+
+        let diff = oneshot(
+            state.clone(),
+            Request::builder()
+                .uri(format!(
+                    "/api/sessions/{session_id}/edited-files/diff?path=..%2Foutside.txt"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(diff.status(), StatusCode::BAD_REQUEST);
+
+        let revert = oneshot(
+            state,
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/sessions/{session_id}/edited-files/revert?path=..%2Foutside.txt"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(revert.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn revert_rejects_a_newer_file_revision_without_removing_cache() {
+        let (dir, state) = state();
+        let session_id = "session-edited-file-stale";
+        let workspace_id = seed_dormant_session(&state, &dir, session_id).await;
+        let agent_revision = state
+            .workspaces
+            .write_file(&workspace_id, "main.rs", "agent head", 0)
+            .await
+            .expect("write agent content");
+        assert!(state.edited_files.record(
+            session_id,
+            "main.rs",
+            "base".to_string(),
+            "agent head",
+            true,
+            agent_revision,
+        ));
+        state
+            .workspaces
+            .write_file(&workspace_id, "main.rs", "newer user edit", agent_revision)
+            .await
+            .expect("write newer content");
+
+        let response = oneshot(
+            state.clone(),
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/sessions/{session_id}/edited-files/revert?path=main.rs"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            state
+                .workspaces
+                .read_file(&workspace_id, "main.rs")
+                .await
+                .expect("read current content")
+                .content,
+            "newer user edit"
+        );
+        assert!(state.edited_files.get(session_id, "main.rs").is_some());
+    }
+
+    #[tokio::test]
+    async fn accept_removes_pending_edit_without_changing_the_file() {
+        let (dir, state) = state();
+        let session_id = "session-edited-file-accept";
+        let workspace_id = seed_dormant_session(&state, &dir, session_id).await;
+        let revision = state
+            .workspaces
+            .write_file(&workspace_id, "main.rs", "head", 0)
+            .await
+            .expect("write current content");
+        assert!(state.edited_files.record(
+            session_id,
+            "main.rs",
+            "base".to_string(),
+            "head",
+            true,
+            revision,
+        ));
+
+        let response = oneshot(
+            state.clone(),
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/sessions/{session_id}/edited-files/accept?path=main.rs"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            state
+                .workspaces
+                .read_file(&workspace_id, "main.rs")
+                .await
+                .expect("read accepted content")
+                .content,
+            "head"
+        );
+        assert!(state.edited_files.get(session_id, "main.rs").is_none());
+    }
+
+    #[tokio::test]
     /// The endpoint retains only the newest `FileWritten` event for each path.
     async fn edited_files_deduplicates_paths_by_latest_event_id() {
-        let (_dir, state) = state();
+        let (dir, state) = state();
         let session_id = "session-edited-files";
+        let _workspace_id = seed_dormant_session(&state, &dir, session_id).await;
+        assert!(state.edited_files.record(
+            session_id,
+            "src/main.rs",
+            "one\ntwo".to_string(),
+            "one\nthree\nfour",
+            true,
+            1,
+        ));
+        assert!(state.edited_files.record(
+            session_id,
+            "README.md",
+            String::new(),
+            "read me",
+            false,
+            1,
+        ));
 
         let mut initial_main =
             Event::new(0, EventType::FileWritten, session_id, chrono::Utc::now());
@@ -628,6 +1094,11 @@ mod tests {
                 .event_id,
             latest_main.id
         );
+        let main = files
+            .iter()
+            .find(|file| file.path == "src/main.rs")
+            .expect("main file");
+        assert_eq!((main.added_lines, main.removed_lines), (2, 1));
         assert_ne!(initial_main.id, latest_main.id);
         assert_eq!(
             files

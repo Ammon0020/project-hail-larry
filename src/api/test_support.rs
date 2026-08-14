@@ -11,7 +11,7 @@ use axum::response::Response;
 use serde_json::Value;
 use tower::ServiceExt;
 
-use crate::acp::{AgentRegistry, Client, ClientDeps, ConversationStore};
+use crate::acp::{AgentRegistry, Client, ClientDeps, ConversationStore, EditedFileCache};
 use crate::config::{Config, ConfigStore};
 use crate::events::{EventBus, SharedEventBus};
 use crate::pairing::Manager as PairingManager;
@@ -22,7 +22,7 @@ use crate::workspace::Manager as WorkspaceManagerImpl;
 
 use super::AppState;
 
-/// The 7 core service deps every handler test needs, built from a temp dir.
+/// The 8 core service deps every handler test needs, built from a temp dir.
 struct CoreDeps {
     config: ConfigStore,
     pairing: PairingManager,
@@ -30,10 +30,11 @@ struct CoreDeps {
     events: SharedEventBus,
     hub: Arc<Hub>,
     acp: Arc<Client>,
+    edited_files: EditedFileCache,
     permissions: Arc<PermissionsManager>,
 }
 
-/// Build the 7 core service deps from a temp state dir.
+/// Build the 8 core service deps from a temp state dir.
 fn core_deps(dir: &Path) -> CoreDeps {
     let config = ConfigStore::new(Config {
         data_dir: dir.display().to_string(),
@@ -46,12 +47,14 @@ fn core_deps(dir: &Path) -> CoreDeps {
     let hub = Hub::with_event_bus(Arc::clone(&events));
     let permissions = PermissionsManager::new(None);
     let registry = Arc::new(AgentRegistry::default());
+    let edited_files = EditedFileCache::new();
     let acp = Arc::new(Client::new(ClientDeps {
         registry,
         workspaces: workspaces.clone(),
         permissions: permissions.clone(),
         event_bus: events.clone(),
-        conversation_store: ConversationStore::new(None),
+        edited_files: edited_files.clone(),
+        conversation_store: ConversationStore::new(Some(dir.join("conversations.json"))),
         mcp_config_path: None,
         cancel_grace_period: std::time::Duration::from_millis(50),
         agent_idle_timeout: std::time::Duration::from_mins(2),
@@ -63,6 +66,7 @@ fn core_deps(dir: &Path) -> CoreDeps {
         events,
         hub,
         acp,
+        edited_files,
         permissions,
     }
 }
@@ -77,6 +81,7 @@ pub(crate) fn test_state(dir: &Path) -> AppState {
         d.events,
         d.hub,
         d.acp,
+        d.edited_files,
         d.permissions,
         None,
         None,
@@ -191,6 +196,7 @@ pub(crate) fn test_state_with_mcp(dir: &Path, mcp_path: PathBuf) -> AppState {
         d.events,
         d.hub,
         d.acp,
+        d.edited_files,
         d.permissions,
         Some(mcp_path),
         None,
@@ -212,6 +218,7 @@ pub(crate) fn test_state_with_uploads(dir: &Path) -> AppState {
         d.events,
         d.hub,
         d.acp,
+        d.edited_files,
         d.permissions,
         None,
         Some(uploads),

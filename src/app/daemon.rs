@@ -143,11 +143,13 @@ impl Daemon {
         let permission_sweeper = permissions.start_sweeper();
         let registry = Arc::new(AgentRegistry::from_agents(config.agents.clone()));
         let mcp_config_path = Path::new(&config.data_dir).join("mcp.json");
+        let edited_files = crate::acp::EditedFileCache::new();
         let acp = Arc::new(Client::new(ClientDeps {
             registry,
             workspaces: workspaces.clone(),
             permissions: permissions.clone(),
             event_bus: events.clone(),
+            edited_files: edited_files.clone(),
             conversation_store: ConversationStore::new(Some(
                 Path::new(&config.data_dir).join("conversations.json"),
             )),
@@ -181,6 +183,7 @@ impl Daemon {
             events.clone(),
             hub.clone(),
             acp,
+            edited_files,
             permissions,
             Some(mcp_config_path.clone()),
             Some(uploads.clone()),

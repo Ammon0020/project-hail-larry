@@ -18,7 +18,7 @@ use super::super::registry::SessionEntry;
 use super::super::{Client, ClientDeps};
 use crate::acp::providers::SessionCaps;
 use crate::acp::store::StoredSession;
-use crate::acp::{AgentRegistry, ConversationStore};
+use crate::acp::{AgentRegistry, ConversationStore, EditedFileCache};
 use crate::config::{AgentInfo, AgentModel};
 use crate::events::{EventBus, Store};
 use crate::interfaces::{
@@ -168,6 +168,7 @@ async fn mock_client_with_mcp(
         workspaces,
         permissions: permissions.clone(),
         event_bus,
+        edited_files: EditedFileCache::new(),
         conversation_store,
         mcp_config_path,
         cancel_grace_period: std::time::Duration::from_millis(50),
@@ -245,6 +246,7 @@ async fn startup_failure_before_publication_is_not_registered() {
         workspaces,
         permissions: permissions.clone(),
         event_bus,
+        edited_files: EditedFileCache::new(),
         conversation_store: ConversationStore::new(None),
         mcp_config_path: None,
         cancel_grace_period: std::time::Duration::from_millis(50),
@@ -297,6 +299,7 @@ async fn unexpected_post_startup_exit_marks_session_failed() {
         workspaces,
         permissions: permissions.clone(),
         event_bus: event_bus.clone(),
+        edited_files: EditedFileCache::new(),
         conversation_store: ConversationStore::new(None),
         mcp_config_path: None,
         cancel_grace_period: std::time::Duration::from_millis(50),
@@ -1518,6 +1521,7 @@ async fn idle_watchdog_marks_hung_agent_failed() {
         workspaces,
         permissions: permissions.clone(),
         event_bus: event_bus.clone(),
+        edited_files: EditedFileCache::new(),
         conversation_store: ConversationStore::new(None),
         mcp_config_path: None,
         cancel_grace_period: Duration::from_mins(1),

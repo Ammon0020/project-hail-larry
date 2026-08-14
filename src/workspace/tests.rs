@@ -268,6 +268,34 @@ async fn write_uses_content_revisions() {
 }
 
 #[tokio::test]
+async fn concurrent_writes_with_one_expected_revision_cannot_both_succeed() {
+    let manager = Arc::new(manager());
+    let dir = TempDir::new().unwrap();
+    let workspace = manager
+        .register(&dir.path().to_string_lossy())
+        .await
+        .unwrap();
+    let revision = manager
+        .write_file(&workspace.id, "file.txt", "base", 0)
+        .await
+        .unwrap();
+
+    let (first, second) = tokio::join!(
+        manager.write_file(&workspace.id, "file.txt", "first", revision),
+        manager.write_file(&workspace.id, "file.txt", "second", revision),
+    );
+    assert_ne!(
+        first.is_ok(),
+        second.is_ok(),
+        "the revision check and write must be one serialized operation"
+    );
+    assert!(
+        matches!(first, Err(AppError::StaleRevision))
+            || matches!(second, Err(AppError::StaleRevision))
+    );
+}
+
+#[tokio::test]
 async fn file_path_returns_only_existing_files() {
     let manager = manager();
     let dir = fixture();

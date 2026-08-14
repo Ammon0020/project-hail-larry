@@ -82,6 +82,7 @@ async fn client_with_workspace() -> (Arc<Client>, TempDir, String, Arc<EventBus>
         mcp_config_path: None,
         cancel_grace_period: std::time::Duration::from_millis(50),
         agent_idle_timeout: std::time::Duration::from_mins(2),
+        edited_files: local_agent::acp::edited_files::EditedFileCache::new(),
     }));
 
     (client, directory, workspace.id, event_bus)

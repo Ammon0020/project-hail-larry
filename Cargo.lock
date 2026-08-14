@@ -2947,6 +2947,7 @@ dependencies = [
  "lru",
  "notify",
  "notify-debouncer-full",
+ "parking_lot",
  "qrcode",
  "rand 0.10.2",
  "rcgen",

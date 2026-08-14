@@ -85,6 +85,9 @@ pub type OnWriteFn = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct Manager {
     workspaces: RwLock<HashMap<String, WorkspaceEntry>>,
     on_write: RwLock<Option<OnWriteFn>>,
+    /// Makes revision check + mutation atomic relative to every app write,
+    /// delete, rename, and mkdir operation.
+    mutation_lock: tokio::sync::Mutex<()>,
 }
 
 impl Manager {
@@ -94,6 +97,7 @@ impl Manager {
         Self {
             workspaces: RwLock::new(HashMap::new()),
             on_write: RwLock::new(None),
+            mutation_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -166,6 +170,33 @@ impl Manager {
                 hook(abs_path);
             }
         }
+    }
+
+    /// Delete a regular file only if its current content still has the
+    /// expected revision. Used to restore nonexistence when reverting a file
+    /// created by an agent without deleting a newer user edit.
+    ///
+    /// # Errors
+    ///
+    /// Returns stale-revision when the file changed or disappeared, validation
+    /// errors for non-files/oversized files, and internal errors for I/O or
+    /// blocking-task failures.
+    pub async fn delete_file_if_revision(
+        &self,
+        workspace_id: &str,
+        rel_path: &str,
+        expected_revision: i64,
+    ) -> Result<(), AppError> {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let root = self.root_for(workspace_id)?;
+        let rel_path = rel_path.to_string();
+        let abs_path = tokio::task::spawn_blocking(move || {
+            delete_file_if_revision(&root, &rel_path, expected_revision)
+        })
+        .await
+        .map_err(|err| AppError::internal(format!("conditional delete task failed: {err}")))??;
+        self.notify_write(&abs_path);
+        Ok(())
     }
 }
 
@@ -285,6 +316,7 @@ impl WorkspaceManager for Manager {
         content: &str,
         expected_revision: i64,
     ) -> Result<i64, AppError> {
+        let _mutation_guard = self.mutation_lock.lock().await;
         let root = self.root_for(workspace_id)?;
         let rel_path = rel_path.to_string();
         let content = content.to_string();
@@ -300,6 +332,7 @@ impl WorkspaceManager for Manager {
     }
 
     async fn delete_path(&self, workspace_id: &str, rel_path: &str) -> Result<(), AppError> {
+        let _mutation_guard = self.mutation_lock.lock().await;
         let root = self.root_for(workspace_id)?;
         let rel_path = rel_path.to_string();
         let abs_path = tokio::task::spawn_blocking(move || delete_path(&root, &rel_path))
@@ -310,6 +343,7 @@ impl WorkspaceManager for Manager {
     }
 
     async fn rename_path(&self, workspace_id: &str, from: &str, to: &str) -> Result<(), AppError> {
+        let _mutation_guard = self.mutation_lock.lock().await;
         let root = self.root_for(workspace_id)?;
         let from = from.to_string();
         let to = to.to_string();
@@ -324,6 +358,7 @@ impl WorkspaceManager for Manager {
     }
 
     async fn mkdir(&self, workspace_id: &str, rel_path: &str) -> Result<(), AppError> {
+        let _mutation_guard = self.mutation_lock.lock().await;
         let root = self.root_for(workspace_id)?;
         let rel_path = rel_path.to_string();
         let abs_path = tokio::task::spawn_blocking(move || mkdir_path(&root, &rel_path))
@@ -520,6 +555,37 @@ fn write_file(
     fs::write(&path, content).map_err(|err| AppError::internal(format!("write file: {err}")))?;
     let abs = path.to_string_lossy().into_owned();
     Ok((crate::files::content_revision(content.as_bytes()), abs))
+}
+
+/// Remove a regular file only when its current bytes match `expected_revision`.
+fn delete_file_if_revision(
+    root: &Path,
+    rel_path: &str,
+    expected_revision: i64,
+) -> Result<String, AppError> {
+    let path = Manager::safe_path(root, rel_path)?;
+    let metadata = fs::symlink_metadata(&path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::StaleRevision
+        } else {
+            AppError::internal(format!("stat file for revision check: {err}"))
+        }
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(AppError::validation("path is not a regular file"));
+    }
+    if metadata.len() > MAX_READ_FILE_SIZE {
+        return Err(AppError::validation(format!(
+            "file too large (max {MAX_READ_FILE_SIZE} bytes, file is {} bytes)",
+            metadata.len()
+        )));
+    }
+    let current = fs::read(&path).map_err(|err| AppError::internal(format!("read file: {err}")))?;
+    if crate::files::content_revision(&current) != expected_revision {
+        return Err(AppError::StaleRevision);
+    }
+    fs::remove_file(&path).map_err(|err| AppError::internal(format!("delete file: {err}")))?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Delete a file or empty directory under `root`. Returns the absolute path

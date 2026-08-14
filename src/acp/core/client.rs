@@ -22,6 +22,8 @@ pub struct ClientDeps {
     pub permissions: Arc<dyn PermissionManager>,
     /// Ordered durable event stream for prompt lifecycle and ACP updates.
     pub event_bus: SharedEventBus,
+    /// Session-scoped pre-edit content and line-count deltas for agent writes.
+    pub edited_files: crate::acp::edited_files::EditedFileCache,
     /// Optional durable metadata file; `None` is useful for isolated tests.
     pub conversation_store: super::super::store::ConversationStore,
     /// Path to `mcp.json`. `None` skips MCP attachment on session/new (tests).

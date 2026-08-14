@@ -597,17 +597,22 @@ pub struct WorkspaceInfo {
     pub sync_tabs: Option<bool>,
 }
 
-/// A file written by an agent during a session, aggregated from `FileWritten`
-/// events. Deduplicated by path — the latest write wins.
+/// A file written by an agent and still pending review in the session cache.
+/// Deduplicated by path — the latest write wins.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EditedFile {
     /// Workspace-relative path of the written file.
     pub path: String,
-    /// Monotonic event ID of the latest `FileWritten` for this path.
+    /// Monotonic event ID of the latest recent `FileWritten`, or zero when its
+    /// metadata fell outside the bounded event-history lookup.
     pub event_id: i64,
     /// Timestamp of the latest write (ISO 8601).
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Lines added by the agent's write (popup +/- display).
+    pub added_lines: u32,
+    /// Lines removed by the agent's write (popup +/- display).
+    pub removed_lines: u32,
 }
 
 // ============================================================================

@@ -27,6 +27,7 @@ pub(super) struct HandlerDeps {
     pub(super) workspaces: Arc<dyn WorkspaceManager>,
     pub(super) permissions: Arc<dyn PermissionManager>,
     pub(super) event_bus: SharedEventBus,
+    pub(super) edited_files: crate::acp::edited_files::EditedFileCache,
     pub(super) terminals: TerminalRegistry,
     pub(super) cancellation: CancellationToken,
     pub(super) callback_slots: Arc<Semaphore>,

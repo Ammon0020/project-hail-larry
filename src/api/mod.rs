@@ -79,6 +79,7 @@ pub struct AppState {
     pub events: SharedEventBus,
     pub hub: Arc<Hub>,
     pub acp: Arc<Client>,
+    pub edited_files: crate::acp::edited_files::EditedFileCache,
     pub permissions: Arc<PermissionsManager>,
     /// Absolute path to `mcp.json`. `None` makes `/api/mcp*` return 503.
     pub mcp_config_path: Option<PathBuf>,
@@ -110,6 +111,7 @@ impl AppState {
         events: SharedEventBus,
         hub: Arc<Hub>,
         acp: Arc<Client>,
+        edited_files: crate::acp::edited_files::EditedFileCache,
         permissions: Arc<PermissionsManager>,
         mcp_config_path: Option<PathBuf>,
         uploads: Option<Arc<Mutex<uploads::Manager>>>,
@@ -123,6 +125,7 @@ impl AppState {
             events,
             hub,
             acp,
+            edited_files,
             permissions,
             mcp_config_path,
             uploads,
@@ -257,6 +260,18 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/sessions/{id}/edited-files",
             get(sessions::edited_files),
+        )
+        .route(
+            "/api/sessions/{id}/edited-files/diff",
+            get(sessions::edited_file_diff),
+        )
+        .route(
+            "/api/sessions/{id}/edited-files/revert",
+            post(sessions::revert_edited_file),
+        )
+        .route(
+            "/api/sessions/{id}/edited-files/accept",
+            post(sessions::accept_edited_file),
         )
         .route(
             "/api/sessions/{id}/capabilities",
