@@ -255,6 +255,10 @@ pub fn router(state: AppState) -> Router {
             get(session_extra::export_session),
         )
         .route(
+            "/api/sessions/{id}/edited-files",
+            get(sessions::edited_files),
+        )
+        .route(
             "/api/sessions/{id}/capabilities",
             get(session_extra::session_capabilities),
         )

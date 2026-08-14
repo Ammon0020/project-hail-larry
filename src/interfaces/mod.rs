@@ -37,8 +37,8 @@ pub use traits::{
     ReadFileResult, WorkspaceManager,
 };
 pub use types::{
-    go_zero_time, AgentInfo, AgentModel, Attachment, DeviceCredential, DeviceInfo, Event,
-    EventMeta, EventPayload, EventType, FileNode, InjectedContext, PairingSession,
+    go_zero_time, AgentInfo, AgentModel, Attachment, DeviceCredential, DeviceInfo, EditedFile,
+    Event, EventMeta, EventPayload, EventType, FileNode, InjectedContext, PairingSession,
     PendingActionInfo, PermissionDecision, PermissionOption, PermissionOptionInfo,
     PermissionRequest, PermissionResponse, ProfileTransitionPreview, ProfileTransitionStrategy,
     ProviderCurrentConfig, ProviderInfo, SearchOptions, SearchResult, Session,

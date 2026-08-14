@@ -1,6 +1,6 @@
 # Chat edited-files popup — Story 1: edited-files tracking
 
-> **Status:** pending | **Difficulty:** medium | **Urgency:** medium
+> **Status:** active | **Difficulty:** medium | **Urgency:** medium
 > **Source:** user-noted improvements — Chat section
 > **Parent:** `pending-user_noted_improvements-large-high.md`
 

@@ -65,7 +65,7 @@ Build: `build.sh`, `build.ps1`, `Makefile`, `build.rs` → `make check`.
 - For Rust-only changes, run `cargo fmt -q --check`, `cargo clippy -q --all-targets -- -D warnings`, and `cargo test -q --all-targets`.
 - Frontend tests are pure utility tests in `web/src/lib/`; run `make test-frontend` and avoid React/DOM-coupled tests.
 - See `docs/development/building.md` for release and toolchain details. Record unrelated failures in `docs/known-issues.md` instead of expanding scope.
-- Keep code small: comment non-obvious or security-sensitive intent, avoid megafiles and overcomplicated tests, and include tests plus a suggested commit message when handing off.
+- Keep code small: comment non-obvious or security-sensitive intent, avoid megafiles and overcomplicated tests, and include tests and suggest a commit message for the user to use when handing off.
 
 ## Optional: Repomix
 

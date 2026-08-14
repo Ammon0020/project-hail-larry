@@ -259,6 +259,17 @@ export interface AppEvent {
   costCurrency?: string
 }
 
+/** A file written by an agent during a session, aggregated from `FileWritten`
+ *  events. Deduplicated by path — the latest write wins. */
+export interface EditedFile {
+  /** Workspace-relative path of the written file. */
+  path: string
+  /** Monotonic event ID of the latest `FileWritten` for this path. */
+  eventId: number
+  /** Timestamp of the latest write (ISO 8601). */
+  timestamp: string
+}
+
 /** Left panel view options (Blueprint Sec 17 — activity bar). */
 export type LeftPanel = 'files' | 'search' | 'git'
 

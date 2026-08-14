@@ -9,7 +9,8 @@ use serde_json::{json, Value};
 use tracing::{error, warn};
 
 use crate::interfaces::{
-    ACPClient, Attachment, ProfileTransitionPreview, ProfileTransitionStrategy, SessionInfo,
+    ACPClient, Attachment, EditedFile, Event, EventStore, EventType, ProfileTransitionPreview,
+    ProfileTransitionStrategy, SessionInfo,
 };
 
 use super::{app_error, decode_json_body, ApiResponseError, AppState};
@@ -42,6 +43,50 @@ pub(super) async fn get_session(
     Path(id): Path<String>,
 ) -> Result<Json<SessionInfo>, ApiResponseError> {
     state.acp.get_session_info(&id).map(Json).map_err(app_error)
+}
+
+/// `GET /api/sessions/{id}/edited-files` — files written by the agent in this
+/// session, aggregated from `FileWritten` events. Deduplicated by path; the
+/// latest write wins. Returns an empty array when no files have been written.
+pub(super) async fn edited_files(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<EditedFile>>, ApiResponseError> {
+    // File writes are infrequent relative to chat and tool events, so one
+    // capped page usually covers a session without allowing unbounded queries.
+    let events = state
+        .events
+        .query(&id, 0, crate::api::events::MAX_EVENT_LIMIT)
+        .await
+        .map_err(app_error)?;
+
+    // Event IDs are monotonic, so the highest ID is the most recent write for
+    // a workspace-relative path.
+    let mut latest: std::collections::HashMap<String, &Event> = std::collections::HashMap::new();
+    for event in &events {
+        if event.event_type != EventType::FileWritten {
+            continue;
+        }
+        let path = &event.target;
+        if latest
+            .get(path)
+            .is_none_or(|previous| event.id > previous.id)
+        {
+            latest.insert(path.clone(), event);
+        }
+    }
+
+    let mut files: Vec<EditedFile> = latest
+        .into_iter()
+        .map(|(path, event)| EditedFile {
+            path,
+            event_id: event.id,
+            timestamp: event.timestamp,
+        })
+        .collect();
+    // Stable output makes clients and tests deterministic.
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(Json(files))
 }
 
 // ids are the natural name for these fields.
@@ -312,13 +357,14 @@ pub(super) async fn close_session(
 
 #[cfg(test)]
 mod tests {
-    use axum::body::Body;
+    use axum::body::{to_bytes, Body};
     use axum::extract::ConnectInfo;
     use axum::http::{header, Request, StatusCode};
     use std::net::SocketAddr;
     use tower::ServiceExt;
 
     use crate::api::{router, test_support, AppState};
+    use crate::interfaces::{EditedFile, Event, EventType};
 
     use super::{validate_session_name, MAX_SESSION_NAME_CHARS};
 
@@ -516,6 +562,81 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// The endpoint retains only the newest `FileWritten` event for each path.
+    async fn edited_files_deduplicates_paths_by_latest_event_id() {
+        let (_dir, state) = state();
+        let session_id = "session-edited-files";
+
+        let mut initial_main =
+            Event::new(0, EventType::FileWritten, session_id, chrono::Utc::now());
+        initial_main.workspace_id = "workspace-1".to_string();
+        initial_main.target = "src/main.rs".to_string();
+        let initial_main = state
+            .events
+            .append_and_publish(initial_main)
+            .await
+            .expect("store initial main write");
+
+        let mut readme = Event::new(0, EventType::FileWritten, session_id, chrono::Utc::now());
+        readme.workspace_id = "workspace-1".to_string();
+        readme.target = "README.md".to_string();
+        let readme = state
+            .events
+            .append_and_publish(readme)
+            .await
+            .expect("store README write");
+
+        let mut latest_main = Event::new(0, EventType::FileWritten, session_id, chrono::Utc::now());
+        latest_main.workspace_id = "workspace-1".to_string();
+        latest_main.target = "src/main.rs".to_string();
+        let latest_main = state
+            .events
+            .append_and_publish(latest_main)
+            .await
+            .expect("store latest main write");
+
+        let response = oneshot(
+            state,
+            Request::builder()
+                .uri(format!("/api/sessions/{session_id}/edited-files"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let files: Vec<EditedFile> = serde_json::from_slice(&body).expect("edited files JSON");
+        assert_eq!(files.len(), 2);
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["README.md", "src/main.rs"]
+        );
+        assert_eq!(
+            files
+                .iter()
+                .find(|file| file.path == "src/main.rs")
+                .expect("main file")
+                .event_id,
+            latest_main.id
+        );
+        assert_ne!(initial_main.id, latest_main.id);
+        assert_eq!(
+            files
+                .iter()
+                .find(|file| file.path == "README.md")
+                .expect("README file")
+                .event_id,
+            readme.id
+        );
     }
 
     #[test]

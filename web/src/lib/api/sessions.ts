@@ -3,7 +3,7 @@
  * uploads, and export endpoints.
  */
 
-import type { AppEvent, Attachment, Agent, PromptContextSettings, Session } from '@/types'
+import type { AppEvent, Attachment, Agent, EditedFile, PromptContextSettings, Session } from '@/types'
 import { API_BASE, ApiError, apiFetch, withAuthHeaders } from './client'
 import { withRetry } from '@/lib/retry'
 
@@ -48,6 +48,13 @@ export function getEvents(afterId = 0, limit = 100) {
 
 export function getSessionEvents(sessionId: string, afterId = 0, limit = 100) {
   return apiFetch<AppEvent[]>(`/events/${sessionId}?after=${afterId}&limit=${limit}`)
+}
+
+/** GET /api/sessions/{id}/edited-files — files written by the agent in this
+ *  session, deduplicated by path. Used to seed the edited-files list on
+ *  session open; the WS event stream keeps it live thereafter. */
+export function getEditedFiles(sessionId: string) {
+  return apiFetch<EditedFile[]>(`/sessions/${sessionId}/edited-files`)
 }
 
 // Agents & Sessions

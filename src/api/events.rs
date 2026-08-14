@@ -8,7 +8,7 @@ use crate::interfaces::EventStore;
 
 use super::{app_error, ApiResponseError, AppState};
 
-const MAX_EVENT_LIMIT: i32 = 10_000;
+pub(super) const MAX_EVENT_LIMIT: i32 = 10_000;
 const DEFAULT_EVENT_LIMIT: i32 = 1_000;
 
 #[derive(Deserialize, Default)]
