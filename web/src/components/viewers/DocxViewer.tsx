@@ -40,17 +40,17 @@ export function DocxViewer({ url, name }: { url: string; name: string }) {
   if (html === null) {
     return (
       <div className="flex flex-col items-center gap-3 text-muted-foreground">
-        <Loader2 className="w-8 h-8 animate-spin" />
+        <Loader2 className="size-8 animate-spin" />
         <p className="text-sm">Converting {name}…</p>
       </div>
     )
   }
   return (
-    <div className="w-full h-full overflow-auto bg-white text-black dark:bg-white dark:text-black">
+    <div className="size-full overflow-auto bg-white text-black dark:bg-white dark:text-black">
       {/* prose-docx: a scoped wrapper so the DOCX HTML gets readable margins
           without polluting the app's Tailwind prose styles. */}
       <div
-        className="prose-docx max-w-3xl mx-auto p-8"
+        className="prose-docx mx-auto max-w-3xl p-8"
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>

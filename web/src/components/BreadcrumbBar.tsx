@@ -47,23 +47,23 @@ export function BreadcrumbBar({
   return (
     <div
       className={cn(
-        'flex items-center gap-0.5 px-3 h-6 text-[11px] bg-panel border-b border-background shrink-0 select-none',
+        'flex h-6 shrink-0 items-center gap-0.5 border-b border-background bg-panel px-3 text-[11px] select-none',
         'min-w-0',
       )}
     >
       {/* Breadcrumb path — takes the left side and truncates when space is tight. */}
-      <div className="flex items-center gap-0.5 min-w-0 flex-1 overflow-hidden">
+      <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
         {all.map((seg, i) => {
           const isLast = i === all.length - 1
           const isWorkspace = i === 0
           return (
-            <span key={i} className="flex items-center gap-0.5 min-w-0">
-              {i > 0 && <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />}
-              {isWorkspace && <FolderCode className="w-3 h-3 text-primary shrink-0" strokeWidth={1.5} />}
+            <span key={i} className="flex min-w-0 items-center gap-0.5">
+              {i > 0 && <ChevronRight className="size-3 shrink-0 text-muted-foreground" />}
+              {isWorkspace && <FolderCode className="size-3 shrink-0 text-primary" strokeWidth={1.5} />}
               <span
                 className={cn(
                   'truncate',
-                  isLast ? 'text-foreground font-medium' : 'text-muted-foreground',
+                  isLast ? 'font-medium text-foreground' : 'text-muted-foreground',
                 )}
               >
                 {seg}
@@ -76,7 +76,7 @@ export function BreadcrumbBar({
       {/* Editor Actions — Wrap, Preview (supported types), Save.
           Right-aligned; only rendered when callbacks are supplied. */}
       {hasActions && (
-        <div className="flex gap-1.5 items-center shrink-0 ml-2">
+        <div className="ml-2 flex shrink-0 items-center gap-1.5">
           {onToggleWrap && (
             <button
               type="button"
@@ -85,13 +85,13 @@ export function BreadcrumbBar({
               title="Toggle line wrapping"
               onClick={onToggleWrap}
               className={cn(
-                'flex items-center justify-center w-7 h-6 rounded transition',
+                'flex h-6 w-7 items-center justify-center rounded transition',
                 wrap
                   ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                   : 'bg-secondary text-secondary-foreground hover:bg-accent',
               )}
             >
-              <WrapText className="w-3.5 h-3.5" />
+              <WrapText className="size-3.5" />
             </button>
           )}
           {showPreview && onPreview && (
@@ -102,13 +102,13 @@ export function BreadcrumbBar({
               title={previewActive ? 'View Raw' : 'Preview'}
               onClick={onPreview}
               className={cn(
-                'flex items-center gap-1 h-6 px-2 rounded text-xs font-semibold transition',
+                'flex h-6 items-center gap-1 rounded px-2 text-xs font-semibold transition',
                 previewActive
                   ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                   : 'bg-secondary text-secondary-foreground hover:bg-accent',
               )}
             >
-              <Eye className="w-3.5 h-3.5" />
+              <Eye className="size-3.5" />
               <span className="hidden @md:inline">{previewActive ? 'Raw' : 'Preview'}</span>
             </button>
           )}
@@ -118,13 +118,13 @@ export function BreadcrumbBar({
               onClick={canSave ? onSave : undefined}
               aria-disabled={!canSave}
               className={cn(
-                'text-xs font-semibold px-2.5 py-1 rounded flex items-center gap-1.5 transition',
+                'flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-semibold transition',
                 canSave
-                  ? 'bg-primary hover:bg-primary/90 text-primary-foreground'
-                  : 'bg-secondary text-muted-foreground cursor-default opacity-60',
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  : 'cursor-default bg-secondary text-muted-foreground opacity-60',
               )}
             >
-              <Save className="w-3 h-3" /> Save
+              <Save className="size-3" /> Save
             </button>
           )}
         </div>

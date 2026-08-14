@@ -138,7 +138,7 @@ export function FileViewer({ tab, active, onToggleViewMode, trusted }: { tab: Ta
           </button>
         </div>
       ) : !url ? (
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        <Loader2 className="size-8 animate-spin text-muted-foreground" />
       ) : null}
       {url && kind === 'image' && (
         ext === 'tiff' || ext === 'tif'
@@ -164,9 +164,9 @@ export function FileViewer({ tab, active, onToggleViewMode, trusted }: { tab: Ta
         <button
           type="button"
           onClick={() => onToggleViewMode(tab.id)}
-          className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded bg-secondary/90 hover:bg-secondary text-secondary-foreground backdrop-blur-sm transition shadow-sm"
+          className="absolute top-2 right-2 z-10 flex items-center gap-1.5 rounded bg-secondary/90 px-2.5 py-1 text-xs font-medium text-secondary-foreground shadow-sm backdrop-blur-sm transition hover:bg-secondary"
         >
-          <Code className="w-3.5 h-3.5" /> View Raw
+          <Code className="size-3.5" /> View Raw
         </button>
       )}
     </div>

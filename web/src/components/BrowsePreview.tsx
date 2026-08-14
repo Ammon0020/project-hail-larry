@@ -129,17 +129,17 @@ export function BrowsePreview({
 
   return (
     <div className="absolute inset-0 flex flex-col bg-background">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-panel text-xs text-muted-foreground shrink-0">
-        <span className="truncate flex-1" title={entryPath}>
+      <div className="flex shrink-0 items-center gap-2 border-b border-border bg-panel px-3 py-1.5 text-xs text-muted-foreground">
+        <span className="flex-1 truncate" title={entryPath}>
           Preview · {entryPath}
         </span>
         <button
           type="button"
           onClick={reloadPreview}
-          className="flex items-center gap-1.5 font-medium text-foreground hover:text-primary transition px-2 py-0.5 rounded"
+          className="flex items-center gap-1.5 rounded px-2 py-0.5 font-medium text-foreground transition hover:text-primary"
           title="Reload preview"
         >
-          <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+          <RefreshCw className="size-3.5" aria-hidden="true" />
           Refresh
         </button>
       </div>
@@ -151,7 +151,7 @@ export function BrowsePreview({
         allow-top-navigation stays OFF so the preview cannot redirect the IDE.
       */}
       {sessionError ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center text-sm text-destructive">
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-destructive">
           <p>Preview authorization failed: {sessionError}</p>
           <button
             type="button"
@@ -168,18 +168,18 @@ export function BrowsePreview({
           className="flex-1 text-destructive"
         />
       ) : effectiveTrust === false ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
           <p>Preview blocked — mark as trusted to view.</p>
         </div>
       ) : previewToken ? (
         <iframe
           src={src}
           title={`Preview: ${entryPath}`}
-          className="flex-1 w-full border-0 bg-white"
+          className="w-full flex-1 border-0 bg-white"
           sandbox="allow-scripts"
         />
       ) : (
-        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
           Authorizing preview…
         </div>
       )}

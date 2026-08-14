@@ -3,7 +3,7 @@ import type { CommitFileStatus } from '@/lib/api/git'
 import { cn } from '@/lib/utils'
 
 const statusBadge = cva(
-  'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] text-[9px] font-bold leading-none',
+  'inline-flex size-4 shrink-0 items-center justify-center rounded-[3px] text-[9px] leading-none font-bold',
   {
     variants: {
       status: {

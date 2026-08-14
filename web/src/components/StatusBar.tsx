@@ -26,10 +26,10 @@ export function StatusBar({
   const isCodeTab =
     activeTab?.kind !== 'settings' && activeTab?.kind !== 'preview' && !activeTab?.isBinary
   return (
-    <div className="flex items-center justify-between bg-status-bar text-white text-[10px] md:text-[11px] px-3 py-0.5 shrink-0">
+    <div className="flex shrink-0 items-center justify-between bg-status-bar px-3 py-0.5 text-[10px] text-white md:text-[11px]">
       <div className="flex items-center gap-3">
         {gitBranch && (
-          <span className="flex items-center gap-1"><GitBranch className="w-3 h-3" /> {gitBranch}</span>
+          <span className="flex items-center gap-1"><GitBranch className="size-3" /> {gitBranch}</span>
         )}
       </div>
       <div className="flex items-center gap-3">
@@ -37,20 +37,20 @@ export function StatusBar({
           <div className="flex items-center gap-1">
             <button
               onClick={() => onFontSizeChange((s) => Math.max(8, s - 1))}
-              className="p-0.5 hover:bg-white/10 rounded transition"
+              className="rounded p-0.5 transition hover:bg-white/10"
               aria-label="Decrease font size"
               title="Decrease font size"
             >
-              <ZoomOut className="w-3 h-3" />
+              <ZoomOut className="size-3" />
             </button>
-            <span className="tabular-nums w-7 text-center">{fontSize}</span>
+            <span className="w-7 text-center tabular-nums">{fontSize}</span>
             <button
               onClick={() => onFontSizeChange((s) => Math.min(32, s + 1))}
-              className="p-0.5 hover:bg-white/10 rounded transition"
+              className="rounded p-0.5 transition hover:bg-white/10"
               aria-label="Increase font size"
               title="Increase font size"
             >
-              <ZoomIn className="w-3 h-3" />
+              <ZoomIn className="size-3" />
             </button>
           </div>
         )}

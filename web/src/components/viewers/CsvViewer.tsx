@@ -32,16 +32,16 @@ export function CsvViewer({ url, name }: { url: string; name: string }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        <Loader2 className="size-8 animate-spin text-muted-foreground" />
       </div>
     )
   }
   return (
-    <div className="w-full h-full overflow-auto bg-white text-black">
+    <div className="size-full overflow-auto bg-white text-black">
       <table className="border-collapse text-xs">
         <tbody>
           {rows.map((row, rowIndex) => (
-            <tr key={rowIndex} className={rowIndex === 0 ? 'font-bold bg-gray-100 sticky top-0' : ''}>
+            <tr key={rowIndex} className={rowIndex === 0 ? 'sticky top-0 bg-gray-100 font-bold' : ''}>
               {row.map((cell, cellIndex) => (
                 <td key={cellIndex} className="border border-gray-300 px-2 py-1 whitespace-nowrap">
                   {cell}

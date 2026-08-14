@@ -79,14 +79,14 @@ export function LeftSidebar({
   return (
     <aside
       className={cn(
-        'flex-col h-full shrink-0 w-full bg-panel border-r border-border lg:w-60',
+        'size-full shrink-0 flex-col border-r border-border bg-panel lg:w-60',
         visible ? 'flex' : 'hidden',
         'absolute inset-0 z-30 lg:relative lg:inset-auto lg:z-auto',
       )}
       style={style}
     >
       {/* Workspace Switcher (mobile only, visible at the very top) */}
-      <div className="lg:hidden p-2 border-b border-border shrink-0">
+      <div className="shrink-0 border-b border-border p-2 lg:hidden">
         <WorkspaceHeader
           connected={connected}
           workspaces={workspaces}
@@ -98,19 +98,19 @@ export function LeftSidebar({
       </div>
 
       {/* Mini horizontal activity bar (mobile only) */}
-      <div className="flex lg:hidden items-center gap-1 px-3 py-1.5 border-b border-border shrink-0 bg-activity-bar">
+      <div className="flex shrink-0 items-center gap-1 border-b border-border bg-activity-bar px-3 py-1.5 lg:hidden">
         {miniTabs.map(({ id, icon: Icon, label }) => (
           <button
             key={id}
             onClick={() => onSwitchPanel(id)}
             className={cn(
-              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition',
+              'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition',
               activePanel === id
-                ? 'text-primary bg-primary/10'
+                ? 'bg-primary/10 text-primary'
                 : 'text-muted-foreground hover:text-foreground',
             )}
           >
-            <Icon className="w-4 h-4" /> {label}
+            <Icon className="size-4" /> {label}
           </button>
         ))}
       </div>
@@ -119,7 +119,7 @@ export function LeftSidebar({
       {activePanel === 'files' && (
         <>
           {/* File Tree */}
-          <div className="px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider shrink-0">
+          <div className="shrink-0 px-3 py-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
             Explorer
           </div>
           <FileTree

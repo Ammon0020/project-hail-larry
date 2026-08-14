@@ -49,7 +49,7 @@ export function TrustPrompt({
         className,
       )}
     >
-      <ShieldAlert className="w-8 h-8 text-destructive" aria-hidden="true" />
+      <ShieldAlert className="size-8 text-destructive" aria-hidden="true" />
       <p className="max-w-md text-foreground">
         This workspace&apos;s HTML preview can run scripts and load cross-origin
         resources (CDNs, APIs). Trust it?
@@ -62,18 +62,18 @@ export function TrustPrompt({
           type="button"
           onClick={() => void choose(true)}
           disabled={submitting}
-          className="flex items-center gap-1.5 rounded px-3 py-1.5 font-medium text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-50 transition"
+          className="flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
         >
-          <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+          <ShieldCheck className="size-4" aria-hidden="true" />
           Trust
         </button>
         <button
           type="button"
           onClick={() => void choose(false)}
           disabled={submitting}
-          className="flex items-center gap-1.5 rounded px-3 py-1.5 font-medium text-foreground hover:text-primary disabled:opacity-50 transition"
+          className="flex items-center gap-1.5 rounded px-3 py-1.5 font-medium text-foreground transition hover:text-primary disabled:opacity-50"
         >
-          <ShieldAlert className="w-4 h-4" aria-hidden="true" />
+          <ShieldAlert className="size-4" aria-hidden="true" />
           Keep untrusted
         </button>
       </div>

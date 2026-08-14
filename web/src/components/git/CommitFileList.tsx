@@ -55,7 +55,7 @@ export function CommitFileList({
   if (loading) {
     return (
       <div className="flex items-center gap-1.5 px-3 py-2 text-[10px] text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" /> Loading changed files…
+        <Loader2 className="size-3 animate-spin" /> Loading changed files…
       </div>
     )
   }

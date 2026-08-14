@@ -59,21 +59,21 @@ export function GitDiffTab({
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 h-full bg-editor text-sm text-muted-foreground p-4 text-center">
+      <div className="flex h-full flex-col items-center justify-center gap-3 bg-editor p-4 text-center text-sm text-muted-foreground">
         <span>Failed to load diff: {error}</span>
         <button
           type="button"
           onClick={() => void refresh()}
           className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-accent"
         >
-          <RefreshCw className="h-3.5 w-3.5" /> Retry
+          <RefreshCw className="size-3.5" /> Retry
         </button>
       </div>
     )
   }
   if (!diff) {
     return (
-      <div className="flex items-center justify-center h-full bg-editor text-sm text-muted-foreground">
+      <div className="flex h-full items-center justify-center bg-editor text-sm text-muted-foreground">
         Loading diff…
       </div>
     )

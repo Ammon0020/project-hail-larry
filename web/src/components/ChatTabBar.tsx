@@ -29,7 +29,7 @@ const tabVariant = cva(
     variants: {
       state: {
         inactive: 'text-muted-foreground hover:text-foreground',
-        active: 'text-foreground border-t-primary bg-foreground/[0.01]',
+        active: 'border-t-primary bg-foreground/[0.01] text-foreground',
       },
     },
     defaultVariants: { state: 'inactive' },
@@ -58,7 +58,7 @@ function TabBarIconButton({ icon, label, onClick, className, ariaExpanded }: Tab
       <TooltipTrigger asChild>
         <button
           onClick={onClick}
-          className={cn('p-1.5 rounded-md transition', className)}
+          className={cn('rounded-md p-1.5 transition', className)}
           aria-label={label}
           aria-expanded={ariaExpanded}
         >
@@ -144,14 +144,14 @@ export function ChatTabBar({
 
   return (
     <div className="relative shrink-0 border-b border-border bg-panel">
-      <div className="flex items-stretch h-10">
+      <div className="flex h-10 items-stretch">
         {/* Tab strip — horizontally scrollable with hidden scrollbars. The
             right-side controls live in a sibling shrink-0 container so they
             never scroll away. */}
         <div
           ref={tabListRef}
           onWheel={handleWheel}
-          className="flex items-stretch overflow-x-auto overflow-y-hidden hide-scrollbar min-w-0 flex-1"
+          className="hide-scrollbar flex min-w-0 flex-1 items-stretch overflow-x-auto overflow-y-hidden"
         >
           {openTabs.length === 0 && !showNewChatTab && (
             <div className="flex items-center px-3 text-xs text-muted-foreground">
@@ -172,9 +172,9 @@ export function ChatTabBar({
                 aria-current={isActive ? 'page' : undefined}
               >
                 {isRunning && (
-                  <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
+                  <Loader2 className="size-3 shrink-0 animate-spin text-primary" />
                 )}
-                <span className="max-w-[7rem] md:max-w-[10rem] truncate">
+                <span className="max-w-28 truncate md:max-w-40">
                   {session.name}
                 </span>
                 {/* Close-on-hover X — appears for every tab, including the
@@ -187,11 +187,11 @@ export function ChatTabBar({
                     e.stopPropagation()
                     onCloseTab(session.id)
                   }}
-                  className="ml-1 flex items-center justify-center w-4 h-4 rounded text-muted-foreground hover:text-foreground hover:bg-accent opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="ml-1 flex size-4 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent hover:text-foreground"
                   title="Close tab"
                   aria-label={`Close ${session.name}`}
                 >
-                  <X className="w-3 h-3" />
+                  <X className="size-3" />
                 </span>
               </button>
             )
@@ -208,7 +208,7 @@ export function ChatTabBar({
               title="New chat"
               aria-current={!activeSessionId ? 'page' : undefined}
             >
-              <span className="max-w-[7rem] md:max-w-[10rem] truncate italic text-muted-foreground">
+              <span className="max-w-28 truncate text-muted-foreground italic md:max-w-40">
                 New chat
               </span>
               {onCloseNewChatTab && (
@@ -219,11 +219,11 @@ export function ChatTabBar({
                     e.stopPropagation()
                     onCloseNewChatTab()
                   }}
-                  className="ml-1 flex items-center justify-center w-4 h-4 rounded text-muted-foreground hover:text-foreground hover:bg-accent opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="ml-1 flex size-4 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent hover:text-foreground"
                   title="Close tab"
                   aria-label="Close New chat"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="size-3" />
                 </span>
               )}
             </button>
@@ -231,22 +231,22 @@ export function ChatTabBar({
         </div>
 
         {/* Right-side controls — never scroll away. */}
-        <div className="flex items-center gap-1 px-2 shrink-0 border-l border-border/60">
+        <div className="flex shrink-0 items-center gap-1 border-l border-border/60 px-2">
           <TabBarIconButton
-            icon={<Plus className="w-4 h-4" />}
+            icon={<Plus className="size-4" />}
             label="New chat"
             onClick={onNewChat}
-            className="text-muted-foreground hover:text-foreground hover:bg-accent"
+            className="text-muted-foreground hover:bg-accent hover:text-foreground"
           />
 
           <TabBarIconButton
-            icon={<History className="w-4 h-4" />}
+            icon={<History className="size-4" />}
             label="Chat history"
             onClick={onToggleHistory}
             className={
               historyOpen
-                ? 'text-foreground bg-accent'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                ? 'bg-accent text-foreground'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
             }
             ariaExpanded={historyOpen}
           />
@@ -259,10 +259,10 @@ export function ChatTabBar({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition"
+                className="rounded-md p-1.5 text-muted-foreground transition hover:bg-accent hover:text-foreground"
                 aria-label="More options"
               >
-                <MoreHorizontal className="w-4 h-4" />
+                <MoreHorizontal className="size-4" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -285,14 +285,14 @@ export function ChatTabBar({
               reconnect banner already, per design §6). */}
           {isDesktop && (
             <span
-              className="flex items-center gap-1 text-[11px] shrink-0 ml-1"
+              className="ml-1 flex shrink-0 items-center gap-1 text-[11px]"
               title={connected ? 'Connected to daemon' : 'Disconnected — reconnecting'}
               aria-label={connected ? 'Connected' : 'Disconnected'}
             >
               {connected ? (
-                <Wifi className="w-3.5 h-3.5 text-green-500" />
+                <Wifi className="size-3.5 text-green-500" />
               ) : (
-                <WifiOff className="w-3.5 h-3.5 text-red-500" />
+                <WifiOff className="size-3.5 text-red-500" />
               )}
             </span>
           )}

@@ -23,7 +23,7 @@ export function ActivityBar({
   ]
 
   return (
-    <div className="hidden lg:flex flex-col items-center w-12 bg-activity-bar border-r border-border shrink-0 pt-2 gap-1">
+    <div className="hidden w-12 shrink-0 flex-col items-center gap-1 border-r border-border bg-activity-bar pt-2 lg:flex">
       {items.map(({ id, icon: Icon, label }) => (
         <button
           key={id}
@@ -32,15 +32,15 @@ export function ActivityBar({
           aria-label={label}
           aria-pressed={activePanel === id}
           className={cn(
-            'w-full flex items-center justify-center py-2.5 transition relative',
+            'relative flex w-full items-center justify-center py-2.5 transition',
             activePanel === id
               ? 'text-primary hover:text-primary/80'
               : 'text-muted-foreground hover:text-foreground',
           )}
         >
-          <Icon className="w-5 h-5" />
+          <Icon className="size-5" />
           {activePanel === id && (
-            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 bg-primary rounded-r" />
+            <div className="absolute top-1/2 left-0 h-6 w-0.5 -translate-y-1/2 rounded-r bg-primary" />
           )}
         </button>
       ))}
@@ -51,9 +51,9 @@ export function ActivityBar({
         onClick={onOpenSettings}
         title="Settings"
         aria-label="Settings"
-        className="w-full flex items-center justify-center py-2.5 text-muted-foreground hover:text-foreground transition"
+        className="flex w-full items-center justify-center py-2.5 text-muted-foreground transition hover:text-foreground"
       >
-        <Settings className="w-5 h-5" />
+        <Settings className="size-5" />
       </button>
     </div>
   )

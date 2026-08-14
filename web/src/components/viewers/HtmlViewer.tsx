@@ -14,7 +14,7 @@ export function HtmlViewer({ url, workspaceId, trusted }: { url: string; workspa
       <TrustPrompt
         workspaceId={workspaceId}
         onResolve={setResolvedTrust}
-        className="w-full h-full text-destructive"
+        className="size-full text-destructive"
       />
     )
   }
@@ -31,7 +31,7 @@ export function HtmlViewer({ url, workspaceId, trusted }: { url: string; workspa
     <iframe
       src={url}
       title="HTML preview"
-      className="w-full h-full border-0 bg-white"
+      className="size-full border-0 bg-white"
       sandbox="allow-scripts"
     />
   )

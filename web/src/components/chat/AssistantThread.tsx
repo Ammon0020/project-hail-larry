@@ -154,7 +154,7 @@ export function AssistantThread({
                     className="text-primary/70 transition hover:text-primary"
                     aria-label="Dismiss"
                   >
-                    <X className="h-3 w-3" />
+                    <X className="size-3" />
                   </button>
                 )}
               </div>
@@ -173,7 +173,7 @@ export function AssistantThread({
           title="Jump to bottom"
           aria-label="Jump to bottom"
         >
-          <ChevronDown className="h-4 w-4" />
+          <ChevronDown className="size-4" />
         </ThreadPrimitive.ScrollToBottom>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
@@ -245,7 +245,7 @@ function renderUnnormalizedDataPart(
 function UserMessage() {
   return (
     <div className="mb-3 flex justify-end">
-      <div className="max-w-[85%] break-words rounded-[18px] rounded-br-[4px] bg-secondary px-3 py-2 text-sm text-foreground">
+      <div className="max-w-[85%] rounded-[18px] rounded-br-[4px] bg-secondary px-3 py-2 text-sm break-words text-foreground">
         <MessagePrimitive.Parts>{({ part }) => renderPart(part)}</MessagePrimitive.Parts>
       </div>
     </div>

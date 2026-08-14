@@ -38,13 +38,13 @@ import {
  * their parent folder's icon.
  */
 const rowStyles = cva(
-  'flex items-center gap-1.5 p-1 rounded cursor-pointer',
+  'flex cursor-pointer items-center gap-1.5 rounded p-1',
   {
     variants: {
       kind: {
-        folder: 'hover:bg-accent text-foreground',
-        active: 'bg-primary/10 text-primary border-l-2 border-primary',
-        default: 'hover:bg-accent text-muted-foreground',
+        folder: 'text-foreground hover:bg-accent',
+        active: 'border-l-2 border-primary bg-primary/10 text-primary',
+        default: 'text-muted-foreground hover:bg-accent',
       },
       // Orthogonal to `kind`: a blue outline marks the row whose context menu
       // is currently open (the right-clicked item). Uses `ring-primary` so it
@@ -154,7 +154,7 @@ function PathMenuItems({
             onClose()
           }}
         >
-          <Copy className="w-3.5 h-3.5" />
+          <Copy className="size-3.5" />
           Copy Path
         </DropdownMenuItem>
       )}
@@ -165,7 +165,7 @@ function PathMenuItems({
             onClose()
           }}
         >
-          <Copy className="w-3.5 h-3.5" />
+          <Copy className="size-3.5" />
           Copy Relative Path
         </DropdownMenuItem>
       )}
@@ -177,7 +177,7 @@ function PathMenuItems({
             onClose()
           }}
         >
-          <Pencil className="w-3.5 h-3.5" />
+          <Pencil className="size-3.5" />
           Rename
         </DropdownMenuItem>
       )}
@@ -194,7 +194,7 @@ function PathMenuItems({
             onClose()
           }}
         >
-          <Trash2 className="w-3.5 h-3.5" />
+          <Trash2 className="size-3.5" />
           Delete
         </DropdownMenuItem>
       )}
@@ -282,7 +282,7 @@ function TreeNode({
         }
       }}
       onClick={(e) => e.stopPropagation()}
-      className="flex-1 min-w-0 bg-background text-foreground text-sm rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring"
+      className="min-w-0 flex-1 rounded bg-background px-1 py-0.5 text-sm text-foreground focus:ring-1 focus:ring-ring focus:outline-none"
       aria-label={`Rename ${node.name}`}
     />
   )
@@ -312,8 +312,8 @@ function TreeNode({
         }}
         {...touchHandlers}
       >
-        <ChevronIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-        <FolderIcon className={cn('w-4 h-4 shrink-0', node.iconColor ?? 'text-primary')} />
+        <ChevronIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        <FolderIcon className={cn('size-4 shrink-0', node.iconColor ?? 'text-primary')} />
         {isRenaming ? renameInput : <span className={labelStyles}>{node.name}</span>}
       </div>
     )
@@ -338,7 +338,7 @@ function TreeNode({
                     closeMenu()
                   }}
                 >
-                  <FilePlus className="w-3.5 h-3.5" />
+                  <FilePlus className="size-3.5" />
                   New File
                 </DropdownMenuItem>
               )}
@@ -349,7 +349,7 @@ function TreeNode({
                     closeMenu()
                   }}
                 >
-                  <FolderPlus className="w-3.5 h-3.5" />
+                  <FolderPlus className="size-3.5" />
                   New Folder
                 </DropdownMenuItem>
               )}
@@ -368,7 +368,7 @@ function TreeNode({
           // Indent children by the chevron + gap footprint (w-3.5 + gap-1.5 =
           // 20px) so nested icons line up under this folder's icon rather than
           // under its chevron. pl-[20px] is a static value the JIT can detect.
-          <div role="group" className="pl-[20px]">
+          <div role="group" className="pl-5">
             {node.children.map((child) => (
               <TreeNode
                 key={child.path || child.name}
@@ -419,11 +419,11 @@ function TreeNode({
       {...touchHandlers}
     >
       <span className={chevronSpacer} aria-hidden />
-      <FileIcon name={node.name} className="w-4 h-4 shrink-0" />
+      <FileIcon name={node.name} className="size-4 shrink-0" />
       {isRenaming ? renameInput : <span className={labelStyles}>{node.name}</span>}
       {node.unsaved && (
         <div title="Unsaved changes" className="shrink-0">
-          <Circle className="w-2 h-2 text-primary fill-primary" />
+          <Circle className="size-2 fill-primary text-primary" />
         </div>
       )}
     </div>
@@ -446,7 +446,7 @@ function TreeNode({
             closeMenu()
           }}
         >
-          <File className="w-3.5 h-3.5" />
+          <File className="size-3.5" />
           Open
         </DropdownMenuItem>
         {showPreview && (
@@ -456,7 +456,7 @@ function TreeNode({
               closeMenu()
             }}
           >
-            <Eye className="w-3.5 h-3.5" />
+            <Eye className="size-3.5" />
             Open Preview
           </DropdownMenuItem>
         )}
@@ -702,7 +702,7 @@ export function FileTree({
     >
       <DropdownMenuTrigger asChild>
         <div
-          className="flex-1 min-h-12 outline-none"
+          className="min-h-12 flex-1 outline-none"
           aria-label="Explorer empty area"
           onContextMenu={(e) => {
             e.preventDefault()
@@ -720,7 +720,7 @@ export function FileTree({
               setMenuPath(null)
             }}
           >
-            <FilePlus className="w-3.5 h-3.5" />
+            <FilePlus className="size-3.5" />
             New File
           </DropdownMenuItem>
         )}
@@ -731,14 +731,14 @@ export function FileTree({
               setMenuPath(null)
             }}
           >
-            <FolderPlus className="w-3.5 h-3.5" />
+            <FolderPlus className="size-3.5" />
             New Folder
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
   ) : (
-    <div className="flex-1 min-h-12" aria-hidden />
+    <div className="min-h-12 flex-1" aria-hidden />
   )
 
   return (
@@ -746,7 +746,7 @@ export function FileTree({
       ref={treeRef}
       role="tree"
       aria-label="File explorer"
-      className="flex flex-1 flex-col min-h-0 overflow-y-auto px-2 pb-2 text-sm"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2 text-sm"
     >
       {nodes.map((node) => (
         <TreeNode

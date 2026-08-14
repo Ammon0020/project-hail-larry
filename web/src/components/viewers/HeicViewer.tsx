@@ -40,16 +40,16 @@ export function HeicViewer({ url, name }: { url: string; name: string }) {
   if (loading || !pngUrl) {
     return (
       <div className="flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        <Loader2 className="size-8 animate-spin text-muted-foreground" />
       </div>
     )
   }
   return (
-    <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
+    <div className="flex max-h-full flex-col items-center gap-3 overflow-auto p-6">
       <img
         src={pngUrl}
         alt={name}
-        className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg bg-checkerboard"
+        className="bg-checkerboard max-h-[calc(100vh-200px)] max-w-full rounded-lg border border-border shadow-lg"
       />
       <span className="text-xs text-muted-foreground">{name}</span>
     </div>

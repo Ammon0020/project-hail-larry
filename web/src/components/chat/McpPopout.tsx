@@ -96,16 +96,16 @@ export function McpPopout({
   return (
     <div
       ref={ref}
-      className="absolute bottom-full left-0 mb-2 w-[260px] z-50 bg-popover border border-border rounded-[10px] shadow-lg p-3 flex flex-col gap-3"
+      className="absolute bottom-full left-0 z-50 mb-2 flex w-65 flex-col gap-3 rounded-[10px] border border-border bg-popover p-3 shadow-lg"
     >
       {/* Header: enabled count + store/settings actions. While a health
           refresh is in flight, a small spinner sits next to the count so
           the user can tell dots may update shortly. */}
-      <div className="flex items-center justify-between pb-2 border-b border-border">
+      <div className="flex items-center justify-between border-b border-border pb-2">
         <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           {enabledCount} MCP{enabledCount === 1 ? '' : 's'}
           {statusLoading && (
-            <Loader2 className="w-3 h-3 animate-spin" aria-label="Refreshing MCP health" />
+            <Loader2 className="size-3 animate-spin" aria-label="Refreshing MCP health" />
           )}
         </span>
         <div className="flex gap-1">
@@ -113,16 +113,16 @@ export function McpPopout({
           <button
             type="button"
             disabled
-            className="p-1 rounded text-muted-foreground opacity-40 cursor-not-allowed"
+            className="cursor-not-allowed rounded p-1 text-muted-foreground opacity-40"
             title="MCP store (coming soon)"
             aria-label="MCP store (coming soon)"
           >
-            <ShoppingBag className="w-3.5 h-3.5" />
+            <ShoppingBag className="size-3.5" />
           </button>
           {/* Settings: close popout and open app Settings → MCP Servers. */}
           <button
             type="button"
-            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition"
+            className="rounded p-1 text-muted-foreground transition hover:bg-accent hover:text-foreground"
             title="MCP settings"
             aria-label="MCP settings"
             onClick={() => {
@@ -130,7 +130,7 @@ export function McpPopout({
               onClose()
             }}
           >
-            <Settings className="w-3.5 h-3.5" />
+            <Settings className="size-3.5" />
           </button>
         </div>
       </div>
@@ -138,7 +138,7 @@ export function McpPopout({
       {/* Server list. */}
       <div className="flex flex-col gap-2.5">
         {mcpServers.length === 0 && (
-          <div className="text-xs text-muted-foreground py-2 text-center">
+          <div className="py-2 text-center text-xs text-muted-foreground">
             No MCP servers configured
           </div>
         )}
@@ -173,7 +173,7 @@ export function McpPopout({
                   enabled-based coloring before the first status fetch
                   resolves so there's no muted flash. */}
               <span
-                className={cn('w-2 h-2 rounded-full', dotClass)}
+                className={cn('size-2 rounded-full', dotClass)}
                 aria-label={
                   health ? `MCP ${health.status}` : server.enabled ? 'MCP enabled' : 'MCP disabled'
                 }
@@ -184,7 +184,7 @@ export function McpPopout({
             {/* Custom toggle: hidden checkbox + styled spans (no Radix
                 Switch dependency). While toggling, show a spinner in place
                 of the track + knob. */}
-            <label className="relative inline-block w-8 h-[18px] shrink-0">
+            <label className="relative inline-block h-[18px] w-8 shrink-0">
               <input
                 type="checkbox"
                 checked={server.enabled}
@@ -195,23 +195,23 @@ export function McpPopout({
                 // spinner below still only renders for the active server.
                 disabled={togglingServer !== null}
                 onChange={(e) => onToggle(server.name, e.target.checked)}
-                className="opacity-0 w-0 h-0"
+                className="size-0 opacity-0"
               />
               {togglingServer === server.name ? (
-                <Loader2 className="w-3 h-3 animate-spin absolute top-[2px] left-[9px] text-muted-foreground" />
+                <Loader2 className="absolute top-[2px] left-[9px] size-3 animate-spin text-muted-foreground" />
               ) : (
                 <>
                   <span
                     className={cn(
                       'absolute inset-0 rounded-full border transition-colors',
                       server.enabled
-                        ? 'bg-primary border-primary'
-                        : 'bg-input border-border',
+                        ? 'border-primary bg-primary'
+                        : 'border-border bg-input',
                     )}
                   />
                   <span
                     className={cn(
-                      'absolute top-[2px] left-[2px] w-3 h-3 rounded-full transition-transform',
+                      'absolute top-[2px] left-[2px] size-3 rounded-full transition-transform',
                       server.enabled
                         ? 'translate-x-[14px] bg-primary-foreground'
                         : 'bg-muted-foreground',

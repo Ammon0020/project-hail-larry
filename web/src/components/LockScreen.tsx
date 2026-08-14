@@ -62,17 +62,17 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center h-full w-full bg-background px-4">
+    <div className="flex size-full flex-col items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm space-y-6">
         {/* Logo / title */}
-        <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/20 border border-primary/30">
-            <Terminal className="w-8 h-8 text-primary" />
+        <div className="space-y-2 text-center">
+          <div className="inline-flex size-16 items-center justify-center rounded-2xl border border-primary/30 bg-primary/20">
+            <Terminal className="size-8 text-primary" />
           </div>
           <h1 className="text-xl font-bold text-foreground">Local Agent Interface</h1>
           <p className="text-sm text-muted-foreground">
             Enter the four-word passcode from{' '}
-            <code className="text-primary font-mono">app pair</code>
+            <code className="font-mono text-primary">app pair</code>
           </p>
         </div>
 
@@ -90,19 +90,19 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
             }}
             onKeyDown={handleKeyDown}
             placeholder="purple-fox-delta-wave"
-            className="w-full bg-panel border border-input rounded-xl px-4 py-3 text-sm font-mono text-center text-foreground focus:outline-none focus:border-ring focus:ring-1 focus:ring-ring transition"
+            className="w-full rounded-xl border border-input bg-panel px-4 py-3 text-center font-mono text-sm text-foreground transition focus:border-ring focus:ring-1 focus:ring-ring focus:outline-none"
             autoComplete="off"
             spellCheck="false"
           />
           <button
             onClick={attemptPair}
             disabled={loading || locked}
-            className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground font-medium py-3 rounded-xl transition"
+            className="w-full rounded-xl bg-primary py-3 font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
           >
             {loading ? 'Pairing...' : locked ? 'Locked — edit passcode' : 'Pair Device'}
           </button>
           {error && (
-            <p className="text-xs text-destructive text-center">{errorMsg}</p>
+            <p className="text-center text-xs text-destructive">{errorMsg}</p>
           )}
         </div>
 
@@ -110,25 +110,25 @@ export function LockScreen({ onPaired }: { onPaired: () => void }) {
             STATUS: stub — the inputs are not yet wired. Shown as a disabled
             "coming soon" affordance so users are not misled into expecting a
             working connect action (AGENTS.md — mark gaps honestly). */}
-        <div className="pt-4 border-t border-border">
-          <div className="text-xs text-muted-foreground mb-2">Or connect manually:</div>
+        <div className="border-t border-border pt-4">
+          <div className="mb-2 text-xs text-muted-foreground">Or connect manually:</div>
           <div className="flex gap-2 opacity-50" aria-disabled="true">
             <input
               type="text"
               placeholder="192.168.1.100:7337"
-              className="flex-1 bg-panel border border-input rounded-lg px-3 py-2 text-xs font-mono text-foreground focus:outline-none focus:border-ring transition"
+              className="flex-1 rounded-lg border border-input bg-panel px-3 py-2 font-mono text-xs text-foreground transition focus:border-ring focus:outline-none"
               disabled
               aria-label="Manual host and port (coming soon)"
             />
             <button
-              className="px-3 py-2 bg-secondary text-secondary-foreground text-xs rounded-lg cursor-not-allowed"
+              className="cursor-not-allowed rounded-lg bg-secondary px-3 py-2 text-xs text-secondary-foreground"
               disabled
               aria-label="Connect manually (coming soon)"
             >
               Connect
             </button>
           </div>
-          <p className="text-[10px] text-muted-foreground mt-1.5">Coming soon.</p>
+          <p className="mt-1.5 text-[10px] text-muted-foreground">Coming soon.</p>
         </div>
       </div>
     </div>

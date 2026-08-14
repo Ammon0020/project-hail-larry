@@ -278,7 +278,7 @@ export function ProfilesSettings() {
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <Users className="w-4 h-4 text-muted-foreground" />
+          <Users className="size-4 text-muted-foreground" />
           <h3 className="text-base font-semibold text-foreground">Profiles</h3>
         </div>
         <p className="text-xs text-muted-foreground">Loading…</p>
@@ -290,20 +290,20 @@ export function ProfilesSettings() {
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <Users className="w-4 h-4 text-muted-foreground" />
+          <Users className="size-4 text-muted-foreground" />
           <h3 className="text-base font-semibold text-foreground">Profiles</h3>
         </div>
-        <div className="flex items-start gap-2 p-3 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          <span className="font-mono whitespace-pre-wrap break-all">
+        <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <span className="font-mono break-all whitespace-pre-wrap">
             {error ?? 'Failed to load profiles.'}
           </span>
         </div>
         <button
           onClick={handleReset}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-foreground bg-secondary hover:bg-accent rounded-md border border-input transition"
+          className="flex items-center gap-2 rounded-md border border-input bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-accent"
         >
-          <RotateCcw className="w-3.5 h-3.5" />
+          <RotateCcw className="size-3.5" />
           Retry
         </button>
       </div>
@@ -316,20 +316,20 @@ export function ProfilesSettings() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Users className="w-4 h-4 text-muted-foreground" />
+          <Users className="size-4 text-muted-foreground" />
           <h3 className="text-base font-semibold text-foreground">Profiles</h3>
           {dirty && (
             <span className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+              <span className="size-1.5 rounded-full bg-amber-500" />
               unsaved
             </span>
           )}
         </div>
         <button
           onClick={handleAdd}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition"
+          className="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition hover:bg-primary/90"
         >
-          <Plus className="w-3.5 h-3.5" />
+          <Plus className="size-3.5" />
           Add
         </button>
       </div>
@@ -339,10 +339,10 @@ export function ProfilesSettings() {
         server access. MCP servers are selected when an ACP session starts.
       </p>
 
-      <div className="flex flex-col md:flex-row gap-4">
+      <div className="flex flex-col gap-4 md:flex-row">
         {/* Profile list */}
-        <div className="md:w-56 shrink-0 border border-border rounded-md bg-panel">
-          <ul className="max-h-72 md:max-h-[28rem] overflow-y-auto">
+        <div className="shrink-0 rounded-md border border-border bg-panel md:w-56">
+          <ul className="max-h-72 overflow-y-auto md:max-h-112">
             {profileIds.length === 0 && (
               <li className="px-3 py-2 text-xs text-muted-foreground italic">
                 No profiles.
@@ -358,20 +358,20 @@ export function ProfilesSettings() {
                     onClick={() => setSelectedId(id)}
                     aria-current={active ? 'true' : undefined}
                     className={cn(
-                      'w-full text-left px-3 py-2 text-sm transition flex items-center justify-between gap-2',
+                      'flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition',
                       active
-                        ? 'bg-primary/10 text-primary font-medium'
+                        ? 'bg-primary/10 font-medium text-primary'
                         : 'text-foreground hover:bg-accent',
                     )}
                   >
                     <span className="truncate">
-                      <span className="font-mono text-xs text-muted-foreground mr-1.5">
+                      <span className="mr-1.5 font-mono text-xs text-muted-foreground">
                         {id}
                       </span>
                       <span className="truncate">{p.label || '(unnamed)'}</span>
                     </span>
                     {isDefault && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-primary/30 bg-primary/10 text-primary shrink-0">
+                      <span className="shrink-0 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
                         default
                       </span>
                     )}
@@ -383,7 +383,7 @@ export function ProfilesSettings() {
         </div>
 
         {/* Editor */}
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 flex-1">
           {selected && selectedId ? (
             <ProfileEditor
               id={selectedId}
@@ -399,7 +399,7 @@ export function ProfilesSettings() {
               canDelete={draft.defaultProfileId !== selectedId}
             />
           ) : (
-            <div className="flex items-center justify-center h-32 text-xs text-muted-foreground italic border border-dashed border-border rounded-md">
+            <div className="flex h-32 items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground italic">
               Select a profile to edit, or click Add.
             </div>
           )}
@@ -407,10 +407,10 @@ export function ProfilesSettings() {
       </div>
 
       {/* Default profile selector — full width below the list/editor. */}
-      <div className="p-3 bg-panel border border-border rounded-md">
+      <div className="rounded-md border border-border bg-panel p-3">
         <label
           htmlFor="default-profile-select"
-          className="block text-xs text-muted-foreground mb-1"
+          className="mb-1 block text-xs text-muted-foreground"
         >
           Default profile
         </label>
@@ -418,7 +418,7 @@ export function ProfilesSettings() {
           id="default-profile-select"
           value={draft.defaultProfileId}
           onChange={e => handleSetDefault(e.target.value)}
-          className="w-full md:w-64 bg-background border border-input rounded-md px-2 py-1.5 text-sm"
+          className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm md:w-64"
         >
           {profileIds.map(id => (
             <option key={id} value={id}>
@@ -426,16 +426,16 @@ export function ProfilesSettings() {
             </option>
           ))}
         </select>
-        <p className="text-[11px] text-muted-foreground mt-1">
+        <p className="mt-1 text-[11px] text-muted-foreground">
           Used when a chat session doesn't pick a profile explicitly.
         </p>
       </div>
 
       {/* Error / success banner + Save / Reset. */}
       {error && (
-        <div className="flex items-start gap-2 p-3 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          <span className="font-mono whitespace-pre-wrap break-all">{error}</span>
+        <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <span className="font-mono break-all whitespace-pre-wrap">{error}</span>
         </div>
       )}
 
@@ -443,22 +443,22 @@ export function ProfilesSettings() {
         <button
           onClick={handleSave}
           disabled={saving || !dirty || !!inlineError}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition disabled:opacity-50"
+          className="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
         >
-          <Save className="w-3.5 h-3.5" />
+          <Save className="size-3.5" />
           {saving ? 'Saving...' : 'Save'}
         </button>
         <button
           onClick={handleReset}
           disabled={saving || !dirty}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-foreground bg-secondary hover:bg-accent rounded-md border border-input transition disabled:opacity-50"
+          className="flex items-center gap-2 rounded-md border border-input bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-50"
         >
-          <RotateCcw className="w-3.5 h-3.5" />
+          <RotateCcw className="size-3.5" />
           Reset
         </button>
         {savedFlash && (
           <span className="flex items-center gap-1 text-xs text-green-500">
-            <Check className="w-3.5 h-3.5" />
+            <Check className="size-3.5" />
             Saved
           </span>
         )}
@@ -524,23 +524,23 @@ function ProfileEditor({
   }
 
   return (
-    <div className="p-4 bg-panel border border-border rounded-lg space-y-4">
+    <div className="space-y-4 rounded-lg border border-border bg-panel p-4">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs font-mono text-muted-foreground shrink-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 font-mono text-xs text-muted-foreground">
             {id}
           </span>
           {isDefault && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded border border-primary/30 bg-primary/10 text-primary shrink-0">
+            <span className="shrink-0 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
               default
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex shrink-0 items-center gap-2">
           {!isDefault && (
             <button
               onClick={onSetDefault}
-              className="px-2.5 py-1 text-xs font-medium text-foreground bg-secondary hover:bg-accent rounded-md border border-input transition"
+              className="rounded-md border border-input bg-secondary px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent"
             >
               Set as default
             </button>
@@ -553,9 +553,9 @@ function ProfileEditor({
                 ? 'Delete this profile'
                 : 'Cannot delete the default profile — pick another default first.'
             }
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-destructive bg-secondary hover:bg-destructive/10 rounded-md border border-destructive/30 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 rounded-md border border-destructive/30 bg-secondary px-2.5 py-1 text-xs font-medium text-destructive transition hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="size-3.5" />
             Delete
           </button>
         </div>
@@ -563,7 +563,7 @@ function ProfileEditor({
 
       {/* Label */}
       <div>
-        <div className="flex items-baseline justify-between mb-1">
+        <div className="mb-1 flex items-baseline justify-between">
           <label
             htmlFor={`profile-label-${id}`}
             className="block text-xs text-muted-foreground"
@@ -586,14 +586,14 @@ function ProfileEditor({
           onChange={e => onChange({ label: e.target.value })}
           maxLength={LABEL_MAX + 50}
           className={cn(
-            'w-full bg-background border rounded-md px-3 py-1.5 text-sm',
+            'w-full rounded-md border bg-background px-3 py-1.5 text-sm',
             labelTooLong
               ? 'border-destructive focus:border-destructive'
               : 'border-input',
           )}
         />
         {labelTooLong && (
-          <p className="text-[11px] text-destructive mt-1">
+          <p className="mt-1 text-[11px] text-destructive">
             Label exceeds the {LABEL_MAX}-character cap.
           </p>
         )}
@@ -601,7 +601,7 @@ function ProfileEditor({
 
       {/* Instructions */}
       <div>
-        <div className="flex items-baseline justify-between mb-1">
+        <div className="mb-1 flex items-baseline justify-between">
           <label
             htmlFor={`profile-instructions-${id}`}
             className="block text-xs text-muted-foreground"
@@ -623,14 +623,14 @@ function ProfileEditor({
           onChange={e => onChange({ instructions: e.target.value })}
           rows={8}
           className={cn(
-            'w-full bg-background border rounded-md px-3 py-2 text-sm font-mono resize-y',
+            'w-full resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm',
             instructionsTooLong
               ? 'border-destructive focus:border-destructive'
               : 'border-input',
           )}
         />
         {instructionsTooLong && (
-          <p className="text-[11px] text-destructive mt-1">
+          <p className="mt-1 text-[11px] text-destructive">
             Instructions exceed the {INSTRUCTIONS_MAX.toLocaleString()}-character cap.
           </p>
         )}
@@ -639,7 +639,7 @@ function ProfileEditor({
       {/* ACP attaches complete MCP servers at session startup; it cannot select
           individual tools from one server. */}
       <div>
-        <label className="flex items-center gap-2 text-xs text-foreground mb-2">
+        <label className="mb-2 flex items-center gap-2 text-xs text-foreground">
           <input
             type="checkbox"
             checked={entry.mcpServers === undefined}
@@ -648,7 +648,7 @@ function ProfileEditor({
           All enabled MCP servers
         </label>
         <fieldset disabled={entry.mcpServers === undefined} className="space-y-1.5">
-          <legend className="text-xs text-muted-foreground mb-1">
+          <legend className="mb-1 text-xs text-muted-foreground">
             Selected MCP servers
           </legend>
           {mcpServersError ? (
@@ -678,12 +678,12 @@ function ProfileEditor({
             </div>
           )}
         </fieldset>
-        <p className="text-[11px] text-muted-foreground mt-1">
+        <p className="mt-1 text-[11px] text-muted-foreground">
           Leave “All enabled MCP servers” selected to omit this policy. Turn it
           off and select none to allow no MCP servers.
         </p>
         {entry.legacyTools && entry.legacyTools.length > 0 && (
-          <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2">
+          <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
             Legacy tool names ({entry.legacyTools.join(', ')}) were not converted
             to server names. Choose MCP servers above before saving this profile.
           </p>

@@ -30,7 +30,7 @@ export function GitCommitDiffTab({ workspaceId, commitOid }: { workspaceId: stri
       <div className="flex h-full flex-col items-center justify-center gap-3 bg-editor p-4 text-center text-sm text-muted-foreground">
         <span>Failed to load commit diff: {error}</span>
         <button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-accent">
-          <RefreshCw className="h-3.5 w-3.5" /> Retry
+          <RefreshCw className="size-3.5" /> Retry
         </button>
       </div>
     )

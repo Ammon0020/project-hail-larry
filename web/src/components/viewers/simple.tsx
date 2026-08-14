@@ -3,11 +3,11 @@ import { FileX, Download } from 'lucide-react'
 
 export function ImageViewer({ url, name }: { url: string; name: string }) {
   return (
-    <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
+    <div className="flex max-h-full flex-col items-center gap-3 overflow-auto p-6">
       <img
         src={url}
         alt={name}
-        className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg bg-checkerboard"
+        className="bg-checkerboard max-h-[calc(100vh-200px)] max-w-full rounded-lg border border-border shadow-lg"
       />
       <span className="text-xs text-muted-foreground">{name}</span>
     </div>
@@ -19,7 +19,7 @@ export function PdfViewer({ url }: { url: string }) {
     <iframe
       src={url}
       title="PDF preview"
-      className="w-full h-full border-0"
+      className="size-full border-0"
       // Firefox renders PDFs via PDF.js, which runs as scripted content inside
       // the iframe; sandbox="" would blank it out. The preview endpoint is the
       // daemon's own token-authed route serving a PDF, not arbitrary HTML.
@@ -30,10 +30,10 @@ export function PdfViewer({ url }: { url: string }) {
 
 export function VideoViewer({ url, name }: { url: string; name: string }) {
   return (
-    <div className="flex flex-col items-center gap-3 p-6 max-h-full">
+    <div className="flex max-h-full flex-col items-center gap-3 p-6">
       <video
         controls
-        className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg"
+        className="max-h-[calc(100vh-200px)] max-w-full rounded-lg border border-border shadow-lg"
       >
         <source src={url} />
         Your browser does not support video playback.
@@ -47,8 +47,8 @@ export function AudioViewer({ url, name }: { url: string; name: string }) {
   return (
     <div className="flex flex-col items-center gap-4 p-8">
       <div className="flex flex-col items-center gap-2 text-muted-foreground">
-        <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-10 h-10">
+        <div className="flex size-20 items-center justify-center rounded-full bg-muted">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-10">
             <path d="M9 18V5l12-2v13" />
             <circle cx="6" cy="18" r="3" />
             <circle cx="18" cy="16" r="3" />
@@ -70,16 +70,16 @@ export function AudioViewer({ url, name }: { url: string; name: string }) {
 
 export function FallbackViewer({ url, name, message }: { url: string; name: string; message?: string }) {
   return (
-    <div className="flex flex-col items-center gap-3 text-muted-foreground p-6">
-      <FileX className="w-12 h-12" />
+    <div className="flex flex-col items-center gap-3 p-6 text-muted-foreground">
+      <FileX className="size-12" />
       <p className="text-sm font-medium">{message || 'Preview not available for this file type'}</p>
       <p className="text-xs text-muted-foreground/70">{name}</p>
       <a
         href={url}
         download={name}
-        className="mt-2 flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 transition"
+        className="mt-2 flex items-center gap-1.5 text-xs font-medium text-primary transition hover:text-primary/80"
       >
-        <Download className="w-3.5 h-3.5" /> Download file
+        <Download className="size-3.5" /> Download file
       </a>
     </div>
   )

@@ -53,7 +53,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="flex h-full items-center justify-center p-3">
           <div className="flex max-w-sm flex-col gap-2 rounded border border-destructive/30 bg-destructive/5 p-3 text-xs">
             <p className="font-semibold text-destructive">{this.props.name ?? 'Panel'} error</p>
-            <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
+            <pre className="max-h-24 overflow-auto text-[11px] break-words whitespace-pre-wrap text-muted-foreground">
               {this.state.error.message}
             </pre>
             <Button onClick={() => this.setState({ error: null })} size="sm" className="self-start">
@@ -77,7 +77,7 @@ export class ErrorBoundary extends Component<Props, State> {
             The IDE hit an unexpected error while rendering. Reloading usually
             clears it.
           </p>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-destructive/10 p-2 text-[11px]">
+          <pre className="max-h-40 overflow-auto rounded bg-destructive/10 p-2 text-[11px] break-words whitespace-pre-wrap">
             {this.state.error.message}
           </pre>
           <Button onClick={() => location.reload()} size="sm" className="self-start">

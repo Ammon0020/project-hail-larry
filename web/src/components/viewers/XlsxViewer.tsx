@@ -48,22 +48,22 @@ export function XlsxViewer({ url, name }: { url: string; name: string }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        <Loader2 className="size-8 animate-spin text-muted-foreground" />
       </div>
     )
   }
   return (
-    <div className="w-full h-full flex flex-col bg-white text-black">
+    <div className="flex size-full flex-col bg-white text-black">
       {sheets.length > 1 && (
-        <div className="flex gap-1 p-2 border-b border-gray-200 bg-gray-50 overflow-x-auto">
+        <div className="flex gap-1 overflow-x-auto border-b border-gray-200 bg-gray-50 p-2">
           {sheets.map((sheet, index) => (
             <button
               key={sheet.name}
               onClick={() => setActiveSheet(index)}
               className={cn(
-                'px-3 py-1 text-xs rounded whitespace-nowrap',
+                'rounded px-3 py-1 text-xs whitespace-nowrap',
                 index === activeSheet
-                  ? 'bg-white border border-gray-300 font-medium shadow-sm'
+                  ? 'border border-gray-300 bg-white font-medium shadow-sm'
                   : 'text-gray-600 hover:bg-gray-100',
               )}
             >

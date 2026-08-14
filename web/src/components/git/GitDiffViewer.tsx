@@ -171,12 +171,12 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
           : null
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-editor border-border">
+    <div className="flex h-full min-h-0 flex-col border-border bg-editor">
       {/* Header: path + mode toggle. Split is disabled on narrow viewports
           where it would collapse to unified — `active` reflects the effective
           rendered mode so the highlight never lies. */}
-      <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border text-xs text-muted-foreground shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-2">
           <span className="truncate font-mono" title={path}>{path}</span>
           {badge && (
             <span className={cn('shrink-0 rounded px-1 py-0.5 text-[10px] font-medium', badge.className)}>
@@ -184,7 +184,7 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex shrink-0 items-center gap-1">
           <ModeButton
             label="Unified"
             active={effectiveMode === 'unified'}
@@ -201,14 +201,14 @@ export function GitDiffViewer({ path, base, head, truncated, mode = 'unified' }:
       </div>
 
       {truncated && (
-        <div role="status" aria-live="polite" className="px-3 py-1 text-xs bg-yellow-500/10 text-yellow-600 border-b border-yellow-500/20">
+        <div role="status" aria-live="polite" className="border-b border-yellow-500/20 bg-yellow-500/10 px-3 py-1 text-xs text-yellow-600">
           Diff truncated at size cap.
         </div>
       )}
 
       {/* The CodeMirror merge view mounts here imperatively. `min-h-0` keeps
           the flex child from overflowing the pane on small viewports. */}
-      <div ref={containerRef} className="flex-1 min-h-0 overflow-auto" />
+      <div ref={containerRef} className="min-h-0 flex-1 overflow-auto" />
     </div>
   )
 }
@@ -235,10 +235,10 @@ function ModeButton({
       title={title}
       onClick={onClick}
       className={cn(
-        'px-2 py-0.5 rounded transition',
-        disabled && 'opacity-40 cursor-not-allowed',
+        'rounded px-2 py-0.5 transition',
+        disabled && 'cursor-not-allowed opacity-40',
         active
-          ? 'bg-foreground/10 text-foreground font-medium'
+          ? 'bg-foreground/10 font-medium text-foreground'
           : 'text-muted-foreground hover:bg-foreground/5',
       )}
     >

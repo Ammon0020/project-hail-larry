@@ -64,35 +64,35 @@ function SessionRow({
   return (
     <div
       className={cn(
-        'flex items-center justify-between p-2 rounded-lg session-item group',
+        'session-item group flex items-center justify-between rounded-lg p-2',
         s.active
-          ? 'bg-primary/10 border border-primary/20'
+          ? 'border border-primary/20 bg-primary/10'
           : 'hover:bg-accent',
       )}
     >
       {editing ? (
         // Inline rename input.
-        <div className="flex items-center gap-1.5 flex-1">
-          <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', statusDotClass[s.status])} />
+        <div className="flex flex-1 items-center gap-1.5">
+          <div className={cn('size-1.5 shrink-0 rounded-full', statusDotClass[s.status])} />
           <input
             ref={inputRef}
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={onRenameKey}
             onBlur={onCommitRename}
-            className="flex-1 bg-background text-xs text-foreground rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring"
+            className="flex-1 rounded bg-background px-1 py-0.5 text-xs text-foreground focus:ring-1 focus:ring-ring focus:outline-none"
           />
           <button onMouseDown={(e) => e.preventDefault()} onClick={onCommitRename} className="text-muted-foreground hover:text-green-400" title="Save" aria-label="Save rename">
-            <Check className="w-3.5 h-3.5" />
+            <Check className="size-3.5" />
           </button>
         </div>
       ) : confirmingDelete ? (
         // Delete confirmation.
-        <div className="flex items-center gap-2 flex-1 text-xs">
-          <span className="text-destructive truncate flex-1">Delete "{s.name}"?</span>
+        <div className="flex flex-1 items-center gap-2 text-xs">
+          <span className="flex-1 truncate text-destructive">Delete "{s.name}"?</span>
           <button
             onClick={onConfirmDelete}
-            className="text-destructive hover:text-destructive/80 font-medium"
+            className="font-medium text-destructive hover:text-destructive/80"
           >
             Delete
           </button>
@@ -103,10 +103,10 @@ function SessionRow({
       ) : (
         <>
           <button
-            className="flex items-center gap-2 overflow-hidden flex-1 text-left cursor-pointer"
+            className="flex flex-1 cursor-pointer items-center gap-2 overflow-hidden text-left"
             onClick={onSelect}
           >
-            <div className={cn('w-1.5 h-1.5 rounded-full shrink-0', statusDotClass[s.status])} />
+            <div className={cn('size-1.5 shrink-0 rounded-full', statusDotClass[s.status])} />
             <span className={cn(
               'truncate text-xs',
               s.active ? 'font-medium text-primary' : 'text-muted-foreground',
@@ -114,21 +114,21 @@ function SessionRow({
               {s.name}
             </span>
             {s.workspace && (
-              <span className="shrink-0 text-muted-foreground bg-muted px-1.5 py-0.5 rounded text-[10px]">
+              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                 {workspaceName(s.workspace)}
               </span>
             )}
           </button>
-          <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition">
-            {s.modelId && <span className="text-[10px] text-muted-foreground mr-1">{s.modelId}</span>}
+          <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100">
+            {s.modelId && <span className="mr-1 text-[10px] text-muted-foreground">{s.modelId}</span>}
             <button onClick={onStartRename} className="text-muted-foreground hover:text-foreground" title="Rename" aria-label={`Rename ${s.name}`}>
-              <Pencil className="w-3 h-3" />
+              <Pencil className="size-3" />
             </button>
             <button onClick={onExport} className="text-muted-foreground hover:text-foreground" title="Export" aria-label={`Export ${s.name}`}>
-              <Download className="w-3 h-3" />
+              <Download className="size-3" />
             </button>
             <button onClick={onRequestDelete} className="text-muted-foreground hover:text-destructive" title="Delete" aria-label={`Delete ${s.name}`}>
-              <Trash2 className="w-3 h-3" />
+              <Trash2 className="size-3" />
             </button>
           </div>
         </>
@@ -297,17 +297,17 @@ export function ChatHistory({
   return (
     <div
       className={cn(
-        'absolute top-full left-0 right-0 z-50 bg-panel border-b border-border shadow-lg max-h-[60vh] overflow-y-auto',
+        'absolute inset-x-0 top-full z-50 max-h-[60vh] overflow-y-auto border-b border-border bg-panel shadow-lg',
         open ? 'block' : 'hidden',
       )}
       role="dialog"
       aria-label="Chat history"
     >
-      <div className="p-2 space-y-1">
+      <div className="space-y-1 p-2">
         <div className="flex items-center justify-between px-1 pb-1">
-          <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Chat History</div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition" aria-label="Close chat history">
-            <X className="w-3.5 h-3.5" />
+          <div className="text-[10px] font-bold tracking-wider text-muted-foreground uppercase">Chat History</div>
+          <button onClick={onClose} className="text-muted-foreground transition hover:text-foreground" aria-label="Close chat history">
+            <X className="size-3.5" />
           </button>
         </div>
 
@@ -322,7 +322,7 @@ export function ChatHistory({
         <select
           value={workspaceFilter}
           onChange={(e) => setWorkspaceFilter(e.target.value)}
-          className="select-chevron appearance-none w-full bg-background border border-input text-muted-foreground text-xs rounded-md py-1.5 pl-2.5 pr-7 focus:outline-none focus:border-ring cursor-pointer mb-1"
+          className="select-chevron mb-1 w-full cursor-pointer appearance-none rounded-md border border-input bg-background py-1.5 pr-7 pl-2.5 text-xs text-muted-foreground focus:border-ring focus:outline-none"
           aria-label="Filter sessions by workspace"
         >
           <option value="all">All Workspaces</option>
@@ -334,12 +334,12 @@ export function ChatHistory({
         {/* Search input — only shown in the expanded (full) view. */}
         {expanded && (
           <div className="relative mb-1">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search conversations..."
-              className="w-full bg-background border border-input text-xs text-foreground rounded-md py-1.5 pl-7 pr-2.5 focus:outline-none focus:border-ring"
+              className="w-full rounded-md border border-input bg-background py-1.5 pr-2.5 pl-7 text-xs text-foreground focus:border-ring focus:outline-none"
               aria-label="Search sessions"
             />
           </div>
@@ -350,7 +350,7 @@ export function ChatHistory({
 
         {/* Empty state for the full search view. */}
         {expanded && fullSessions.length === 0 && (
-          <div className="px-2 py-3 text-xs text-muted-foreground text-center">
+          <div className="px-2 py-3 text-center text-xs text-muted-foreground">
             No conversations match "{search}".
           </div>
         )}
@@ -360,15 +360,15 @@ export function ChatHistory({
         {workspaceFiltered.length > RECENT_CAP && (
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="w-full flex items-center justify-center gap-1 p-2 rounded-lg hover:bg-accent cursor-pointer text-muted-foreground hover:text-foreground text-xs transition"
+            className="flex w-full cursor-pointer items-center justify-center gap-1 rounded-lg p-2 text-xs text-muted-foreground transition hover:bg-accent hover:text-foreground"
           >
             {expanded ? (
               <>
-                <ChevronUp className="w-3.5 h-3.5" /> Show less
+                <ChevronUp className="size-3.5" /> Show less
               </>
             ) : (
               <>
-                <ChevronDown className="w-3.5 h-3.5" /> See more ({
+                <ChevronDown className="size-3.5" /> See more ({
                   workspaceFiltered.length - RECENT_CAP
                 })
               </>
@@ -378,10 +378,10 @@ export function ChatHistory({
 
         {/* New chat button */}
         <button
-          className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-accent cursor-pointer text-muted-foreground text-xs transition"
+          className="flex w-full cursor-pointer items-center gap-2 rounded-lg p-2 text-xs text-muted-foreground transition hover:bg-accent"
           onClick={onCreateSession}
         >
-          <Plus className="w-3.5 h-3.5" /> New Chat
+          <Plus className="size-3.5" /> New Chat
         </button>
       </div>
     </div>

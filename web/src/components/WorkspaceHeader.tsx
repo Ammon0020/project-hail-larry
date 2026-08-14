@@ -38,7 +38,7 @@ export function WorkspaceHeader({
   }, [showWorkspaceDropdown, showStatusDropdown])
 
   return (
-    <div className="flex items-center gap-2 w-full min-w-0 @container">
+    <div className="@container flex w-full min-w-0 items-center gap-2">
       {/* Online indicator */}
       <div className="relative shrink-0">
         <button
@@ -47,26 +47,26 @@ export function WorkspaceHeader({
             setShowWorkspaceDropdown(false)
           }}
           className={cn(
-            'flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border transition hover:opacity-80 cursor-pointer',
+            'flex cursor-pointer items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs transition hover:opacity-80',
             connected
-              ? 'text-green-400 bg-green-400/10 border-green-500/20'
-              : 'text-muted-foreground bg-muted/40 border-border'
+              ? 'border-green-500/20 bg-green-400/10 text-green-400'
+              : 'border-border bg-muted/40 text-muted-foreground'
           )}
           title={connected ? 'Connected to backend' : 'Backend offline — reconnecting…'}
         >
           {connected ? (
-            <Wifi className="w-4 h-4 shrink-0" />
+            <Wifi className="size-4 shrink-0" />
           ) : (
-            <WifiOff className="w-4 h-4 animate-pulse shrink-0" />
+            <WifiOff className="size-4 shrink-0 animate-pulse" />
           )}
         </button>
 
         {showStatusDropdown && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowStatusDropdown(false)} aria-hidden="true" />
-            <div className="absolute top-full left-0 mt-2 w-56 bg-panel border border-border rounded-md shadow-xl z-50 p-3 text-xs text-muted-foreground cursor-default leading-relaxed">
-              <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
-                 {connected ? <Wifi className="w-4 h-4 text-green-400"/> : <WifiOff className="w-4 h-4 text-muted-foreground"/>}
+            <div className="absolute top-full left-0 z-50 mt-2 w-56 cursor-default rounded-md border border-border bg-panel p-3 text-xs leading-relaxed text-muted-foreground shadow-xl">
+              <div className="mb-1.5 flex items-center gap-1.5 font-semibold text-foreground">
+                 {connected ? <Wifi className="size-4 text-green-400"/> : <WifiOff className="size-4 text-muted-foreground"/>}
                  Connection Status
               </div>
               {connected ? (
@@ -88,49 +88,49 @@ export function WorkspaceHeader({
           aria-pressed={syncOn}
           title={`Workspace tab syncing ${syncOn ? 'on' : 'off'}`}
           className={cn(
-            'shrink-0 flex items-center justify-center w-6 h-6 rounded-full border transition hover:opacity-80 cursor-pointer',
+            'flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border transition hover:opacity-80',
             syncOn
-              ? 'text-primary bg-primary/10 border-primary/20'
-              : 'text-muted-foreground bg-muted/40 border-border',
+              ? 'border-primary/20 bg-primary/10 text-primary'
+              : 'border-border bg-muted/40 text-muted-foreground',
           )}
         >
           {syncOn ? (
-            <CloudUpload className="w-3.5 h-3.5" />
+            <CloudUpload className="size-3.5" />
           ) : (
-            <CloudOff className="w-3.5 h-3.5" />
+            <CloudOff className="size-3.5" />
           )}
         </button>
       )}
 
-      <div className="flex-1 min-w-0" />
+      <div className="min-w-0 flex-1" />
 
       {/* Workspace Label */}
-      <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider shrink-0 hidden @[340px]:inline">Workspace:</span>
+      <span className="hidden shrink-0 text-[10px] font-bold tracking-wider text-muted-foreground uppercase @[340px]:inline">Workspace:</span>
 
       {/* Workspace Selector */}
-      <div className="relative shrink-0 w-[140px] @[280px]:w-[160px]">
+      <div className="relative w-35 shrink-0 @[280px]:w-40">
         <button
           onClick={() => {
             setShowWorkspaceDropdown(!showWorkspaceDropdown)
             setShowStatusDropdown(false)
           }}
-          className="w-full bg-background border border-input rounded-md px-2 py-1 flex items-center justify-between hover:border-muted-foreground transition shadow-sm cursor-pointer"
+          className="flex w-full cursor-pointer items-center justify-between rounded-md border border-input bg-background px-2 py-1 shadow-sm transition hover:border-muted-foreground"
           aria-label="Switch workspace"
           aria-expanded={showWorkspaceDropdown}
           aria-haspopup="listbox"
         >
-          <div className="flex items-center gap-1.5 min-w-0">
-            <FolderCode className="w-4 h-4 text-primary shrink-0" />
+          <div className="flex min-w-0 items-center gap-1.5">
+            <FolderCode className="size-4 shrink-0 text-primary" />
             <span className="truncate text-xs font-medium">{activeWorkspace?.name || 'No workspace'}</span>
           </div>
-          <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0" />
+          <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
         </button>
         {/* Dropdown Menu */}
         {showWorkspaceDropdown && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowWorkspaceDropdown(false)} aria-hidden="true" />
             {/* divide-y and divide-border for visual separators, right-0 aligns to right side of parent on mobile */}
-            <div className="absolute top-full right-0 lg:left-0 lg:right-auto mt-2 w-[calc(100vw-32px)] lg:w-56 max-w-[280px] bg-panel border border-border rounded-md shadow-xl z-50 max-h-60 overflow-y-auto divide-y divide-border" role="listbox" aria-label="Workspaces">
+            <div className="absolute top-full right-0 z-50 mt-2 max-h-60 w-[calc(100vw-32px)] max-w-70 divide-y divide-border overflow-y-auto rounded-md border border-border bg-panel shadow-xl lg:right-auto lg:left-0 lg:w-56" role="listbox" aria-label="Workspaces">
               {workspaces.map((ws) => (
                 <button
                   key={ws.id}
@@ -138,16 +138,16 @@ export function WorkspaceHeader({
                     onWorkspaceSelect(ws)
                     setShowWorkspaceDropdown(false)
                   }}
-                  className="w-full text-left px-3 py-2.5 text-xs hover:bg-accent flex items-center justify-between transition group"
+                  className="group flex w-full items-center justify-between px-3 py-2.5 text-left text-xs transition hover:bg-accent"
                 >
                   <span className="truncate">{ws.name}</span>
                   {activeWorkspace?.id === ws.id && (
-                    <Check className="w-3.5 h-3.5 text-primary" />
+                    <Check className="size-3.5 text-primary" />
                   )}
                 </button>
               ))}
               {workspaces.length === 0 && (
-                <div className="px-3 py-3 text-xs text-muted-foreground italic text-center">No workspaces found</div>
+                <div className="p-3 text-center text-xs text-muted-foreground italic">No workspaces found</div>
               )}
             </div>
           </>

@@ -37,13 +37,13 @@ export function EpubViewer({ url }: { url: string }) {
     return <FallbackViewer url={url} name="" message={`Failed to render EPUB: ${error}`} />
   }
   return (
-    <div className="w-full h-full relative bg-white">
+    <div className="relative size-full bg-white">
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+          <Loader2 className="size-8 animate-spin text-muted-foreground" />
         </div>
       )}
-      <div ref={viewerRef} className="w-full h-full" />
+      <div ref={viewerRef} className="size-full" />
     </div>
   )
 }

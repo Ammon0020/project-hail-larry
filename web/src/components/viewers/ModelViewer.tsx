@@ -191,16 +191,16 @@ export function ModelViewer({ url, name }: { url: string; name: string }) {
     return <FallbackViewer url={url} name={name} message={`Failed to render 3D model: ${error}`} />
   }
   return (
-    <div className="w-full h-full relative">
+    <div className="relative size-full">
       {loading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-muted-foreground bg-editor">
-          <Loader2 className="w-8 h-8 animate-spin" />
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-editor text-muted-foreground">
+          <Loader2 className="size-8 animate-spin" />
           <p className="text-sm">Loading 3D model…</p>
         </div>
       )}
-      <div ref={containerRef} className="w-full h-full" />
-      <div className="absolute bottom-2 left-3 text-xs text-muted-foreground/60 flex items-center gap-1.5 pointer-events-none">
-        <Box className="w-3 h-3" /> {name} — drag to rotate, scroll to zoom
+      <div ref={containerRef} className="size-full" />
+      <div className="pointer-events-none absolute bottom-2 left-3 flex items-center gap-1.5 text-xs text-muted-foreground/60">
+        <Box className="size-3" /> {name} — drag to rotate, scroll to zoom
       </div>
     </div>
   )

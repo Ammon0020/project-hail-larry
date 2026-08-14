@@ -41,11 +41,11 @@ export function TiffViewer({ url, name }: { url: string; name: string }) {
     return <FallbackViewer url={url} name={name} message={`Failed to render TIFF: ${error}`} />
   }
   return (
-    <div className="flex flex-col items-center gap-3 p-6 max-h-full overflow-auto">
-      {loading && <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />}
+    <div className="flex max-h-full flex-col items-center gap-3 overflow-auto p-6">
+      {loading && <Loader2 className="size-8 animate-spin text-muted-foreground" />}
       <canvas
         ref={canvasRef}
-        className="max-w-full max-h-[calc(100vh-200px)] rounded-lg border border-border shadow-lg bg-checkerboard"
+        className="bg-checkerboard max-h-[calc(100vh-200px)] max-w-full rounded-lg border border-border shadow-lg"
       />
       <span className="text-xs text-muted-foreground">{name}</span>
     </div>

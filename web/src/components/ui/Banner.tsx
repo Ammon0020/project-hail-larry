@@ -5,10 +5,10 @@ import { cn } from '@/lib/utils'
 const bannerVariants = cva('text-xs', {
   variants: {
     variant: {
-      info: 'bg-muted text-muted-foreground border-border',
-      warning: 'bg-warning/10 text-warning border-warning/40',
-      error: 'bg-destructive/10 text-destructive border-destructive/40',
-      success: 'bg-primary/10 text-primary border-primary/40',
+      info: 'border-border bg-muted text-muted-foreground',
+      warning: 'border-warning/40 bg-warning/10 text-warning',
+      error: 'border-destructive/40 bg-destructive/10 text-destructive',
+      success: 'border-primary/40 bg-primary/10 text-primary',
     },
   },
 })

@@ -35,7 +35,7 @@ const reasoningVariants = cva("aui-reasoning-root mb-4 w-full", {
     variant: {
       outline: "rounded-lg border px-3 py-2",
       ghost: "",
-      muted: "bg-muted/50 rounded-lg px-3 py-2",
+      muted: "rounded-lg bg-muted/50 px-3 py-2",
     },
   },
   defaultVariants: {
@@ -140,7 +140,7 @@ function ReasoningFade({
           "aui-reasoning-fade pointer-events-none absolute inset-x-0 top-0 z-10 h-8",
           "bg-[linear-gradient(to_bottom,var(--color-background),transparent)]",
           "group-data-[variant=muted]/reasoning-root:bg-[linear-gradient(to_bottom,hsl(var(--muted)/0.5),transparent)]",
-          "fade-in-0 animate-in",
+          "animate-in fade-in-0",
           "duration-(--animation-duration)",
           className,
         )}
@@ -156,7 +156,7 @@ function ReasoningFade({
         "aui-reasoning-fade pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8",
         "bg-[linear-gradient(to_top,var(--color-background),transparent)]",
         "group-data-[variant=muted]/reasoning-root:bg-[linear-gradient(to_top,hsl(var(--muted)/0.5),transparent)]",
-        "fade-in-0 animate-in",
+        "animate-in fade-in-0",
         "duration-(--animation-duration)",
         className,
       )}
@@ -180,7 +180,7 @@ function ReasoningTrigger({
     <CollapsibleTrigger
       data-slot="reasoning-trigger"
       className={cn(
-        "aui-reasoning-trigger group/trigger text-muted-foreground hover:text-foreground flex max-w-[75%] origin-left items-center gap-2 py-1.5 text-sm transition-[color,scale] active:scale-[0.98]",
+        "aui-reasoning-trigger group/trigger active:scale-0.98 flex max-w-[75%] origin-left items-center gap-2 py-1.5 text-sm text-muted-foreground transition-[color,scale] hover:text-foreground",
         className,
       )}
       {...props}
@@ -198,7 +198,7 @@ function ReasoningTrigger({
           <span
             aria-hidden
             data-slot="reasoning-trigger-shimmer"
-            className="aui-reasoning-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
+            className="aui-reasoning-trigger-shimmer pointer-events-none absolute inset-0 shimmer motion-reduce:animate-none"
           >
             Reasoning{durationText}
           </span>
@@ -229,7 +229,7 @@ function ReasoningContent({
     <CollapsibleContent
       data-slot="reasoning-content"
       className={cn(
-        "aui-reasoning-content text-muted-foreground relative overflow-hidden text-sm outline-none",
+        "aui-reasoning-content relative overflow-hidden text-sm text-muted-foreground outline-none",
         "group/collapsible-content ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:animate-none",
         "data-closed:animate-collapsible-up",
         "data-open:animate-collapsible-down",
@@ -306,7 +306,7 @@ function ReasoningText({
       ref={scrollRef}
       data-slot="reasoning-text"
       className={cn(
-        "aui-reasoning-text relative z-0 max-h-64 overflow-y-auto ps-6 pt-2 pb-2 leading-relaxed text-pretty",
+        "aui-reasoning-text relative z-0 max-h-64 overflow-y-auto py-2 ps-6 leading-relaxed text-pretty",
         "transform-gpu transition-[transform,opacity] ease-[cubic-bezier(0.32,0.72,0,1)]",
         "motion-reduce:animate-none",
         "group-data-open/collapsible-content:animate-in",

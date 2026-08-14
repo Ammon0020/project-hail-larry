@@ -188,9 +188,9 @@ export function ModelSelector({
         disabled={isDisabled}
         onClick={() => (open ? closePopover() : setOpen(true))}
         className={cn(
-          'flex items-center gap-1 max-w-[10rem] px-1.5 py-0.5 rounded text-xs text-muted-foreground',
-          'hover:bg-accent hover:text-foreground transition-colors',
-          'disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent',
+          'flex max-w-40 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground',
+          'transition-colors hover:bg-accent hover:text-foreground',
+          'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent',
         )}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -198,7 +198,7 @@ export function ModelSelector({
         <span className="truncate">{triggerLabel}</span>
         <ChevronDown
           className={cn(
-            'w-3 h-3 shrink-0 transition-transform',
+            'size-3 shrink-0 transition-transform',
             open && 'rotate-180',
           )}
         />
@@ -208,12 +208,12 @@ export function ModelSelector({
         <div
           ref={popoverRef}
           role="listbox"
-          className="absolute bottom-full left-0 mb-2 w-[320px] z-50 bg-popover border border-border rounded-[10px] shadow-lg flex flex-col"
+          className="absolute bottom-full left-0 z-50 mb-2 flex w-80 flex-col rounded-[10px] border border-border bg-popover shadow-lg"
         >
           {/* Search input — auto-focused on open. */}
-          <div className="p-2 border-b border-border">
+          <div className="border-b border-border p-2">
             <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <input
                 ref={searchInputRef}
                 type="text"
@@ -221,19 +221,19 @@ export function ModelSelector({
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search models"
                 className={cn(
-                  'w-full pl-7 pr-2 py-1.5 text-xs rounded-md',
-                  'bg-secondary/60 border border-border text-foreground',
+                  'w-full rounded-md py-1.5 pr-2 pl-7 text-xs',
+                  'border border-border bg-secondary/60 text-foreground',
                   'placeholder:text-muted-foreground',
-                  'focus:outline-none focus:ring-1 focus:ring-primary/40',
+                  'focus:ring-1 focus:ring-primary/40 focus:outline-none',
                 )}
               />
             </div>
           </div>
 
           {/* Scrollable list. */}
-          <div className="max-h-[400px] overflow-y-auto p-2 flex flex-col gap-3">
+          <div className="flex max-h-100 flex-col gap-3 overflow-y-auto p-2">
             {pinnedGroups.length === 0 && otherGroups.length === 0 && (
-              <div className="text-xs text-muted-foreground py-4 text-center">
+              <div className="py-4 text-center text-xs text-muted-foreground">
                 No models match "{search.trim()}"
               </div>
             )}
@@ -280,7 +280,7 @@ export function ModelSelector({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground px-1">
+      <div className="px-1 text-[10px] tracking-wide text-muted-foreground uppercase">
         {title}
       </div>
       {children}
@@ -321,16 +321,16 @@ function BaseModelBlock({
   return (
     <div
       className={cn(
-        'rounded-md px-1.5 py-1.5 flex flex-col gap-1.5',
+        'flex flex-col gap-1.5 rounded-md p-1.5',
         isSelectedGroup && 'bg-accent/40',
       )}
     >
       {/* Header row: display name + preferred badge + pin icon. */}
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-xs font-medium truncate">{group.displayName}</span>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-xs font-medium">{group.displayName}</span>
           {group.preferred && (
-            <span className="text-[9px] uppercase tracking-wide text-primary shrink-0">
+            <span className="shrink-0 text-[9px] tracking-wide text-primary uppercase">
               Preferred
             </span>
           )}
@@ -339,17 +339,17 @@ function BaseModelBlock({
           type="button"
           onClick={() => onTogglePin(group.baseId)}
           className={cn(
-            'p-0.5 rounded shrink-0 transition-colors',
+            'shrink-0 rounded p-0.5 transition-colors',
             isPinned
               ? 'text-primary hover:text-primary/80'
-              : 'text-muted-foreground hover:text-foreground hover:bg-accent',
+              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
           )}
           aria-label={isPinned ? `Unpin ${group.displayName}` : `Pin ${group.displayName}`}
           aria-pressed={isPinned}
           title={isPinned ? 'Unpin' : 'Pin'}
         >
           <Star
-            className={cn('w-3 h-3', isPinned && 'fill-current')}
+            className={cn('size-3', isPinned && 'fill-current')}
           />
         </button>
       </div>
@@ -406,7 +406,7 @@ function ThinkingPill({
       type="button"
       onClick={onClick}
       className={cn(
-        'text-[11px] px-2 py-0.5 rounded-full transition-colors',
+        'rounded-full px-2 py-0.5 text-[11px] transition-colors',
         selected
           ? 'bg-primary text-primary-foreground'
           : 'bg-secondary text-secondary-foreground hover:bg-accent',
@@ -426,13 +426,13 @@ function FastToggle({ selected, onClick }: { selected: boolean; onClick: () => v
       aria-label="Fast variant"
       title="Fast"
       className={cn(
-        'inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full transition-colors',
+        'inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] transition-colors',
         selected
           ? 'bg-primary text-primary-foreground'
           : 'bg-secondary/70 text-muted-foreground hover:bg-accent hover:text-foreground',
       )}
     >
-      <Zap className="w-2.5 h-2.5" />
+      <Zap className="size-2.5" />
       <span>Fast</span>
     </button>
   )

@@ -17,20 +17,20 @@ import { ContextInjectionBlock } from './ContextInjectionBlock'
 /** Renders image attachments in user messages as small thumbnails. */
 export function AssistantImagePart({ image, filename }: ImageMessagePartProps) {
   return (
-    <div className="flex flex-wrap gap-2 mt-2">
+    <div className="mt-2 flex flex-wrap gap-2">
       <a
         href={image}
         target="_blank"
         rel="noopener noreferrer"
-        className="group block rounded-lg border border-border bg-muted p-1.5 hover:border-ring transition"
+        className="group block rounded-lg border border-border bg-muted p-1.5 transition hover:border-ring"
         title={filename}
       >
         <img
           src={image}
           alt={filename ?? ''}
-          className="w-20 h-20 rounded-md object-cover border border-border"
+          className="size-20 rounded-md border border-border object-cover"
         />
-        <div className="mt-1 text-[11px] text-muted-foreground truncate max-w-[80px]">
+        <div className="mt-1 max-w-20 truncate text-[11px] text-muted-foreground">
           {filename}
         </div>
       </a>
@@ -66,9 +66,9 @@ export function ContextInjectionPartView({
 export function PlanPartView({ content }: { content: string }) {
   return (
     <div className="flex justify-start">
-      <div className="text-xs text-muted-foreground flex items-center gap-1.5">
-        <ListChecks className="w-3.5 h-3.5 shrink-0" />
-        <span className="text-foreground whitespace-pre-wrap">{content}</span>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <ListChecks className="size-3.5 shrink-0" />
+        <span className="whitespace-pre-wrap text-foreground">{content}</span>
       </div>
     </div>
   )

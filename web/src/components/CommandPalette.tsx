@@ -221,22 +221,22 @@ export function CommandPalette({
     <Dialog open={open} onOpenChange={(v) => { if (!v) close() }}>
       <DialogContent
         showCloseButton={false}
-        className="max-w-xl top-[10vh] translate-y-0 left-1/2 -translate-x-1/2 p-0 gap-0"
+        className="top-[10vh] left-1/2 max-w-xl -translate-x-1/2 translate-y-0 gap-0 p-0"
         onKeyDown={handleKeyDown}
       >
         <DialogTitle className="sr-only">Command Palette</DialogTitle>
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-          <Search className="w-4 h-4 shrink-0 text-muted-foreground" />
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+          <Search className="size-4 shrink-0 text-muted-foreground" />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => handleQueryChange(e.target.value)}
             placeholder="Search files by name... (use > for commands)"
-            className="flex-1 bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground"
+            className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
             autoFocus
           />
         </div>
-        <div ref={listRef} className="max-h-[400px] overflow-y-auto p-1">
+        <div ref={listRef} className="max-h-100 overflow-y-auto p-1">
           {resultCount === 0 ? (
             <div className="px-3 py-6 text-center text-sm text-muted-foreground">
               No {isCommandMode ? 'commands' : 'files'} found
@@ -249,7 +249,7 @@ export function CommandPalette({
                 onMouseEnter={() => setSelectedIndex(i)}
                 onClick={() => activate(i)}
                 className={cn(
-                  'flex items-center gap-2 px-3 py-2 rounded cursor-pointer text-sm',
+                  'flex cursor-pointer items-center gap-2 rounded px-3 py-2 text-sm',
                   i === selectedIndex && 'bg-accent text-accent-foreground',
                 )}
               >
@@ -265,16 +265,16 @@ export function CommandPalette({
                 onMouseEnter={() => setSelectedIndex(i)}
                 onClick={() => activate(i)}
                 className={cn(
-                  'flex items-center gap-2 px-3 py-2 rounded cursor-pointer',
+                  'flex cursor-pointer items-center gap-2 rounded px-3 py-2',
                   i === selectedIndex && 'bg-accent text-accent-foreground',
                 )}
               >
-                <FileIcon name={file.name} className="w-4 h-4 shrink-0" />
+                <FileIcon name={file.name} className="size-4 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium truncate">
+                  <div className="truncate text-sm font-medium">
                     <HighlightedText text={file.name} positions={file.namePositions} />
                   </div>
-                  <div className="text-xs text-muted-foreground truncate">
+                  <div className="truncate text-xs text-muted-foreground">
                     <HighlightedText text={file.path} positions={file.pathPositions} />
                   </div>
                 </div>

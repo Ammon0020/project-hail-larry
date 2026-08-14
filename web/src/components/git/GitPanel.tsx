@@ -113,7 +113,7 @@ function GitFileRow({
   const row = (
     <div
       className={cn(
-        'group flex items-center gap-1.5 px-3 h-7 text-xs hover:bg-accent cursor-pointer select-none',
+        'group flex h-7 cursor-pointer items-center gap-1.5 px-3 text-xs select-none hover:bg-accent',
         menuOpen && 'ring-1 ring-primary outline-none',
       )}
       title={`${file.oldPath ? `${file.oldPath} → ${file.path}` : file.path} • ${file.status}`}
@@ -129,15 +129,15 @@ function GitFileRow({
     >
       <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
         {isFolder
-          ? <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          : <FileIcon name={newFilename} className="h-3.5 w-3.5 shrink-0" />}
+          ? <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+          : <FileIcon name={newFilename} className="size-3.5 shrink-0" />}
         <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
-          <span className="shrink-0 truncate max-w-full text-xs">{displayName}</span>
+          <span className="max-w-full shrink-0 truncate text-xs">{displayName}</span>
           {displayDirname && <span className="min-w-0 truncate text-[10px] text-muted-foreground">{displayDirname}</span>}
         </div>
       </div>
       <div
-        className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex"
+        className="hidden items-center gap-0.5 group-focus-within:flex group-hover:flex"
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
@@ -150,11 +150,11 @@ function GitFileRow({
               e.preventDefault()
               onFileSelect(file.path)
             }}
-            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-primary hover:text-primary-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-primary hover:text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
             title="Open File"
             aria-label={`Open ${file.path}`}
           >
-            <File className="h-3.5 w-3.5" />
+            <File className="size-3.5" />
           </button>
         )}
         {!file.staged && onDiscard && (
@@ -165,11 +165,11 @@ function GitFileRow({
               e.preventDefault()
               onDiscard(file)
             }}
-            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground disabled:cursor-not-allowed disabled:opacity-50"
             title="Discard Changes"
             aria-label={`Discard changes in ${file.path}`}
           >
-            <RotateCcw className="h-3.5 w-3.5" />
+            <RotateCcw className="size-3.5" />
           </button>
         )}
         <button
@@ -183,14 +183,14 @@ function GitFileRow({
               onStage(file.path)
             }
           }}
-          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-primary hover:text-primary-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-primary hover:text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
           aria-label={stageLabel}
           title={stageLabel}
         >
-          {file.staged ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+          {file.staged ? <Minus className="size-3.5" /> : <Plus className="size-3.5" />}
         </button>
       </div>
-      <span className={cn('shrink-0 font-semibold text-xs ml-1', style.className)}>{style.label}</span>
+      <span className={cn('ml-1 shrink-0 text-xs font-semibold', style.className)}>{style.label}</span>
     </div>
   )
 
@@ -210,7 +210,7 @@ function GitFileRow({
               onCloseMenu()
             }}
           >
-            <Eye className="w-3.5 h-3.5" />
+            <Eye className="size-3.5" />
             Open Diff
           </DropdownMenuItem>
         )}
@@ -222,8 +222,8 @@ function GitFileRow({
           }}
         >
           {file.staged
-            ? <Minus className="w-3.5 h-3.5" />
-            : <Plus className="w-3.5 h-3.5" />}
+            ? <Minus className="size-3.5" />
+            : <Plus className="size-3.5" />}
           {file.staged ? 'Unstage' : 'Stage'}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -233,7 +233,7 @@ function GitFileRow({
             onCloseMenu()
           }}
         >
-          <Folder className="w-3.5 h-3.5" />
+          <Folder className="size-3.5" />
           {isFolder ? 'Add folder to .gitignore' : 'Add to .gitignore'}
         </DropdownMenuItem>
         <DropdownMenuItem
@@ -242,7 +242,7 @@ function GitFileRow({
             onCloseMenu()
           }}
         >
-          <Copy className="w-3.5 h-3.5" />
+          <Copy className="size-3.5" />
           Copy Path
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -305,14 +305,14 @@ function ChangeSection({
 
   return (
     <section>
-      <div className="flex items-center justify-between px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center justify-between px-3 py-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
         <span>{title} ({files.length})</span>
         {staged ? (
           <button type="button" disabled={busy} onClick={() => onUnstage(files.map((file) => file.path))} className="rounded p-1 hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-label={actionLabel} title={actionLabel}>
-            <Minus className="h-3.5 w-3.5" />
+            <Minus className="size-3.5" />
           </button>
         ) : (
-          <button type="button" disabled={busy} onClick={() => onStage([], true)} className="rounded px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-primary hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50" aria-label={actionLabel} title={actionLabel}>
+          <button type="button" disabled={busy} onClick={() => onStage([], true)} className="rounded px-1.5 py-0.5 text-[10px] font-medium tracking-normal text-primary normal-case hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50" aria-label={actionLabel} title={actionLabel}>
             Stage All
           </button>
         )}
@@ -508,13 +508,13 @@ export function GitPanel({
   }
 
   if (gitStateLoading) {
-    return <div className="flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading source control…</div>
+    return <div className="flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Loading source control…</div>
   }
 
   if (!gitState?.repoDetected) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <GitBranch className="h-8 w-8 text-muted-foreground" />
+        <GitBranch className="size-8 text-muted-foreground" />
         <div>
           <p className="text-sm font-medium">No Git repository detected</p>
           <p className="mt-1 text-xs text-muted-foreground">Initialize this workspace to start tracking changes.</p>
@@ -529,7 +529,7 @@ export function GitPanel({
           })}
           className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {busyAction === 'init' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Initialize Repository'}
+          {busyAction === 'init' ? <Loader2 className="size-3.5 animate-spin" /> : 'Initialize Repository'}
         </button>
       </div>
     )
@@ -556,33 +556,33 @@ export function GitPanel({
             type="button"
             disabled={busy}
             onClick={() => setBranchPickerOpen(true)}
-            className="flex items-center gap-1.5 text-xs font-medium rounded px-1 -mx-1 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50 outline-none"
+            className="-mx-1 flex items-center gap-1.5 rounded px-1 text-xs font-medium outline-none hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
             <span className={cn('truncate', !status?.headBranch && !gitState.headBranch && 'text-amber-500')}>
               {status?.headBranch ?? gitState.headBranch ?? 'Detached HEAD'}
             </span>
-            {branchOptions.length > 1 && <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />}
+            {branchOptions.length > 1 && <ChevronDown className="size-3 shrink-0 text-muted-foreground" />}
           </button>
           {status && (status.upstream || status.ahead || status.behind) && (
             <div className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
               {status.upstream && <span className="truncate">{status.upstream}</span>}
-              {status.ahead > 0 && <span className="flex items-center"><ArrowUp className="h-2.5 w-2.5" />{status.ahead}</span>}
-              {status.behind > 0 && <span className="flex items-center"><ArrowDown className="h-2.5 w-2.5" />{status.behind}</span>}
+              {status.ahead > 0 && <span className="flex items-center"><ArrowUp className="size-2.5" />{status.ahead}</span>}
+              {status.behind > 0 && <span className="flex items-center"><ArrowDown className="size-2.5" />{status.behind}</span>}
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex shrink-0 items-center gap-1">
           <button type="button" disabled={busy} onClick={() => void runMutation('refresh', async () => { /* refreshStatus runs as runMutation's trailing reload */ })} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-label="Refresh source control" title="Refresh">
-            <RefreshCw className={cn('h-3.5 w-3.5', busyAction === 'refresh' && 'animate-spin')} />
+            <RefreshCw className={cn('size-3.5', busyAction === 'refresh' && 'animate-spin')} />
           </button>
           <button type="button" disabled={busy} onClick={() => void runMutation('fetch', async () => { await api.gitFetch(workspaceId) })} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-label="Fetch from remote" title="Fetch">
-            {busyAction === 'fetch' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <DownloadCloud className="h-3.5 w-3.5" />}
+            {busyAction === 'fetch' ? <Loader2 className="size-3.5 animate-spin" /> : <DownloadCloud className="size-3.5" />}
           </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button type="button" className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground outline-none" aria-label="More actions" title="More actions">
-                <MoreHorizontal className="h-3.5 w-3.5" />
+              <button type="button" className="rounded p-1 text-muted-foreground outline-none hover:bg-secondary hover:text-foreground" aria-label="More actions" title="More actions">
+                <MoreHorizontal className="size-3.5" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -595,7 +595,7 @@ export function GitPanel({
                   })
                 }}
               >
-                <GitPullRequest className="w-3.5 h-3.5" />
+                <GitPullRequest className="size-3.5" />
                 Pull from remote
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -617,14 +617,14 @@ export function GitPanel({
           }}
           placeholder="Message (press Ctrl+Enter to commit)"
           rows={3}
-          className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-xs outline-none transition focus:border-ring"
+          className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-xs transition outline-none focus:border-ring"
         />
         <div className="mt-2 flex gap-2">
           <button type="button" disabled={!canCommit || busy} onClick={commit} className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-2 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">
-            {busyAction === 'commit' && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Commit
+            {busyAction === 'commit' && <Loader2 className="size-3.5 animate-spin" />} Commit
           </button>
           <button type="button" disabled={busy} onClick={() => void runMutation('push', async () => { await api.gitPush(workspaceId) })} className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50">
-            {busyAction === 'push' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Push
+            {busyAction === 'push' ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />} Push
           </button>
           {confirmStash === 'push' ? (
             <div className="flex items-center gap-1">
@@ -634,15 +634,15 @@ export function GitPanel({
                 onClick={() => { setConfirmStash(null); stashPush() }}
                 className="flex items-center justify-center gap-1.5 rounded-md bg-primary px-2 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {busyAction === 'stash' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />} Stash?
+                {busyAction === 'stash' ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />} Stash?
               </button>
               <button
                 type="button"
                 onClick={() => setConfirmStash(null)}
-                className="rounded-md border border-border px-1.5 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+                className="rounded-md border border-border p-1.5 text-xs text-muted-foreground hover:bg-accent"
                 title="Cancel"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="size-3.5" />
               </button>
             </div>
           ) : (
@@ -653,7 +653,7 @@ export function GitPanel({
               className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               title="Stash changes"
             >
-              {busyAction === 'stash' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />} Stash
+              {busyAction === 'stash' ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />} Stash
             </button>
           )}
         </div>
@@ -666,12 +666,12 @@ export function GitPanel({
           <button
             type="button"
             onClick={() => setStashExpanded((v) => !v)}
-            className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+            className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase hover:text-foreground"
           >
-            {stashExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            <Archive className="h-3 w-3" />
+            {stashExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+            <Archive className="size-3" />
             <span>Stashes</span>
-            <span className="font-normal normal-case tracking-normal">({stashes.length})</span>
+            <span className="font-normal tracking-normal normal-case">({stashes.length})</span>
           </button>
           {stashExpanded && (
             <div className="pb-1">
@@ -702,7 +702,7 @@ export function GitPanel({
                         className="rounded p-1 text-muted-foreground hover:bg-secondary"
                         title="Cancel"
                       >
-                        <X className="h-3 w-3" />
+                        <X className="size-3" />
                       </button>
                     </div>
                   ) : (
@@ -714,7 +714,7 @@ export function GitPanel({
                       title="Pop stash"
                       aria-label="Pop stash"
                     >
-                      {busyAction === 'stash-pop' ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowDown className="h-3 w-3" />}
+                      {busyAction === 'stash-pop' ? <Loader2 className="size-3 animate-spin" /> : <ArrowDown className="size-3" />}
                     </button>
                   )}
                   {/* Drop — inline confirm since this is irreversible */}
@@ -734,7 +734,7 @@ export function GitPanel({
                         className="rounded p-1 text-muted-foreground hover:bg-secondary"
                         title="Cancel"
                       >
-                        <X className="h-3 w-3" />
+                        <X className="size-3" />
                       </button>
                     </div>
                   ) : (
@@ -746,7 +746,7 @@ export function GitPanel({
                       title="Drop stash"
                       aria-label="Drop stash"
                     >
-                      {busyAction === 'stash-drop' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                      {busyAction === 'stash-drop' ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
                     </button>
                   )}
                 </div>

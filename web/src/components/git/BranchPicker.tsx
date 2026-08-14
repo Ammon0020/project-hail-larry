@@ -118,12 +118,12 @@ export function BranchPicker({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="max-w-xl top-[10vh] translate-y-0 left-1/2 -translate-x-1/2 p-0 gap-0"
+        className="top-[10vh] left-1/2 max-w-xl -translate-x-1/2 translate-y-0 gap-0 p-0"
         onKeyDown={handleKeyDown}
       >
         <DialogTitle className="sr-only">Switch branch</DialogTitle>
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-          <Search className="w-4 h-4 shrink-0 text-muted-foreground" />
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+          <Search className="size-4 shrink-0 text-muted-foreground" />
           <input
             ref={inputRef}
             value={query}
@@ -134,7 +134,7 @@ export function BranchPicker({
             placeholder="Select a branch or tag to checkout"
             aria-controls="branch-picker-list"
             aria-activedescendant={filtered.length > 0 ? `branch-picker-item-${activeRow}` : undefined}
-            className="flex-1 bg-transparent outline-none text-sm text-foreground placeholder:text-muted-foreground"
+            className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
         {/* Stub action rows: persistent commands, never filtered by search and
@@ -148,10 +148,10 @@ export function BranchPicker({
             <div
               key={id}
               aria-disabled="true"
-              className="flex items-center gap-2 px-3 h-8 text-sm rounded-sm select-none cursor-default opacity-60"
+              className="flex h-8 cursor-default items-center gap-2 rounded-sm px-3 text-sm opacity-60 select-none"
             >
               <span className="flex w-4 shrink-0 items-center justify-center text-muted-foreground">
-                <Icon className="h-3.5 w-3.5" />
+                <Icon className="size-3.5" />
               </span>
               <span className="min-w-0 truncate">{label}</span>
               <span className="ml-auto text-xs text-muted-foreground/70">Coming soon</span>
@@ -187,16 +187,16 @@ export function BranchPicker({
                   onMouseEnter={() => setActiveIndex(i)}
                   onClick={() => activate(i)}
                   className={cn(
-                    'flex items-center gap-2 px-3 h-8 text-sm rounded-sm select-none',
+                    'flex h-8 items-center gap-2 rounded-sm px-3 text-sm select-none',
                     i === activeRow ? 'bg-accent' : 'hover:bg-accent/50',
                     (isCurrent || busy) ? 'cursor-default opacity-90' : 'cursor-pointer',
                   )}
                 >
                   <span className="flex w-4 shrink-0 items-center justify-center text-muted-foreground">
                     {isCurrent ? (
-                      <Check className="h-3.5 w-3.5" />
+                      <Check className="size-3.5" />
                     ) : (
-                      <GitBranch className="h-3.5 w-3.5 opacity-60" />
+                      <GitBranch className="size-3.5 opacity-60" />
                     )}
                   </span>
                   <span className="min-w-0 truncate">

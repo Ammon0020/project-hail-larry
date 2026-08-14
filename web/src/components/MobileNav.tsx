@@ -32,31 +32,31 @@ export function MobileNav({
   ]
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 w-full h-16 pb-[env(safe-area-inset-bottom)] bg-panel border-t border-border flex items-center justify-around z-50 px-2">
+    <nav className="fixed bottom-0 left-0 z-50 flex h-16 w-full items-center justify-around border-t border-border bg-panel px-2 pb-[env(safe-area-inset-bottom)] lg:hidden">
       {navItems.map(({ view, icon: Icon, label, badge }) => (
         <button
           key={view}
           onClick={() => onSwitchView(view)}
           className={cn(
-            'flex flex-col items-center justify-center w-16 h-full transition relative',
+            'relative flex h-full w-16 flex-col items-center justify-center transition',
             activeView === view && !(view === 'editor' && settingsActive) ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
           )}
         >
           {badge && (
             <div className={cn('absolute top-1.5 right-3 rounded-full', badge)} />
           )}
-          <Icon className="w-5 h-5 mb-0.5" />
+          <Icon className="mb-0.5 size-5" />
           <span className="text-[10px] font-medium">{label}</span>
         </button>
       ))}
       <button
         onClick={onOpenSettings}
         className={cn(
-          'flex flex-col items-center justify-center w-16 h-full transition relative',
+          'relative flex h-full w-16 flex-col items-center justify-center transition',
           settingsActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
         )}
       >
-        <Settings className="w-5 h-5 mb-0.5" />
+        <Settings className="mb-0.5 size-5" />
         <span className="text-[10px] font-medium">Settings</span>
       </button>
     </nav>

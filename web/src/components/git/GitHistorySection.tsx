@@ -228,7 +228,7 @@ function GraphRow({
         </div>
         <ChevronRight
           className={cn(
-            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform',
+            'size-3.5 shrink-0 text-muted-foreground transition-transform',
             isExpanded && 'rotate-90',
           )}
         />
@@ -498,29 +498,29 @@ export function GitHistorySection({
       const checkoutItem: CommitContextMenuItem = branch
         ? {
             label: `Checkout ${branch}`,
-            icon: <GitBranch className="h-3.5 w-3.5" />,
+            icon: <GitBranch className="size-3.5" />,
             onClick: () => void api.gitCheckout(workspaceId, branch).then(() => void refresh()),
           }
         : {
             label: `Checkout ${commit.oid.slice(0, 7)} (detached)`,
-            icon: <GitBranch className="h-3.5 w-3.5" />,
+            icon: <GitBranch className="size-3.5" />,
             onClick: () => void api.gitCheckoutCommit(workspaceId, commit.oid).then(() => void refresh()),
           }
       return [
         {
           label: 'Copy SHA',
-          icon: <Copy className="h-3.5 w-3.5" />,
+          icon: <Copy className="size-3.5" />,
           onClick: () => void navigator.clipboard.writeText(commit.oid),
         },
         {
           label: 'Open diff in tab',
-          icon: <SquareArrowOutUpRight className="h-3.5 w-3.5" />,
+          icon: <SquareArrowOutUpRight className="size-3.5" />,
           onClick: () => onOpenCommitDiff(commit.oid),
         },
         checkoutItem,
         {
           label: 'Refresh',
-          icon: <RefreshCw className="h-3.5 w-3.5" />,
+          icon: <RefreshCw className="size-3.5" />,
           onClick: () => void refresh(),
         },
       ]
@@ -558,20 +558,20 @@ export function GitHistorySection({
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
-          className="flex min-w-0 flex-1 items-center gap-1 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+          className="flex min-w-0 flex-1 items-center gap-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase hover:text-foreground"
           aria-expanded={expanded}
           aria-controls="git-history-content"
         >
-          {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          <GitBranch className="h-3 w-3" />
+          {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          <GitBranch className="size-3" />
           <span>Graph</span>
           {!loading && (
-            <span className="font-normal normal-case tracking-normal">
+            <span className="font-normal tracking-normal normal-case">
               {debouncedFilter ? `(${filteredCommits.length}/${commits.length})` : `(${commits.length})`}
             </span>
           )}
           {headNotice && (
-            <span className="ml-1 truncate text-[10px] font-normal normal-case tracking-normal text-muted-foreground">
+            <span className="ml-1 truncate text-[10px] font-normal tracking-normal text-muted-foreground normal-case">
               {headNotice}
             </span>
           )}
@@ -582,7 +582,7 @@ export function GitHistorySection({
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="Filter…"
-            className="h-5 w-24 rounded-sm border border-border bg-background px-1.5 text-[10px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="h-5 w-24 rounded-sm border border-border bg-background px-1.5 text-[10px] placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
             aria-label="Filter commits"
           />
         )}
@@ -593,7 +593,7 @@ export function GitHistorySection({
           aria-label={flatMode ? 'Show graph view' : 'Show flat history'}
           title={flatMode ? 'Show graph view' : 'Show flat history'}
         >
-          {flatMode ? <GitBranch className="h-3 w-3" /> : <List className="h-3 w-3" />}
+          {flatMode ? <GitBranch className="size-3" /> : <List className="size-3" />}
         </button>
         <button
           type="button"
@@ -603,7 +603,7 @@ export function GitHistorySection({
           aria-label="Scroll to HEAD"
           title="Scroll to HEAD"
         >
-          <Crosshair className="h-3 w-3" />
+          <Crosshair className="size-3" />
         </button>
         <button
           type="button"
@@ -613,14 +613,14 @@ export function GitHistorySection({
           aria-label="Refresh history"
           title="Refresh history"
         >
-          <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} />
+          <RefreshCw className={cn('size-3', loading && 'animate-spin')} />
         </button>
       </header>
       {expanded && (
         <div ref={scrollRef} id="git-history-content" className="min-h-0 flex-1 overflow-y-auto">
           {loading ? (
             <div className="flex h-full items-center justify-center gap-1.5 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading history…
+              <Loader2 className="size-3.5 animate-spin" /> Loading history…
             </div>
           ) : error ? (
             <div className="flex h-full items-center justify-center px-3 text-center text-xs text-destructive">
@@ -628,11 +628,11 @@ export function GitHistorySection({
             </div>
           ) : debouncedFilter && filteredCommits.length === 0 ? (
             <div className="flex h-full items-center justify-center gap-1.5 text-xs text-muted-foreground">
-              <Search className="h-3.5 w-3.5" /> No commits match "{debouncedFilter}".
+              <Search className="size-3.5" /> No commits match "{debouncedFilter}".
             </div>
           ) : commits.length === 0 ? (
             <div className="flex h-full items-center justify-center gap-1.5 text-xs text-muted-foreground">
-              <GitCommit className="h-3.5 w-3.5" /> No commits yet.
+              <GitCommit className="size-3.5" /> No commits yet.
             </div>
           ) : (
             <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
@@ -690,7 +690,7 @@ export function GitHistorySection({
                       {!flatMode && (
                         <svg
                           width={graphWidth(layout.laneCount)}
-                          className="pointer-events-none absolute left-2 top-0 overflow-visible"
+                          className="pointer-events-none absolute top-0 left-2 overflow-visible"
                           style={{ height: '100%' }}
                           aria-hidden="true"
                         >

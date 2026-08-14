@@ -11,7 +11,7 @@ interface SystemRowProps {
   variant?: 'muted' | 'destructive'
 }
 
-const systemRow = cva('text-xs text-center py-1', {
+const systemRow = cva('py-1 text-center text-xs', {
   variants: {
     variant: {
       muted: 'text-muted-foreground',

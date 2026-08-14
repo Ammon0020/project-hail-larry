@@ -152,7 +152,7 @@ export function ContextUsageRing({ usage }: ContextUsageRingProps) {
       {showPopout && (
         <div
           ref={popoutRef}
-          className="absolute bottom-full right-0 mb-2 w-[200px] z-50 bg-popover border border-border rounded-[10px] shadow-lg p-3 flex flex-col gap-1.5"
+          className="absolute right-0 bottom-full z-50 mb-2 flex w-50 flex-col gap-1.5 rounded-[10px] border border-border bg-popover p-3 shadow-lg"
         >
           {hasUsage ? (
             <>
