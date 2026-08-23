@@ -28,7 +28,7 @@
 
 ## Out of Scope (do NOT implement)
 
-- Device credential expiry, multi-user, image upload, ACP sub-workers, editor mobile touch optimization, session replay, developer terminal UI, MCP management, multi-client collaboration. (Per `docs/plans/OpenItems.md` lower-priority / Phase 3.)
+- Device credential expiry, multi-user, image upload, ACP sub-workers, editor mobile touch optimization, session replay, developer terminal UI, MCP management, multi-client collaboration. (Per `plans/OpenItems.md` lower-priority / Phase 3.)
 
 ---
 
@@ -175,7 +175,7 @@
 
 **Docs to update on completion:**
 - `docs/STATUS.md` — task 5 row → ✅ Done; check off UI Persistence row.
-- `docs/plans/OpenItems.md` — check off TLS on LAN, Pairing TTL, UI persistence; leave Device credential expiry, Editor on mobile, ACP sub-workers unchecked.
+- `plans/OpenItems.md` — check off TLS on LAN, Pairing TTL, UI persistence; leave Device credential expiry, Editor on mobile, ACP sub-workers unchecked.
 
 ---
 
@@ -220,8 +220,8 @@
 - Verify `app pair` generates a QR + mnemonic (capture stdout, confirm both present).
 - Document results in `docs/STATUS.md` under "Runtime Verification Needed" — check off what works, note what doesn't with a one-line reason.
 - Final pass on `docs/STATUS.md` — every row honest, every gap marked, every completed item checked. No false "✅ Done".
-- Update `docs/plans/OpenItems.md` — remove resolved items, note any new gaps discovered.
-- Confirm `docs/plans/execution-plan.md` (this file) reflects final state — mark each stream ✅ at completion.
+- Update `plans/OpenItems.md` — remove resolved items, note any new gaps discovered.
+- Confirm `docs/archive/old_plans/execution-plan.md` (this file) reflects final state — mark each stream ✅ at completion.
 
 **Verify:** All gates green + STATUS.md accurate + OpenItems.md accurate.
 
@@ -250,11 +250,11 @@ Step 2f (done):    Stream 6 — E2E verification & docs    ✅
 - [x] `.\build.ps1` passes
 - [x] `docs/STATUS.md` accurate — no false "✅ Done" on partial work
 - [x] `docs/reference/acp/responsibilities.md` ⚠️ markers resolved or accurately tracked
-- [x] `docs/plans/OpenItems.md` reflects current state
-- [x] `docs/plans/execution-plan.md` exists and is accurate
+- [x] `plans/OpenItems.md` reflects current state
+- [x] `docs/archive/old_plans/execution-plan.md` exists and is accurate
 - [x] `mockup-chat-panel.html` renders all ACP panel states in a browser
 - [x] `docs/specs/chat-panel-spec.md` under 3 pages, covers every ACP feature
 
 ## Completion Status
 
-All six work streams are complete and merged (2026-06-27). All gates green. Runtime verification confirmed: `app start` serves the UI (`/health` 200, root div present), `app add-folder .` + `app list-folders` register and list workspaces, `app pair` emits a mnemonic passcode + QR code + token URL. The only remaining verification gap is ACP transport end-to-end (requires a real agent process) — tracked in `docs/plans/OpenItems.md`.
+All six work streams are complete and merged (2026-06-27). All gates green. Runtime verification confirmed: `app start` serves the UI (`/health` 200, root div present), `app add-folder .` + `app list-folders` register and list workspaces, `app pair` emits a mnemonic passcode + QR code + token URL. The only remaining verification gap is ACP transport end-to-end (requires a real agent process) — tracked in `plans/OpenItems.md`.

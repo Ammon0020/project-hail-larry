@@ -110,7 +110,7 @@ local_agent help                   Show help
 
 | File | Purpose |
 |---|---|
-| [`docs/plans/Blueprint.md`](docs/plans/Blueprint.md) | Architecture and design source of truth |
+| [`plans/Blueprint.md`](plans/Blueprint.md) | Architecture and design source of truth |
 | [`docs/STATUS.md`](docs/STATUS.md) | Task-level implementation status |
 | [`docs/known-issues.md`](docs/known-issues.md) | Known gaps and deferred issues |
 | [`AGENTS.md`](AGENTS.md) | Rules and context for AI agents working in this repo |

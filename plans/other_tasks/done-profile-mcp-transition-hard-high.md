@@ -1,7 +1,7 @@
 # ACP-compliant profile and MCP transition
 
 > Security + UX follow-up. Difficulty: hard. Urgency: high.
-> Source: `docs/reviews/2026-07-21/HANDOFF-tool-whitelist-on-profile-switch.md`.
+> Source: `reviews/2026-07-21/HANDOFF-tool-whitelist-on-profile-switch.md`.
 
 ## Goal
 

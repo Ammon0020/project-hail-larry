@@ -32,7 +32,7 @@ Skip for targeted lookups (one function/file) — just `read`/`grep`.
 ```bash
 npx repomix@latest                    # whole repo (uses repomix.config.json)
 npx repomix@latest src/acp            # subdirectory
-npx repomix@latest --include "src/**/*.rs,docs/plans/**/*.md"
+npx repomix@latest --include "src/**/*.rs,plans/**/*.md"
 npx repomix@latest --compress         # ~70% token cut; drops bodies, keeps signatures
 npx repomix@latest --split-output 1mb # chunk for file-size-limited tools
 git ls-files | npx repomix@latest --stdin

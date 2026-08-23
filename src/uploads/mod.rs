@@ -15,7 +15,7 @@
 //!   magic-byte image detection.
 //! - `tests` — port of `internal/uploads/uploads_test.go`.
 //!
-//! See `docs/plans/rust-port/complete-S-UPLOADS-uploads-med.md`.
+//! See `plans/rust-port/complete-S-UPLOADS-uploads-med.md`.
 
 use std::collections::HashMap;
 use std::fs;

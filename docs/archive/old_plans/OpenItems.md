@@ -14,13 +14,13 @@ Tracked gaps and decisions to address in the Local Agent Interface blueprint and
 
 - [x] **Missing workspace user warning** — Done (Go+Rust): retain unavailable
   roots, list/CLI `available:false` + error, no config auto-prune. Story:
-  `docs/plans/stories/pending-missing_workspace_user_warning-med-med.md`
+  `plans/stories/pending-missing_workspace_user_warning-med-med.md`
 - [ ] **Team collaboration** — Shared workspaces, multiple operators
 - [x] **Editor on mobile** — CodeMirror touch config in `EditorPane.tsx`:
   scaled line height, no text DnD/fold gutter, soft-keyboard keep-in-view
 - [ ] **Session replay** — Superseded by the active agent-owned history epic:
-  `docs/plans/active-acp-agent-session-history-med.md` →
-  `docs/plans/acp-session-history/`. Keep until epic Q1–Q8 lock direction.
+  `plans/active-acp-agent-session-history-med.md` →
+  `plans/acp-session-history/`. Keep until epic Q1–Q8 lock direction.
 - [ ] **Developer terminal UI** — Optional Phase 3 power-user feature — noted in Blueprint Phase 3
 - [ ] **ACP sub-workers** — Deferred until next ACP release (~next quarter)
 
@@ -30,4 +30,4 @@ Tracked gaps and decisions to address in the Local Agent Interface blueprint and
 
 The original profile epic is complete. Its tool-enumeration design was
 superseded by profile-level MCP-server allowlists; the ACP-safe transition UX
-is tracked in `docs/plans/other_tasks/active-profile-mcp-transition-hard-high.md`.
+is tracked in `plans/other_tasks/active-profile-mcp-transition-hard-high.md`.

@@ -14,7 +14,7 @@ TODO: Break this down into individual stories.
 ## Git
 
 - [x] **[Large/Medium]** Add a git action bar item and diff viewer and a way to stage/commit/push if a git repo is detected.
-  - *Done 2026-07-26 — see `docs/plans/git-action-bar/`. Backend `gix` + git-CLI-porcelain API (`src/git/`, `src/api/git.rs`), CodeMirror merge diff viewer (`web/src/components/git/GitDiffViewer.tsx`), Source Control panel (`GitPanel.tsx`), and dynamic branch in `StatusBar.tsx`.*
+  - *Done 2026-07-26 — see `plans/git-action-bar/`. Backend `gix` + git-CLI-porcelain API (`src/git/`, `src/api/git.rs`), CodeMirror merge diff viewer (`web/src/components/git/GitDiffViewer.tsx`), Source Control panel (`GitPanel.tsx`), and dynamic branch in `StatusBar.tsx`.*
 - [x] **[Small/Medium]** Add a way to initialize git in the workspace if it isn't detected.
   - *Done 2026-07-26 — `POST /api/workspaces/{id}/git/init` + "Initialize Repository" button in `GitPanel.tsx` (shown when `repoDetected === false`).*
 
@@ -31,7 +31,7 @@ TODO: Break this down into individual stories.
   - Thinking (high, medium, low, none, or any other thinking level models have)
   - fast
   - Statistics (token usage, cost, etc.) optional. They'll be added in eventually, so plan ahead for updates. 
-  - *Done 2026-08-05 — see `docs/plans/other_tasks/done-model-selector-menu-med-high.md`. New `ModelSelector.tsx` popover with search, base-model grouping, inline thinking-level pills, fast toggle, and pin (replacing favorites). `modelGrouping.ts` parses model IDs; `modelPrefs.ts` migrated favorites→pinned with storage migration.*
+  - *Done 2026-08-05 — see `plans/other_tasks/done-model-selector-menu-med-high.md`. New `ModelSelector.tsx` popover with search, base-model grouping, inline thinking-level pills, fast toggle, and pin (replacing favorites). `modelGrouping.ts` parses model IDs; `modelPrefs.ts` migrated favorites→pinned with storage migration.*
   - [ ] Under ACP's model_config options, agents can advertise configurable model traits. We should try to support any of these we can. *(deferred — backend AgentModel has no structured traits yet)*
 
 - [x] Context Window Usage & Cumulative Cost (usage_update): ACP uses a standardized session notification (session/update with sessionUpdate: "usage_update") that allows agents to push real-time context token usage and financial cost metrics back to the client.  
@@ -40,7 +40,7 @@ TODO: Break this down into individual stories.
     - "<x>% (<y>k/<z>k) context used"
     - Cost
     - Below that a timer until the prompt cache expires: "Prompt cache expires in x" down to the second. If prompt cache time can't be seen for the model, it says "Estimated: Prompt cache expires in x". When expired the text turns orange. On mobile, shows on tap for a few seconds or on hold.
-  - *Done 2026-08-05 — see `docs/plans/other_tasks/done-context-usage-ring-med-med.md`. Ring + cost display complete. Compaction signal and prompt-cache expiry deferred (blocked on ACP protocol — no compaction flag or cache expiry in the stabilized `usage_update` schema).*
+  - *Done 2026-08-05 — see `plans/other_tasks/done-context-usage-ring-med-med.md`. Ring + cost display complete. Compaction signal and prompt-cache expiry deferred (blocked on ACP protocol — no compaction flag or cache expiry in the stabilized `usage_update` schema).*
 
 ---
 
@@ -67,7 +67,7 @@ TODO: Break this down into individual stories.
 - [x] **[Medium/Medium]** Permission approvals: show exact grant scope before
       resolving "Always allow" / "Allow for session", and add an optional
       broader "always allow this tool kind" scope tier.
-  - *Done 2026-07-29 — see `docs/plans/other_tasks/done-permission-grant-transparency-med-med.md`.*
+  - *Done 2026-07-29 — see `plans/other_tasks/done-permission-grant-transparency-med-med.md`.*
   - *Part 1: `chatConverter.ts` populates `confirm` + `grants` on durable
     decisions so the ToolFallback confirm step shows exactly what will be
     persisted (tool + target/command + scope) before the user commits.*

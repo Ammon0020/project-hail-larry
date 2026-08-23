@@ -4,8 +4,8 @@
 > browse/open remain decision-blocked.
 > **Owner:** —. **Created:** 2026-07-18. **Updated:** 2026-07-18.
 > **Related:** `docs/reference/acp/responsibilities.md`,
-> `docs/plans/acp-spec-compliance.md` (§4.4 list reconcile, §4.6 fork/resume/close),
-> Blueprint §9–12. Stories: `docs/plans/acp-session-history/`.
+> `plans/acp-spec-compliance.md` (§4.4 list reconcile, §4.6 fork/resume/close),
+> Blueprint §9–12. Stories: `plans/acp-session-history/`.
 
 ## Goal
 

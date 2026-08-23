@@ -38,8 +38,9 @@ web/                 React/Vite client (See web/AGENTS.md)
     └── types/       frontend wire types
 tests/               integration/contract tests (See tests/AGENTS.md)
 └── contract_runner/ REST/WS runner (See tests/contract_runner/AGENTS.md)
-docs/                specs, plans, status, reviews (See docs/AGENTS.md)
-└── plans/           epics and stories (See docs/plans/AGENTS.md)
+plans/               epics and stories (See plans/AGENTS.md)
+reviews/             review findings and audits
+docs/                specs, status, guides (See docs/AGENTS.md)
 configs/             bundled runtime defaults (See configs/AGENTS.md)
 scripts/             setup and smoke utilities (See scripts/AGENTS.md)
 ```
@@ -76,7 +77,7 @@ List relevant folder to see task status. Review after milestones. Task reviewer 
 
 **Plan Folder**
 ```
-docs/plans/
+plans/
 ├── Blueprint.md  # summary of the app. Ignore for now - needs updating. 
 ├── status-epic-difficulty.md
 ├── epic/
@@ -93,7 +94,7 @@ This daemon exposes a browser UI and may execute commands or write files.
 - Reject workspace symlinks; contain and validate paths.
 - Rate-limit unauthenticated endpoints and cap request/response sizes.
 - For endpoints or file/command surfaces, identify the caller and worst-case impact before implementation.
-- Run a focused auth, input, path, command, secrets, TLS, SQLi, and DoS audit after major feature batches or before releases; save findings in `docs/reviews/<date>/`.
+- Run a focused auth, input, path, command, secrets, TLS, SQLi, and DoS audit after major feature batches or before releases; save findings in `reviews/<date>/`.
 - NEVER commit without user review.
 
 ## Frontend

@@ -13,7 +13,7 @@
 //! - `store`  — `load`, atomic `save`, and the thread-safe `ConfigStore`
 //!   wrapper (`RwLock<Config>`).
 //!
-//! See `docs/plans/rust-port/complete-S-CONFIG-config-med.md`.
+//! See `plans/rust-port/complete-S-CONFIG-config-med.md`.
 
 #[cfg(test)]
 use std::sync::PoisonError;

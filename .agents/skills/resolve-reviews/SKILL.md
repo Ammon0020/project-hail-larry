@@ -1,7 +1,7 @@
 ---
 name: resolve-reviews
 description: Subagent-driven review fixer — processes action item finding files in batches, delegates fixes to subagents, and validates via parent-level tests, linting, and formatting before suggesting commits.
-argument-hint: "[dir] (default: docs/reviews/<YYYY-MM-DD> or latest review dir)"
+argument-hint: "[dir] (default: reviews/<YYYY-MM-DD> or latest review dir)"
 allowed-tools:
   - read
   - grep
@@ -21,7 +21,7 @@ Batch-fix review action items using parallel `small` subagents, validate changes
 ## Workflow
 
 ### 1. Collect & Group Action Items
-1. Locate finding files in `docs/reviews/<YYYY-MM-DD>/` (or passed path).
+1. Locate finding files in `reviews/<YYYY-MM-DD>/` (or passed path).
 2. Read files and group related findings into logical batches (max 3 concurrent fixes per batch). Focus on tightly coupled files or individual `<slug>,<difficulty>,<urgency>.md` units meant to be fixed together.
 
 ### 2. Dispatch Fix Subagents (Max 3 Concurrent)

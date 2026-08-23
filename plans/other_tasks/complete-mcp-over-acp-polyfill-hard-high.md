@@ -8,7 +8,7 @@
 ## Goal
 
 Wire the MCP-over-ACP broker using the SDK's `agent-client-protocol-polyfill`
-crate, replacing the unbuilt broker design in `docs/plans/acp-spec-compliance.md`
+crate, replacing the unbuilt broker design in `plans/acp-spec-compliance.md`
 and unblocking the "MCP-over-ACP — broker not wired" gap in `docs/STATUS.md`.
 
 ## Background

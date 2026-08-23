@@ -1,4 +1,4 @@
-# docs/plans/
+# plans/
 
 ## Responsibility
 
@@ -7,7 +7,7 @@ Project epic and story execution plans, roadmap blueprints, and task tracking fi
 ## Module Map
 
 ```text
-docs/plans/
+plans/
 ├── Blueprint.md
 ├── acp-context-policy/       context-policy stories
 ├── acp-core-modularization/ ACP core stories

@@ -1,7 +1,7 @@
 # Project Status — Local Agent Interface
 
-> Updated: 2026-07-29. Task detail lives in `docs/plans/`; deferred gaps in
-> `docs/known-issues.md`; architecture is `docs/plans/Blueprint.md`.
+> Updated: 2026-07-29. Task detail lives in `plans/`; deferred gaps in
+> `docs/known-issues.md`; architecture is `plans/Blueprint.md`.
 
 ## What Works
 
@@ -32,22 +32,22 @@
 - [ ] **Multi-user** — multi-device/single-user is decided; multi-user is future.
 - [ ] **ACP futures** — multi-client gateway, workers, session lifecycle,
   elicitation, NES, audio, and ACP inspector. See
-  `docs/plans/pending-multi-client-acp-gateway-med.md`.
+  `plans/pending-multi-client-acp-gateway-med.md`.
 - [x] **Git action bar + diff viewer** — workspace git detection, backend
   status/diff/stage/unstage/commit/push/init API (`gix` + git CLI porcelain),
   reusable CodeMirror merge diff viewer, Source Control activity-bar panel,
   and git init. Foundational for the edited-files popup. See
-  `docs/plans/git-action-bar/` (all stories done).
+  `plans/git-action-bar/` (all stories done).
 - [x] **ACP core modularization** — callbacks, actor runtime, turn state,
   session registry, lifecycle, operations, and the thin client facade are
   extracted (`S-ACP-MOD-CALLBACKS` through `S-ACP-MOD-FACADE`). See
-  `docs/plans/complete-acp-core-modularization-hard.md`.
+  `plans/complete-acp-core-modularization-hard.md`.
 - [~] **Agent-owned history** — PROBE + fallback complete; migration deferred;
   local history remains for agents without list/load. Q7/Q8 still block browse.
 - [~] **Workspace preview** — serving, browse tab, live reload, sandbox, and
   LAN relative-asset auth complete; dev-server proxy, mobile UX, and auto-index
   remain. (Plan files reviewed and pruned 2026-07-22; see
-  `docs/reviews/2026-07-22/workspace-preview-lan-auth-compact.md`.)
+  `reviews/2026-07-22/workspace-preview-lan-auth-compact.md`.)
 - [ ] **Phase 2** — concurrent workers, capability negotiation, diagnostics.
 - [x] **Profiles over ACP** — config schema/loader, mockagent mode-cap, REST
   CRUD, ACP `set_config_option` send path + `POST /sessions/:id/profile`,
@@ -58,7 +58,7 @@
 - [~] **Profile MCP transitions** — active: keep profile switching available,
   while offering ACP-safe new-session, fresh-chat, or instructions-only choices
   when MCP access differs. See
-  `docs/plans/other_tasks/active-profile-mcp-transition-hard-high.md`.
+  `plans/other_tasks/active-profile-mcp-transition-hard-high.md`.
 
 ## Blocked
 
@@ -69,18 +69,18 @@
 
 - **Git module split** — Git DTOs, repository/history, worktree operations,
   CLI helpers, and tests moved out of `src/git/mod.rs`; the facade is now 34
-  lines. See `docs/plans/other_tasks/done-git-module-split-large-high.md`.
+  lines. See `plans/other_tasks/done-git-module-split-large-high.md`.
 - **API module split** — REST handlers, auth, pairing, files, previews, sessions,
   and shared test support moved into focused `src/api/` modules; `mod.rs` now
   owns composition and shared plumbing. See
-  `docs/plans/other_tasks/done-api-module-split-large-medium.md`.
+  `plans/other_tasks/done-api-module-split-large-medium.md`.
 - **Git log API (S-GIT-LOG-API)** — `GET /api/workspaces/{id}/git/log?limit=&offset=`
   implemented with `gix::Repository::rev_walk()` for the commit graph, branch
   labels, and ISO 8601 UTC author timestamps. The walk now seeds from the union
   of all local branch heads plus detached HEAD (when detached), so the
   checked-out commit is reachable even when no local branch points at it;
   `is_head` is preserved for the commit HEAD currently points at. 7 unit tests.
-  See `docs/plans/git-history-graph/done-git-log-api-medium.md`.
+  See `plans/git-history-graph/done-git-log-api-medium.md`.
 - **Git history graph (S-GIT-GRAPH-VIEWER)** — collapsible/resizable bottom pane
   in the Source Control panel rendering an SVG commit graph (greedy lane
   layout in `gitGraphLayout.ts`, 6 vitest cases) with a graph/flat-list toggle,
@@ -89,7 +89,7 @@
   `GitDiffViewer`) backed by the new `GET /api/workspaces/{id}/git/commit-diff?
   oid=` endpoint (`commit_diff()` with validated commit ids and bounded Git CLI
   ref/tree reads, 2 unit tests). See
-  `docs/plans/git-history-graph/done-git-graph-viewer-medium.md`.
+  `plans/git-history-graph/done-git-graph-viewer-medium.md`.
 - **Git discard button** — client-side discard (untracked → delete, tracked →
   restore base via readFile/getGitDiff/saveFile). Backend discard endpoint
   still pending (`pending-git-discard-endpoint-med-high.md`).
@@ -100,7 +100,7 @@
   confirm step with the exact grant scope before the user commits. Tool-kind
   scoping (`AllowToolKind`) added for a conservative allowlist
   (move/edit/read/search, never execute). See
-  `docs/plans/other_tasks/done-permission-grant-transparency-med-med.md`.
+  `plans/other_tasks/done-permission-grant-transparency-med-med.md`.
 - **Git integration** — full Source Control surface shipped: `gix`-based
   workspace detection (`GET /git`), status/diff/stage/unstage/commit/push/init
   REST API (authenticated paired-device gate, no permission sink), CodeMirror
@@ -155,14 +155,14 @@
   `upstream`/`ahead`/`behind` via `git rev-parse @{u}` + `rev-list --count`;
   pull refuses dirty trees (409). GitPanel header has a Fetch button and a
   "Pull from remote" dropdown action. See
-  `docs/plans/git-history-graph/done-git-fetch-pull-small.md`.
+  `plans/git-history-graph/done-git-fetch-pull-small.md`.
 - **S-GIT-CHECKOUT** — `POST /git/checkout` switches local branches (refuses
   dirty trees with 409); `status()` returns local and remote-tracking branch
   names. GitPanel header branch name opens a searchable, keyboard-accessible
   picker modal showing `origin/branch` entries with muted remote prefixes, a
   check on the current branch, and visible `Coming soon` rows for creating a
   branch, creating from a branch, and detached checkout. See
-  `docs/plans/git-history-graph/done-git-checkout-small.md`.
+  `plans/git-history-graph/done-git-checkout-small.md`.
 
 ## Known Gaps
 

@@ -46,7 +46,7 @@ forking the SDK or replacing our `ClientSideConnection` usage with a hand-rolled
 `acp.NewConnection` layer — both disproportionate for an unstable protocol no
 mainstream agent advertises (`mcp_capabilities.acp`) yet.
 
-Fix path / unblock signal + full drop-in design: `docs/plans/acp-spec-compliance.md` § 4.10.
+Fix path / unblock signal + full drop-in design: `plans/acp-spec-compliance.md` § 4.10.
 
 ## ACP auth persistence across daemon restarts — deferred
 
@@ -70,7 +70,7 @@ Linux is wired (`src/app/port.rs` parses `/proc/net/tcp`); macOS/Windows
 `find_pid_listening_on` return `Ok(None)` (no cheap kernel introspection path
 is wired yet). On those platforms an orphaned daemon without a PID file still
 requires a manual `kill`/`taskkill`. See
-`docs/plans/other_tasks/active-daemon-port-orphan-recovery-small-high.md`.
+`plans/other_tasks/active-daemon-port-orphan-recovery-small-high.md`.
 
 ## Security audit — deferred findings (from 2026-07-07 audit)
 

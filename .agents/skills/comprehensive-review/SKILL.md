@@ -1,6 +1,6 @@
 ---
 name: comprehensive-review
-description: Parallel subagent code review — splits the surface area into groups, dispatches up to 3 subagents per batch, each writes markdown files per action item to docs/reviews/<date>/
+description: Parallel subagent code review — splits the surface area into groups, dispatches up to 3 subagents per batch, each writes markdown files per action item to reviews/<date>/
 argument-hint: "[base-ref]  (default: HEAD — reviews all uncommitted changes)"
 allowed-tools:
   - read
@@ -34,7 +34,7 @@ Dispatch up to **3 `small` subagents in parallel** (`is_background: true`).
   1. Read the file.
   2. Summarize its architecture.
   3. Summarize action items.
-  4. Write each action item into `docs/reviews/<YYYY-MM-DD>/<slug>,<difficulty>,<urgency>.md`. Combine action items meant to be fixed in the same go into the same file.
+  4. Write each action item into `reviews/<YYYY-MM-DD>/<slug>,<difficulty>,<urgency>.md`. Combine action items meant to be fixed in the same go into the same file.
   5. Repeat steps 1–4 for the next file.
   6. Summarize connections between all files reviewed so far.
   7. Summarize new action items derived from cross-file interactions (written using the same file naming format).

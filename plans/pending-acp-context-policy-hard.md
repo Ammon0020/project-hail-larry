@@ -1,8 +1,8 @@
 # Epic: ACP Context Policy
 
 > **Status:** Pending. **Created:** 2026-07-25.
-> **Related:** `docs/plans/agent-context.md` (superseded design reference),
-> `docs/plans/Blueprint.md`, ACP prompt lifecycle and session configuration.
+> **Related:** `plans/agent-context.md` (superseded design reference),
+> `plans/Blueprint.md`, ACP prompt lifecycle and session configuration.
 
 ## Goal
 
